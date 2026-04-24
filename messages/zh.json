@@ -27,7 +27,22 @@
     "approve": "核准",
     "reject": "拒絕",
     "search": "搜尋",
-    "filter": "篩選"
+    "filter": "篩選",
+    "submit": "提交",
+    "invite": "邀請",
+    "remove": "移除",
+    "create": "建立",
+    "back": "返回",
+    "actions": "操作",
+    "status": "狀態",
+    "name": "姓名",
+    "email": "電子郵件",
+    "notes": "備註"
+  },
+  "roles": {
+    "admin": "管理員",
+    "teacher": "教師",
+    "student": "學生"
   },
   "landing": {
     "hero": {
@@ -42,14 +57,203 @@
   "auth": {
     "welcome": "歡迎使用 SAT Exam OS"
   },
-  "roles": {
-    "admin": "管理員",
-    "teacher": "教師",
-    "student": "學生"
-  },
   "languageSwitcher": {
     "label": "切換語言",
     "zh": "中文",
     "en": "EN"
+  },
+  "register": {
+    "title": "學生自主註冊",
+    "completeProfile": "完成個人資料",
+    "completeProfileHint": "此資訊有助於老師和管理員為您設定帳號。",
+    "fullName": "全名",
+    "grade": "年級",
+    "school": "學校",
+    "parentName": "家長姓名",
+    "parentEmail": "家長電子郵件",
+    "parentPhone": "家長電話",
+    "targetScore": "目標 SAT 分數",
+    "currentLevel": "目前程度",
+    "submit": "提交申請",
+    "submitting": "提交中...",
+    "successTitle": "申請已提交！",
+    "successMessage": "您的帳號正在等待管理員審核。審核通過後您將收到電子郵件通知。",
+    "viewStatus": "查看帳號狀態",
+    "pending": "帳號待審核",
+    "pendingMessage": "您的申請已提交。管理員將盡快審核並核准您的帳號。",
+    "levels": {
+      "beginner": "初級",
+      "intermediate": "中級",
+      "advanced": "高級"
+    }
+  },
+  "dashboard": {
+    "admin": {
+      "title": "管理員儀表板",
+      "welcome": "歡迎回來",
+      "overview": "以下是平台概況。",
+      "pendingStudents": "待審核學生",
+      "approvedStudents": "已核准學生",
+      "teachers": "教師",
+      "modules": "模組",
+      "pendingApprovals": "待審核申請",
+      "quickActions": "快速操作",
+      "reviewApprovals": "審核學生申請",
+      "inviteTeacher": "邀請教師",
+      "uploadModule": "上傳模組",
+      "manageClasses": "管理班級",
+      "viewAll": "查看全部"
+    },
+    "teacher": {
+      "title": "教師儀表板",
+      "welcome": "歡迎",
+      "assignedTests": "指派測驗",
+      "studentsUnderReview": "待審學生",
+      "submissionsThisWeek": "本週提交",
+      "noTestsYet": "管理員分配班級後，您的測驗將顯示在這裡。"
+    },
+    "student": {
+      "title": "學生儀表板",
+      "welcome": "歡迎",
+      "pendingTitle": "帳號待審核",
+      "pendingMessage": "您的申請已成功提交。管理員將盡快審核並核准您的帳號，審核通過後您將收到電子郵件通知。",
+      "completeProfile": "完成個人資料",
+      "completeProfileHint": "您的個人資料尚未完整，請補充年級、學校等資訊以便老師了解您。",
+      "noTestsYet": "老師指派測驗後，您的測驗將顯示在這裡。",
+      "targetScore": "目標分數"
+    }
+  },
+  "admin": {
+    "students": {
+      "title": "學生管理",
+      "tabs": {
+        "pending": "待審核",
+        "approved": "已核准",
+        "suspended": "已停用"
+      },
+      "searchPlaceholder": "依姓名、電子郵件、年級、學校搜尋...",
+      "columns": {
+        "name": "姓名",
+        "grade": "年級",
+        "school": "學校",
+        "parent": "家長",
+        "registered": "申請日期",
+        "actions": "操作"
+      },
+      "approve": "核准",
+      "reject": "拒絕",
+      "approveModal": {
+        "title": "核准學生",
+        "campus": "校區",
+        "classGroup": "班級",
+        "none": "— 不指定 —",
+        "grade": "年級",
+        "targetScore": "目標分數",
+        "notes": "備註",
+        "approving": "核准中...",
+        "cancel": "取消"
+      },
+      "noStudents": "找不到學生。",
+      "suspendReason": "停用原因（選填）："
+    },
+    "teachers": {
+      "title": "教師管理",
+      "invite": "邀請教師",
+      "inviteModal": {
+        "title": "邀請教師",
+        "email": "電子郵件",
+        "displayName": "顯示名稱",
+        "optional": "選填",
+        "inviting": "邀請中...",
+        "sent": "邀請已送出！",
+        "sentMessage": "邀請郵件已發送至",
+        "cancel": "取消"
+      },
+      "columns": {
+        "teacher": "教師",
+        "specialty": "專長",
+        "status": "狀態",
+        "invited": "邀請日期",
+        "actions": "操作"
+      },
+      "remove": "移除",
+      "confirmRemove": "確定移除此教師？移除後將無法存取平台。",
+      "noTeachers": "尚無教師。邀請一位開始使用。"
+    },
+    "classes": {
+      "title": "班級管理",
+      "create": "新增班級",
+      "createModal": {
+        "title": "建立班級",
+        "name": "班級名稱",
+        "campus": "校區",
+        "grade": "年級",
+        "anyGrade": "— 不限 —",
+        "creating": "建立中...",
+        "cancel": "取消"
+      },
+      "members": "名學生",
+      "noGroups": "尚無班級。新增班級以管理學生。",
+      "detail": {
+        "addStudent": "新增學生",
+        "selectStudent": "選擇學生...",
+        "add": "新增",
+        "remove": "移除",
+        "noMembers": "尚無成員。請在上方新增學生。"
+      }
+    },
+    "modules": {
+      "title": "模組管理",
+      "upload": "上傳模組",
+      "uploadTitle": "上傳模組",
+      "section": "科目",
+      "moduleNumber": "模組編號",
+      "difficulty": "難度",
+      "sourceName": "來源名稱",
+      "version": "版本 / 日期",
+      "pdfFile": "PDF 檔案",
+      "clickToSelect": "點擊選擇 PDF",
+      "pdfOnly": "僅限 PDF",
+      "save": "儲存",
+      "saveAndParse": "儲存並用 AI 解析",
+      "saving": "儲存中...",
+      "noModules": "尚無模組。",
+      "uploadFirst": "上傳第一個模組",
+      "columns": {
+        "module": "模組",
+        "section": "科目",
+        "difficulty": "難度",
+        "questions": "題數",
+        "status": "狀態",
+        "uploaded": "上傳日期"
+      },
+      "detail": {
+        "pdfFile": "PDF 檔案",
+        "openPdf": "開啟 PDF",
+        "parseWithAI": "用 AI 解析",
+        "parseHint": "觸發 AI 解析以從 PDF 中提取題目。解析完成後可審核草稿（Phase 1B）。",
+        "parsingQueued": "解析已排隊。AI 解析完成後管理員可審核題目草稿（Phase 1B）。",
+        "questions": "題目",
+        "noQuestions": "尚無題目。解析此模組以提取題目。",
+        "viewQuestions": "查看題目"
+      },
+      "status": {
+        "pending": "待解析",
+        "parsing": "解析中",
+        "parsed": "已解析",
+        "approved": "已核准",
+        "failed": "解析失敗"
+      },
+      "sections": {
+        "math": "數學",
+        "readingWriting": "閱讀與寫作"
+      },
+      "difficulties": {
+        "easy": "簡單",
+        "medium": "中等",
+        "hard": "困難",
+        "mixed": "混合"
+      }
+    }
   }
 }

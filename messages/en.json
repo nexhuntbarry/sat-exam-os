@@ -27,7 +27,22 @@
     "approve": "Approve",
     "reject": "Reject",
     "search": "Search",
-    "filter": "Filter"
+    "filter": "Filter",
+    "submit": "Submit",
+    "invite": "Invite",
+    "remove": "Remove",
+    "create": "Create",
+    "back": "Back",
+    "actions": "Actions",
+    "status": "Status",
+    "name": "Name",
+    "email": "Email",
+    "notes": "Notes"
+  },
+  "roles": {
+    "admin": "Admin",
+    "teacher": "Teacher",
+    "student": "Student"
   },
   "landing": {
     "hero": {
@@ -42,14 +57,203 @@
   "auth": {
     "welcome": "Welcome to SAT Exam OS"
   },
-  "roles": {
-    "admin": "Admin",
-    "teacher": "Teacher",
-    "student": "Student"
-  },
   "languageSwitcher": {
     "label": "Switch language",
     "zh": "中文",
     "en": "EN"
+  },
+  "register": {
+    "title": "Student Self-Registration",
+    "completeProfile": "Complete Your Profile",
+    "completeProfileHint": "This information helps your teacher and admin set you up correctly.",
+    "fullName": "Full Name",
+    "grade": "Grade",
+    "school": "School",
+    "parentName": "Parent / Guardian Name",
+    "parentEmail": "Parent Email",
+    "parentPhone": "Parent Phone",
+    "targetScore": "Target SAT Score",
+    "currentLevel": "Current Level",
+    "submit": "Submit Registration",
+    "submitting": "Submitting...",
+    "successTitle": "Registration Submitted!",
+    "successMessage": "Your account is awaiting admin approval. You'll receive an email once approved.",
+    "viewStatus": "View Account Status",
+    "pending": "Account Pending Approval",
+    "pendingMessage": "Your registration has been submitted. An administrator will review and approve your account shortly.",
+    "levels": {
+      "beginner": "Beginner",
+      "intermediate": "Intermediate",
+      "advanced": "Advanced"
+    }
+  },
+  "dashboard": {
+    "admin": {
+      "title": "Admin Dashboard",
+      "welcome": "Welcome back",
+      "overview": "Here's an overview of your platform.",
+      "pendingStudents": "Pending Students",
+      "approvedStudents": "Approved Students",
+      "teachers": "Teachers",
+      "modules": "Modules",
+      "pendingApprovals": "Pending Approvals",
+      "quickActions": "Quick Actions",
+      "reviewApprovals": "Review student approvals",
+      "inviteTeacher": "Invite a teacher",
+      "uploadModule": "Upload a module",
+      "manageClasses": "Manage class groups",
+      "viewAll": "View all"
+    },
+    "teacher": {
+      "title": "Teacher Dashboard",
+      "welcome": "Welcome",
+      "assignedTests": "Assigned Tests",
+      "studentsUnderReview": "Students Under Review",
+      "submissionsThisWeek": "Submissions This Week",
+      "noTestsYet": "Your assigned tests will appear here once an admin assigns classes to you."
+    },
+    "student": {
+      "title": "Student Dashboard",
+      "welcome": "Welcome",
+      "pendingTitle": "Account Pending Approval",
+      "pendingMessage": "Your registration has been submitted successfully. An administrator will review and approve your account shortly. You will receive an email notification once your account is approved.",
+      "completeProfile": "Complete Profile",
+      "completeProfileHint": "Your profile is incomplete. Add your grade, school, and other info to help your teacher.",
+      "noTestsYet": "Your upcoming tests will appear here once your teacher assigns them.",
+      "targetScore": "Target Score"
+    }
+  },
+  "admin": {
+    "students": {
+      "title": "Students",
+      "tabs": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "suspended": "Suspended"
+      },
+      "searchPlaceholder": "Search by name, email, grade, school...",
+      "columns": {
+        "name": "Name",
+        "grade": "Grade",
+        "school": "School",
+        "parent": "Parent",
+        "registered": "Registered",
+        "actions": "Actions"
+      },
+      "approve": "Approve",
+      "reject": "Reject",
+      "approveModal": {
+        "title": "Approve Student",
+        "campus": "Campus",
+        "classGroup": "Class Group",
+        "none": "— None —",
+        "grade": "Grade",
+        "targetScore": "Target Score",
+        "notes": "Notes",
+        "approving": "Approving...",
+        "cancel": "Cancel"
+      },
+      "noStudents": "No students found.",
+      "suspendReason": "Reason for suspension (optional):"
+    },
+    "teachers": {
+      "title": "Teachers",
+      "invite": "Invite Teacher",
+      "inviteModal": {
+        "title": "Invite Teacher",
+        "email": "Email",
+        "displayName": "Display Name",
+        "optional": "Optional",
+        "inviting": "Inviting...",
+        "sent": "Invitation sent!",
+        "sentMessage": "An email has been sent to",
+        "cancel": "Cancel"
+      },
+      "columns": {
+        "teacher": "Teacher",
+        "specialty": "Specialty",
+        "status": "Status",
+        "invited": "Invited",
+        "actions": "Actions"
+      },
+      "remove": "Remove",
+      "confirmRemove": "Remove this teacher? They will lose access.",
+      "noTeachers": "No teachers yet. Invite one to get started."
+    },
+    "classes": {
+      "title": "Class Groups",
+      "create": "New Group",
+      "createModal": {
+        "title": "Create Class Group",
+        "name": "Group Name",
+        "campus": "Campus",
+        "grade": "Grade",
+        "anyGrade": "— Any —",
+        "creating": "Creating...",
+        "cancel": "Cancel"
+      },
+      "members": "members",
+      "noGroups": "No class groups yet. Create one to organize students.",
+      "detail": {
+        "addStudent": "Add Student",
+        "selectStudent": "Select a student...",
+        "add": "Add",
+        "remove": "Remove",
+        "noMembers": "No members yet. Add students above."
+      }
+    },
+    "modules": {
+      "title": "Modules",
+      "upload": "Upload Module",
+      "uploadTitle": "Upload Module",
+      "section": "Section",
+      "moduleNumber": "Module Number",
+      "difficulty": "Difficulty",
+      "sourceName": "Source Name",
+      "version": "Version / Date",
+      "pdfFile": "PDF File",
+      "clickToSelect": "Click to select PDF",
+      "pdfOnly": "PDF only",
+      "save": "Save",
+      "saveAndParse": "Save & Parse with AI",
+      "saving": "Saving...",
+      "noModules": "No modules yet.",
+      "uploadFirst": "Upload your first module",
+      "columns": {
+        "module": "Module",
+        "section": "Section",
+        "difficulty": "Difficulty",
+        "questions": "Questions",
+        "status": "Status",
+        "uploaded": "Uploaded"
+      },
+      "detail": {
+        "pdfFile": "PDF File",
+        "openPdf": "Open PDF",
+        "parseWithAI": "Parse with AI",
+        "parseHint": "Trigger AI parsing to extract questions from this PDF. You can review drafts once parsing is complete (Phase 1B).",
+        "parsingQueued": "Parsing queued. Admin will review question drafts once AI parse is complete (Phase 1B).",
+        "questions": "Questions",
+        "noQuestions": "No questions yet. Parse this module to extract questions.",
+        "viewQuestions": "View questions"
+      },
+      "status": {
+        "pending": "Pending",
+        "parsing": "Parsing",
+        "parsed": "Parsed",
+        "approved": "Approved",
+        "failed": "Failed"
+      },
+      "sections": {
+        "math": "Math",
+        "readingWriting": "Reading & Writing"
+      },
+      "difficulties": {
+        "easy": "Easy",
+        "medium": "Medium",
+        "hard": "Hard",
+        "mixed": "Mixed"
+      }
+    }
   }
 }
