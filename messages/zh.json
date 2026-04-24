@@ -378,22 +378,6 @@
       }
     }
   },
-  "teacher": {
-    "tests": {
-      "title": "我的測驗",
-      "noTests": "尚未分配測驗給您。",
-      "columns": {
-        "testName": "測驗名稱",
-        "section": "科目",
-        "status": "狀態",
-        "students": "學生",
-        "submitted": "已繳交",
-        "avgScore": "平均分數",
-        "due": "截止日期",
-        "actions": "操作"
-      }
-    }
-  },
   "student": {
     "tests": {
       "title": "我的測驗",
@@ -444,6 +428,57 @@
       "correctAnswer": "正確答案",
       "backToTests": "返回測驗列表"
     }
+  },
+  "teacher": {
+    "tests": {
+      "title": "我的測驗",
+      "noTests": "尚未分配測驗給您。",
+      "columns": {
+        "testName": "測驗名稱",
+        "section": "科目",
+        "status": "狀態",
+        "students": "學生",
+        "submitted": "已繳交",
+        "avgScore": "平均分數",
+        "due": "截止日期",
+        "actions": "操作"
+      }
+    },
+    "analytics": {
+      "resultsTitle": "測驗成績",
+      "studentResults": "學生成績",
+      "questionAnalysis": "題目分析",
+      "hardestQuestion": "最難題目",
+      "easiestQuestion": "最簡單題目",
+      "avgScore": "班級平均分數",
+      "exportCsv": "匯出 CSV",
+      "markForReview": "標記為課堂講解",
+      "privateNote": "私人備註",
+      "totalAssigned": "已分配人數",
+      "submitted": "已繳交",
+      "notStarted": "未開始",
+      "inProgress": "進行中",
+      "lateSubmissions": "逾期繳交",
+      "highestScore": "最高分",
+      "lowestScore": "最低分",
+      "avgTimeSpent": "平均花費時間",
+      "scoreDistribution": "分數分布",
+      "toTeach": "課堂待講解",
+      "mostFlagged": "最多標記"
+    }
+  },
+  "analytics": {
+    "distribution": "分布",
+    "flagged": "已標記",
+    "blank": "未作答",
+    "time": "花費時間",
+    "correctRate": "答對率",
+    "wrongRate": "答錯率",
+    "mostSelectedWrong": "最多選擇的錯誤答案",
+    "correctAnswer": "正確答案",
+    "classReview": "標記為課堂講解",
+    "studentGotWrong": "答錯的學生",
+    "studentGotRight": "答對的學生"
   },
   "test": {
     "questions": {

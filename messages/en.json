@@ -378,22 +378,6 @@
       }
     }
   },
-  "teacher": {
-    "tests": {
-      "title": "My Tests",
-      "noTests": "No tests assigned to you yet.",
-      "columns": {
-        "testName": "Test Name",
-        "section": "Section",
-        "status": "Status",
-        "students": "Students",
-        "submitted": "Submitted",
-        "avgScore": "Avg Score",
-        "due": "Due",
-        "actions": "Actions"
-      }
-    }
-  },
   "student": {
     "tests": {
       "title": "My Tests",
@@ -444,6 +428,57 @@
       "correctAnswer": "Correct answer",
       "backToTests": "Back to Tests"
     }
+  },
+  "teacher": {
+    "tests": {
+      "title": "My Tests",
+      "noTests": "No tests assigned to you yet.",
+      "columns": {
+        "testName": "Test Name",
+        "section": "Section",
+        "status": "Status",
+        "students": "Students",
+        "submitted": "Submitted",
+        "avgScore": "Avg Score",
+        "due": "Due",
+        "actions": "Actions"
+      }
+    },
+    "analytics": {
+      "resultsTitle": "Test Results",
+      "studentResults": "Student Results",
+      "questionAnalysis": "Question Analytics",
+      "hardestQuestion": "Hardest Question",
+      "easiestQuestion": "Easiest Question",
+      "avgScore": "Avg Class Score",
+      "exportCsv": "Export CSV",
+      "markForReview": "Mark for Class Review",
+      "privateNote": "Private Note",
+      "totalAssigned": "Total Assigned",
+      "submitted": "Submitted",
+      "notStarted": "Not Started",
+      "inProgress": "In Progress",
+      "lateSubmissions": "Late Submissions",
+      "highestScore": "Highest Score",
+      "lowestScore": "Lowest Score",
+      "avgTimeSpent": "Avg Time Spent",
+      "scoreDistribution": "Score Distribution",
+      "toTeach": "To Teach in Class",
+      "mostFlagged": "Most Flagged"
+    }
+  },
+  "analytics": {
+    "distribution": "Distribution",
+    "flagged": "Flagged",
+    "blank": "Left Blank",
+    "time": "Time Spent",
+    "correctRate": "Correct Rate",
+    "wrongRate": "Wrong Rate",
+    "mostSelectedWrong": "Most Selected Wrong Answer",
+    "correctAnswer": "Correct Answer",
+    "classReview": "Mark for Class Review",
+    "studentGotWrong": "Students Who Got It Wrong",
+    "studentGotRight": "Students Who Got It Right"
   },
   "test": {
     "questions": {
