@@ -1,0 +1,55 @@
+{
+  "brand": {
+    "name": "SAT Exam OS",
+    "tagline": "Upload. Parse. Assign. Analyze.",
+    "subtitle": "AI-powered SAT test management for tutoring centers."
+  },
+  "nav": {
+    "home": "Home",
+    "dashboard": "Dashboard",
+    "modules": "Modules",
+    "questions": "Questions",
+    "tests": "Tests",
+    "students": "Students",
+    "teachers": "Teachers",
+    "reports": "Reports",
+    "settings": "Settings"
+  },
+  "common": {
+    "signIn": "Sign In",
+    "signUp": "Sign Up",
+    "signOut": "Sign Out",
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "approve": "Approve",
+    "reject": "Reject",
+    "search": "Search",
+    "filter": "Filter"
+  },
+  "landing": {
+    "hero": {
+      "title": "Upload. Parse. Assign. Analyze.",
+      "subtitle": "AI-powered SAT test management for tutoring centers. Upload PDFs, auto-parse questions, assign tests, and track student performance.",
+      "adminCta": "Admin Sign In",
+      "studentCta": "Student Register"
+    },
+    "disclaimer": "SAT is a registered trademark of College Board. This platform is not affiliated with or endorsed by College Board.",
+    "goToDashboard": "Go to Dashboard"
+  },
+  "auth": {
+    "welcome": "Welcome to SAT Exam OS"
+  },
+  "roles": {
+    "admin": "Admin",
+    "teacher": "Teacher",
+    "student": "Student"
+  },
+  "languageSwitcher": {
+    "label": "Switch language",
+    "zh": "中文",
+    "en": "EN"
+  }
+}

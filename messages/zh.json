@@ -1,0 +1,55 @@
+{
+  "brand": {
+    "name": "SAT Exam OS",
+    "tagline": "上傳。解析。分配。分析。",
+    "subtitle": "為補習班打造的 AI 驅動 SAT 測驗管理平台"
+  },
+  "nav": {
+    "home": "首頁",
+    "dashboard": "儀表板",
+    "modules": "模組",
+    "questions": "題目",
+    "tests": "測驗",
+    "students": "學生",
+    "teachers": "教師",
+    "reports": "報告",
+    "settings": "設定"
+  },
+  "common": {
+    "signIn": "登入",
+    "signUp": "註冊",
+    "signOut": "登出",
+    "loading": "載入中...",
+    "save": "儲存",
+    "cancel": "取消",
+    "delete": "刪除",
+    "edit": "編輯",
+    "approve": "核准",
+    "reject": "拒絕",
+    "search": "搜尋",
+    "filter": "篩選"
+  },
+  "landing": {
+    "hero": {
+      "title": "上傳。解析。分配。分析。",
+      "subtitle": "AI 驅動的 SAT 測驗管理平台，為補習班量身打造。上傳 PDF、自動解析題目、分配測驗、追蹤學生成效。",
+      "adminCta": "管理員登入",
+      "studentCta": "學生註冊"
+    },
+    "disclaimer": "SAT 是 College Board 的註冊商標。本平台與 College Board 無任何關聯或背書。",
+    "goToDashboard": "前往儀表板"
+  },
+  "auth": {
+    "welcome": "歡迎使用 SAT Exam OS"
+  },
+  "roles": {
+    "admin": "管理員",
+    "teacher": "教師",
+    "student": "學生"
+  },
+  "languageSwitcher": {
+    "label": "切換語言",
+    "zh": "中文",
+    "en": "EN"
+  }
+}

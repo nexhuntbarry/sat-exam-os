@@ -1,0 +1,12 @@
+<svg width="100" height="100" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="SAT Exam OS" role="img">
+  <defs>
+    <linearGradient id="sat-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#84CC16"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded square frame -->
+  <rect x="4" y="4" width="92" height="92" rx="20" stroke="url(#sat-grad)" stroke-width="4" fill="none"/>
+  <!-- SAT wordmark -->
+  <text x="50" y="62" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="800" fill="url(#sat-grad)" text-anchor="middle" letter-spacing="-1">SAT</text>
+</svg>

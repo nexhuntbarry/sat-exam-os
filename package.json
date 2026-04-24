@@ -1,0 +1,38 @@
+{
+  "name": "sat-exam-os",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.71",
+    "@clerk/nextjs": "latest",
+    "@clerk/themes": "^2.4.57",
+    "@supabase/supabase-js": "latest",
+    "@vercel/blob": "latest",
+    "ai": "^6.0.168",
+    "clsx": "latest",
+    "lucide-react": "latest",
+    "next": "latest",
+    "next-intl": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-is": "^19.2.5",
+    "recharts": "^3.8.1",
+    "resend": "latest",
+    "tailwind-merge": "latest",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
