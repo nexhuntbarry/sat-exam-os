@@ -24,6 +24,7 @@
     "react-is": "^19.2.5",
     "recharts": "^3.8.1",
     "resend": "latest",
+    "svix": "^1.92.2",
     "tailwind-merge": "latest",
     "zod": "^4.3.6"
   },
