@@ -254,6 +254,66 @@
         "hard": "困難",
         "mixed": "混合"
       }
+    },
+    "questions": {
+      "title": "題庫",
+      "review": "審核",
+      "approve": "核准",
+      "reject": "拒絕",
+      "needsReview": "需審核",
+      "bulkApprove": "批量核准",
+      "bulkReject": "批量拒絕",
+      "keywordSearch": "搜尋題目...",
+      "filters": "篩選",
+      "resetFilters": "重置",
+      "status": {
+        "draft": "草稿",
+        "approved": "已核准",
+        "needsReview": "需審核",
+        "rejected": "已拒絕"
+      },
+      "columns": {
+        "qNum": "題號",
+        "module": "模組",
+        "text": "題目",
+        "difficulty": "難度",
+        "domain": "領域",
+        "status": "狀態",
+        "confidence": "信心",
+        "actions": "操作"
+      },
+      "noResults": "找不到題目。",
+      "selected": "已選擇 {count} 題"
+    },
+    "parsing": {
+      "pending": "待解析",
+      "parsing": "解析中",
+      "parsed": "已解析",
+      "failed": "解析失敗",
+      "startParse": "用 AI 解析",
+      "retry": "重試解析",
+      "confidence": "AI 信心分數",
+      "progress": "{approved} / {total} 已核准",
+      "approveHighConf": "核准所有（信心 > 85%）",
+      "confirmApprove": "再次點擊確認",
+      "parsingInProgress": "AI 解析進行中…（1-3 分鐘）",
+      "parseFailed": "解析失敗",
+      "retryButton": "重試",
+      "startButton": "開始 AI 解析"
+    },
+    "aiUsage": {
+      "title": "AI 使用量",
+      "subtitle": "本月",
+      "totalCalls": "總呼叫數",
+      "inputTokens": "輸入 Token",
+      "outputTokens": "輸出 Token",
+      "estCost": "預估費用（本月）",
+      "dailyTrend": "每日費用趨勢（本月）",
+      "callsPerRoute": "各路由呼叫數",
+      "noData": "尚無使用資料。",
+      "route": "路由",
+      "calls": "呼叫數",
+      "cost": "費用"
     }
   }
 }

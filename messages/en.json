@@ -254,6 +254,66 @@
         "hard": "Hard",
         "mixed": "Mixed"
       }
+    },
+    "questions": {
+      "title": "Question Bank",
+      "review": "Review",
+      "approve": "Approve",
+      "reject": "Reject",
+      "needsReview": "Needs Review",
+      "bulkApprove": "Approve All",
+      "bulkReject": "Reject All",
+      "keywordSearch": "Search questions...",
+      "filters": "Filters",
+      "resetFilters": "Reset",
+      "status": {
+        "draft": "Draft",
+        "approved": "Approved",
+        "needsReview": "Needs Review",
+        "rejected": "Rejected"
+      },
+      "columns": {
+        "qNum": "Q#",
+        "module": "Module",
+        "text": "Text",
+        "difficulty": "Difficulty",
+        "domain": "Domain",
+        "status": "Status",
+        "confidence": "Conf.",
+        "actions": "Actions"
+      },
+      "noResults": "No questions found.",
+      "selected": "{count} selected"
+    },
+    "parsing": {
+      "pending": "Pending",
+      "parsing": "Parsing",
+      "parsed": "Parsed",
+      "failed": "Failed",
+      "startParse": "Parse with AI",
+      "retry": "Retry Parse",
+      "confidence": "AI Confidence",
+      "progress": "{approved} of {total} approved",
+      "approveHighConf": "Approve all (conf. > 85%)",
+      "confirmApprove": "Click again to confirm",
+      "parsingInProgress": "AI parsing in progress… (1-3 min)",
+      "parseFailed": "Parsing failed",
+      "retryButton": "Retry",
+      "startButton": "Start AI Parse"
+    },
+    "aiUsage": {
+      "title": "AI Usage",
+      "subtitle": "This month",
+      "totalCalls": "Total Calls",
+      "inputTokens": "Input Tokens",
+      "outputTokens": "Output Tokens",
+      "estCost": "Est. Cost (month)",
+      "dailyTrend": "Daily Cost Trend (this month)",
+      "callsPerRoute": "Calls per Route",
+      "noData": "No usage data yet.",
+      "route": "Route",
+      "calls": "Calls",
+      "cost": "Cost"
     }
   }
 }
