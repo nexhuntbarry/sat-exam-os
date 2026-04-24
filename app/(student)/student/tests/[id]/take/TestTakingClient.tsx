@@ -1,0 +1,253 @@
+"use client";
+
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, Flag } from "lucide-react";
+import { clsx } from "clsx";
+import TestTimer from "@/components/tests/TestTimer";
+import QuestionRenderer from "@/components/tests/QuestionRenderer";
+import QuestionNavigator from "@/components/tests/QuestionNavigator";
+import SubmitModal from "@/components/tests/SubmitModal";
+
+interface Question {
+  id: string;
+  original_question_number: number;
+  question_text: string;
+  choices: { label: string; text: string }[];
+  question_type: "Multiple Choice" | "Student Produced Response";
+  has_image: boolean;
+  has_table: boolean;
+  source_pdf_url?: string | null;
+  section: string;
+}
+
+interface Props {
+  testId: string;
+  submissionId: string;
+  initialAnswers: Record<string, string>;
+  initialMetadata: Record<string, unknown>;
+  test: { id: string; name: string; timeLimitMinutes: number; dueDate: string | null };
+  questions: Question[];
+  timeRemainingSeconds: number;
+}
+
+const AUTO_SAVE_DEBOUNCE_MS = 3000;
+
+export default function TestTakingClient({
+  testId,
+  submissionId,
+  initialAnswers,
+  initialMetadata,
+  test,
+  questions,
+  timeRemainingSeconds,
+}: Props) {
+  const router = useRouter();
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [answers, setAnswers] = useState<Record<string, string>>(initialAnswers);
+  const [flagged, setFlagged] = useState<Set<string>>(new Set());
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [tabSwitchCount, setTabSwitchCount] = useState(
+    typeof initialMetadata.tab_switches === "number" ? initialMetadata.tab_switches : 0
+  );
+
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+
+  const tabSwitchRef = useRef(tabSwitchCount);
+  tabSwitchRef.current = tabSwitchCount;
+
+  // Auto-save debounced
+  const scheduleSave = useCallback(() => {
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await fetch(`/api/student/submissions/${submissionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            answers: answersRef.current,
+            metadata: { tab_switches: tabSwitchRef.current },
+          }),
+        });
+      } catch {
+        // Silent fail — will retry on next change
+      }
+    }, AUTO_SAVE_DEBOUNCE_MS);
+  }, [submissionId]);
+
+  // Tab visibility tracking
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === "hidden") {
+        setTabSwitchCount((c) => c + 1);
+        scheduleSave();
+      }
+    }
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [scheduleSave]);
+
+  // Save on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
+
+  function handleAnswer(questionId: string, answer: string) {
+    setAnswers((prev) => {
+      const next = { ...prev, [questionId]: answer };
+      answersRef.current = next;
+      scheduleSave();
+      return next;
+    });
+  }
+
+  function toggleFlag(questionId: string) {
+    setFlagged((prev) => {
+      const next = new Set(prev);
+      if (next.has(questionId)) next.delete(questionId);
+      else next.add(questionId);
+      return next;
+    });
+  }
+
+  async function handleSubmit() {
+    setIsSubmitting(true);
+    // Save latest answers first
+    try {
+      await fetch(`/api/student/submissions/${submissionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          answers: answersRef.current,
+          metadata: { tab_switches: tabSwitchRef.current },
+        }),
+      });
+    } catch { /* ignore */ }
+
+    try {
+      const res = await fetch(`/api/student/submissions/${submissionId}/submit`, { method: "POST" });
+      if (res.ok) {
+        router.push(`/student/tests/${testId}/result?submission=${submissionId}`);
+      } else {
+        setIsSubmitting(false);
+        setShowSubmitModal(false);
+      }
+    } catch {
+      setIsSubmitting(false);
+      setShowSubmitModal(false);
+    }
+  }
+
+  function handleTimerExpire() {
+    handleSubmit();
+  }
+
+  const currentQuestion = questions[currentIndex];
+  const answeredCount = questions.filter((q) => answers[q.id] && answers[q.id].trim() !== "").length;
+  const questionIds = questions.map((q) => q.id);
+
+  return (
+    <div className="flex flex-col h-screen bg-deep-navy">
+      {/* Top bar */}
+      <div className="shrink-0 border-b border-white/8 px-6 py-3 flex items-center justify-between gap-4">
+        <div className="font-semibold text-white truncate text-sm md:text-base">{test.name}</div>
+
+        <div className="flex items-center gap-4">
+          <span className="text-soft-gray/50 text-sm hidden sm:block">
+            {currentIndex + 1} / {questions.length}
+          </span>
+          <TestTimer initialSeconds={timeRemainingSeconds} onExpire={handleTimerExpire} />
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="px-4 py-2 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm transition-colors"
+          >
+            Submit
+          </button>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto p-6">
+          {currentQuestion ? (
+            <div className="space-y-6">
+              <QuestionRenderer
+                question={currentQuestion}
+                selectedAnswer={answers[currentQuestion.id] ?? ""}
+                onAnswer={(ans) => handleAnswer(currentQuestion.id, ans)}
+                questionIndex={currentIndex}
+                totalQuestions={questions.length}
+              />
+
+              {/* Flag button */}
+              <button
+                onClick={() => toggleFlag(currentQuestion.id)}
+                className={clsx(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                  flagged.has(currentQuestion.id)
+                    ? "bg-amber/20 text-amber"
+                    : "bg-white/5 text-soft-gray/50 hover:text-soft-gray hover:bg-white/10"
+                )}
+              >
+                <Flag size={12} />
+                {flagged.has(currentQuestion.id) ? "Flagged for Review" : "Flag for Review"}
+              </button>
+            </div>
+          ) : (
+            <div className="py-16 text-center text-soft-gray/40">No questions found.</div>
+          )}
+        </div>
+      </div>
+
+      {/* Prev / Next */}
+      <div className="shrink-0 border-t border-white/8 px-6 py-3 flex items-center justify-between">
+        <button
+          onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
+          disabled={currentIndex === 0}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 text-soft-gray/70 hover:text-soft-gray hover:border-white/20 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <ChevronLeft size={16} /> Previous
+        </button>
+
+        <span className="text-soft-gray/40 text-xs">
+          {answeredCount}/{questions.length} answered
+        </span>
+
+        <button
+          onClick={() => setCurrentIndex((i) => Math.min(questions.length - 1, i + 1))}
+          disabled={currentIndex === questions.length - 1}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 text-soft-gray/70 hover:text-soft-gray hover:border-white/20 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          Next <ChevronRight size={16} />
+        </button>
+      </div>
+
+      {/* Question navigator */}
+      <QuestionNavigator
+        totalQuestions={questions.length}
+        currentIndex={currentIndex}
+        answers={answers}
+        questionIds={questionIds}
+        flagged={flagged}
+        onNavigate={setCurrentIndex}
+        onToggleFlag={toggleFlag}
+      />
+
+      {/* Submit modal */}
+      {showSubmitModal && (
+        <SubmitModal
+          totalQuestions={questions.length}
+          answeredCount={answeredCount}
+          isSubmitting={isSubmitting}
+          onConfirm={handleSubmit}
+          onCancel={() => setShowSubmitModal(false)}
+        />
+      )}
+    </div>
+  );
+}
