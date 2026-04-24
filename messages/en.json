@@ -314,6 +314,152 @@
       "route": "Route",
       "calls": "Calls",
       "cost": "Cost"
+    },
+    "tests": {
+      "title": "Tests",
+      "create": "Create Test",
+      "noTests": "No tests yet.",
+      "createFirst": "Create your first test",
+      "columns": {
+        "testName": "Test Name",
+        "module": "Module",
+        "status": "Status",
+        "assignments": "Assignments",
+        "submissions": "Submissions",
+        "dueDate": "Due Date",
+        "actions": "Actions"
+      },
+      "status": {
+        "draft": "Draft",
+        "published": "Published",
+        "closed": "Closed"
+      },
+      "new": {
+        "step1": "Select Module",
+        "step2": "Configure",
+        "step3": "Assign",
+        "selectModule": "Select Module",
+        "noEligibleModules": "No eligible modules. Approve at least one module first.",
+        "configure": "Configure Test",
+        "testName": "Test Name",
+        "timeLimitMinutes": "Time Limit (minutes)",
+        "timeLimitHint": "SAT standard: 64 min (Math), 32 min (Reading & Writing)",
+        "openDate": "Open Date",
+        "dueDate": "Due Date",
+        "showAnswers": "Show answers after submission",
+        "showAnswersHint": "Students can review correct answers",
+        "allowRetake": "Allow retake",
+        "allowRetakeHint": "Students can take this test multiple times",
+        "assign": "Assign Test",
+        "teachers": "Teachers",
+        "classGroups": "Class Groups",
+        "individualStudents": "Individual Students",
+        "noTeachers": "No teachers available.",
+        "noClassGroups": "No class groups.",
+        "noStudents": "No approved students.",
+        "assignPreview": "Assigning to {groups} class group(s)",
+        "noAssignment": "No students assigned yet (can assign later)",
+        "creating": "Creating...",
+        "createTest": "Create Test"
+      },
+      "detail": {
+        "publish": "Publish",
+        "publishing": "Publishing...",
+        "close": "Close Test",
+        "closing": "Closing...",
+        "viewSubmissions": "View all submissions →",
+        "teachers": "Teachers",
+        "classGroups": "Class Groups",
+        "individualStudents": "Individual Students",
+        "noneAssigned": "None assigned",
+        "submitted": "Submitted",
+        "total": "Total",
+        "avgScore": "Avg Score"
+      }
+    }
+  },
+  "teacher": {
+    "tests": {
+      "title": "My Tests",
+      "noTests": "No tests assigned to you yet.",
+      "columns": {
+        "testName": "Test Name",
+        "section": "Section",
+        "status": "Status",
+        "students": "Students",
+        "submitted": "Submitted",
+        "avgScore": "Avg Score",
+        "due": "Due",
+        "actions": "Actions"
+      }
+    }
+  },
+  "student": {
+    "tests": {
+      "title": "My Tests",
+      "noTests": "No tests assigned to you yet.",
+      "columns": {
+        "testName": "Test Name",
+        "section": "Section",
+        "status": "Status",
+        "dueDate": "Due Date",
+        "score": "Score",
+        "action": "Action"
+      },
+      "status": {
+        "notStarted": "Not Started",
+        "inProgress": "In Progress",
+        "submitted": "Submitted"
+      },
+      "actions": {
+        "start": "Start Test",
+        "resume": "Resume",
+        "viewResult": "View Result"
+      },
+      "landing": {
+        "timeLimit": "Time Limit",
+        "questions": "Questions",
+        "dueDate": "Due Date",
+        "noDeadline": "No deadline",
+        "start": "Start Test",
+        "resume": "Resume Test",
+        "loading": "Loading...",
+        "submittedTitle": "Test Submitted",
+        "viewResult": "View Result",
+        "pastDue": "This test is no longer available — the due date has passed.",
+        "inProgressNote": "You have an in-progress submission. Resuming will continue from where you left off."
+      }
+    },
+    "result": {
+      "title": "Your Score",
+      "correct": "Correct",
+      "incorrect": "Incorrect",
+      "timeSpent": "Time Spent",
+      "attempt": "Attempt",
+      "lateSubmission": "Submitted Late",
+      "answerReview": "Answer Review",
+      "noReview": "Detailed answer review is not available for this test.",
+      "explanation": "Explanation",
+      "yourAnswer": "Your answer",
+      "correctAnswer": "Correct answer",
+      "backToTests": "Back to Tests"
+    }
+  },
+  "test": {
+    "questions": {
+      "previous": "Previous",
+      "next": "Next",
+      "flag": "Flag for Review",
+      "unflag": "Flagged for Review",
+      "unanswered": "unanswered",
+      "answered": "answered",
+      "submit": "Submit",
+      "confirm": "Submit Test?",
+      "confirmNote": "This action cannot be undone.",
+      "keepReviewing": "Keep Reviewing",
+      "submitTest": "Submit Test",
+      "submitting": "Submitting...",
+      "unansweredWarning": "{count} unanswered question(s). Unanswered questions will be marked incorrect."
     }
   }
 }

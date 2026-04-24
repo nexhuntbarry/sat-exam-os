@@ -314,6 +314,152 @@
       "route": "路由",
       "calls": "呼叫數",
       "cost": "費用"
+    },
+    "tests": {
+      "title": "測驗",
+      "create": "建立測驗",
+      "noTests": "尚無測驗。",
+      "createFirst": "建立第一個測驗",
+      "columns": {
+        "testName": "測驗名稱",
+        "module": "模組",
+        "status": "狀態",
+        "assignments": "分配",
+        "submissions": "繳交",
+        "dueDate": "截止日期",
+        "actions": "操作"
+      },
+      "status": {
+        "draft": "草稿",
+        "published": "已發布",
+        "closed": "已關閉"
+      },
+      "new": {
+        "step1": "選擇模組",
+        "step2": "設定",
+        "step3": "分配",
+        "selectModule": "選擇模組",
+        "noEligibleModules": "無可用模組，請先核准至少一個模組。",
+        "configure": "設定測驗",
+        "testName": "測驗名稱",
+        "timeLimitMinutes": "時間限制（分鐘）",
+        "timeLimitHint": "SAT 標準：數學 64 分鐘，閱讀與寫作 32 分鐘",
+        "openDate": "開放日期",
+        "dueDate": "截止日期",
+        "showAnswers": "繳交後顯示解答",
+        "showAnswersHint": "學生可查看正確答案",
+        "allowRetake": "允許重考",
+        "allowRetakeHint": "學生可多次參加此測驗",
+        "assign": "分配測驗",
+        "teachers": "教師",
+        "classGroups": "班級群組",
+        "individualStudents": "個別學生",
+        "noTeachers": "無可用教師。",
+        "noClassGroups": "無班級群組。",
+        "noStudents": "無已核准學生。",
+        "assignPreview": "分配至 {groups} 個班級群組",
+        "noAssignment": "尚未分配學生（可稍後分配）",
+        "creating": "建立中...",
+        "createTest": "建立測驗"
+      },
+      "detail": {
+        "publish": "發布",
+        "publishing": "發布中...",
+        "close": "關閉測驗",
+        "closing": "關閉中...",
+        "viewSubmissions": "查看所有繳交 →",
+        "teachers": "教師",
+        "classGroups": "班級群組",
+        "individualStudents": "個別學生",
+        "noneAssigned": "未分配",
+        "submitted": "已繳交",
+        "total": "總計",
+        "avgScore": "平均分數"
+      }
+    }
+  },
+  "teacher": {
+    "tests": {
+      "title": "我的測驗",
+      "noTests": "尚未分配測驗給您。",
+      "columns": {
+        "testName": "測驗名稱",
+        "section": "科目",
+        "status": "狀態",
+        "students": "學生",
+        "submitted": "已繳交",
+        "avgScore": "平均分數",
+        "due": "截止日期",
+        "actions": "操作"
+      }
+    }
+  },
+  "student": {
+    "tests": {
+      "title": "我的測驗",
+      "noTests": "尚未分配測驗給您。",
+      "columns": {
+        "testName": "測驗名稱",
+        "section": "科目",
+        "status": "狀態",
+        "dueDate": "截止日期",
+        "score": "分數",
+        "action": "操作"
+      },
+      "status": {
+        "notStarted": "未開始",
+        "inProgress": "進行中",
+        "submitted": "已繳交"
+      },
+      "actions": {
+        "start": "開始測驗",
+        "resume": "繼續",
+        "viewResult": "查看結果"
+      },
+      "landing": {
+        "timeLimit": "時間限制",
+        "questions": "題數",
+        "dueDate": "截止日期",
+        "noDeadline": "無截止日期",
+        "start": "開始測驗",
+        "resume": "繼續測驗",
+        "loading": "載入中...",
+        "submittedTitle": "測驗已繳交",
+        "viewResult": "查看結果",
+        "pastDue": "此測驗已超過截止日期，無法繼續作答。",
+        "inProgressNote": "您有尚未完成的測驗，繼續將從上次進度接續。"
+      }
+    },
+    "result": {
+      "title": "您的分數",
+      "correct": "答對",
+      "incorrect": "答錯",
+      "timeSpent": "花費時間",
+      "attempt": "第幾次",
+      "lateSubmission": "逾期繳交",
+      "answerReview": "答案回顧",
+      "noReview": "此測驗不提供詳細答案回顧。",
+      "explanation": "解析",
+      "yourAnswer": "您的答案",
+      "correctAnswer": "正確答案",
+      "backToTests": "返回測驗列表"
+    }
+  },
+  "test": {
+    "questions": {
+      "previous": "上一題",
+      "next": "下一題",
+      "flag": "標記待複習",
+      "unflag": "已標記待複習",
+      "unanswered": "未作答",
+      "answered": "已作答",
+      "submit": "繳交",
+      "confirm": "確認繳交？",
+      "confirmNote": "此操作無法撤回。",
+      "keepReviewing": "繼續複習",
+      "submitTest": "繳交測驗",
+      "submitting": "繳交中...",
+      "unansweredWarning": "您有 {count} 題未作答。未作答的題目將視為錯誤。"
     }
   }
 }
