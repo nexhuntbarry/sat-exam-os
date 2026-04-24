@@ -4,7 +4,9 @@ const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
   : null;
 
-const FROM = "SAT Exam OS <noreply@sat.nexhunt.xyz>";
+// Use Resend's free verified domain until sat.nexhunt.xyz DNS (SPF/DKIM) is verified
+// To use custom domain: verify in Resend dashboard then change FROM to "SAT Exam OS <noreply@sat.nexhunt.xyz>"
+const FROM = process.env.RESEND_FROM ?? "SAT Exam OS <onboarding@resend.dev>";
 
 export interface SendEmailOptions {
   to: string | string[];

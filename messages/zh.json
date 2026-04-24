@@ -49,8 +49,10 @@
       "title": "上傳。解析。分配。分析。",
       "subtitle": "AI 驅動的 SAT 測驗管理平台，為補習班量身打造。上傳 PDF、自動解析題目、分配測驗、追蹤學生成效。",
       "adminCta": "管理員登入",
+      "teacherCta": "教師登入",
       "studentCta": "學生註冊"
     },
+    "loginHint": "已註冊教師請用「教師登入」；新學生請先「學生註冊」",
     "disclaimer": "SAT 是 College Board 的註冊商標。本平台與 College Board 無任何關聯或背書。",
     "goToDashboard": "前往儀表板"
   },

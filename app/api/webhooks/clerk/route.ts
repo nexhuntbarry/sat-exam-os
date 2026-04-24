@@ -81,30 +81,58 @@ export async function POST(req: Request) {
       [first_name, last_name].filter(Boolean).join(" ") || username || email.split("@")[0];
 
     const isAdmin = ADMIN_EMAILS.has(email);
-    const role = isAdmin ? "admin" : "student";
-    const accountStatus = isAdmin ? "approved" : "pending";
 
-    const { error } = await supabase.from("users").upsert(
-      {
+    // Check if an invited user row exists for this email (teacher invite flow)
+    const { data: existing } = await supabase
+      .from("users")
+      .select("id, role, account_status")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (existing) {
+      // Invited user is signing up — link Clerk id, preserve invited role
+      const { error } = await supabase
+        .from("users")
+        .update({
+          clerk_user_id: clerkUserId,
+          display_name: displayName,
+          role: isAdmin ? "admin" : existing.role,
+          account_status: isAdmin
+            ? "approved"
+            : existing.role === "teacher"
+              ? "approved" // invited teachers auto-approved on signup
+              : existing.account_status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", existing.id);
+
+      if (error) {
+        console.error("[webhook/clerk] Failed to link invited user:", error);
+        return NextResponse.json({ error: "DB error" }, { status: 500 });
+      }
+    } else {
+      // Fresh signup — create new row
+      const role = isAdmin ? "admin" : "student";
+      const accountStatus = isAdmin ? "approved" : "pending";
+
+      const { error } = await supabase.from("users").insert({
         clerk_user_id: clerkUserId,
         email,
         display_name: displayName,
         role,
         account_status: accountStatus,
         metadata: {},
-      },
-      { onConflict: "clerk_user_id" }
-    );
+      });
 
-    if (error) {
-      console.error("[webhook/clerk] Failed to upsert user:", error);
-      return NextResponse.json({ error: "DB error" }, { status: 500 });
-    }
+      if (error) {
+        console.error("[webhook/clerk] Failed to insert user:", error);
+        return NextResponse.json({ error: "DB error" }, { status: 500 });
+      }
 
-    // Send welcome email (non-blocking, only for students)
-    if (!isAdmin) {
-      const { subject, html } = welcomeStudentEmail(displayName);
-      sendEmail({ to: email, subject, html }).catch(() => {});
+      if (!isAdmin) {
+        const { subject, html } = welcomeStudentEmail(displayName);
+        sendEmail({ to: email, subject, html }).catch(() => {});
+      }
     }
   }
 

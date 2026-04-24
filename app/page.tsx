@@ -70,6 +70,12 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
                 {t("adminCta")}
               </Link>
               <Link
+                href="/sign-in"
+                className="px-8 py-4 rounded-xl font-semibold text-white border border-electric-blue/60 hover:border-electric-blue hover:bg-electric-blue/10 transition-all duration-200"
+              >
+                {t("teacherCta")}
+              </Link>
+              <Link
                 href="/register"
                 className="px-8 py-4 rounded-xl font-semibold text-white border border-lime-green/60 hover:border-lime-green hover:bg-lime-green/10 transition-all duration-200"
               >
@@ -78,6 +84,9 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
             </>
           )}
         </div>
+        <p className="mt-4 text-soft-gray/50 text-xs text-center">
+          {tLanding("loginHint")}
+        </p>
       </div>
 
       <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-soft-gray/30 text-xs">
