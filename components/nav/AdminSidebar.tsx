@@ -12,6 +12,7 @@ import {
   FolderKanban,
   BarChart2,
   Settings,
+  Zap,
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/admin/teachers", icon: GraduationCap, label: "Teachers" },
   { href: "/admin/classes", icon: FolderKanban, label: "Classes" },
   { href: "/admin/reports", icon: BarChart2, label: "Reports" },
+  { href: "/admin/ai-usage", icon: Zap, label: "AI Usage" },
   { href: "/admin/settings", icon: Settings, label: "Settings" },
 ];
 
