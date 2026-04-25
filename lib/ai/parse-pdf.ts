@@ -113,10 +113,18 @@ export async function parsePdfToQuestions(
   moduleMetadata: ModuleMetadata,
   callerUserId?: string
 ): Promise<ParsedQuestion[]> {
-  // Fetch PDF as base64
+  // Fetch PDF as base64. The Blob store is private, so URLs at
+  // *.private.blob.vercel-storage.com require Authorization with the
+  // BLOB_READ_WRITE_TOKEN. Public URLs ignore the header so this is safe
+  // for either store mode.
   let pdfBase64: string;
   try {
-    const response = await fetch(pdfUrl);
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+    const headers: Record<string, string> = {};
+    if (blobToken && pdfUrl.includes(".blob.vercel-storage.com")) {
+      headers.Authorization = `Bearer ${blobToken}`;
+    }
+    const response = await fetch(pdfUrl, { headers });
     if (!response.ok) {
       throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
     }

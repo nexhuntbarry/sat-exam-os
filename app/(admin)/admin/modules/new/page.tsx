@@ -38,8 +38,13 @@ export default function NewModulePage() {
     try {
       stage = "upload-start";
       const pathname = `modules/${Date.now()}-${file.name}`;
+      // The blob store `sat-exam-pdfs` is configured with private access. Asking
+      // for `access: "public"` here was rejected by vercel.com/api/blob with
+      // "Cannot use public access on a private store", causing the PUT to fail
+      // silently and `onUploadCompleted` to never fire (no rows in DB, no blobs
+      // in storage). Must match the store's access mode.
       const uploadPromise = upload(pathname, file, {
-        access: "public",
+        access: "private" as "public",
         handleUploadUrl: "/api/upload/handle",
         multipart: false,
         onUploadProgress: ({ percentage }) => {

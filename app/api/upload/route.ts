@@ -16,8 +16,9 @@ export async function POST(req: Request) {
   const pathname = formData.get("pathname") as string | null;
   const blobPathname = pathname ?? `uploads/${Date.now()}-${file.name}`;
 
+  // Blob store is private — server put() must match.
   const blob = await put(blobPathname, file, {
-    access: "public",
+    access: "private",
     addRandomSuffix: false,
   });
 
