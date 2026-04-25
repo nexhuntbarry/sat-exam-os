@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, AlertCircle, CheckCircle2, ClipboardList, Ban, Upload } from "lucide-react";
 import { clsx } from "clsx";
+import { getLocale } from "next-intl/server";
 import ModuleParseButton from "./ModuleParseButton";
 
 async function getModule(id: string) {
@@ -48,7 +49,35 @@ export default async function ModuleDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const mod = await getModule(id);
+  const [mod, locale] = await Promise.all([getModule(id), getLocale()]);
+  const isZh = locale !== "en";
+  const t = {
+    parseTitle: isZh ? "解析並加入題庫" : "Parse & Add to Question Bank",
+    parseHint: isZh
+      ? "AI 會先確認此 PDF 為 SAT 題目，再抽取每一題。約 1-3 分鐘。"
+      : "AI will first verify this PDF is a SAT test, then extract every question. Takes 1-3 minutes.",
+    rejectedTitle: isZh
+      ? "⚠️ 此 PDF 非 SAT 題目，無法加入題庫"
+      : "⚠️ This PDF is not a SAT test and cannot be added to the question bank",
+    rejectedSub: isZh
+      ? "AI 判定此檔案為非考試內容。"
+      : "The AI classifier rejected this file as non-SAT content.",
+    rejectedReason: isZh ? "原因" : "Reason",
+    uploadNew: isZh ? "上傳新檔" : "Upload New",
+    parsingNow: isZh ? "AI 解析中…" : "AI parsing in progress…",
+    parsingHint: isZh
+      ? "需要 1-3 分鐘，頁面會自動更新。"
+      : "This takes 1-3 minutes. The page will update automatically.",
+    failed: isZh ? "解析失敗" : "Parsing failed",
+    approved: isZh ? "所有題目已核准，此 module 已鎖定。" : "All questions approved. This module is locked.",
+    previewQuestions: isZh ? "預覽題目" : "Preview questions",
+    questions: isZh ? "題目" : "Questions",
+    reviewQueue: isZh ? "審核佇列" : "Review queue",
+    allQuestions: isZh ? "所有題目" : "All questions",
+    noQuestions: isZh ? "尚無題目。解析此 module 以抽取題目。" : "No questions yet. Parse this module to extract questions.",
+    openPdf: isZh ? "開啟 PDF" : "Open PDF",
+    pdfFile: isZh ? "PDF 檔案" : "PDF File",
+  };
 
   if (!mod) notFound();
 
@@ -107,7 +136,7 @@ export default async function ModuleDetailPage({
       {/* PDF link */}
       <div className="bg-surface border border-divider rounded-2xl p-5 flex items-center justify-between">
         <div className="min-w-0">
-          <p className="text-soft-mute text-xs mb-0.5">PDF File</p>
+          <p className="text-soft-mute text-xs mb-0.5">{t.pdfFile}</p>
           <p className="text-charcoal text-sm truncate max-w-xs">{mod.pdf_url}</p>
         </div>
         <a
@@ -117,7 +146,7 @@ export default async function ModuleDetailPage({
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-light-bg hover:bg-light-bg text-charcoal text-sm transition-colors shrink-0 ml-3"
         >
           <ExternalLink size={14} />
-          Open PDF
+          {t.openPdf}
         </a>
       </div>
 
@@ -125,10 +154,8 @@ export default async function ModuleDetailPage({
       {(mod.parsing_status === "uploaded" || mod.parsing_status === "pending") && (
         <div className="bg-warm-coral/10 border border-warm-coral/20 rounded-2xl p-5 flex items-center justify-between gap-4">
           <div>
-            <p className="text-charcoal font-medium text-sm mb-1">解析並加入題庫 / Parse &amp; Add to Question Bank</p>
-            <p className="text-mid-gray text-xs">
-              AI will first verify this PDF is a SAT test, then extract every question. Takes 1-3 minutes.
-            </p>
+            <p className="text-charcoal font-medium text-sm mb-1">{t.parseTitle}</p>
+            <p className="text-mid-gray text-xs">{t.parseHint}</p>
           </div>
           <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} />
         </div>
@@ -140,15 +167,11 @@ export default async function ModuleDetailPage({
           <div className="flex items-start gap-3">
             <Ban size={20} className="text-status-error shrink-0 mt-0.5" />
             <div className="flex-1">
-              <p className="text-charcoal font-semibold text-sm">
-                ⚠️ 此 PDF 非 SAT 題目（AI 判定為非考試內容），無法加入題庫
-              </p>
-              <p className="text-charcoal/80 text-sm mt-1">
-                This PDF was rejected by the AI classifier as non-SAT content and cannot be added to the question bank.
-              </p>
+              <p className="text-charcoal font-semibold text-sm">{t.rejectedTitle}</p>
+              <p className="text-charcoal/80 text-sm mt-1">{t.rejectedSub}</p>
               {mod.parsing_error && (
                 <p className="text-status-error/80 text-xs mt-2 bg-surface/40 rounded px-2 py-1">
-                  Reason: {mod.parsing_error as string}
+                  {t.rejectedReason}: {mod.parsing_error as string}
                 </p>
               )}
             </div>
@@ -159,7 +182,7 @@ export default async function ModuleDetailPage({
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white text-sm font-medium transition-colors"
             >
               <Upload size={14} />
-              上傳新檔 / Upload New
+              {t.uploadNew}
             </Link>
           </div>
         </div>
@@ -169,8 +192,8 @@ export default async function ModuleDetailPage({
       {mod.parsing_status === "parsing" && (
         <div className="bg-status-warning/10 border border-status-warning/20 rounded-2xl p-5 flex items-center gap-4">
           <div className="flex-1">
-            <p className="text-charcoal text-sm font-medium mb-1">AI parsing in progress…</p>
-            <p className="text-mid-gray text-xs">This takes 1-3 minutes. The page will update automatically.</p>
+            <p className="text-charcoal text-sm font-medium mb-1">{t.parsingNow}</p>
+            <p className="text-mid-gray text-xs">{t.parsingHint}</p>
           </div>
           <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} />
         </div>
@@ -182,7 +205,7 @@ export default async function ModuleDetailPage({
           <div className="flex items-center gap-3">
             <AlertCircle size={18} className="text-status-error shrink-0" />
             <div className="flex-1">
-              <p className="text-charcoal text-sm font-medium">Parsing failed</p>
+              <p className="text-charcoal text-sm font-medium">{t.failed}</p>
               {mod.parsing_error && (
                 <p className="text-status-error/70 text-xs mt-0.5">{mod.parsing_error as string}</p>
               )}
@@ -196,12 +219,12 @@ export default async function ModuleDetailPage({
       {mod.parsing_status === "approved" && (
         <div className="bg-warm-amber/10 border border-warm-amber/20 rounded-2xl p-5 flex items-center gap-4">
           <CheckCircle2 size={20} className="text-warm-amber shrink-0" />
-          <p className="text-charcoal text-sm">All questions approved. This module is locked.</p>
+          <p className="text-charcoal text-sm">{t.approved}</p>
           <Link
             href={`/admin/questions?moduleId=${id}`}
             className="ml-auto text-xs text-warm-coral hover:underline shrink-0"
           >
-            Preview questions
+            {t.previewQuestions}
           </Link>
         </div>
       )}
@@ -209,7 +232,7 @@ export default async function ModuleDetailPage({
       {/* Questions */}
       <div className="bg-surface border border-divider rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-charcoal">Questions ({questions.length})</h2>
+          <h2 className="font-semibold text-charcoal">{t.questions} ({questions.length})</h2>
           {questions.length > 0 && (
             <div className="flex gap-2">
               <Link
@@ -217,21 +240,19 @@ export default async function ModuleDetailPage({
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 transition-colors"
               >
                 <ClipboardList size={12} />
-                Review queue
+                {t.reviewQueue}
               </Link>
               <Link
                 href={`/admin/questions?moduleId=${id}`}
                 className="text-xs text-soft-mute hover:text-charcoal transition-colors px-2 py-1.5"
               >
-                All questions →
+                {t.allQuestions} →
               </Link>
             </div>
           )}
         </div>
         {questions.length === 0 ? (
-          <p className="text-soft-mute text-sm text-center py-6">
-            No questions yet. Parse this module to extract questions.
-          </p>
+          <p className="text-soft-mute text-sm text-center py-6">{t.noQuestions}</p>
         ) : (
           <div className="flex gap-3 flex-wrap">
             {Object.entries(statusCounts).map(([status, count]) => (

@@ -70,7 +70,22 @@ export async function POST(
     return NextResponse.json({ error: "PDF fetch failed", detail: errorMsg }, { status: 500 });
   }
 
-  const classification = await classifyPdfIsSat(pdfBase64, authResult.userId);
+  let classification;
+  try {
+    classification = await classifyPdfIsSat(pdfBase64, authResult.userId);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error("[modules/parse] classifier failed:", err);
+    await db
+      .from("modules")
+      .update({
+        parsing_status: "failed",
+        parsing_error: errorMsg,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    return NextResponse.json({ error: "Classifier failed", detail: errorMsg }, { status: 500 });
+  }
   if (!classification.is_sat || classification.confidence < SAT_CONFIDENCE_THRESHOLD) {
     const reason = `${classification.reason} (confidence ${classification.confidence.toFixed(2)})`;
     await db

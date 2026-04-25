@@ -165,12 +165,13 @@ export async function classifyPdfIsSat(
       costCents: 0,
       metadata: { error: String(err) },
     });
-    // Fail-open with low confidence so caller treats it as non-SAT.
-    return {
-      is_sat: false,
-      confidence: 0,
-      reason: `Classifier error: ${err instanceof Error ? err.message : String(err)}`,
-    };
+    // Re-throw so the parse route can distinguish "classifier failed"
+    // (transient API/billing error) from "PDF is genuinely not SAT".
+    // Mislabeling an API failure as "not SAT" surfaces a misleading message
+    // to the user (e.g. when Anthropic credits run out).
+    throw new Error(
+      `Classifier error: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   const usage = result.usage;
