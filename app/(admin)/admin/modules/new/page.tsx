@@ -41,7 +41,7 @@ export default function NewModulePage() {
       const uploadPromise = upload(pathname, file, {
         access: "public",
         handleUploadUrl: "/api/upload/handle",
-        multipart: true,
+        multipart: false,
         onUploadProgress: ({ percentage }) => {
           lastPct = Math.round(percentage);
           setUploadPct(lastPct);
