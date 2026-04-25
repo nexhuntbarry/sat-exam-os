@@ -110,8 +110,8 @@ OUTPUT: Return valid JSON only. No markdown, no explanation text, no code fences
 
 const SAT_CLASSIFIER_SCHEMA = z.object({
   is_sat: z.boolean(),
-  confidence: z.number().min(0).max(1),
-  reason: z.string().min(1),
+  confidence: z.number().describe("Confidence between 0 and 1"),
+  reason: z.string().describe("Brief reason"),
 });
 
 export interface SatClassification {
