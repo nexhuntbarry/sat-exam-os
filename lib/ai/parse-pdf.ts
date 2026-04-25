@@ -40,7 +40,7 @@ export interface ParsedQuestion {
 // rejected at the API boundary. Keep types pure and document constraints
 // in `.describe()` so the model still complies.
 const ParsedQuestionSchema = z.object({
-  original_question_number: z.number().int().describe("Positive integer question number"),
+  original_question_number: z.number().describe("Positive integer question number"),
   question_text: z.string().describe("Question text (non-empty)"),
   choices: z
     .array(
@@ -60,7 +60,7 @@ const ParsedQuestionSchema = z.object({
   has_image: z.boolean(),
   has_table: z.boolean(),
   has_formula: z.boolean(),
-  page_number: z.number().int().describe("Positive integer page number"),
+  page_number: z.number().describe("Positive integer page number"),
   ai_confidence_score: z.number().describe("Confidence between 0 and 1"),
 });
 
