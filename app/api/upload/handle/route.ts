@@ -28,6 +28,9 @@ export async function POST(req: Request) {
           allowedContentTypes: ["application/pdf"],
           maximumSizeInBytes: 50 * 1024 * 1024, // 50 MB headroom
           addRandomSuffix: false,
+          // Default token TTL is short (~30s); large PDFs on slow connections
+          // exceed it and fail with "Client token has expired". Give 1 hour.
+          validUntil: Date.now() + 60 * 60 * 1000,
           tokenPayload: clientPayload ?? JSON.stringify({
             pathname,
             uploadedBy: innerAuth.userId,
