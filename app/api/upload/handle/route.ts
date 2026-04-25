@@ -5,35 +5,42 @@ import { requireRole } from "@/lib/rbac";
 // POST /api/upload/handle
 // Generates short-lived client tokens that allow the browser to upload
 // directly to Vercel Blob, bypassing the 4.5 MB Vercel function body limit.
-// Admin only — used by the new-module form for large PDF uploads.
+// Two body types arrive at this endpoint:
+//   1. blob.generate-client-token — from the browser, must be admin-authed
+//   2. blob.upload-completed       — from Vercel Blob's servers, signed via
+//      x-vercel-signature header. handleUpload verifies the signature
+//      internally — gating with Clerk auth here would 401 the callback and
+//      cause the SDK to retry forever.
 export async function POST(req: Request) {
   console.log("[upload/handle] POST received");
-  const authResult = await requireRole("admin");
-  if (authResult instanceof NextResponse) {
-    console.warn("[upload/handle] auth failed, returning", authResult.status);
-    return authResult;
-  }
-  console.log("[upload/handle] auth ok, userId:", authResult.userId);
 
   const body = (await req.json()) as HandleUploadBody;
   console.log("[upload/handle] body type:", body.type);
+
+  if (body.type === "blob.generate-client-token") {
+    const authResult = await requireRole("admin");
+    if (authResult instanceof NextResponse) {
+      console.warn("[upload/handle] token request auth failed", authResult.status);
+      return authResult;
+    }
+    console.log("[upload/handle] token auth ok userId=", authResult.userId);
+  } else {
+    console.log("[upload/handle] callback received, skipping Clerk auth (signature-verified)");
+  }
 
   try {
     const jsonResponse = await handleUpload({
       body,
       request: req,
       onBeforeGenerateToken: async (pathname, clientPayload) => {
-        // Re-verify admin role inside the token-issuance callback.
         const innerAuth = await requireRole("admin");
         if (innerAuth instanceof NextResponse) {
           throw new Error("Unauthorized");
         }
         return {
           allowedContentTypes: ["application/pdf"],
-          maximumSizeInBytes: 50 * 1024 * 1024, // 50 MB headroom
+          maximumSizeInBytes: 50 * 1024 * 1024,
           addRandomSuffix: false,
-          // Default token TTL is short (~30s); large PDFs on slow connections
-          // exceed it and fail with "Client token has expired". Give 1 hour.
           validUntil: Date.now() + 60 * 60 * 1000,
           tokenPayload: clientPayload ?? JSON.stringify({
             pathname,
