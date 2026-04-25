@@ -34,16 +34,27 @@ export default function NewModulePage() {
     setUploadPct(0);
 
     let stage = "init";
+    let lastPct = 0;
     try {
       stage = "upload-start";
       const pathname = `modules/${Date.now()}-${file.name}`;
-      const blob = await upload(pathname, file, {
+      const uploadPromise = upload(pathname, file, {
         access: "public",
         handleUploadUrl: "/api/upload/handle",
+        multipart: true,
         onUploadProgress: ({ percentage }) => {
-          setUploadPct(Math.round(percentage));
+          lastPct = Math.round(percentage);
+          setUploadPct(lastPct);
         },
       });
+      const TIMEOUT_MS = 4 * 60 * 1000;
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`Upload hung at ${lastPct}% after ${TIMEOUT_MS / 1000}s`)),
+          TIMEOUT_MS,
+        ),
+      );
+      const blob = await Promise.race([uploadPromise, timeoutPromise]);
       stage = "upload-done";
       const pdfUrl = blob.url;
 
