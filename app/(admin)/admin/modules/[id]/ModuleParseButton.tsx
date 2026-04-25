@@ -7,9 +7,15 @@ import { Cpu, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 interface ModuleParseButtonProps {
   moduleId: string;
   initialStatus: string;
+  labels?: {
+    parse?: string;
+    retry?: string;
+    starting?: string;
+    parsing?: string;
+  };
 }
 
-export default function ModuleParseButton({ moduleId, initialStatus }: ModuleParseButtonProps) {
+export default function ModuleParseButton({ moduleId, initialStatus, labels }: ModuleParseButtonProps) {
   const router = useRouter();
   const [status, setStatus] = useState(initialStatus);
   const [loading, setLoading] = useState(false);
@@ -69,17 +75,17 @@ export default function ModuleParseButton({ moduleId, initialStatus }: ModulePar
     return (
       <div className="flex items-center gap-2 text-status-warning text-sm font-medium">
         <Loader2 size={15} className="animate-spin" />
-        Parsing… (1-3 min)
+        {labels?.parsing ?? "Parsing… (1-3 min)"}
       </div>
     );
   }
 
   const isRetry = status === "failed";
   const label = loading
-    ? "Starting..."
+    ? labels?.starting ?? "Starting..."
     : isRetry
-      ? "Retry Parse"
-      : "解析並加入題庫";
+      ? labels?.retry ?? "Retry Parse"
+      : labels?.parse ?? "Parse & Add to Question Bank";
 
   return (
     <div className="flex flex-col gap-1.5">

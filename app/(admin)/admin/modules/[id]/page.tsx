@@ -5,6 +5,7 @@ import { ArrowLeft, ExternalLink, AlertCircle, CheckCircle2, ClipboardList, Ban,
 import { clsx } from "clsx";
 import { getLocale } from "next-intl/server";
 import ModuleParseButton from "./ModuleParseButton";
+import DeleteModuleButton from "../DeleteModuleButton";
 
 async function getModule(id: string) {
   const db = getServiceClient();
@@ -56,6 +57,10 @@ export default async function ModuleDetailPage({
     parseHint: isZh
       ? "AI 會先確認此 PDF 為 SAT 題目，再抽取每一題。約 1-3 分鐘。"
       : "AI will first verify this PDF is a SAT test, then extract every question. Takes 1-3 minutes.",
+    btnParse: isZh ? "解析並加入題庫" : "Parse & Add to Bank",
+    btnRetry: isZh ? "重試解析" : "Retry Parse",
+    btnStarting: isZh ? "啟動中…" : "Starting…",
+    btnParsing: isZh ? "解析中… (1-3 分鐘)" : "Parsing… (1-3 min)",
     rejectedTitle: isZh
       ? "⚠️ 此 PDF 非 SAT 題目，無法加入題庫"
       : "⚠️ This PDF is not a SAT test and cannot be added to the question bank",
@@ -112,6 +117,7 @@ export default async function ModuleDetailPage({
         >
           {statusLabels[mod.parsing_status] ?? mod.parsing_status}
         </span>
+        <DeleteModuleButton moduleId={id} moduleName={mod.module_name} />
       </div>
 
       {/* Info card */}
@@ -157,7 +163,7 @@ export default async function ModuleDetailPage({
             <p className="text-charcoal font-medium text-sm mb-1">{t.parseTitle}</p>
             <p className="text-mid-gray text-xs">{t.parseHint}</p>
           </div>
-          <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} />
+          <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} labels={{ parse: t.btnParse, retry: t.btnRetry, starting: t.btnStarting, parsing: t.btnParsing }} />
         </div>
       )}
 
@@ -195,7 +201,7 @@ export default async function ModuleDetailPage({
             <p className="text-charcoal text-sm font-medium mb-1">{t.parsingNow}</p>
             <p className="text-mid-gray text-xs">{t.parsingHint}</p>
           </div>
-          <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} />
+          <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} labels={{ parse: t.btnParse, retry: t.btnRetry, starting: t.btnStarting, parsing: t.btnParsing }} />
         </div>
       )}
 
@@ -210,7 +216,7 @@ export default async function ModuleDetailPage({
                 <p className="text-status-error/70 text-xs mt-0.5">{mod.parsing_error as string}</p>
               )}
             </div>
-            <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} />
+            <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} labels={{ parse: t.btnParse, retry: t.btnRetry, starting: t.btnStarting, parsing: t.btnParsing }} />
           </div>
         </div>
       )}

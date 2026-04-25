@@ -2,6 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import Link from "next/link";
 import { Plus, FileText } from "lucide-react";
 import { clsx } from "clsx";
+import DeleteModuleButton from "./DeleteModuleButton";
 
 async function getModules() {
   const db = getServiceClient();
@@ -58,6 +59,7 @@ export default async function ModulesPage() {
                   <th className="text-left px-5 py-3 font-medium">Questions</th>
                   <th className="text-left px-5 py-3 font-medium">Status</th>
                   <th className="text-left px-5 py-3 font-medium">Uploaded</th>
+                  <th className="text-right px-5 py-3 font-medium"></th>
                 </tr>
               </thead>
               <tbody>
@@ -92,6 +94,9 @@ export default async function ModulesPage() {
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
                       {new Date(mod.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <DeleteModuleButton moduleId={mod.id} moduleName={mod.module_name} />
                     </td>
                   </tr>
                 ))}
