@@ -7,12 +7,16 @@ import { requireRole } from "@/lib/rbac";
 // directly to Vercel Blob, bypassing the 4.5 MB Vercel function body limit.
 // Admin only — used by the new-module form for large PDF uploads.
 export async function POST(req: Request) {
-  // Auth check happens here (before generating the token) and again
-  // inside onBeforeGenerateToken — the latter runs on every token request.
+  console.log("[upload/handle] POST received");
   const authResult = await requireRole("admin");
-  if (authResult instanceof NextResponse) return authResult;
+  if (authResult instanceof NextResponse) {
+    console.warn("[upload/handle] auth failed, returning", authResult.status);
+    return authResult;
+  }
+  console.log("[upload/handle] auth ok, userId:", authResult.userId);
 
   const body = (await req.json()) as HandleUploadBody;
+  console.log("[upload/handle] body type:", body.type);
 
   try {
     const jsonResponse = await handleUpload({
@@ -38,10 +42,7 @@ export async function POST(req: Request) {
         };
       },
       onUploadCompleted: async ({ blob, tokenPayload }) => {
-        // Vercel Blob calls this from its servers when the upload finishes.
-        // Local dev cannot reach localhost, so we keep this as a no-op
-        // logger; the client will trigger the parse endpoint after upload().
-        console.log("[upload/handle] upload completed:", blob.url, tokenPayload);
+        console.log("[upload/handle] onUploadCompleted url=", blob.url, "payload=", tokenPayload);
       },
     });
 
