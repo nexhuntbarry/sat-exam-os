@@ -249,14 +249,18 @@ export async function parsePdfToQuestions(
     throw new Error(`Could not fetch PDF from URL: ${pdfUrl}`);
   }
 
-  const userPrompt = `Please extract all SAT questions from this PDF.
+  // SAT Math/RW modules typically contain 22-27 numbered questions per module.
+  // Without this explicit hint, Sonnet often stops at 15-17 thinking it's done.
+  // Telling it to scan EVERY page and keep going until the last numbered
+  // question yields full coverage in our tests.
+  const userPrompt = `This PDF is a SAT exam module. Extract EVERY numbered question. SAT modules normally contain 22-27 questions. Do NOT stop early — read every page top to bottom and keep extracting until you reach the last numbered question in the PDF.
 
 Module context:
 - Section: ${moduleMetadata.section}
 - Difficulty hint: ${moduleMetadata.difficulty_hint}
 - Module number: ${moduleMetadata.moduleNumber ?? "unknown"}
 
-Extract every question you can find. Return a JSON object with a "questions" array containing all extracted questions.`;
+Return all questions in order via the schema. Confirm you have not missed any before responding.`;
 
   let result;
   try {
