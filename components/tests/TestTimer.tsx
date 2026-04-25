@@ -49,10 +49,10 @@ export default function TestTimer({ initialSeconds, onExpire }: TestTimerProps) 
       className={clsx(
         "flex items-center gap-2 px-3 py-1.5 rounded-lg font-mono font-semibold text-sm transition-colors",
         isCritical
-          ? "bg-rose/20 text-rose animate-pulse"
+          ? "bg-status-error/15 text-status-error animate-pulse"
           : isWarning
-          ? "bg-amber/20 text-amber"
-          : "bg-white/10 text-soft-gray"
+          ? "bg-status-warning/15 text-status-warning"
+          : "bg-light-bg text-charcoal"
       )}
     >
       <Clock size={14} />

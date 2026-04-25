@@ -131,19 +131,19 @@ export default async function TestResultsPage({
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-soft-gray/50 text-sm flex-wrap">
-        <Link href="/teacher/tests" className="hover:text-soft-gray transition-colors">Tests</Link>
+      <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap">
+        <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
-        <Link href={`/teacher/tests/${id}`} className="hover:text-soft-gray transition-colors">{test.test_name}</Link>
+        <Link href={`/teacher/tests/${id}`} className="hover:text-charcoal transition-colors">{test.test_name}</Link>
         <span>/</span>
-        <span className="text-white">Results</span>
+        <span className="text-charcoal">Results</span>
       </div>
 
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h1 className="text-2xl font-bold text-white">{test.test_name} — Results</h1>
-          <p className="text-soft-gray/50 text-sm mt-1">
+          <h1 className="text-2xl font-bold text-charcoal">{test.test_name} — Results</h1>
+          <p className="text-soft-mute text-sm mt-1">
             {mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}
             {test.time_limit_minutes && ` · ${test.time_limit_minutes} min`}
             {test.due_date && ` · Due ${new Date(test.due_date).toLocaleDateString()}`}
@@ -152,13 +152,13 @@ export default async function TestResultsPage({
         <div className="flex items-center gap-3">
           <Link
             href={`/teacher/tests/${id}/analytics`}
-            className="px-4 py-2 rounded-xl bg-electric-blue/10 border border-electric-blue/20 text-electric-blue text-sm font-medium hover:bg-electric-blue/20 transition-colors"
+            className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral text-sm font-medium hover:bg-warm-coral/20 transition-colors"
           >
             Question Analytics
           </Link>
           <a
             href={`/api/teacher/tests/${id}/export`}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-lime-green/10 border border-lime-green/20 text-lime-green text-sm font-medium hover:bg-lime-green/20 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-amber/10 border border-warm-amber/20 text-warm-amber text-sm font-medium hover:bg-warm-amber/20 transition-colors"
           >
             <Download size={14} />
             Export CSV
@@ -204,24 +204,24 @@ export default async function TestResultsPage({
 
       {/* Charts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white/3 border border-white/8 rounded-2xl p-5">
-          <h2 className="text-white font-semibold mb-4">Score Distribution</h2>
+        <div className="bg-surface border border-divider rounded-2xl p-5">
+          <h2 className="text-charcoal font-semibold mb-4">Score Distribution</h2>
           <ScoreDistributionChart data={scoreDistribution} />
         </div>
-        <div className="bg-white/3 border border-white/8 rounded-2xl p-5">
-          <h2 className="text-white font-semibold mb-2">Status Breakdown</h2>
+        <div className="bg-surface border border-divider rounded-2xl p-5">
+          <h2 className="text-charcoal font-semibold mb-2">Status Breakdown</h2>
           <div className="space-y-3 mt-4">
             {[
-              { label: "Submitted", value: stats.submittedCount, color: "bg-lime-green" },
-              { label: "Late", value: stats.lateCount, color: "bg-amber" },
-              { label: "In Progress", value: stats.inProgressCount, color: "bg-electric-blue" },
-              { label: "Not Started", value: stats.notStartedCount, color: "bg-white/20" },
+              { label: "Submitted", value: stats.submittedCount, color: "bg-warm-amber" },
+              { label: "Late", value: stats.lateCount, color: "bg-status-warning" },
+              { label: "In Progress", value: stats.inProgressCount, color: "bg-warm-coral" },
+              { label: "Not Started", value: stats.notStartedCount, color: "bg-light-bg/600" },
             ].map((item) => (
               <div key={item.label} className="flex items-center gap-3 text-sm">
                 <div className={`w-2 h-2 rounded-full flex-shrink-0 ${item.color}`} />
-                <span className="text-soft-gray/60 flex-1">{item.label}</span>
-                <span className="text-white font-medium">{item.value}</span>
-                <div className="w-24 bg-white/5 rounded-full h-1.5 overflow-hidden">
+                <span className="text-mid-gray flex-1">{item.label}</span>
+                <span className="text-charcoal font-medium">{item.value}</span>
+                <div className="w-24 bg-light-bg rounded-full h-1.5 overflow-hidden">
                   <div
                     className={`h-full rounded-full ${item.color}`}
                     style={{ width: `${stats.totalAssigned > 0 ? (item.value / stats.totalAssigned) * 100 : 0}%` }}
@@ -235,7 +235,7 @@ export default async function TestResultsPage({
 
       {/* Student results table */}
       <div>
-        <h2 className="text-white font-semibold text-lg mb-4">Student Results</h2>
+        <h2 className="text-charcoal font-semibold text-lg mb-4">Student Results</h2>
         <StudentResultsTable rows={students} testId={id} />
       </div>
     </div>

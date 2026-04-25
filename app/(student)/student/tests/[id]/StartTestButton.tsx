@@ -41,11 +41,11 @@ export default function StartTestButton({ testId, submissionId, isResume }: Prop
 
   return (
     <div className="space-y-2">
-      {error && <p className="text-rose text-sm text-center">{error}</p>}
+      {error && <p className="text-status-error text-sm text-center">{error}</p>}
       <button
         onClick={handleStart}
         disabled={loading}
-        className="w-full py-4 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+        className="w-full py-4 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
       >
         {isResume ? <RotateCcw size={20} /> : <Play size={20} />}
         {loading ? "Loading..." : isResume ? "Resume Test" : "Start Test"}

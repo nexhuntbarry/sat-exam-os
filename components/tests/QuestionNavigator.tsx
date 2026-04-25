@@ -23,21 +23,21 @@ export default function QuestionNavigator({
   onToggleFlag,
 }: QuestionNavigatorProps) {
   return (
-    <div className="bg-deep-navy border-t border-white/8 p-4">
+    <div className="bg-cream border-t border-divider p-4">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-soft-gray/50 text-xs font-medium uppercase tracking-wider">
+          <span className="text-soft-mute text-xs font-medium uppercase tracking-wider">
             Question Navigator
           </span>
-          <div className="flex items-center gap-4 text-xs text-soft-gray/40">
+          <div className="flex items-center gap-4 text-xs text-soft-mute">
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-lime-green/60 inline-block" /> Answered
+              <span className="w-3 h-3 rounded-sm bg-warm-amber/60 inline-block" /> Answered
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-white/10 inline-block" /> Unanswered
+              <span className="w-3 h-3 rounded-sm bg-light-bg inline-block" /> Unanswered
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-amber/60 inline-block" /> Flagged
+              <span className="w-3 h-3 rounded-sm bg-status-warning/60 inline-block" /> Flagged
             </span>
           </div>
         </div>
@@ -55,19 +55,19 @@ export default function QuestionNavigator({
                   className={clsx(
                     "w-9 h-9 rounded-lg text-xs font-semibold transition-all",
                     isCurrent
-                      ? "ring-2 ring-electric-blue bg-electric-blue/20 text-electric-blue"
+                      ? "ring-2 ring-warm-coral bg-warm-coral/20 text-warm-coral"
                       : isFlagged
-                      ? "bg-amber/20 text-amber hover:bg-amber/30"
+                      ? "bg-status-warning/15 text-status-warning hover:bg-status-warning/30"
                       : isAnswered
-                      ? "bg-lime-green/20 text-lime-green hover:bg-lime-green/30"
-                      : "bg-white/8 text-soft-gray/50 hover:bg-white/12 hover:text-soft-gray"
+                      ? "bg-warm-amber/20 text-warm-amber hover:bg-warm-amber/25"
+                      : "bg-surface text-soft-mute hover:bg-light-bg hover:text-charcoal"
                   )}
                 >
                   {i + 1}
                 </button>
                 {isFlagged && (
-                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber rounded-full flex items-center justify-center">
-                    <Flag size={6} className="text-deep-navy" />
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-status-warning rounded-full flex items-center justify-center">
+                    <Flag size={6} className="text-charcoal" />
                   </span>
                 )}
               </div>

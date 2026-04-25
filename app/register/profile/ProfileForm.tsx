@@ -51,16 +51,16 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
 
   if (submitted) {
     return (
-      <div className="bg-[#0F1A3A] border border-white/10 shadow-xl shadow-black/40 rounded-2xl p-8 text-center space-y-4">
+      <div className="bg-surface border border-divider shadow-xl shadow-black/40 rounded-2xl p-8 text-center space-y-4">
         <div className="text-5xl">✅</div>
-        <h2 className="text-white font-bold text-xl">Registration Submitted!</h2>
+        <h2 className="text-charcoal font-bold text-xl">Registration Submitted!</h2>
         <p className="text-slate-300 text-sm leading-relaxed">
           Your account is awaiting admin approval. You&apos;ll receive an email once
           approved.
         </p>
         <button
           onClick={() => router.push("/student")}
-          className="mt-4 px-6 py-2.5 rounded-xl bg-lime-green text-deep-navy font-semibold text-sm hover:bg-lime-green/90 transition-colors"
+          className="mt-4 px-6 py-2.5 rounded-xl bg-warm-amber text-charcoal font-semibold text-sm hover:bg-warm-amber/90 transition-colors"
         >
           View Account Status
         </button>
@@ -69,16 +69,16 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
   }
 
   const inputCls =
-    "w-full bg-[#0A1330] border border-white/15 text-white placeholder:text-slate-500 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-lime-green/50 transition-colors";
+    "w-full bg-surface border border-divider text-charcoal placeholder:text-slate-500 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-amber/50 transition-colors";
   const labelCls = "block text-slate-200 font-medium text-sm mb-1";
 
   return (
     <form
       onSubmit={handleSubmit}
-      className="bg-[#0F1A3A] border border-white/10 shadow-xl shadow-black/40 rounded-2xl p-6 space-y-4"
+      className="bg-surface border border-divider shadow-xl shadow-black/40 rounded-2xl p-6 space-y-4"
     >
       <div className="mb-2">
-        <h2 className="text-white font-bold text-lg">Complete Your Profile</h2>
+        <h2 className="text-charcoal font-bold text-lg">Complete Your Profile</h2>
         <p className="text-slate-400 text-xs mt-1">
           This information helps your teacher and admin set you up correctly.
         </p>
@@ -190,7 +190,7 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
       </div>
 
       {error && (
-        <p className="text-rose text-sm bg-rose/10 border border-rose/20 rounded-xl px-3 py-2">
+        <p className="text-status-error text-sm bg-status-error/10 border border-status-error/20 rounded-xl px-3 py-2">
           {error}
         </p>
       )}
@@ -198,7 +198,7 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
       <button
         type="submit"
         disabled={loading}
-        className="w-full py-3 rounded-xl bg-lime-green hover:bg-lime-green/90 text-deep-navy font-semibold text-sm disabled:opacity-60 transition-colors"
+        className="w-full py-3 rounded-xl bg-warm-amber hover:bg-warm-amber/90 text-charcoal font-semibold text-sm disabled:opacity-60 transition-colors"
       >
         {loading ? "Submitting..." : "Submit Registration"}
       </button>

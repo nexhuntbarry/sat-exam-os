@@ -13,11 +13,11 @@ async function getModules() {
 }
 
 const statusStyles: Record<string, string> = {
-  pending: "bg-white/10 text-soft-gray/60",
-  parsing: "bg-amber/15 text-amber",
-  parsed: "bg-electric-blue/15 text-electric-blue",
-  approved: "bg-lime-green/15 text-lime-green",
-  failed: "bg-rose/15 text-rose",
+  pending: "bg-light-bg text-mid-gray",
+  parsing: "bg-status-warning/15 text-status-warning",
+  parsed: "bg-warm-coral/15 text-warm-coral",
+  approved: "bg-warm-amber/15 text-warm-amber",
+  failed: "bg-status-error/15 text-status-error",
 };
 
 export default async function ModulesPage() {
@@ -26,23 +26,23 @@ export default async function ModulesPage() {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Modules</h1>
+        <h1 className="text-2xl font-bold text-charcoal">Modules</h1>
         <Link
           href="/admin/modules/new"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm transition-colors"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
         >
           <Plus size={16} />
           Upload Module
         </Link>
       </div>
 
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {modules.length === 0 ? (
           <div className="py-16 text-center space-y-3">
-            <FileText size={40} className="text-soft-gray/20 mx-auto" />
-            <p className="text-soft-gray/40 text-sm">
+            <FileText size={40} className="text-charcoal/20 mx-auto" />
+            <p className="text-soft-mute text-sm">
               No modules yet.{" "}
-              <Link href="/admin/modules/new" className="text-electric-blue hover:underline">
+              <Link href="/admin/modules/new" className="text-warm-coral hover:underline">
                 Upload your first module
               </Link>
             </p>
@@ -51,7 +51,7 @@ export default async function ModulesPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/8 text-soft-gray/50">
+                <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Module</th>
                   <th className="text-left px-5 py-3 font-medium">Section</th>
                   <th className="text-left px-5 py-3 font-medium">Difficulty</th>
@@ -64,33 +64,33 @@ export default async function ModulesPage() {
                 {modules.map((mod) => (
                   <tr
                     key={mod.id}
-                    className="border-b border-white/5 last:border-0 hover:bg-white/2 transition-colors"
+                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                   >
                     <td className="px-5 py-3">
-                      <Link href={`/admin/modules/${mod.id}`} className="hover:text-electric-blue transition-colors">
-                        <div className="font-medium text-white">{mod.module_name}</div>
+                      <Link href={`/admin/modules/${mod.id}`} className="hover:text-warm-coral transition-colors">
+                        <div className="font-medium text-charcoal">{mod.module_name}</div>
                         {mod.source_name && (
-                          <div className="text-soft-gray/50 text-xs">{mod.source_name}</div>
+                          <div className="text-soft-mute text-xs">{mod.source_name}</div>
                         )}
                       </Link>
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/70">
+                    <td className="px-5 py-3 text-mid-gray">
                       {mod.section}
                       {mod.module_number && ` · M${mod.module_number}`}
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/70">{mod.difficulty ?? "—"}</td>
-                    <td className="px-5 py-3 text-soft-gray/70">{mod.total_questions}</td>
+                    <td className="px-5 py-3 text-mid-gray">{mod.difficulty ?? "—"}</td>
+                    <td className="px-5 py-3 text-mid-gray">{mod.total_questions}</td>
                     <td className="px-5 py-3">
                       <span
                         className={clsx(
                           "px-2 py-1 rounded-full text-xs font-medium capitalize",
-                          statusStyles[mod.parsing_status] ?? "bg-white/10 text-soft-gray/60"
+                          statusStyles[mod.parsing_status] ?? "bg-light-bg text-mid-gray"
                         )}
                       >
                         {mod.parsing_status}
                       </span>
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/50 text-xs">
+                    <td className="px-5 py-3 text-soft-mute text-xs">
                       {new Date(mod.created_at).toLocaleDateString()}
                     </td>
                   </tr>

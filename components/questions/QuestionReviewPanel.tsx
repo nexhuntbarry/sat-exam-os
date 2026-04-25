@@ -60,10 +60,10 @@ interface QuestionReviewPanelProps {
 }
 
 const statusStyles: Record<string, string> = {
-  Draft: "bg-white/10 text-soft-gray/60",
-  Approved: "bg-lime-green/15 text-lime-green",
-  "Needs Review": "bg-amber/15 text-amber",
-  Rejected: "bg-rose/15 text-rose",
+  Draft: "bg-light-bg text-mid-gray",
+  Approved: "bg-warm-amber/15 text-warm-amber",
+  "Needs Review": "bg-status-warning/15 text-status-warning",
+  Rejected: "bg-status-error/15 text-status-error",
 };
 
 export default function QuestionReviewPanel({ question: initial }: QuestionReviewPanelProps) {
@@ -146,7 +146,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
         <div
           className={clsx(
             "fixed top-4 right-4 z-50 px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg",
-            toast.ok ? "bg-lime-green/20 text-lime-green border border-lime-green/30" : "bg-rose/20 text-rose border border-rose/30"
+            toast.ok ? "bg-warm-amber/20 text-warm-amber border border-warm-amber/30" : "bg-status-error/15 text-status-error border border-status-error/30"
           )}
         >
           {toast.msg}
@@ -156,7 +156,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
       {/* Header */}
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <span className="text-soft-gray/50 text-sm">
+          <span className="text-soft-mute text-sm">
             Q{q.original_question_number ?? "?"} · {q.modules?.module_name ?? "Unknown module"}
           </span>
           <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", statusStyles[q.parsing_status])}>
@@ -170,7 +170,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/8 hover:bg-white/15 text-soft-gray text-sm font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface hover:bg-light-bg text-charcoal text-sm font-medium transition-colors disabled:opacity-50"
           >
             <Save size={14} />
             {saving ? "Saving..." : "Save"}
@@ -178,7 +178,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           <button
             onClick={() => handleAction("approve")}
             disabled={actionLoading !== null || q.parsing_status === "Approved"}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-lime-green/15 hover:bg-lime-green/25 text-lime-green text-sm font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-sm font-medium transition-colors disabled:opacity-50"
           >
             <CheckCircle2 size={14} />
             {actionLoading === "approve" ? "..." : "Approve"}
@@ -186,7 +186,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           <button
             onClick={() => handleAction("reject")}
             disabled={actionLoading !== null || q.parsing_status === "Rejected"}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose/15 hover:bg-rose/25 text-rose text-sm font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-status-error/15 hover:bg-status-error/25 text-status-error text-sm font-medium transition-colors disabled:opacity-50"
           >
             <XCircle size={14} />
             {actionLoading === "reject" ? "..." : "Reject"}
@@ -194,7 +194,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           <button
             onClick={() => handleAction("needs-review")}
             disabled={actionLoading !== null || q.parsing_status === "Needs Review"}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber/15 hover:bg-amber/25 text-amber text-sm font-medium transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-status-warning/15 hover:bg-status-warning/25 text-status-warning text-sm font-medium transition-colors disabled:opacity-50"
           >
             <AlertCircle size={14} />
             {actionLoading === "needs-review" ? "..." : "Flag"}
@@ -204,7 +204,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
 
       {/* Flags */}
       {q.parsing_notes && (
-        <div className="bg-amber/8 border border-amber/20 rounded-xl px-4 py-2.5 text-amber text-xs">
+        <div className="bg-status-warning/8 border border-status-warning/20 rounded-xl px-4 py-2.5 text-status-warning text-xs">
           {q.parsing_notes}
         </div>
       )}
@@ -213,13 +213,13 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
       <div className="grid grid-cols-2 gap-6 min-h-[640px]">
         {/* Left: PDF */}
         <div className="flex flex-col gap-2">
-          <p className="text-xs text-soft-gray/40 font-medium uppercase tracking-wide">
+          <p className="text-xs text-soft-mute font-medium uppercase tracking-wide">
             PDF · Page {pageNum}
           </p>
           {pdfUrl ? (
-            <PDFViewer url={pdfUrl} page={pageNum} className="flex-1 min-h-[600px] w-full rounded-xl border border-white/8" />
+            <PDFViewer url={pdfUrl} page={pageNum} className="flex-1 min-h-[600px] w-full rounded-xl border border-divider" />
           ) : (
-            <div className="flex-1 bg-white/3 border border-white/8 rounded-xl flex items-center justify-center text-soft-gray/30 text-sm">
+            <div className="flex-1 bg-surface border border-divider rounded-xl flex items-center justify-center text-soft-mute text-sm">
               No PDF
             </div>
           )}
@@ -229,28 +229,28 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
         <div className="flex flex-col gap-4 overflow-y-auto max-h-[780px] pr-1">
           {/* Question text */}
           <div>
-            <label className="block text-xs text-soft-gray/50 mb-1">Question Text</label>
+            <label className="block text-xs text-soft-mute mb-1">Question Text</label>
             <textarea
               value={q.question_text}
               onChange={(e) => setQ((prev) => ({ ...prev, question_text: e.target.value }))}
               rows={5}
-              className="w-full bg-white/5 border border-white/8 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-electric-blue/50 resize-none"
+              className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-none"
             />
           </div>
 
           {/* Choices */}
           {q.choices.length > 0 && (
             <div>
-              <label className="block text-xs text-soft-gray/50 mb-2">Answer Choices</label>
+              <label className="block text-xs text-soft-mute mb-2">Answer Choices</label>
               <div className="space-y-2">
                 {q.choices.map((c) => (
                   <div key={c.label} className="flex items-center gap-2">
-                    <span className="text-xs text-soft-gray/50 w-4 shrink-0">{c.label}</span>
+                    <span className="text-xs text-soft-mute w-4 shrink-0">{c.label}</span>
                     <input
                       type="text"
                       value={c.text}
                       onChange={(e) => updateChoice(c.label, e.target.value)}
-                      className="flex-1 bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+                      className="flex-1 bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
                     />
                   </div>
                 ))}
@@ -261,47 +261,47 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           {/* Correct answer + explanation */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-soft-gray/50 mb-1">Correct Answer</label>
+              <label className="block text-xs text-soft-mute mb-1">Correct Answer</label>
               <input
                 type="text"
                 value={q.correct_answer ?? ""}
                 onChange={(e) => setQ((prev) => ({ ...prev, correct_answer: e.target.value || null }))}
-                className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
               />
             </div>
             <div>
-              <label className="block text-xs text-soft-gray/50 mb-1">Page #</label>
+              <label className="block text-xs text-soft-mute mb-1">Page #</label>
               <input
                 type="number"
                 value={q.page_number ?? ""}
                 onChange={(e) =>
                   setQ((prev) => ({ ...prev, page_number: e.target.value ? parseInt(e.target.value, 10) : null }))
                 }
-                className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
               />
             </div>
           </div>
 
           <div>
-            <label className="block text-xs text-soft-gray/50 mb-1">Explanation</label>
+            <label className="block text-xs text-soft-mute mb-1">Explanation</label>
             <textarea
               value={q.explanation ?? ""}
               onChange={(e) => setQ((prev) => ({ ...prev, explanation: e.target.value || null }))}
               rows={3}
-              className="w-full bg-white/5 border border-white/8 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-electric-blue/50 resize-none"
+              className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-none"
             />
           </div>
 
           {/* Metadata */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-soft-gray/50 mb-1">Difficulty</label>
+              <label className="block text-xs text-soft-mute mb-1">Difficulty</label>
               <select
                 value={q.difficulty ?? ""}
                 onChange={(e) =>
                   setQ((prev) => ({ ...prev, difficulty: (e.target.value || null) as Question["difficulty"] }))
                 }
-                className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
               >
                 <option value="">—</option>
                 <option value="Easy">Easy</option>
@@ -310,13 +310,13 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
               </select>
             </div>
             <div>
-              <label className="block text-xs text-soft-gray/50 mb-1">Type</label>
+              <label className="block text-xs text-soft-mute mb-1">Type</label>
               <select
                 value={q.question_type ?? ""}
                 onChange={(e) =>
                   setQ((prev) => ({ ...prev, question_type: (e.target.value || null) as Question["question_type"] }))
                 }
-                className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
               >
                 <option value="">—</option>
                 <option value="Multiple Choice">Multiple Choice</option>
@@ -326,11 +326,11 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           </div>
 
           <div>
-            <label className="block text-xs text-soft-gray/50 mb-1">Domain</label>
+            <label className="block text-xs text-soft-mute mb-1">Domain</label>
             <select
               value={q.domain ?? ""}
               onChange={(e) => setQ((prev) => ({ ...prev, domain: e.target.value || null }))}
-              className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+              className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
             >
               <option value="">—</option>
               {SAT_DOMAINS.map((d) => (
@@ -341,21 +341,21 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-soft-gray/50 mb-1">Skill</label>
+              <label className="block text-xs text-soft-mute mb-1">Skill</label>
               <input
                 type="text"
                 value={q.skill ?? ""}
                 onChange={(e) => setQ((prev) => ({ ...prev, skill: e.target.value || null }))}
-                className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
               />
             </div>
             <div>
-              <label className="block text-xs text-soft-gray/50 mb-1">Concept</label>
+              <label className="block text-xs text-soft-mute mb-1">Concept</label>
               <input
                 type="text"
                 value={q.concept ?? ""}
                 onChange={(e) => setQ((prev) => ({ ...prev, concept: e.target.value || null }))}
-                className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
               />
             </div>
           </div>
@@ -369,12 +369,12 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
                 { key: "has_formula", label: "Has formula" },
               ] as const
             ).map(({ key, label }) => (
-              <label key={key} className="flex items-center gap-2 cursor-pointer text-xs text-soft-gray/60">
+              <label key={key} className="flex items-center gap-2 cursor-pointer text-xs text-mid-gray">
                 <input
                   type="checkbox"
                   checked={q[key]}
                   onChange={(e) => setQ((prev) => ({ ...prev, [key]: e.target.checked }))}
-                  className="accent-electric-blue"
+                  className="accent-warm-coral"
                 />
                 {label}
               </label>
@@ -383,7 +383,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
 
           {/* Parsing metadata (read-only) */}
           {q.ai_confidence_score !== null && (
-            <div className="bg-white/3 border border-white/6 rounded-xl p-3 text-xs text-soft-gray/40 space-y-1">
+            <div className="bg-surface border border-divider rounded-xl p-3 text-xs text-soft-mute space-y-1">
               <p>AI confidence: {Math.round((q.ai_confidence_score ?? 0) * 100)}%</p>
               {q.reviewed_at && <p>Reviewed: {new Date(q.reviewed_at).toLocaleString()}</p>}
             </div>

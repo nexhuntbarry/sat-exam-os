@@ -19,7 +19,7 @@ export default async function AdminLayout({
   }
 
   return (
-    <div className="flex flex-col h-screen bg-deep-navy text-soft-gray">
+    <div className="flex flex-col h-screen bg-cream text-charcoal">
       <Topbar title="Admin" />
       <div className="flex flex-1 min-h-0">
         <AdminSidebar />

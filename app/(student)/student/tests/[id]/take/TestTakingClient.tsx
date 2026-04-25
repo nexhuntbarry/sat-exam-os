@@ -152,19 +152,19 @@ export default function TestTakingClient({
   const questionIds = questions.map((q) => q.id);
 
   return (
-    <div className="flex flex-col h-screen bg-deep-navy">
+    <div className="flex flex-col h-screen bg-cream">
       {/* Top bar */}
-      <div className="shrink-0 border-b border-white/8 px-4 sm:px-6 py-3 flex items-center justify-between gap-3 overflow-x-hidden">
-        <div className="font-semibold text-white truncate text-sm md:text-base">{test.name}</div>
+      <div className="shrink-0 border-b border-divider px-4 sm:px-6 py-3 flex items-center justify-between gap-3 overflow-x-hidden">
+        <div className="font-semibold text-charcoal truncate text-sm md:text-base">{test.name}</div>
 
         <div className="flex items-center gap-4">
-          <span className="text-soft-gray/50 text-sm hidden sm:block">
+          <span className="text-soft-mute text-sm hidden sm:block">
             {currentIndex + 1} / {questions.length}
           </span>
           <TestTimer initialSeconds={timeRemainingSeconds} onExpire={handleTimerExpire} />
           <button
             onClick={() => setShowSubmitModal(true)}
-            className="px-4 py-2 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm transition-colors"
+            className="px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
           >
             Submit
           </button>
@@ -190,8 +190,8 @@ export default function TestTakingClient({
                 className={clsx(
                   "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
                   flagged.has(currentQuestion.id)
-                    ? "bg-amber/20 text-amber"
-                    : "bg-white/5 text-soft-gray/50 hover:text-soft-gray hover:bg-white/10"
+                    ? "bg-status-warning/15 text-status-warning"
+                    : "bg-light-bg text-soft-mute hover:text-charcoal hover:bg-light-bg"
                 )}
               >
                 <Flag size={12} />
@@ -199,29 +199,29 @@ export default function TestTakingClient({
               </button>
             </div>
           ) : (
-            <div className="py-16 text-center text-soft-gray/40">No questions found.</div>
+            <div className="py-16 text-center text-soft-mute">No questions found.</div>
           )}
         </div>
       </div>
 
       {/* Prev / Next */}
-      <div className="shrink-0 border-t border-white/8 px-6 py-3 flex items-center justify-between">
+      <div className="shrink-0 border-t border-divider px-6 py-3 flex items-center justify-between">
         <button
           onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
           disabled={currentIndex === 0}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 text-soft-gray/70 hover:text-soft-gray hover:border-white/20 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-divider text-mid-gray hover:text-charcoal hover:border-divider transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
         >
           <ChevronLeft size={16} /> Previous
         </button>
 
-        <span className="text-soft-gray/40 text-xs">
+        <span className="text-soft-mute text-xs">
           {answeredCount}/{questions.length} answered
         </span>
 
         <button
           onClick={() => setCurrentIndex((i) => Math.min(questions.length - 1, i + 1))}
           disabled={currentIndex === questions.length - 1}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-white/10 text-soft-gray/70 hover:text-soft-gray hover:border-white/20 transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl border border-divider text-mid-gray hover:text-charcoal hover:border-divider transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
         >
           Next <ChevronRight size={16} />
         </button>

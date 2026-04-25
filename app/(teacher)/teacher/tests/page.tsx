@@ -60,9 +60,9 @@ async function getTeacherTests(teacherId: string) {
 }
 
 const statusStyles: Record<string, string> = {
-  Draft: "bg-white/10 text-soft-gray/60",
-  Published: "bg-lime-green/15 text-lime-green",
-  Closed: "bg-rose/15 text-rose",
+  Draft: "bg-light-bg text-mid-gray",
+  Published: "bg-warm-amber/15 text-warm-amber",
+  Closed: "bg-status-error/15 text-status-error",
 };
 
 export default async function TeacherTestsPage() {
@@ -73,19 +73,19 @@ export default async function TeacherTestsPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-white">My Tests</h1>
+      <h1 className="text-2xl font-bold text-charcoal">My Tests</h1>
 
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {tests.length === 0 ? (
           <div className="py-16 text-center space-y-3">
-            <ClipboardList size={40} className="text-soft-gray/20 mx-auto" />
-            <p className="text-soft-gray/40 text-sm">No tests assigned to you yet.</p>
+            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
+            <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/8 text-soft-gray/50">
+                <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Test Name</th>
                   <th className="text-left px-5 py-3 font-medium">Section</th>
                   <th className="text-left px-5 py-3 font-medium">Status</th>
@@ -100,30 +100,30 @@ export default async function TeacherTestsPage() {
                 {tests.map((test) => {
                   const mod = test.modules as unknown as { module_name: string; section: string; module_number: number | null };
                   return (
-                    <tr key={test.id} className="border-b border-white/5 last:border-0 hover:bg-white/2 transition-colors">
+                    <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                       <td className="px-5 py-3">
-                        <Link href={`/teacher/tests/${test.id}`} className="text-white font-medium hover:text-electric-blue transition-colors">
+                        <Link href={`/teacher/tests/${test.id}`} className="text-charcoal font-medium hover:text-warm-coral transition-colors">
                           {test.test_name}
                         </Link>
                       </td>
-                      <td className="px-5 py-3 text-soft-gray/70">
+                      <td className="px-5 py-3 text-mid-gray">
                         {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}
                       </td>
                       <td className="px-5 py-3">
-                        <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", statusStyles[test.status] ?? "bg-white/10 text-soft-gray/60")}>
+                        <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
                           {test.status}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-soft-gray/70">{test.totalStudents}</td>
-                      <td className="px-5 py-3 text-soft-gray/70">{test.submittedCount}</td>
-                      <td className="px-5 py-3 text-soft-gray/70">
+                      <td className="px-5 py-3 text-mid-gray">{test.totalStudents}</td>
+                      <td className="px-5 py-3 text-mid-gray">{test.submittedCount}</td>
+                      <td className="px-5 py-3 text-mid-gray">
                         {test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}
                       </td>
-                      <td className="px-5 py-3 text-soft-gray/50 text-xs">
+                      <td className="px-5 py-3 text-soft-mute text-xs">
                         {test.due_date ? new Date(test.due_date).toLocaleDateString() : "—"}
                       </td>
                       <td className="px-5 py-3">
-                        <Link href={`/teacher/tests/${test.id}`} className="text-xs text-electric-blue hover:underline">
+                        <Link href={`/teacher/tests/${test.id}`} className="text-xs text-warm-coral hover:underline">
                           View
                         </Link>
                       </td>

@@ -29,7 +29,7 @@ export default function TestDetailActions({ testId, status }: Props) {
         <button
           disabled={loading === "publish"}
           onClick={() => handleAction("publish")}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-lime-green hover:bg-lime-green/90 text-deep-navy font-semibold text-sm transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-amber hover:bg-warm-amber/90 text-charcoal font-semibold text-sm transition-colors disabled:opacity-50"
         >
           <Send size={14} />
           {loading === "publish" ? "Publishing..." : "Publish"}
@@ -39,7 +39,7 @@ export default function TestDetailActions({ testId, status }: Props) {
         <button
           disabled={loading === "close"}
           onClick={() => handleAction("close")}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-rose/20 hover:bg-rose/30 text-rose font-semibold text-sm transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-status-error/15 hover:bg-status-error/30 text-status-error font-semibold text-sm transition-colors disabled:opacity-50"
         >
           <Lock size={14} />
           {loading === "close" ? "Closing..." : "Close Test"}

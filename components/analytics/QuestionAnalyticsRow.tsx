@@ -30,17 +30,17 @@ interface QuestionAnalyticsRowProps {
 }
 
 const difficultyColor: Record<string, string> = {
-  Easy: "text-lime-green",
-  Medium: "text-amber",
-  Hard: "text-rose",
+  Easy: "text-warm-amber",
+  Medium: "text-status-warning",
+  Hard: "text-status-error",
 };
 
 const CHOICE_COLORS: Record<string, string> = {
-  A: "bg-electric-blue",
-  B: "bg-lime-green",
-  C: "bg-amber",
-  D: "bg-emerald",
-  blank: "bg-soft-gray/30",
+  A: "bg-warm-coral",
+  B: "bg-warm-amber",
+  C: "bg-status-warning",
+  D: "bg-status-success",
+  blank: "bg-light-bg/30",
 };
 
 export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyticsRowProps) {
@@ -60,36 +60,36 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
   return (
     <div
       className={clsx(
-        "border-b border-white/5 last:border-0 transition-colors",
-        q.classReview && "bg-electric-blue/5"
+        "border-b border-divider last:border-0 transition-colors",
+        q.classReview && "bg-warm-coral/5"
       )}
     >
       {/* Main row */}
       <div
-        className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:bg-white/2 transition-colors"
+        className="px-5 py-4 flex items-center gap-4 cursor-pointer hover:bg-light-bg/60 transition-colors"
         onClick={() => setExpanded((e) => !e)}
       >
-        <div className="flex-shrink-0 text-soft-gray/30 w-4">
+        <div className="flex-shrink-0 text-soft-mute w-4">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
 
         {/* Q# */}
-        <div className="flex-shrink-0 w-8 text-soft-gray/50 text-sm font-mono">
+        <div className="flex-shrink-0 w-8 text-soft-mute text-sm font-mono">
           Q{q.questionNumber}
         </div>
 
         {/* Question text preview */}
         <div className="flex-1 min-w-0">
-          <p className="text-soft-gray/80 text-sm truncate">
+          <p className="text-charcoal text-sm truncate">
             {q.questionText.slice(0, 80)}
             {q.questionText.length > 80 ? "…" : ""}
           </p>
           <div className="flex items-center gap-2 mt-0.5">
             {q.domain && (
-              <span className="text-soft-gray/40 text-xs">{q.domain}</span>
+              <span className="text-soft-mute text-xs">{q.domain}</span>
             )}
             {q.difficulty && (
-              <span className={clsx("text-xs font-medium", difficultyColor[q.difficulty] ?? "text-soft-gray/50")}>
+              <span className={clsx("text-xs font-medium", difficultyColor[q.difficulty] ?? "text-soft-mute")}>
                 {q.difficulty}
               </span>
             )}
@@ -100,12 +100,12 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
         <div className="flex-shrink-0 w-20 text-right">
           <span className={clsx(
             "text-sm font-bold",
-            Number(correctRate) >= 70 ? "text-lime-green" :
-            Number(correctRate) >= 40 ? "text-amber" : "text-rose"
+            Number(correctRate) >= 70 ? "text-warm-amber" :
+            Number(correctRate) >= 40 ? "text-status-warning" : "text-status-error"
           )}>
             {correctRate}%
           </span>
-          <div className="text-soft-gray/30 text-xs">correct</div>
+          <div className="text-soft-mute text-xs">correct</div>
         </div>
 
         {/* Stacked bar */}
@@ -125,7 +125,7 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
               );
             })}
           </div>
-          <div className="flex justify-between text-xs text-soft-gray/30 mt-0.5">
+          <div className="flex justify-between text-xs text-soft-mute mt-0.5">
             <span>A</span><span>D</span>
           </div>
         </div>
@@ -134,8 +134,8 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
         <div className="flex-shrink-0 w-16 text-center hidden sm:flex items-center justify-center gap-1">
           {q.flaggedCount > 0 && (
             <>
-              <Flag size={12} className="text-amber" />
-              <span className="text-amber text-xs">{q.flaggedCount}</span>
+              <Flag size={12} className="text-status-warning" />
+              <span className="text-status-warning text-xs">{q.flaggedCount}</span>
             </>
           )}
         </div>
@@ -149,8 +149,8 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
           className={clsx(
             "flex-shrink-0 px-2 py-1 rounded text-xs font-medium transition-colors",
             q.classReview
-              ? "bg-electric-blue/20 text-electric-blue border border-electric-blue/30"
-              : "bg-white/5 text-soft-gray/40 border border-white/10 hover:border-electric-blue/30 hover:text-electric-blue"
+              ? "bg-warm-coral/20 text-warm-coral border border-warm-coral/30"
+              : "bg-light-bg text-soft-mute border border-divider hover:border-warm-coral/30 hover:text-warm-coral"
           )}
         >
           <BookOpen size={12} className="inline mr-1" />
@@ -161,30 +161,30 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
       {/* Expanded detail */}
       {expanded && (
         <div className="px-12 pb-5 space-y-3">
-          <div className="text-soft-gray/70 text-sm leading-relaxed bg-white/3 rounded-lg p-4">
+          <div className="text-mid-gray text-sm leading-relaxed bg-surface rounded-lg p-4">
             {q.questionText}
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div>
-              <div className="text-soft-gray/40">Correct Answer</div>
-              <div className="text-lime-green font-bold">{q.correctAnswer}</div>
+              <div className="text-soft-mute">Correct Answer</div>
+              <div className="text-warm-amber font-bold">{q.correctAnswer}</div>
             </div>
             <div>
-              <div className="text-soft-gray/40">Most-selected wrong</div>
-              <div className="text-rose font-bold">{q.mostSelectedWrong ?? "—"}</div>
+              <div className="text-soft-mute">Most-selected wrong</div>
+              <div className="text-status-error font-bold">{q.mostSelectedWrong ?? "—"}</div>
             </div>
             <div>
-              <div className="text-soft-gray/40">Avg time</div>
-              <div className="text-white">
+              <div className="text-soft-mute">Avg time</div>
+              <div className="text-charcoal">
                 {q.avgTimeSeconds != null
                   ? `${Math.floor(q.avgTimeSeconds / 60)}m ${Math.round(q.avgTimeSeconds % 60)}s`
                   : "—"}
               </div>
             </div>
             <div>
-              <div className="text-soft-gray/40">Left blank</div>
-              <div className="text-white">{q.blankCount}</div>
+              <div className="text-soft-mute">Left blank</div>
+              <div className="text-charcoal">{q.blankCount}</div>
             </div>
           </div>
 
@@ -198,17 +198,17 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
                 <div key={c} className="flex items-center gap-2 text-xs">
                   <span className={clsx(
                     "w-6 h-5 rounded text-center font-bold flex items-center justify-center",
-                    isCorrect ? "bg-lime-green text-deep-navy" : "bg-white/10 text-soft-gray/60"
+                    isCorrect ? "bg-warm-amber text-charcoal" : "bg-light-bg text-mid-gray"
                   )}>
                     {c === "blank" ? "—" : c}
                   </span>
-                  <div className="flex-1 bg-white/5 rounded-full h-2 overflow-hidden">
+                  <div className="flex-1 bg-light-bg rounded-full h-2 overflow-hidden">
                     <div
-                      className={clsx("h-full rounded-full", isCorrect ? "bg-lime-green" : "bg-electric-blue/50")}
+                      className={clsx("h-full rounded-full", isCorrect ? "bg-warm-amber" : "bg-warm-coral/50")}
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                  <span className="text-soft-gray/50 w-12 text-right">
+                  <span className="text-soft-mute w-12 text-right">
                     {count} ({pct.toFixed(0)}%)
                   </span>
                 </div>
@@ -217,8 +217,8 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
           </div>
 
           {q.explanation && (
-            <div className="bg-lime-green/5 border border-lime-green/10 rounded-lg p-3 text-sm text-soft-gray/70">
-              <div className="text-lime-green font-semibold text-xs mb-1">Explanation</div>
+            <div className="bg-warm-amber/5 border border-warm-amber/10 rounded-lg p-3 text-sm text-mid-gray">
+              <div className="text-warm-amber font-semibold text-xs mb-1">Explanation</div>
               {q.explanation}
             </div>
           )}

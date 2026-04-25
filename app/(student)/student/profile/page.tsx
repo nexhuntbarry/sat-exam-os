@@ -11,7 +11,7 @@ interface Profile {
 }
 
 const inputCls =
-  "w-full bg-deep-navy border border-white/15 text-white placeholder:text-soft-gray/30 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-electric-blue/50 transition-colors";
+  "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
 export default function StudentProfilePage() {
   const [profile, setProfile] = useState<Profile>({ grade: "", school: "", target_score: null, class_group: "" });
@@ -57,7 +57,7 @@ export default function StudentProfilePage() {
 
   if (loading) {
     return (
-      <div className="max-w-xl mx-auto py-16 text-center text-soft-gray/40 text-sm">
+      <div className="max-w-xl mx-auto py-16 text-center text-soft-mute text-sm">
         Loading profile…
       </div>
     );
@@ -66,19 +66,19 @@ export default function StudentProfilePage() {
   return (
     <div className="max-w-xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
-        <div className="p-2 rounded-xl bg-electric-blue/10 border border-electric-blue/20">
-          <User size={20} className="text-electric-blue" />
+        <div className="p-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20">
+          <User size={20} className="text-warm-coral" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-white">My Profile</h1>
-          <p className="text-soft-gray/50 text-sm">Help your teacher know more about you.</p>
+          <h1 className="text-2xl font-bold text-charcoal">My Profile</h1>
+          <p className="text-soft-mute text-sm">Help your teacher know more about you.</p>
         </div>
       </div>
 
-      <form onSubmit={handleSave} className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+      <form onSubmit={handleSave} className="bg-surface border border-divider rounded-2xl p-6 space-y-5">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
-            <label className="block text-soft-gray/70 text-sm font-medium mb-1.5">Grade</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1.5">Grade</label>
             <input
               className={inputCls}
               placeholder="e.g. 11"
@@ -87,7 +87,7 @@ export default function StudentProfilePage() {
             />
           </div>
           <div>
-            <label className="block text-soft-gray/70 text-sm font-medium mb-1.5">School</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1.5">School</label>
             <input
               className={inputCls}
               placeholder="e.g. Taipei High School"
@@ -99,7 +99,7 @@ export default function StudentProfilePage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
-            <label className="block text-soft-gray/70 text-sm font-medium mb-1.5">Target SAT Score</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1.5">Target SAT Score</label>
             <input
               type="number"
               min={400}
@@ -114,7 +114,7 @@ export default function StudentProfilePage() {
             />
           </div>
           <div>
-            <label className="block text-soft-gray/70 text-sm font-medium mb-1.5">Class Group</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1.5">Class Group</label>
             <input
               className={inputCls}
               placeholder="e.g. Class A"
@@ -125,13 +125,13 @@ export default function StudentProfilePage() {
         </div>
 
         {error && (
-          <p className="text-rose text-sm bg-rose/10 border border-rose/20 rounded-xl px-3 py-2">
+          <p className="text-status-error text-sm bg-status-error/10 border border-status-error/20 rounded-xl px-3 py-2">
             {error}
           </p>
         )}
 
         {saved && (
-          <p className="text-lime-green text-sm bg-lime-green/10 border border-lime-green/20 rounded-xl px-3 py-2">
+          <p className="text-warm-amber text-sm bg-warm-amber/10 border border-warm-amber/20 rounded-xl px-3 py-2">
             Profile saved successfully.
           </p>
         )}
@@ -139,7 +139,7 @@ export default function StudentProfilePage() {
         <button
           type="submit"
           disabled={saving}
-          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm disabled:opacity-60 transition-colors"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-60 transition-colors"
         >
           <Save size={15} />
           {saving ? "Saving…" : "Save Profile"}

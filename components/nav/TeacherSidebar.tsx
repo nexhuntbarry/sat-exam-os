@@ -23,9 +23,9 @@ export default function TeacherSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-56 shrink-0 border-r border-white/5 flex flex-col bg-deep-navy min-h-0">
+    <aside className="w-56 shrink-0 border-r border-divider flex flex-col bg-cream min-h-0">
       <nav className="flex-1 py-4 px-2 overflow-y-auto">
-        <p className="px-3 mb-2 text-xs font-semibold text-soft-gray/30 uppercase tracking-widest">
+        <p className="px-3 mb-2 text-xs font-semibold text-soft-mute uppercase tracking-widest">
           Teacher
         </p>
         {navItems.map(({ href, icon: Icon, label, exact }) => {
@@ -37,8 +37,8 @@ export default function TeacherSidebar() {
               className={clsx(
                 "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-0.5",
                 active
-                  ? "bg-electric-blue/15 text-electric-blue"
-                  : "text-soft-gray/60 hover:text-soft-gray hover:bg-white/5"
+                  ? "bg-warm-coral/15 text-warm-coral"
+                  : "text-mid-gray hover:text-charcoal hover:bg-light-bg"
               )}
             >
               <Icon size={16} />

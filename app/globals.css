@@ -1,20 +1,27 @@
 @import "tailwindcss";
 
 @theme {
-  --color-deep-navy: #0A1330;
-  --color-electric-blue: #2563EB;
-  --color-lime-green: #84CC16;
-  --color-emerald: #10B981;
-  --color-amber: #F59E0B;
-  --color-rose: #F43F5E;
-  --color-soft-gray: #E6E9EE;
+  /* Premier+ inspired warm-light palette */
+  --color-cream: #FAFAF7;
+  --color-surface: #FFFFFF;
+  --color-light-bg: #F6F6F6;
+  --color-warm-coral: #F0523D;
+  --color-warm-coral-dark: #D63F2A;
+  --color-warm-coral-soft: #FFE9E4;
+  --color-warm-amber: #E8893B;
+  --color-charcoal: #1F1F1F;
+  --color-graphite: #272727;
+  --color-mid-gray: #3E3E3E;
+  --color-soft-mute: #9C9999;
+  --color-divider: #E4E4E4;
 
-  --color-status-success: #10B981;
-  --color-status-info: #2563EB;
-  --color-status-warning: #F59E0B;
-  --color-status-error: #F43F5E;
+  /* Status colors (slightly muted for light bg) */
+  --color-status-success: #16A34A;
+  --color-status-info: #0284C7;
+  --color-status-warning: #D97706;
+  --color-status-error: #DC2626;
 
-  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
 }
 
 html {
@@ -22,103 +29,105 @@ html {
 }
 
 body {
-  background-color: #0A1330;
-  color: #E6E9EE;
+  background-color: #FAFAF7;
+  color: #1F1F1F;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Gradient utilities */
+/* Gradient utilities (warm spectrum) */
 .gradient-brand {
-  background: linear-gradient(135deg, #2563EB 0%, #84CC16 100%);
+  background: linear-gradient(135deg, #F0523D 0%, #E8893B 100%);
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #2563EB 0%, #84CC16 100%);
+  background: linear-gradient(135deg, #F0523D 0%, #E8893B 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-/* Clerk dark-theme overrides — force readable text on dark bg */
+/* Clerk light-theme overrides — warm, premium look */
 .cl-rootBox,
 .cl-rootBox * {
-  color-scheme: dark;
+  color-scheme: light;
+}
+.cl-card {
+  background-color: #FFFFFF !important;
+  border: 1px solid #E4E4E4 !important;
+  box-shadow: 0 1px 2px rgba(31, 31, 31, 0.04), 0 8px 24px rgba(31, 31, 31, 0.04) !important;
 }
 .cl-headerTitle {
-  color: #FFFFFF !important;
+  color: #1F1F1F !important;
   font-weight: 700 !important;
 }
 .cl-headerSubtitle,
 .cl-footerActionText {
-  color: #CBD5E1 !important;
+  color: #3E3E3E !important;
 }
 .cl-formFieldLabel,
 .cl-formFieldLabelRow {
-  color: #E2E8F0 !important;
+  color: #1F1F1F !important;
   font-weight: 500 !important;
 }
 .cl-formFieldInput {
-  background-color: #0A1330 !important;
-  border-color: rgba(255, 255, 255, 0.15) !important;
-  color: #F8FAFC !important;
+  background-color: #FFFFFF !important;
+  border-color: #E4E4E4 !important;
+  color: #1F1F1F !important;
 }
 .cl-formFieldInput::placeholder {
-  color: #64748B !important;
+  color: #9C9999 !important;
 }
 .cl-formFieldInputShowPasswordButton {
-  color: #CBD5E1 !important;
+  color: #3E3E3E !important;
 }
 .cl-socialButtonsBlockButton,
 .cl-socialButtonsIconButton {
-  background-color: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid rgba(255, 255, 255, 0.15) !important;
-  color: #FFFFFF !important;
+  background-color: #FFFFFF !important;
+  border: 1px solid #E4E4E4 !important;
+  color: #1F1F1F !important;
 }
 .cl-socialButtonsBlockButton:hover {
-  background-color: rgba(255, 255, 255, 0.1) !important;
+  background-color: #F6F6F6 !important;
 }
 .cl-socialButtonsBlockButtonText,
 .cl-socialButtonsBlockButtonArrow {
-  color: #FFFFFF !important;
+  color: #1F1F1F !important;
 }
 .cl-dividerLine {
-  background-color: rgba(255, 255, 255, 0.15) !important;
+  background-color: #E4E4E4 !important;
 }
 .cl-dividerText {
-  color: #94A3B8 !important;
+  color: #9C9999 !important;
 }
 .cl-formButtonPrimary {
-  background-color: #2563EB !important;
+  background-color: #F0523D !important;
   color: #FFFFFF !important;
+  box-shadow: 0 1px 2px rgba(240, 82, 61, 0.18) !important;
 }
 .cl-formButtonPrimary:hover {
-  background-color: #1D4ED8 !important;
+  background-color: #D63F2A !important;
 }
 .cl-footerActionLink {
-  color: #60A5FA !important;
+  color: #F0523D !important;
   font-weight: 600 !important;
 }
 .cl-footerActionLink:hover {
-  color: #84CC16 !important;
+  color: #D63F2A !important;
 }
 .cl-footer,
 .cl-footerPagesLink {
-  color: #64748B !important;
+  color: #9C9999 !important;
 }
 .cl-identityPreviewText,
 .cl-identityPreviewEditButtonIcon {
-  color: #E2E8F0 !important;
+  color: #1F1F1F !important;
 }
 .cl-alertText,
 .cl-formFieldErrorText {
-  color: #FCA5A5 !important;
-}
-.cl-card {
-  background-color: #0F1A3A !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: #DC2626 !important;
 }
 .cl-internal-b3fm6y {
-  color: #F59E0B !important;
+  color: #D97706 !important;
 }

@@ -77,29 +77,29 @@ export default async function StudentDashboardPage() {
   if (isPending) {
     return (
       <div className="max-w-2xl mx-auto flex flex-col items-center justify-center min-h-[60vh] text-center space-y-6">
-        <div className="p-6 rounded-full bg-amber/10 border border-amber/20">
-          <Clock size={40} className="text-amber" />
+        <div className="p-6 rounded-full bg-status-warning/10 border border-status-warning/20">
+          <Clock size={40} className="text-status-warning" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-white mb-3">Account Pending Approval</h1>
-          <p className="text-soft-gray/60 leading-relaxed">
+          <h1 className="text-2xl font-bold text-charcoal mb-3">Account Pending Approval</h1>
+          <p className="text-mid-gray leading-relaxed">
             Your registration has been submitted successfully. An administrator will review
             and approve your account shortly. You will receive an email notification once
             your account is approved.
           </p>
         </div>
-        <div className="bg-white/3 border border-white/8 rounded-2xl p-5 w-full text-left space-y-2">
+        <div className="bg-surface border border-divider rounded-2xl p-5 w-full text-left space-y-2">
           <div className="flex justify-between text-sm">
-            <span className="text-soft-gray/50">Name</span>
-            <span className="text-soft-gray">{user.displayName}</span>
+            <span className="text-soft-mute">Name</span>
+            <span className="text-charcoal">{user.displayName}</span>
           </div>
           <div className="flex justify-between text-sm">
-            <span className="text-soft-gray/50">Email</span>
-            <span className="text-soft-gray">{user.email}</span>
+            <span className="text-soft-mute">Email</span>
+            <span className="text-charcoal">{user.email}</span>
           </div>
           <div className="flex justify-between text-sm">
-            <span className="text-soft-gray/50">Status</span>
-            <span className="text-amber font-medium">Pending Approval</span>
+            <span className="text-soft-mute">Status</span>
+            <span className="text-status-warning font-medium">Pending Approval</span>
           </div>
         </div>
       </div>
@@ -111,23 +111,23 @@ export default async function StudentDashboardPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-white">
+        <h1 className="text-2xl font-bold text-charcoal">
           Welcome, {user.displayName}!
         </h1>
-        <p className="text-soft-gray/50 text-sm mt-1">Your SAT Exam OS dashboard.</p>
+        <p className="text-soft-mute text-sm mt-1">Your SAT Exam OS dashboard.</p>
       </div>
 
       {!hasCompleteProfile && (
-        <div className="bg-amber/10 border border-amber/20 rounded-2xl p-5 flex items-center justify-between gap-4">
+        <div className="bg-status-warning/10 border border-status-warning/20 rounded-2xl p-5 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <User size={18} className="text-amber shrink-0" />
-            <p className="text-soft-gray/80 text-sm">
+            <User size={18} className="text-status-warning shrink-0" />
+            <p className="text-charcoal text-sm">
               Your profile is incomplete. Add your grade, school, and other info to help your teacher.
             </p>
           </div>
           <a
             href="/student/profile"
-            className="shrink-0 px-4 py-2 rounded-lg bg-amber/20 hover:bg-amber/30 text-amber text-sm font-medium transition-colors"
+            className="shrink-0 px-4 py-2 rounded-lg bg-status-warning/15 hover:bg-status-warning/30 text-status-warning text-sm font-medium transition-colors"
           >
             Complete Profile
           </a>
@@ -135,43 +135,43 @@ export default async function StudentDashboardPage() {
       )}
 
       {/* Profile card */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-6 flex items-start gap-5">
-        <div className="w-14 h-14 rounded-full bg-electric-blue/20 border border-electric-blue/30 flex items-center justify-center shrink-0">
-          <span className="text-xl font-bold text-electric-blue">
+      <div className="bg-surface border border-divider rounded-2xl p-6 flex items-start gap-5">
+        <div className="w-14 h-14 rounded-full bg-warm-coral/20 border border-warm-coral/30 flex items-center justify-center shrink-0">
+          <span className="text-xl font-bold text-warm-coral">
             {user.displayName?.charAt(0)?.toUpperCase() ?? "S"}
           </span>
         </div>
         <div className="flex-1 space-y-1">
-          <p className="font-semibold text-white">{user.displayName}</p>
-          <p className="text-soft-gray/50 text-sm">{user.email}</p>
+          <p className="font-semibold text-charcoal">{user.displayName}</p>
+          <p className="text-soft-mute text-sm">{user.email}</p>
           {profile?.grade && (
-            <p className="text-soft-gray/50 text-sm">
+            <p className="text-soft-mute text-sm">
               Grade {profile.grade}{profile.school ? ` · ${profile.school}` : ""}
             </p>
           )}
           {profile?.target_score && (
-            <p className="text-soft-gray/50 text-sm">
-              Target Score: <span className="text-lime-green font-medium">{profile.target_score}</span>
+            <p className="text-soft-mute text-sm">
+              Target Score: <span className="text-warm-amber font-medium">{profile.target_score}</span>
             </p>
           )}
         </div>
       </div>
 
       {/* Upcoming tests */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-white/8 flex items-center justify-between">
-          <h2 className="font-semibold text-white flex items-center gap-2">
-            <ClipboardList size={16} className="text-electric-blue" />
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-divider flex items-center justify-between">
+          <h2 className="font-semibold text-charcoal flex items-center gap-2">
+            <ClipboardList size={16} className="text-warm-coral" />
             Upcoming Tests
           </h2>
-          <Link href="/student/tests" className="text-xs text-electric-blue hover:underline">
+          <Link href="/student/tests" className="text-xs text-warm-coral hover:underline">
             View all
           </Link>
         </div>
         {upcomingTests.length === 0 ? (
           <div className="py-10 text-center space-y-2">
-            <ClipboardList size={32} className="text-soft-gray/20 mx-auto" />
-            <p className="text-soft-gray/40 text-sm">
+            <ClipboardList size={32} className="text-charcoal/20 mx-auto" />
+            <p className="text-soft-mute text-sm">
               No upcoming tests yet. Your teacher will assign tests here.
             </p>
           </div>
@@ -184,8 +184,8 @@ export default async function StudentDashboardPage() {
               return (
                 <div key={t.id} className="px-5 py-3 flex items-center justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <p className="text-white text-sm font-medium truncate">{t.test_name}</p>
-                    <p className="text-soft-gray/40 text-xs">
+                    <p className="text-charcoal text-sm font-medium truncate">{t.test_name}</p>
+                    <p className="text-soft-mute text-xs">
                       {mod.section}
                       {t.due_date ? ` · Due ${new Date(t.due_date).toLocaleDateString()}` : ""}
                     </p>
@@ -193,7 +193,7 @@ export default async function StudentDashboardPage() {
                   {isSubmitted ? (
                     <Link
                       href={`/student/tests/${t.id}/result`}
-                      className="shrink-0 px-3 py-1.5 rounded-lg bg-lime-green/15 text-lime-green text-xs font-medium hover:bg-lime-green/25 transition-colors"
+                      className="shrink-0 px-3 py-1.5 rounded-lg bg-warm-amber/15 text-warm-amber text-xs font-medium hover:bg-warm-amber/25 transition-colors"
                     >
                       View Result
                     </Link>
@@ -203,8 +203,8 @@ export default async function StudentDashboardPage() {
                       className={clsx(
                         "shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
                         isInProgress
-                          ? "bg-electric-blue/15 text-electric-blue hover:bg-electric-blue/25"
-                          : "bg-white/8 text-soft-gray/70 hover:text-white hover:bg-white/12"
+                          ? "bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25"
+                          : "bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg"
                       )}
                     >
                       {isInProgress ? "Resume" : "Start"}

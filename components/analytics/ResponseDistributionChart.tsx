@@ -53,7 +53,7 @@ export function ResponseDistributionChart({ data, totalStudents }: ResponseDistr
           ]}
           contentStyle={{
             backgroundColor: "#0F1C3F",
-            border: "1px solid rgba(255,255,255,0.1)",
+            border: "1px solid #E4E4E4",
             borderRadius: 8,
             color: "#E6E9EE",
             fontSize: 12,

@@ -28,16 +28,16 @@ export default async function QuestionDetailPage({
   return (
     <div className="max-w-7xl mx-auto space-y-4">
       <div className="flex items-center gap-3">
-        <Link href="/admin/questions" className="text-soft-gray/50 hover:text-soft-gray transition-colors">
+        <Link href="/admin/questions" className="text-soft-mute hover:text-charcoal transition-colors">
           <ArrowLeft size={20} />
         </Link>
-        <h1 className="text-xl font-bold text-white">
+        <h1 className="text-xl font-bold text-charcoal">
           Review Question
         </h1>
         {question.modules && (
           <Link
             href={`/admin/modules/${question.module_id}`}
-            className="text-xs text-electric-blue hover:underline"
+            className="text-xs text-warm-coral hover:underline"
           >
             {question.modules.module_name}
           </Link>

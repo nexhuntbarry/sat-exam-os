@@ -40,11 +40,11 @@ export default function QuestionRenderer({
     <div className="space-y-6">
       {/* Question number */}
       <div className="flex items-center gap-3">
-        <span className="px-3 py-1 rounded-full bg-electric-blue/15 text-electric-blue text-xs font-semibold">
+        <span className="px-3 py-1 rounded-full bg-warm-coral/15 text-warm-coral text-xs font-semibold">
           Question {questionIndex + 1} of {totalQuestions}
         </span>
         {question.has_image || question.has_table ? (
-          <span className="px-2 py-1 rounded-full bg-amber/15 text-amber text-xs font-medium flex items-center gap-1">
+          <span className="px-2 py-1 rounded-full bg-status-warning/15 text-status-warning text-xs font-medium flex items-center gap-1">
             {question.has_image ? "Has Image" : "Has Table"}
           </span>
         ) : null}
@@ -52,7 +52,7 @@ export default function QuestionRenderer({
 
       {/* Image/table notice */}
       {(question.has_image || question.has_table) && (
-        <div className="p-3 rounded-xl bg-amber/10 border border-amber/20 text-amber text-sm flex items-start gap-2">
+        <div className="p-3 rounded-xl bg-status-warning/10 border border-status-warning/20 text-status-warning text-sm flex items-start gap-2">
           <span className="shrink-0 mt-0.5">⚠</span>
           <span>
             This question references {question.has_image ? "an image" : "a table"} — see source PDF.
@@ -71,7 +71,7 @@ export default function QuestionRenderer({
       )}
 
       {/* Question text */}
-      <div className="text-white text-base leading-relaxed whitespace-pre-wrap">
+      <div className="text-charcoal text-base leading-relaxed whitespace-pre-wrap">
         {question.question_text}
       </div>
 
@@ -87,16 +87,16 @@ export default function QuestionRenderer({
                 className={clsx(
                   "w-full flex items-start gap-3 p-4 rounded-xl border text-left transition-all",
                   isSelected
-                    ? "border-electric-blue bg-electric-blue/10 text-white"
-                    : "border-white/10 bg-white/3 text-soft-gray/80 hover:border-white/20 hover:bg-white/5 hover:text-white"
+                    ? "border-warm-coral bg-warm-coral/10 text-charcoal"
+                    : "border-divider bg-surface text-charcoal hover:border-divider hover:bg-light-bg hover:text-charcoal"
                 )}
               >
                 <span
                   className={clsx(
                     "shrink-0 w-7 h-7 rounded-full border flex items-center justify-center text-xs font-bold transition-colors",
                     isSelected
-                      ? "border-electric-blue bg-electric-blue text-white"
-                      : "border-white/20 text-soft-gray/60"
+                      ? "border-warm-coral bg-warm-coral text-white"
+                      : "border-divider text-mid-gray"
                   )}
                 >
                   {choice.label}
@@ -108,15 +108,15 @@ export default function QuestionRenderer({
         </div>
       ) : (
         <div className="space-y-2">
-          <label className="text-soft-gray/50 text-sm">Your Answer</label>
+          <label className="text-soft-mute text-sm">Your Answer</label>
           <input
             type="text"
             value={selectedAnswer}
             onChange={(e) => onAnswer(e.target.value)}
             placeholder="Enter your answer (e.g. 3, 1/2, 0.5)"
-            className="w-full max-w-xs px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-soft-gray/30 focus:outline-none focus:border-electric-blue/60 focus:bg-white/8 transition-colors"
+            className="w-full max-w-xs px-4 py-3 rounded-xl bg-surface border border-divider text-charcoal placeholder-soft-mute focus:outline-none focus:border-warm-coral/60 focus:bg-surface transition-colors"
           />
-          <p className="text-soft-gray/40 text-xs">
+          <p className="text-soft-mute text-xs">
             For fractions, you may enter as decimal (0.5) or fraction (1/2). Both are accepted.
           </p>
         </div>

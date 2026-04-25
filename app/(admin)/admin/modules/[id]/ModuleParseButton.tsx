@@ -61,7 +61,7 @@ export default function ModuleParseButton({ moduleId, initialStatus }: ModulePar
 
   if (status === "parsing") {
     return (
-      <div className="flex items-center gap-2 text-amber text-sm font-medium">
+      <div className="flex items-center gap-2 text-status-warning text-sm font-medium">
         <Loader2 size={15} className="animate-spin" />
         Parsing… (1-3 min)
       </div>
@@ -73,13 +73,13 @@ export default function ModuleParseButton({ moduleId, initialStatus }: ModulePar
       <button
         onClick={handleParse}
         disabled={loading}
-        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm shrink-0 disabled:opacity-60 transition-colors"
+        className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm shrink-0 disabled:opacity-60 transition-colors"
       >
         {loading ? <Loader2 size={15} className="animate-spin" /> : status === "failed" ? <RefreshCw size={15} /> : <Cpu size={15} />}
         {loading ? "Starting..." : status === "failed" ? "Retry Parse" : "Parse with AI"}
       </button>
       {error && (
-        <div className="flex items-center gap-1.5 text-rose text-xs">
+        <div className="flex items-center gap-1.5 text-status-error text-xs">
           <AlertCircle size={12} />
           {error}
         </div>

@@ -26,11 +26,11 @@ interface StudentResultsTableProps {
 }
 
 const statusStyles: Record<string, string> = {
-  Submitted: "bg-lime-green/15 text-lime-green",
-  Late: "bg-amber/15 text-amber",
-  "In Progress": "bg-electric-blue/15 text-electric-blue",
-  "Not Started": "bg-white/5 text-soft-gray/50",
-  Expired: "bg-rose/15 text-rose",
+  Submitted: "bg-warm-amber/15 text-warm-amber",
+  Late: "bg-status-warning/15 text-status-warning",
+  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "Not Started": "bg-light-bg text-soft-mute",
+  Expired: "bg-status-error/15 text-status-error",
 };
 
 type SortKey = "studentName" | "status" | "percentage" | "correctCount" | "timeSpentSeconds" | "submittedAt";
@@ -82,13 +82,13 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
   }
 
   function SortIcon({ k }: { k: SortKey }) {
-    if (sortKey !== k) return <ArrowUpDown size={12} className="text-soft-gray/30" />;
+    if (sortKey !== k) return <ArrowUpDown size={12} className="text-soft-mute" />;
     return sortAsc
-      ? <ChevronUp size={12} className="text-electric-blue" />
-      : <ChevronDown size={12} className="text-electric-blue" />;
+      ? <ChevronUp size={12} className="text-warm-coral" />
+      : <ChevronDown size={12} className="text-warm-coral" />;
   }
 
-  const selectCls = "bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-soft-gray/80 focus:outline-none focus:border-electric-blue/50";
+  const selectCls = "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
   return (
     <div className="space-y-4">
@@ -109,20 +109,20 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
             <option key={c} value={c}>{c === "all" ? "All Classes" : c}</option>
           ))}
         </select>
-        <div className="ml-auto text-soft-gray/40 text-sm self-center">
+        <div className="ml-auto text-soft-mute text-sm self-center">
           {sorted.length} student{sorted.length !== 1 ? "s" : ""}
         </div>
       </div>
 
       {/* Table */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {sorted.length === 0 ? (
-          <div className="py-12 text-center text-soft-gray/40 text-sm">No students match the current filters.</div>
+          <div className="py-12 text-center text-soft-mute text-sm">No students match the current filters.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/8 text-soft-gray/50">
+                <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("studentName")}>
                       Student <SortIcon k="studentName" />
@@ -160,17 +160,17 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
               </thead>
               <tbody>
                 {sorted.map((row) => (
-                  <tr key={row.submissionId} className="border-b border-white/5 last:border-0 hover:bg-white/2 transition-colors">
+                  <tr key={row.submissionId} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                     <td className="px-5 py-3">
-                      <div className="text-white font-medium">{row.studentName}</div>
-                      <div className="text-soft-gray/40 text-xs">{row.email}</div>
+                      <div className="text-charcoal font-medium">{row.studentName}</div>
+                      <div className="text-soft-mute text-xs">{row.email}</div>
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/60 hidden sm:table-cell">{row.grade ?? "—"}</td>
-                    <td className="px-5 py-3 text-soft-gray/60 hidden md:table-cell">{row.classGroup ?? "—"}</td>
+                    <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">{row.grade ?? "—"}</td>
+                    <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{row.classGroup ?? "—"}</td>
                     <td className="px-5 py-3">
                       <span className={clsx(
                         "px-2 py-0.5 rounded-full text-xs font-medium",
-                        statusStyles[row.status] ?? "bg-white/10 text-soft-gray/60"
+                        statusStyles[row.status] ?? "bg-light-bg text-mid-gray"
                       )}>
                         {row.status}
                       </span>
@@ -178,25 +178,25 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                     <td className="px-5 py-3">
                       <span className={clsx(
                         "font-semibold",
-                        row.percentage != null && row.percentage >= 70 ? "text-lime-green" :
-                        row.percentage != null && row.percentage >= 50 ? "text-amber" :
-                        row.percentage != null ? "text-rose" : "text-soft-gray/40"
+                        row.percentage != null && row.percentage >= 70 ? "text-warm-amber" :
+                        row.percentage != null && row.percentage >= 50 ? "text-status-warning" :
+                        row.percentage != null ? "text-status-error" : "text-soft-mute"
                       )}>
                         {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
                       </span>
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/60 hidden sm:table-cell">
+                    <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">
                       {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/60 hidden md:table-cell">{fmtTime(row.timeSpentSeconds)}</td>
-                    <td className="px-5 py-3 text-soft-gray/50 text-xs hidden lg:table-cell">
+                    <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{fmtTime(row.timeSpentSeconds)}</td>
+                    <td className="px-5 py-3 text-soft-mute text-xs hidden lg:table-cell">
                       {row.submittedAt ? new Date(row.submittedAt).toLocaleString() : "—"}
                     </td>
                     <td className="px-5 py-3">
                       {(row.status === "Submitted" || row.status === "Late") && (
                         <Link
                           href={`/teacher/tests/${testId}/results/${row.submissionId}`}
-                          className="text-electric-blue text-xs hover:underline"
+                          className="text-warm-coral text-xs hover:underline"
                         >
                           View
                         </Link>

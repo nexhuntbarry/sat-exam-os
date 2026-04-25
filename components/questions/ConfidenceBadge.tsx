@@ -8,7 +8,7 @@ interface ConfidenceBadgeProps {
 export default function ConfidenceBadge({ score, className }: ConfidenceBadgeProps) {
   if (score === null || score === undefined) {
     return (
-      <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium bg-white/8 text-soft-gray/40", className)}>
+      <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium bg-surface text-soft-mute", className)}>
         —
       </span>
     );
@@ -18,10 +18,10 @@ export default function ConfidenceBadge({ score, className }: ConfidenceBadgePro
 
   const color =
     score >= 0.85
-      ? "bg-lime-green/15 text-lime-green"
+      ? "bg-warm-amber/15 text-warm-amber"
       : score >= 0.7
-      ? "bg-amber/15 text-amber"
-      : "bg-rose/15 text-rose";
+      ? "bg-status-warning/15 text-status-warning"
+      : "bg-status-error/15 text-status-error";
 
   return (
     <span

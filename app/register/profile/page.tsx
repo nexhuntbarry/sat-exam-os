@@ -40,14 +40,14 @@ export default async function RegisterProfilePage() {
   }
 
   return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6 py-24 bg-deep-navy">
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full opacity-10 blur-3xl bg-lime-green pointer-events-none" />
+    <main className="min-h-screen flex flex-col items-center justify-center px-6 py-24 bg-cream">
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full opacity-10 blur-3xl bg-warm-amber pointer-events-none" />
 
       <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-md">
         <div className="flex flex-col items-center gap-3">
           <Logo size={48} />
-          <h1 className="text-xl font-semibold text-white">SAT Exam OS</h1>
-          <p className="text-soft-gray/60 text-sm">Student Self-Registration</p>
+          <h1 className="text-xl font-semibold text-charcoal">SAT Exam OS</h1>
+          <p className="text-mid-gray text-sm">Student Self-Registration</p>
         </div>
 
         <div className="w-full">

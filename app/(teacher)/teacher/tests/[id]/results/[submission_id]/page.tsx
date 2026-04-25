@@ -91,13 +91,13 @@ export default function SubmissionDetailPage() {
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto py-16 text-center text-soft-gray/40">Loading...</div>
+      <div className="max-w-4xl mx-auto py-16 text-center text-soft-mute">Loading...</div>
     );
   }
 
   if (error || !data) {
     return (
-      <div className="max-w-4xl mx-auto py-16 text-center text-rose">{error ?? "Not found"}</div>
+      <div className="max-w-4xl mx-auto py-16 text-center text-status-error">{error ?? "Not found"}</div>
     );
   }
 
@@ -107,30 +107,30 @@ export default function SubmissionDetailPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-soft-gray/50 text-sm flex-wrap">
-        <Link href="/teacher/tests" className="hover:text-soft-gray transition-colors">Tests</Link>
+      <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap">
+        <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
-        <Link href={`/teacher/tests/${testId}/results`} className="hover:text-soft-gray transition-colors">Results</Link>
+        <Link href={`/teacher/tests/${testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
         <span>/</span>
-        <span className="text-white">{student.name}</span>
+        <span className="text-charcoal">{student.name}</span>
       </div>
 
       {/* Student header */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-5">
+      <div className="bg-surface border border-divider rounded-2xl p-5">
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-xl font-bold text-white">{student.name}</h1>
-            <div className="text-soft-gray/50 text-sm mt-0.5">{student.email}</div>
-            <div className="flex items-center gap-3 mt-1 text-sm text-soft-gray/40">
+            <h1 className="text-xl font-bold text-charcoal">{student.name}</h1>
+            <div className="text-soft-mute text-sm mt-0.5">{student.email}</div>
+            <div className="flex items-center gap-3 mt-1 text-sm text-soft-mute">
               {student.grade && <span>Grade {student.grade}</span>}
               {student.classGroup && <span>· {student.classGroup}</span>}
             </div>
           </div>
           <span className={clsx(
             "px-3 py-1 rounded-full text-sm font-medium",
-            submission.status === "Submitted" ? "bg-lime-green/15 text-lime-green" :
-            submission.status === "Late" ? "bg-amber/15 text-amber" :
-            "bg-white/10 text-soft-gray/50"
+            submission.status === "Submitted" ? "bg-warm-amber/15 text-warm-amber" :
+            submission.status === "Late" ? "bg-status-warning/15 text-status-warning" :
+            "bg-light-bg text-soft-mute"
           )}>
             {submission.status}
           </span>
@@ -139,35 +139,35 @@ export default function SubmissionDetailPage() {
 
       {/* Score summary */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4 col-span-2 sm:col-span-1">
-          <div className="text-soft-gray/40 text-xs mb-1">Score</div>
+        <div className="bg-surface border border-divider rounded-xl p-4 col-span-2 sm:col-span-1">
+          <div className="text-soft-mute text-xs mb-1">Score</div>
           <div className={clsx(
             "text-3xl font-bold",
-            submission.percentage != null && submission.percentage >= 70 ? "text-lime-green" :
-            submission.percentage != null && submission.percentage >= 50 ? "text-amber" : "text-rose"
+            submission.percentage != null && submission.percentage >= 70 ? "text-warm-amber" :
+            submission.percentage != null && submission.percentage >= 50 ? "text-status-warning" : "text-status-error"
           )}>
             {submission.percentage != null ? `${Number(submission.percentage).toFixed(1)}%` : "—"}
           </div>
         </div>
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4">
-          <div className="text-soft-gray/40 text-xs mb-1">Correct</div>
-          <div className="text-white text-2xl font-bold flex items-center gap-1">
-            <Check size={16} className="text-lime-green" />
+        <div className="bg-surface border border-divider rounded-xl p-4">
+          <div className="text-soft-mute text-xs mb-1">Correct</div>
+          <div className="text-charcoal text-2xl font-bold flex items-center gap-1">
+            <Check size={16} className="text-warm-amber" />
             {submission.correctCount}/{submission.totalQuestions}
           </div>
         </div>
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4">
-          <div className="text-soft-gray/40 text-xs mb-1">Incorrect</div>
-          <div className="text-white text-2xl font-bold flex items-center gap-1">
-            <X size={16} className="text-rose" />
+        <div className="bg-surface border border-divider rounded-xl p-4">
+          <div className="text-soft-mute text-xs mb-1">Incorrect</div>
+          <div className="text-charcoal text-2xl font-bold flex items-center gap-1">
+            <X size={16} className="text-status-error" />
             {submission.totalQuestions - submission.correctCount}
           </div>
         </div>
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4">
-          <div className="text-soft-gray/40 text-xs mb-1">Time Spent</div>
-          <div className="text-white font-semibold">{fmtTime(submission.timeSpentSeconds)}</div>
+        <div className="bg-surface border border-divider rounded-xl p-4">
+          <div className="text-soft-mute text-xs mb-1">Time Spent</div>
+          <div className="text-charcoal font-semibold">{fmtTime(submission.timeSpentSeconds)}</div>
           {submission.submittedAt && (
-            <div className="text-soft-gray/30 text-xs mt-1">
+            <div className="text-soft-mute text-xs mt-1">
               {new Date(submission.submittedAt).toLocaleString()}
             </div>
           )}

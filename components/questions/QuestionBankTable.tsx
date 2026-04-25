@@ -41,10 +41,10 @@ interface ApiResponse {
 // ────────────────────────────────────────────
 
 const statusStyles: Record<string, string> = {
-  Draft: "bg-white/10 text-soft-gray/60",
-  Approved: "bg-lime-green/15 text-lime-green",
-  "Needs Review": "bg-amber/15 text-amber",
-  Rejected: "bg-rose/15 text-rose",
+  Draft: "bg-light-bg text-mid-gray",
+  Approved: "bg-warm-amber/15 text-warm-amber",
+  "Needs Review": "bg-status-warning/15 text-status-warning",
+  Rejected: "bg-status-error/15 text-status-error",
 };
 
 const SAT_DOMAINS = [
@@ -208,13 +208,13 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
         )}
       >
         <div className="flex items-center justify-between">
-          <p className="text-xs font-semibold text-soft-gray/40 uppercase tracking-widest">Filters</p>
+          <p className="text-xs font-semibold text-soft-mute uppercase tracking-widest">Filters</p>
           <button
             onClick={() => {
               setFilters(DEFAULT_FILTERS);
               setPage(1);
             }}
-            className="text-xs text-soft-gray/40 hover:text-soft-gray transition-colors"
+            className="text-xs text-soft-mute hover:text-charcoal transition-colors"
           >
             Reset
           </button>
@@ -222,23 +222,23 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
 
         {/* Keyword */}
         <div>
-          <label className="block text-xs text-soft-gray/50 mb-1">Keyword</label>
+          <label className="block text-xs text-soft-mute mb-1">Keyword</label>
           <input
             type="text"
             placeholder="Search questions..."
             defaultValue={filters.keyword}
             onChange={(e) => handleKeywordChange(e.target.value)}
-            className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-soft-gray/30 focus:outline-none focus:border-electric-blue/50"
+            className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-warm-coral/50"
           />
         </div>
 
         {/* Section */}
         <div>
-          <label className="block text-xs text-soft-gray/50 mb-1">Section</label>
+          <label className="block text-xs text-soft-mute mb-1">Section</label>
           <select
             value={filters.section}
             onChange={(e) => handleFilterChange("section", e.target.value)}
-            className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+            className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
           >
             <option value="">All</option>
             <option value="Math">Math</option>
@@ -248,11 +248,11 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
 
         {/* Status */}
         <div>
-          <label className="block text-xs text-soft-gray/50 mb-1">Status</label>
+          <label className="block text-xs text-soft-mute mb-1">Status</label>
           <select
             value={filters.status}
             onChange={(e) => handleFilterChange("status", e.target.value)}
-            className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+            className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
           >
             <option value="">All</option>
             <option value="Draft">Draft</option>
@@ -264,11 +264,11 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
 
         {/* Domain */}
         <div>
-          <label className="block text-xs text-soft-gray/50 mb-1">Domain</label>
+          <label className="block text-xs text-soft-mute mb-1">Domain</label>
           <select
             value={filters.domain}
             onChange={(e) => handleFilterChange("domain", e.target.value)}
-            className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+            className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
           >
             <option value="">All</option>
             {SAT_DOMAINS.map((d) => (
@@ -279,23 +279,23 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
 
         {/* Skill */}
         <div>
-          <label className="block text-xs text-soft-gray/50 mb-1">Skill</label>
+          <label className="block text-xs text-soft-mute mb-1">Skill</label>
           <input
             type="text"
             placeholder="Filter by skill..."
             value={filters.skill}
             onChange={(e) => handleFilterChange("skill", e.target.value)}
-            className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-soft-gray/30 focus:outline-none focus:border-electric-blue/50"
+            className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-warm-coral/50"
           />
         </div>
 
         {/* Difficulty */}
         <div>
-          <label className="block text-xs text-soft-gray/50 mb-1">Difficulty</label>
+          <label className="block text-xs text-soft-mute mb-1">Difficulty</label>
           <select
             value={filters.difficulty}
             onChange={(e) => handleFilterChange("difficulty", e.target.value)}
-            className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+            className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
           >
             <option value="">All</option>
             <option value="Easy">Easy</option>
@@ -306,11 +306,11 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
 
         {/* Question Type */}
         <div>
-          <label className="block text-xs text-soft-gray/50 mb-1">Type</label>
+          <label className="block text-xs text-soft-mute mb-1">Type</label>
           <select
             value={filters.questionType}
             onChange={(e) => handleFilterChange("questionType", e.target.value)}
-            className="w-full bg-white/5 border border-white/8 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-electric-blue/50"
+            className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
           >
             <option value="">All</option>
             <option value="Multiple Choice">MC</option>
@@ -327,14 +327,14 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
               { key: "hasFormula", label: "Has formula" },
             ] as const
           ).map(({ key, label }) => (
-            <label key={key} className="flex items-center gap-2 cursor-pointer text-xs text-soft-gray/60">
+            <label key={key} className="flex items-center gap-2 cursor-pointer text-xs text-mid-gray">
               <input
                 type="checkbox"
                 checked={filters[key] === true}
                 onChange={(e) =>
                   handleFilterChange(key, e.target.checked ? true : null)
                 }
-                className="accent-electric-blue"
+                className="accent-warm-coral"
               />
               {label}
             </label>
@@ -348,12 +348,12 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
         <div className="flex items-center gap-3">
           <button
             onClick={() => setFiltersOpen((o) => !o)}
-            className="lg:hidden flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/5 text-soft-gray/70 text-sm"
+            className="lg:hidden flex items-center gap-2 px-3 py-1.5 rounded-lg bg-light-bg text-mid-gray text-sm"
           >
             <Filter size={14} />
             Filters
           </button>
-          <span className="text-sm text-soft-gray/50 ml-auto">
+          <span className="text-sm text-soft-mute ml-auto">
             {loading ? "Loading..." : `${total} questions`}
           </span>
           <BulkActions
@@ -365,22 +365,22 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
           />
         </div>
 
-        <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+        <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
           {questions.length === 0 && !loading ? (
             <div className="py-16 text-center">
-              <p className="text-soft-gray/40 text-sm">No questions found.</p>
+              <p className="text-soft-mute text-sm">No questions found.</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-white/8 text-soft-gray/50">
+                  <tr className="border-b border-divider text-soft-mute">
                     <th className="px-4 py-3 w-8">
                       <input
                         type="checkbox"
                         checked={selectedIds.size === questions.length && questions.length > 0}
                         onChange={toggleAll}
-                        className="accent-electric-blue"
+                        className="accent-warm-coral"
                       />
                     </th>
                     <th className="text-left px-4 py-3 font-medium">Q#</th>
@@ -398,8 +398,8 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                     <tr
                       key={q.id}
                       className={clsx(
-                        "border-b border-white/5 last:border-0 hover:bg-white/2 transition-colors",
-                        selectedIds.has(q.id) && "bg-electric-blue/5"
+                        "border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors",
+                        selectedIds.has(q.id) && "bg-warm-coral/5"
                       )}
                     >
                       <td className="px-4 py-3">
@@ -407,33 +407,33 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                           type="checkbox"
                           checked={selectedIds.has(q.id)}
                           onChange={() => toggleSelected(q.id)}
-                          className="accent-electric-blue"
+                          className="accent-warm-coral"
                         />
                       </td>
-                      <td className="px-4 py-3 text-soft-gray/50 text-xs">
+                      <td className="px-4 py-3 text-soft-mute text-xs">
                         {q.original_question_number ?? "—"}
                       </td>
-                      <td className="px-4 py-3 text-soft-gray/70 text-xs max-w-[120px] truncate">
+                      <td className="px-4 py-3 text-mid-gray text-xs max-w-[120px] truncate">
                         {q.modules?.module_name ?? "—"}
                       </td>
                       <td className="px-4 py-3 max-w-xs">
                         <Link
                           href={`/admin/questions/${q.id}`}
-                          className="text-white hover:text-electric-blue transition-colors line-clamp-2 text-sm"
+                          className="text-charcoal hover:text-warm-coral transition-colors line-clamp-2 text-sm"
                         >
                           {q.question_text.slice(0, 120)}
                           {q.question_text.length > 120 ? "…" : ""}
                         </Link>
                       </td>
-                      <td className="px-4 py-3 text-soft-gray/60 text-xs">{q.difficulty ?? "—"}</td>
-                      <td className="px-4 py-3 text-soft-gray/60 text-xs max-w-[140px] truncate" title={q.domain ?? ""}>
+                      <td className="px-4 py-3 text-mid-gray text-xs">{q.difficulty ?? "—"}</td>
+                      <td className="px-4 py-3 text-mid-gray text-xs max-w-[140px] truncate" title={q.domain ?? ""}>
                         {q.domain ?? "—"}
                       </td>
                       <td className="px-4 py-3">
                         <span
                           className={clsx(
                             "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
-                            statusStyles[q.parsing_status] ?? "bg-white/10 text-soft-gray/50"
+                            statusStyles[q.parsing_status] ?? "bg-light-bg text-soft-mute"
                           )}
                         >
                           {q.parsing_status}
@@ -446,7 +446,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                         <div className="flex items-center gap-1">
                           <Link
                             href={`/admin/questions/${q.id}`}
-                            className="p-1 rounded hover:bg-white/8 text-soft-gray/50 hover:text-white transition-colors"
+                            className="p-1 rounded hover:bg-surface text-soft-mute hover:text-charcoal transition-colors"
                             title="View / Edit"
                           >
                             <Eye size={14} />
@@ -454,7 +454,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                           {q.parsing_status !== "Approved" && (
                             <button
                               onClick={() => handleStatusChange(q.id, "approve")}
-                              className="p-1 rounded hover:bg-lime-green/15 text-soft-gray/50 hover:text-lime-green transition-colors"
+                              className="p-1 rounded hover:bg-warm-amber/15 text-soft-mute hover:text-warm-amber transition-colors"
                               title="Approve"
                             >
                               <CheckCircle2 size={14} />
@@ -463,7 +463,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                           {q.parsing_status !== "Rejected" && (
                             <button
                               onClick={() => handleStatusChange(q.id, "reject")}
-                              className="p-1 rounded hover:bg-rose/15 text-soft-gray/50 hover:text-rose transition-colors"
+                              className="p-1 rounded hover:bg-status-error/15 text-soft-mute hover:text-status-error transition-colors"
                               title="Reject"
                             >
                               <XCircle size={14} />
@@ -482,21 +482,21 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
         {/* Pagination */}
         {pages > 1 && (
           <div className="flex items-center justify-between text-sm">
-            <span className="text-soft-gray/40">
+            <span className="text-soft-mute">
               Page {page} of {pages}
             </span>
             <div className="flex gap-2">
               <button
                 disabled={page <= 1}
                 onClick={() => setPage((p) => p - 1)}
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 transition-colors"
+                className="p-1.5 rounded-lg bg-light-bg hover:bg-light-bg disabled:opacity-30 transition-colors"
               >
                 <ChevronLeft size={15} />
               </button>
               <button
                 disabled={page >= pages}
                 onClick={() => setPage((p) => p + 1)}
-                className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-30 transition-colors"
+                className="p-1.5 rounded-lg bg-light-bg hover:bg-light-bg disabled:opacity-30 transition-colors"
               >
                 <ChevronRight size={15} />
               </button>

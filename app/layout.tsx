@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Inter } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import "./globals.css";
 
-const plusJakartaSans = Plus_Jakarta_Sans({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-plus-jakarta-sans",
+  variable: "--font-inter",
   display: "swap",
 });
 
@@ -45,8 +45,8 @@ export default async function RootLayout({
 
   return (
     <ClerkProvider>
-      <html lang={htmlLang} className={plusJakartaSans.variable}>
-        <body className="font-sans antialiased bg-deep-navy text-soft-gray">
+      <html lang={htmlLang} className={inter.variable}>
+        <body className="font-sans antialiased bg-cream text-charcoal">
           <NextIntlClientProvider locale={locale} messages={messages}>
             {children}
           </NextIntlClientProvider>

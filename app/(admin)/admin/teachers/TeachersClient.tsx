@@ -57,14 +57,14 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
   }
 
   const inputCls =
-    "w-full bg-deep-navy border border-white/15 text-white placeholder:text-soft-gray/30 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-electric-blue/50 transition-colors";
+    "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-      <div className="bg-[#0F1A3A] border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
+      <div className="bg-surface border border-divider rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-white text-lg">Invite Teacher</h2>
-          <button onClick={onClose} className="text-soft-gray/50 hover:text-soft-gray">
+          <h2 className="font-bold text-charcoal text-lg">Invite Teacher</h2>
+          <button onClick={onClose} className="text-soft-mute hover:text-charcoal">
             <X size={20} />
           </button>
         </div>
@@ -72,8 +72,8 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         {success ? (
           <div className="text-center py-6 space-y-3">
             <div className="text-4xl">✉️</div>
-            <p className="text-white font-medium">Invitation sent!</p>
-            <p className="text-soft-gray/50 text-sm">An email has been sent to {email}</p>
+            <p className="text-charcoal font-medium">Invitation sent!</p>
+            <p className="text-soft-mute text-sm">An email has been sent to {email}</p>
           </div>
         ) : (
           <>
@@ -101,7 +101,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
             </div>
 
             {error && (
-              <p className="text-rose text-sm bg-rose/10 border border-rose/20 rounded-xl px-3 py-2">
+              <p className="text-status-error text-sm bg-status-error/10 border border-status-error/20 rounded-xl px-3 py-2">
                 {error}
               </p>
             )}
@@ -109,14 +109,14 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
             <div className="flex gap-3">
               <button
                 onClick={onClose}
-                className="flex-1 py-2.5 rounded-xl border border-white/15 text-soft-gray/70 hover:text-soft-gray text-sm transition-colors"
+                className="flex-1 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={handleInvite}
                 disabled={loading || !email}
-                className="flex-1 py-2.5 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm disabled:opacity-60 transition-colors"
+                className="flex-1 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-60 transition-colors"
               >
                 {loading ? "Inviting..." : "Send Invite"}
               </button>
@@ -154,25 +154,25 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
       )}
 
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Teachers</h1>
+        <h1 className="text-2xl font-bold text-charcoal">Teachers</h1>
         <button
           onClick={() => setShowInvite(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm transition-colors"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
         >
           <UserPlus size={16} />
           Invite Teacher
         </button>
       </div>
 
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {teachers.length === 0 ? (
-          <div className="py-16 text-center text-soft-gray/40 text-sm">
+          <div className="py-16 text-center text-soft-mute text-sm">
             No teachers yet. Invite one to get started.
           </div>
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-white/8 text-soft-gray/50">
+              <tr className="border-b border-divider text-soft-mute">
                 <th className="text-left px-5 py-3 font-medium">Teacher</th>
                 <th className="text-left px-5 py-3 font-medium">Specialty</th>
                 <th className="text-left px-5 py-3 font-medium">Status</th>
@@ -186,18 +186,18 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                 return (
                   <tr
                     key={teacher.id}
-                    className="border-b border-white/5 last:border-0 hover:bg-white/2 transition-colors"
+                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                   >
                     <td className="px-5 py-3">
-                      <div className="font-medium text-white">
+                      <div className="font-medium text-charcoal">
                         {teacher.display_name ?? "—"}
                       </div>
-                      <div className="flex items-center gap-1 text-soft-gray/50 text-xs mt-0.5">
+                      <div className="flex items-center gap-1 text-soft-mute text-xs mt-0.5">
                         <Mail size={11} />
                         {teacher.email}
                       </div>
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/70">
+                    <td className="px-5 py-3 text-mid-gray">
                       {profile?.specialty ?? "—"}
                     </td>
                     <td className="px-5 py-3">
@@ -205,16 +205,16 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                         className={clsx(
                           "px-2 py-1 rounded-full text-xs font-medium",
                           teacher.account_status === "approved"
-                            ? "bg-lime-green/15 text-lime-green"
+                            ? "bg-warm-amber/15 text-warm-amber"
                             : teacher.account_status === "pending"
-                            ? "bg-amber/15 text-amber"
-                            : "bg-rose/15 text-rose"
+                            ? "bg-status-warning/15 text-status-warning"
+                            : "bg-status-error/15 text-status-error"
                         )}
                       >
                         {teacher.account_status}
                       </span>
                     </td>
-                    <td className="px-5 py-3 text-soft-gray/50 text-xs">
+                    <td className="px-5 py-3 text-soft-mute text-xs">
                       {new Date(teacher.created_at).toLocaleDateString()}
                     </td>
                     <td className="px-5 py-3">
@@ -223,7 +223,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                           onClick={() =>
                             handleRemove(teacher.id, teacher.display_name ?? teacher.email)
                           }
-                          className="px-3 py-1.5 rounded-lg bg-rose/10 hover:bg-rose/20 text-rose text-xs font-medium transition-colors"
+                          className="px-3 py-1.5 rounded-lg bg-status-error/10 hover:bg-status-error/15 text-status-error text-xs font-medium transition-colors"
                         >
                           Remove
                         </button>

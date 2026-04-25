@@ -81,62 +81,62 @@ export default async function StudentTestLandingPage({
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 text-soft-gray/50 text-sm">
-        <Link href="/student/tests" className="hover:text-soft-gray transition-colors">My Tests</Link>
+      <div className="flex items-center gap-2 text-soft-mute text-sm">
+        <Link href="/student/tests" className="hover:text-charcoal transition-colors">My Tests</Link>
         <span>/</span>
-        <span className="text-white">{test.test_name}</span>
+        <span className="text-charcoal">{test.test_name}</span>
       </div>
 
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-8 space-y-6">
+      <div className="bg-surface border border-divider rounded-2xl p-8 space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-white mb-1">{test.test_name}</h1>
-          <p className="text-soft-gray/50">{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</p>
+          <h1 className="text-2xl font-bold text-charcoal mb-1">{test.test_name}</h1>
+          <p className="text-soft-mute">{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</p>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
-          <div className="flex flex-col items-center p-4 bg-white/3 border border-white/8 rounded-xl">
-            <Clock size={20} className="text-electric-blue mb-2" />
-            <div className="text-white font-semibold">{test.time_limit_minutes ?? "—"} min</div>
-            <div className="text-soft-gray/50 text-xs">Time Limit</div>
+          <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
+            <Clock size={20} className="text-warm-coral mb-2" />
+            <div className="text-charcoal font-semibold">{test.time_limit_minutes ?? "—"} min</div>
+            <div className="text-soft-mute text-xs">Time Limit</div>
           </div>
-          <div className="flex flex-col items-center p-4 bg-white/3 border border-white/8 rounded-xl">
-            <BookOpen size={20} className="text-electric-blue mb-2" />
-            <div className="text-white font-semibold">{questionCount}</div>
-            <div className="text-soft-gray/50 text-xs">Questions</div>
+          <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
+            <BookOpen size={20} className="text-warm-coral mb-2" />
+            <div className="text-charcoal font-semibold">{questionCount}</div>
+            <div className="text-soft-mute text-xs">Questions</div>
           </div>
-          <div className="flex flex-col items-center p-4 bg-white/3 border border-white/8 rounded-xl">
-            <Calendar size={20} className="text-electric-blue mb-2" />
-            <div className="text-white font-semibold text-sm">
+          <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
+            <Calendar size={20} className="text-warm-coral mb-2" />
+            <div className="text-charcoal font-semibold text-sm">
               {test.due_date ? new Date(test.due_date).toLocaleDateString() : "No deadline"}
             </div>
-            <div className="text-soft-gray/50 text-xs">Due Date</div>
+            <div className="text-soft-mute text-xs">Due Date</div>
           </div>
         </div>
 
         {/* State-based CTA */}
         {isSubmitted && !canRetake ? (
           <div className="space-y-3">
-            <div className="p-4 bg-lime-green/10 border border-lime-green/20 rounded-xl text-center">
-              <div className="text-lime-green font-semibold mb-1">Test Submitted</div>
-              <div className="text-white text-2xl font-bold">
+            <div className="p-4 bg-warm-amber/10 border border-warm-amber/20 rounded-xl text-center">
+              <div className="text-warm-amber font-semibold mb-1">Test Submitted</div>
+              <div className="text-charcoal text-2xl font-bold">
                 {submission?.percentage != null ? `${Number(submission.percentage).toFixed(1)}%` : ""}
               </div>
             </div>
             <Link
               href={`/student/tests/${test.id}/result`}
-              className="block w-full py-3 text-center rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold transition-colors"
+              className="block w-full py-3 text-center rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold transition-colors"
             >
               View Result
             </Link>
           </div>
         ) : isPastDue && !isInProgress ? (
-          <div className="p-4 bg-rose/10 border border-rose/20 rounded-xl text-center text-rose">
+          <div className="p-4 bg-status-error/10 border border-status-error/20 rounded-xl text-center text-status-error">
             This test is no longer available — the due date has passed.
           </div>
         ) : (
           <div className="space-y-3">
             {isInProgress && (
-              <p className="text-amber text-sm text-center">
+              <p className="text-status-warning text-sm text-center">
                 You have an in-progress submission. Resuming will continue from where you left off.
               </p>
             )}

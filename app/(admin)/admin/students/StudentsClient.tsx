@@ -96,22 +96,22 @@ function ApproveModal({
   }
 
   const inputCls =
-    "w-full bg-deep-navy border border-white/15 text-white placeholder:text-soft-gray/30 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-electric-blue/50 transition-colors";
+    "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-      <div className="bg-[#0F1A3A] border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+      <div className="bg-surface border border-divider rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-white text-lg">Approve Student</h2>
-          <button onClick={onClose} className="text-soft-gray/50 hover:text-soft-gray">
+          <h2 className="font-bold text-charcoal text-lg">Approve Student</h2>
+          <button onClick={onClose} className="text-soft-mute hover:text-charcoal">
             <X size={20} />
           </button>
         </div>
 
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4 text-sm space-y-1">
-          <p className="text-white font-medium">{student.display_name ?? student.email}</p>
-          <p className="text-soft-gray/50">{student.email}</p>
-          {profile?.school && <p className="text-soft-gray/50">{profile.school}</p>}
+        <div className="bg-surface border border-divider rounded-xl p-4 text-sm space-y-1">
+          <p className="text-charcoal font-medium">{student.display_name ?? student.email}</p>
+          <p className="text-soft-mute">{student.email}</p>
+          {profile?.school && <p className="text-soft-mute">{profile.school}</p>}
         </div>
 
         <div className="space-y-3">
@@ -183,7 +183,7 @@ function ApproveModal({
         </div>
 
         {error && (
-          <p className="text-rose text-sm bg-rose/10 border border-rose/20 rounded-xl px-3 py-2">
+          <p className="text-status-error text-sm bg-status-error/10 border border-status-error/20 rounded-xl px-3 py-2">
             {error}
           </p>
         )}
@@ -191,14 +191,14 @@ function ApproveModal({
         <div className="flex gap-3 pt-1">
           <button
             onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl border border-white/15 text-soft-gray/70 hover:text-soft-gray text-sm transition-colors"
+            className="flex-1 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleApprove}
             disabled={loading}
-            className="flex-1 py-2.5 rounded-xl bg-lime-green hover:bg-lime-green/90 text-deep-navy font-semibold text-sm disabled:opacity-60 transition-colors"
+            className="flex-1 py-2.5 rounded-xl bg-warm-amber hover:bg-warm-amber/90 text-charcoal font-semibold text-sm disabled:opacity-60 transition-colors"
           >
             {loading ? "Approving..." : "Approve"}
           </button>
@@ -264,11 +264,11 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
       )}
 
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white">Students</h1>
+        <h1 className="text-2xl font-bold text-charcoal">Students</h1>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-white/3 rounded-xl w-fit border border-white/8">
+      <div className="flex gap-1 p-1 bg-surface rounded-xl w-fit border border-divider">
         {tabs.map((t) => (
           <button
             key={t.key}
@@ -276,8 +276,8 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
             className={clsx(
               "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
               tab === t.key
-                ? "bg-electric-blue text-white"
-                : "text-soft-gray/60 hover:text-soft-gray"
+                ? "bg-warm-coral text-white"
+                : "text-mid-gray hover:text-charcoal"
             )}
           >
             {t.label}
@@ -287,9 +287,9 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
 
       {/* Search */}
       <div className="relative">
-        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-soft-gray/40" />
+        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-soft-mute" />
         <input
-          className="w-full max-w-sm bg-white/3 border border-white/8 text-soft-gray placeholder:text-soft-gray/30 rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-electric-blue/50 transition-colors"
+          className="w-full max-w-sm bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors"
           placeholder="Search by name, email, grade, school..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -297,16 +297,16 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
       </div>
 
       {/* Table */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {filtered.length === 0 ? (
-          <div className="py-16 text-center text-soft-gray/40 text-sm">
+          <div className="py-16 text-center text-soft-mute text-sm">
             No {tab} students found.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/8 text-soft-gray/50">
+                <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Name</th>
                   <th className="text-left px-5 py-3 font-medium">Grade</th>
                   <th className="text-left px-5 py-3 font-medium">School</th>
@@ -323,26 +323,26 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                   return (
                     <tr
                       key={student.id}
-                      className="border-b border-white/5 last:border-0 hover:bg-white/2 transition-colors"
+                      className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                     >
                       <td className="px-5 py-3">
-                        <div className="font-medium text-white">
+                        <div className="font-medium text-charcoal">
                           {student.display_name ?? "—"}
                         </div>
-                        <div className="text-soft-gray/50 text-xs">{student.email}</div>
+                        <div className="text-soft-mute text-xs">{student.email}</div>
                       </td>
-                      <td className="px-5 py-3 text-soft-gray/70">
+                      <td className="px-5 py-3 text-mid-gray">
                         {profile?.grade ? `Grade ${profile.grade}` : "—"}
                       </td>
-                      <td className="px-5 py-3 text-soft-gray/70">
+                      <td className="px-5 py-3 text-mid-gray">
                         {profile?.school ?? "—"}
                       </td>
                       <td className="px-5 py-3">
-                        <div className="text-soft-gray/70">{profile?.parent_name ?? "—"}</div>
-                        <div className="text-soft-gray/40 text-xs">{profile?.parent_email ?? ""}</div>
-                        <div className="text-soft-gray/40 text-xs">{profile?.parent_phone ?? ""}</div>
+                        <div className="text-mid-gray">{profile?.parent_name ?? "—"}</div>
+                        <div className="text-soft-mute text-xs">{profile?.parent_email ?? ""}</div>
+                        <div className="text-soft-mute text-xs">{profile?.parent_phone ?? ""}</div>
                       </td>
-                      <td className="px-5 py-3 text-soft-gray/50 text-xs">
+                      <td className="px-5 py-3 text-soft-mute text-xs">
                         {new Date(student.created_at).toLocaleDateString()}
                       </td>
                       {tab === "pending" && (
@@ -350,14 +350,14 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                           <div className="flex items-center gap-2">
                             <button
                               onClick={() => setApproveTarget(student)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-lime-green/15 hover:bg-lime-green/25 text-lime-green text-xs font-medium transition-colors"
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-xs font-medium transition-colors"
                             >
                               <Check size={13} />
                               Approve
                             </button>
                             <button
                               onClick={() => handleSuspend(student.id)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose/10 hover:bg-rose/20 text-rose text-xs font-medium transition-colors"
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-status-error/10 hover:bg-status-error/15 text-status-error text-xs font-medium transition-colors"
                             >
                               <X size={13} />
                               Reject

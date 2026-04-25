@@ -107,9 +107,9 @@ async function getTeacherDashboardData(userId: string) {
 }
 
 const statusCls: Record<string, string> = {
-  Submitted: "bg-lime-green/15 text-lime-green",
-  Late: "bg-amber/15 text-amber",
-  "In Progress": "bg-electric-blue/15 text-electric-blue",
+  Submitted: "bg-warm-amber/15 text-warm-amber",
+  Late: "bg-status-warning/15 text-status-warning",
+  "In Progress": "bg-warm-coral/15 text-warm-coral",
 };
 
 export default async function TeacherDashboardPage() {
@@ -122,52 +122,52 @@ export default async function TeacherDashboardPage() {
     <div className="max-w-5xl mx-auto space-y-8">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-white">
+        <h1 className="text-2xl font-bold text-charcoal">
           Welcome, {user.displayName ?? "Teacher"}
         </h1>
-        <p className="text-soft-gray/50 text-sm mt-1">Here is your teaching overview.</p>
+        <p className="text-soft-mute text-sm mt-1">Here is your teaching overview.</p>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="flex items-center gap-4 p-5 rounded-2xl border bg-electric-blue/10 border-electric-blue/20">
-          <div className="p-3 rounded-xl bg-white/5">
-            <ClipboardList size={20} className="text-electric-blue" />
+        <div className="flex items-center gap-4 p-5 rounded-2xl border bg-warm-coral/10 border-warm-coral/20">
+          <div className="p-3 rounded-xl bg-light-bg">
+            <ClipboardList size={20} className="text-warm-coral" />
           </div>
           <div>
-            <div className="text-2xl font-bold text-electric-blue">{stats.assignedTests}</div>
-            <div className="text-soft-gray/60 text-xs mt-0.5">Assigned Tests</div>
+            <div className="text-2xl font-bold text-warm-coral">{stats.assignedTests}</div>
+            <div className="text-mid-gray text-xs mt-0.5">Assigned Tests</div>
           </div>
         </div>
-        <div className="flex items-center gap-4 p-5 rounded-2xl border bg-lime-green/10 border-lime-green/20">
-          <div className="p-3 rounded-xl bg-white/5">
-            <Users size={20} className="text-lime-green" />
+        <div className="flex items-center gap-4 p-5 rounded-2xl border bg-warm-amber/10 border-warm-amber/20">
+          <div className="p-3 rounded-xl bg-light-bg">
+            <Users size={20} className="text-warm-amber" />
           </div>
           <div>
-            <div className="text-2xl font-bold text-lime-green">{stats.studentsCount}</div>
-            <div className="text-soft-gray/60 text-xs mt-0.5">Students</div>
+            <div className="text-2xl font-bold text-warm-amber">{stats.studentsCount}</div>
+            <div className="text-mid-gray text-xs mt-0.5">Students</div>
           </div>
         </div>
-        <div className="flex items-center gap-4 p-5 rounded-2xl border bg-emerald/10 border-emerald/20">
-          <div className="p-3 rounded-xl bg-white/5">
-            <BarChart2 size={20} className="text-emerald" />
+        <div className="flex items-center gap-4 p-5 rounded-2xl border bg-status-success/10 border-status-success/20">
+          <div className="p-3 rounded-xl bg-light-bg">
+            <BarChart2 size={20} className="text-status-success" />
           </div>
           <div>
-            <div className="text-2xl font-bold text-emerald">{stats.weekSubmissions}</div>
-            <div className="text-soft-gray/60 text-xs mt-0.5">Submissions This Week</div>
+            <div className="text-2xl font-bold text-status-success">{stats.weekSubmissions}</div>
+            <div className="text-mid-gray text-xs mt-0.5">Submissions This Week</div>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Published tests */}
-        <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-white/8 flex items-center justify-between">
-            <h2 className="text-white font-semibold">Active Tests</h2>
-            <Link href="/teacher/tests" className="text-electric-blue text-xs hover:underline">View all</Link>
+        <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-divider flex items-center justify-between">
+            <h2 className="text-charcoal font-semibold">Active Tests</h2>
+            <Link href="/teacher/tests" className="text-warm-coral text-xs hover:underline">View all</Link>
           </div>
           {tests.length === 0 ? (
-            <div className="py-10 text-center text-soft-gray/40 text-sm">No active tests.</div>
+            <div className="py-10 text-center text-soft-mute text-sm">No active tests.</div>
           ) : (
             <div className="divide-y divide-white/5">
               {tests.map((t) => {
@@ -177,13 +177,13 @@ export default async function TeacherDashboardPage() {
                     <div className="flex-1 min-w-0">
                       <Link
                         href={`/teacher/tests/${t.id}/results`}
-                        className="text-white text-sm font-medium hover:text-electric-blue transition-colors truncate block"
+                        className="text-charcoal text-sm font-medium hover:text-warm-coral transition-colors truncate block"
                       >
                         {t.test_name}
                       </Link>
-                      <div className="text-soft-gray/40 text-xs">{mod.section}</div>
+                      <div className="text-soft-mute text-xs">{mod.section}</div>
                     </div>
-                    <div className="text-right flex-shrink-0 text-xs text-soft-gray/50">
+                    <div className="text-right flex-shrink-0 text-xs text-soft-mute">
                       <div>{t.submittedCount}/{t.studentCount} submitted</div>
                       {t.due_date && (
                         <div>Due {new Date(t.due_date).toLocaleDateString()}</div>
@@ -197,25 +197,25 @@ export default async function TeacherDashboardPage() {
         </div>
 
         {/* Recent submissions */}
-        <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-white/8">
-            <h2 className="text-white font-semibold">Recent Submissions</h2>
+        <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-divider">
+            <h2 className="text-charcoal font-semibold">Recent Submissions</h2>
           </div>
           {recentSubmissions.length === 0 ? (
-            <div className="py-10 text-center text-soft-gray/40 text-sm">No submissions this week.</div>
+            <div className="py-10 text-center text-soft-mute text-sm">No submissions this week.</div>
           ) : (
             <div className="divide-y divide-white/5">
               {recentSubmissions.map((s) => (
                 <div key={s.id} className="px-5 py-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="text-white text-sm font-medium">{s.student.display_name}</div>
-                    <div className="text-soft-gray/40 text-xs">
+                    <div className="text-charcoal text-sm font-medium">{s.student.display_name}</div>
+                    <div className="text-soft-mute text-xs">
                       {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : ""}
                     </div>
                   </div>
                   <span className={clsx(
                     "px-2 py-0.5 rounded-full text-xs font-medium flex-shrink-0",
-                    statusCls[s.status] ?? "bg-white/10 text-soft-gray/50"
+                    statusCls[s.status] ?? "bg-light-bg text-soft-mute"
                   )}>
                     {s.percentage != null ? `${Number(s.percentage).toFixed(0)}%` : s.status}
                   </span>
@@ -228,20 +228,20 @@ export default async function TeacherDashboardPage() {
 
       {/* Students needing attention */}
       {attentionStudents.length > 0 && (
-        <div className="bg-amber/5 border border-amber/15 rounded-2xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-amber/10 flex items-center gap-2">
-            <AlertTriangle size={16} className="text-amber" />
-            <h2 className="text-amber font-semibold">Students Needing Attention</h2>
-            <span className="text-soft-gray/40 text-xs">(avg &lt; 60%)</span>
+        <div className="bg-status-warning/5 border border-status-warning/15 rounded-2xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-status-warning/20 flex items-center gap-2">
+            <AlertTriangle size={16} className="text-status-warning" />
+            <h2 className="text-status-warning font-semibold">Students Needing Attention</h2>
+            <span className="text-soft-mute text-xs">(avg &lt; 60%)</span>
           </div>
           <div className="divide-y divide-white/5">
             {attentionStudents.map((s) => (
               <div key={s.id} className="px-5 py-3 flex items-center justify-between gap-4">
                 <div>
-                  <div className="text-white text-sm font-medium">{s.display_name}</div>
-                  <div className="text-soft-gray/40 text-xs">{s.email}</div>
+                  <div className="text-charcoal text-sm font-medium">{s.display_name}</div>
+                  <div className="text-soft-mute text-xs">{s.email}</div>
                 </div>
-                <div className="text-rose font-bold text-sm">
+                <div className="text-status-error font-bold text-sm">
                   {s.avgScore != null ? `${s.avgScore.toFixed(1)}% avg` : "—"}
                 </div>
               </div>

@@ -73,17 +73,17 @@ export default function BulkActions({ selectedIds, onComplete }: BulkActionsProp
   return (
     <div className="flex items-center gap-3">
       {toast && (
-        <span className="text-xs text-soft-gray/70 bg-white/5 px-3 py-1.5 rounded-lg">
+        <span className="text-xs text-mid-gray bg-light-bg px-3 py-1.5 rounded-lg">
           {toast}
         </span>
       )}
-      <span className="text-xs text-soft-gray/50">{count} selected</span>
+      <span className="text-xs text-soft-mute">{count} selected</span>
       <button
         onClick={handleBulkApprove}
         disabled={loading !== null}
         className={clsx(
           "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-          "bg-lime-green/15 text-lime-green hover:bg-lime-green/25 disabled:opacity-50"
+          "bg-warm-amber/15 text-warm-amber hover:bg-warm-amber/25 disabled:opacity-50"
         )}
       >
         <CheckCheck size={13} />
@@ -94,7 +94,7 @@ export default function BulkActions({ selectedIds, onComplete }: BulkActionsProp
         disabled={loading !== null}
         className={clsx(
           "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-          "bg-rose/15 text-rose hover:bg-rose/25 disabled:opacity-50"
+          "bg-status-error/15 text-status-error hover:bg-status-error/25 disabled:opacity-50"
         )}
       >
         <XCircle size={13} />

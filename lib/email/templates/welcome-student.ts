@@ -38,7 +38,7 @@ export function welcomeStudentEmail(displayName: string): {
                 You'll receive another email once your account is approved and you're ready to
                 start your SAT preparation journey.
               </p>
-              <div style="background:rgba(37,99,235,0.1);border:1px solid rgba(37,99,235,0.3);border-radius:12px;padding:20px;margin-bottom:32px;">
+              <div style="background:rgba(37,99,235,0.1);border:1px solid rgba(240,82,61,0.18);border-radius:12px;padding:20px;margin-bottom:32px;">
                 <p style="color:#93C5FD;font-size:14px;margin:0;line-height:1.6;">
                   While waiting, you can log in to check your account status at any time.
                 </p>

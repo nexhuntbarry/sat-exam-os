@@ -50,12 +50,12 @@ export default function BulkApproveHighConfidence({ moduleId }: BulkApproveHighC
   return (
     <div className="flex items-center gap-2">
       {toast && (
-        <span className="text-xs text-soft-gray/60 bg-white/5 px-3 py-1.5 rounded-lg">{toast}</span>
+        <span className="text-xs text-mid-gray bg-light-bg px-3 py-1.5 rounded-lg">{toast}</span>
       )}
       <button
         onClick={handleBulkApprove}
         disabled={loading}
-        className="flex items-center gap-2 px-3 py-2 rounded-xl bg-lime-green/15 hover:bg-lime-green/25 text-lime-green text-sm font-medium transition-colors disabled:opacity-50"
+        className="flex items-center gap-2 px-3 py-2 rounded-xl bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-sm font-medium transition-colors disabled:opacity-50"
       >
         <CheckCheck size={14} />
         {loading

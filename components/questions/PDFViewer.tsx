@@ -12,7 +12,7 @@ export default function PDFViewer({ url, page = 1, className }: PDFViewerProps) 
   return (
     <iframe
       src={src}
-      className={className ?? "w-full h-full min-h-[600px] rounded-xl border border-white/8"}
+      className={className ?? "w-full h-full min-h-[600px] rounded-xl border border-divider"}
       title={`PDF page ${page}`}
     />
   );

@@ -62,9 +62,9 @@ async function getTest(id: string) {
 }
 
 const statusStyles: Record<string, string> = {
-  Draft: "bg-white/10 text-soft-gray/60",
-  Published: "bg-lime-green/15 text-lime-green",
-  Closed: "bg-rose/15 text-rose",
+  Draft: "bg-light-bg text-mid-gray",
+  Published: "bg-warm-amber/15 text-warm-amber",
+  Closed: "bg-status-error/15 text-status-error",
 };
 
 export default async function TestDetailPage({
@@ -83,21 +83,21 @@ export default async function TestDetailPage({
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 text-soft-gray/50 text-sm">
-        <Link href="/admin/tests" className="hover:text-soft-gray transition-colors">Tests</Link>
+      <div className="flex items-center gap-2 text-soft-mute text-sm">
+        <Link href="/admin/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
-        <span className="text-white">{test.test_name}</span>
+        <span className="text-charcoal">{test.test_name}</span>
       </div>
 
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-2xl font-bold text-white">{test.test_name}</h1>
-            <span className={clsx("px-2.5 py-1 rounded-full text-xs font-semibold", statusStyles[test.status] ?? "bg-white/10 text-soft-gray/60")}>
+            <h1 className="text-2xl font-bold text-charcoal">{test.test_name}</h1>
+            <span className={clsx("px-2.5 py-1 rounded-full text-xs font-semibold", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
               {test.status}
             </span>
           </div>
-          <p className="text-soft-gray/50 text-sm">
+          <p className="text-soft-mute text-sm">
             {mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}
             {mod.source_name ? ` · ${mod.source_name}` : ""}
           </p>
@@ -117,34 +117,34 @@ export default async function TestDetailPage({
           { label: "Students", value: String(test.assignment.studentIds.length) },
           { label: "Class Groups", value: String(test.assignment.classGroupIds.length) },
         ].map(({ label, value }) => (
-          <div key={label} className="bg-white/3 border border-white/8 rounded-xl p-4">
-            <div className="text-soft-gray/50 text-xs mb-1">{label}</div>
-            <div className="text-white font-semibold text-sm">{value}</div>
+          <div key={label} className="bg-surface border border-divider rounded-xl p-4">
+            <div className="text-soft-mute text-xs mb-1">{label}</div>
+            <div className="text-charcoal font-semibold text-sm">{value}</div>
           </div>
         ))}
       </div>
 
       {/* Submission stats */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-5 space-y-3">
+      <div className="bg-surface border border-divider rounded-2xl p-5 space-y-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-white font-semibold">Submissions</h2>
-          <Link href={`/admin/tests/${test.id}/submissions`} className="text-electric-blue text-sm hover:underline">
+          <h2 className="text-charcoal font-semibold">Submissions</h2>
+          <Link href={`/admin/tests/${test.id}/submissions`} className="text-warm-coral text-sm hover:underline">
             View all submissions →
           </Link>
         </div>
         <div className="flex gap-6">
           <div>
-            <div className="text-2xl font-bold text-white">{test.stats.submitted}</div>
-            <div className="text-soft-gray/50 text-xs">Submitted</div>
+            <div className="text-2xl font-bold text-charcoal">{test.stats.submitted}</div>
+            <div className="text-soft-mute text-xs">Submitted</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-white">{test.stats.total}</div>
-            <div className="text-soft-gray/50 text-xs">Total</div>
+            <div className="text-2xl font-bold text-charcoal">{test.stats.total}</div>
+            <div className="text-soft-mute text-xs">Total</div>
           </div>
           {test.stats.avgScore !== null && (
             <div>
-              <div className="text-2xl font-bold text-lime-green">{test.stats.avgScore.toFixed(1)}%</div>
-              <div className="text-soft-gray/50 text-xs">Avg Score</div>
+              <div className="text-2xl font-bold text-warm-amber">{test.stats.avgScore.toFixed(1)}%</div>
+              <div className="text-soft-mute text-xs">Avg Score</div>
             </div>
           )}
         </div>
@@ -152,25 +152,25 @@ export default async function TestDetailPage({
 
       {/* Assignment details */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4 space-y-2">
-          <h3 className="text-soft-gray/50 text-xs font-medium uppercase tracking-wider">Teachers</h3>
+        <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
+          <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Teachers</h3>
           {test.assignment.teachers.length === 0 ? (
-            <p className="text-soft-gray/30 text-sm">None assigned</p>
+            <p className="text-soft-mute text-sm">None assigned</p>
           ) : test.assignment.teachers.map((t: { id: string; display_name: string; email: string }) => (
-            <div key={t.id} className="text-white text-sm">{t.display_name}</div>
+            <div key={t.id} className="text-charcoal text-sm">{t.display_name}</div>
           ))}
         </div>
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4 space-y-2">
-          <h3 className="text-soft-gray/50 text-xs font-medium uppercase tracking-wider">Class Groups</h3>
+        <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
+          <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Class Groups</h3>
           {test.assignment.classGroups.length === 0 ? (
-            <p className="text-soft-gray/30 text-sm">None assigned</p>
+            <p className="text-soft-mute text-sm">None assigned</p>
           ) : test.assignment.classGroups.map((cg: { id: string; name: string }) => (
-            <div key={cg.id} className="text-white text-sm">{cg.name}</div>
+            <div key={cg.id} className="text-charcoal text-sm">{cg.name}</div>
           ))}
         </div>
-        <div className="bg-white/3 border border-white/8 rounded-xl p-4 space-y-2">
-          <h3 className="text-soft-gray/50 text-xs font-medium uppercase tracking-wider">Individual Students</h3>
-          <p className="text-soft-gray/50 text-sm">{test.assignment.studentIds.length} student(s)</p>
+        <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
+          <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Individual Students</h3>
+          <p className="text-soft-mute text-sm">{test.assignment.studentIds.length} student(s)</p>
         </div>
       </div>
     </div>

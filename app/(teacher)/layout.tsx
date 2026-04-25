@@ -19,7 +19,7 @@ export default async function TeacherLayout({
   }
 
   return (
-    <div className="flex flex-col h-screen bg-deep-navy text-soft-gray">
+    <div className="flex flex-col h-screen bg-cream text-charcoal">
       <Topbar title="Teacher" />
       <div className="flex flex-1 min-h-0">
         <TeacherSidebar />

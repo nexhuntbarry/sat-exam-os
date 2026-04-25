@@ -22,7 +22,7 @@ export default function LanguageSwitcher() {
 
   return (
     <div
-      className="flex items-center gap-1 rounded-lg border border-white/10 bg-white/5 p-1"
+      className="flex items-center gap-1 rounded-lg border border-divider bg-light-bg p-1"
       aria-label={t('label')}
     >
       <button
@@ -32,8 +32,8 @@ export default function LanguageSwitcher() {
         aria-pressed={locale === 'zh'}
         className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
           locale === 'zh'
-            ? 'bg-electric-blue text-white shadow-sm'
-            : 'text-soft-gray/60 hover:text-soft-gray hover:bg-white/5'
+            ? 'bg-warm-coral text-white shadow-sm'
+            : 'text-mid-gray hover:text-charcoal hover:bg-light-bg'
         }`}
       >
         {t('zh')}
@@ -45,8 +45,8 @@ export default function LanguageSwitcher() {
         aria-pressed={locale === 'en'}
         className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
           locale === 'en'
-            ? 'bg-electric-blue text-white shadow-sm'
-            : 'text-soft-gray/60 hover:text-soft-gray hover:bg-white/5'
+            ? 'bg-warm-coral text-white shadow-sm'
+            : 'text-mid-gray hover:text-charcoal hover:bg-light-bg'
         }`}
       >
         {t('en')}

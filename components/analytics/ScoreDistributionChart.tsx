@@ -40,14 +40,14 @@ export function ScoreDistributionChart({ data }: ScoreDistributionChartProps) {
         <Tooltip
           contentStyle={{
             backgroundColor: "#0F1C3F",
-            border: "1px solid rgba(255,255,255,0.1)",
+            border: "1px solid #E4E4E4",
             borderRadius: 8,
             color: "#E6E9EE",
             fontSize: 12,
           }}
           cursor={{ fill: "rgba(255,255,255,0.04)" }}
         />
-        <Bar dataKey="count" name="Students" fill="#2563EB" radius={[4, 4, 0, 0]} />
+        <Bar dataKey="count" name="Students" fill="#F0523D" radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );

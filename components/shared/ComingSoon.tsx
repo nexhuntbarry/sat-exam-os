@@ -16,26 +16,26 @@ export default function ComingSoon({
 }: ComingSoonProps) {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-6 max-w-md mx-auto">
-      <div className="p-5 rounded-2xl bg-electric-blue/10 border border-electric-blue/20">
-        <Construction size={36} className="text-electric-blue" />
+      <div className="p-5 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
+        <Construction size={36} className="text-warm-coral" />
       </div>
       <div className="space-y-2">
-        <h1 className="text-2xl font-bold text-white">{title}</h1>
-        <p className="text-soft-gray/50 text-sm leading-relaxed">{description}</p>
-        <p className="text-soft-gray/30 text-xs mt-1">
+        <h1 className="text-2xl font-bold text-charcoal">{title}</h1>
+        <p className="text-soft-mute text-sm leading-relaxed">{description}</p>
+        <p className="text-soft-mute text-xs mt-1">
           此頁尚未建置 / This page is being built
         </p>
       </div>
       <div className="flex flex-col sm:flex-row gap-3">
         <Link
           href={dashboardHref}
-          className="px-5 py-2.5 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white text-sm font-semibold transition-colors"
+          className="px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white text-sm font-semibold transition-colors"
         >
           {dashboardLabel}
         </Link>
         <Link
           href="/"
-          className="px-5 py-2.5 rounded-xl border border-white/10 text-soft-gray/70 hover:text-soft-gray hover:border-white/20 text-sm transition-colors"
+          className="px-5 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal hover:border-divider text-sm transition-colors"
         >
           Home
         </Link>

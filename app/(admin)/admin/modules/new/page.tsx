@@ -85,21 +85,21 @@ export default function NewModulePage() {
   }
 
   const inputCls =
-    "w-full bg-deep-navy border border-white/15 text-white placeholder:text-soft-gray/30 rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-electric-blue/50 transition-colors";
+    "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
         <button
           onClick={() => router.back()}
-          className="text-soft-gray/50 hover:text-soft-gray transition-colors"
+          className="text-soft-mute hover:text-charcoal transition-colors"
         >
           <ArrowLeft size={20} />
         </button>
-        <h1 className="text-2xl font-bold text-white">Upload Module</h1>
+        <h1 className="text-2xl font-bold text-charcoal">Upload Module</h1>
       </div>
 
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-6 space-y-5">
+      <div className="bg-surface border border-divider rounded-2xl p-6 space-y-5">
         <div>
           <label className="block text-slate-200 text-sm font-medium mb-1">Module Name *</label>
           <input
@@ -174,19 +174,19 @@ export default function NewModulePage() {
 
         <div>
           <label className="block text-slate-200 text-sm font-medium mb-2">PDF File *</label>
-          <label className="flex flex-col items-center justify-center gap-3 p-8 border-2 border-dashed border-white/15 rounded-2xl cursor-pointer hover:border-electric-blue/50 transition-colors">
-            <Upload size={28} className="text-soft-gray/40" />
+          <label className="flex flex-col items-center justify-center gap-3 p-8 border-2 border-dashed border-divider rounded-2xl cursor-pointer hover:border-warm-coral/50 transition-colors">
+            <Upload size={28} className="text-soft-mute" />
             {file ? (
               <div className="text-center">
-                <p className="text-white text-sm font-medium">{file.name}</p>
-                <p className="text-soft-gray/50 text-xs mt-1">
+                <p className="text-charcoal text-sm font-medium">{file.name}</p>
+                <p className="text-soft-mute text-xs mt-1">
                   {(file.size / 1024 / 1024).toFixed(2)} MB
                 </p>
               </div>
             ) : (
               <div className="text-center">
-                <p className="text-soft-gray/60 text-sm">Click to select PDF</p>
-                <p className="text-soft-gray/40 text-xs mt-1">PDF only</p>
+                <p className="text-mid-gray text-sm">Click to select PDF</p>
+                <p className="text-soft-mute text-xs mt-1">PDF only</p>
               </div>
             )}
             <input
@@ -199,7 +199,7 @@ export default function NewModulePage() {
         </div>
 
         {error && (
-          <p className="text-rose text-sm bg-rose/10 border border-rose/20 rounded-xl px-3 py-2">
+          <p className="text-status-error text-sm bg-status-error/10 border border-status-error/20 rounded-xl px-3 py-2">
             {error}
           </p>
         )}
@@ -208,7 +208,7 @@ export default function NewModulePage() {
           <button
             onClick={() => handleSubmit(false)}
             disabled={loading}
-            className="flex-1 py-3 rounded-xl border border-white/15 text-soft-gray hover:bg-white/5 font-medium text-sm disabled:opacity-60 transition-colors"
+            className="flex-1 py-3 rounded-xl border border-divider text-charcoal hover:bg-light-bg font-medium text-sm disabled:opacity-60 transition-colors"
           >
             {loading
               ? uploadPct !== null && uploadPct < 100
@@ -219,7 +219,7 @@ export default function NewModulePage() {
           <button
             onClick={() => handleSubmit(true)}
             disabled={loading}
-            className="flex-1 py-3 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm disabled:opacity-60 transition-colors"
+            className="flex-1 py-3 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-60 transition-colors"
           >
             {loading
               ? uploadPct !== null && uploadPct < 100

@@ -27,21 +27,21 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
         className="absolute inset-0 opacity-5"
         style={{
           backgroundImage:
-            "linear-gradient(rgba(37,99,235,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(37,99,235,0.3) 1px, transparent 1px)",
+            "linear-gradient(rgba(240,82,61,0.18) 1px, transparent 1px), linear-gradient(90deg, rgba(240,82,61,0.18) 1px, transparent 1px)",
           backgroundSize: "60px 60px",
         }}
       />
 
       {/* Glow orbs */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-10 blur-3xl bg-electric-blue" />
-      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full opacity-10 blur-3xl bg-lime-green" />
+      <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full opacity-10 blur-3xl bg-warm-coral" />
+      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 rounded-full opacity-10 blur-3xl bg-warm-amber" />
 
       <div className="relative z-10 max-w-4xl mx-auto text-center">
         <div className="flex justify-center mb-10">
           <Logo size={80} />
         </div>
 
-        <p className="text-electric-blue text-sm font-semibold tracking-widest uppercase mb-4">
+        <p className="text-warm-coral text-sm font-semibold tracking-widest uppercase mb-4">
           {tBrand("name")}
         </p>
 
@@ -49,7 +49,7 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
           {t("title")}
         </h1>
 
-        <p className="text-soft-gray/70 text-lg md:text-xl max-w-2xl mx-auto mb-12 leading-relaxed">
+        <p className="text-mid-gray text-lg md:text-xl max-w-2xl mx-auto mb-12 leading-relaxed">
           {t("subtitle")}
         </p>
 
@@ -57,7 +57,7 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
           {dashboardHref ? (
             <Link
               href={dashboardHref}
-              className="px-8 py-4 rounded-xl font-semibold text-white bg-electric-blue hover:bg-electric-blue/90 transition-all duration-200 shadow-lg shadow-electric-blue/25 hover:shadow-electric-blue/40 hover:-translate-y-0.5"
+              className="px-8 py-4 rounded-xl font-semibold text-white bg-warm-coral hover:bg-warm-coral-dark transition-all duration-200 shadow-lg shadow-warm-coral/20 hover:shadow-warm-coral/30 hover:-translate-y-0.5"
             >
               {tLanding("goToDashboard")}
             </Link>
@@ -65,32 +65,32 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
             <>
               <Link
                 href="/sign-in"
-                className="px-8 py-4 rounded-xl font-semibold text-white bg-electric-blue hover:bg-electric-blue/90 transition-all duration-200 shadow-lg shadow-electric-blue/25 hover:shadow-electric-blue/40 hover:-translate-y-0.5"
+                className="px-8 py-4 rounded-xl font-semibold text-white bg-warm-coral hover:bg-warm-coral-dark transition-all duration-200 shadow-lg shadow-warm-coral/20 hover:shadow-warm-coral/30 hover:-translate-y-0.5"
               >
                 {t("adminCta")}
               </Link>
               <Link
                 href="/sign-in"
-                className="px-8 py-4 rounded-xl font-semibold text-white border border-electric-blue/60 hover:border-electric-blue hover:bg-electric-blue/10 transition-all duration-200"
+                className="px-8 py-4 rounded-xl font-semibold text-warm-coral bg-surface border border-warm-coral/40 hover:border-warm-coral hover:bg-warm-coral/5 transition-all duration-200"
               >
                 {t("teacherCta")}
               </Link>
               <Link
                 href="/register"
-                className="px-8 py-4 rounded-xl font-semibold text-white border border-lime-green/60 hover:border-lime-green hover:bg-lime-green/10 transition-all duration-200"
+                className="px-8 py-4 rounded-xl font-semibold text-warm-amber bg-surface border border-warm-amber/40 hover:border-warm-amber hover:bg-warm-amber/5 transition-all duration-200"
               >
                 {t("studentCta")}
               </Link>
             </>
           )}
         </div>
-        <p className="mt-4 text-soft-gray/50 text-xs text-center">
+        <p className="mt-4 text-soft-mute text-xs text-center">
           {tLanding("loginHint")}
         </p>
       </div>
 
-      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-soft-gray/30 text-xs">
-        <div className="w-px h-12 bg-gradient-to-b from-transparent to-electric-blue/60" />
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2 text-soft-mute text-xs">
+        <div className="w-px h-12 bg-gradient-to-b from-transparent to-warm-coral/60" />
       </div>
     </section>
   );
@@ -103,34 +103,34 @@ function FeaturesSection() {
       title: "Upload PDF",
       description:
         "Upload SAT module PDFs directly. Supports multi-section files for Math, Reading & Writing modules.",
-      color: "text-electric-blue",
-      borderColor: "border-electric-blue/20",
+      color: "text-warm-coral",
+      borderColor: "border-warm-coral/20",
     },
     {
       icon: "◈",
       title: "AI Parse",
       description:
         "Claude Vision automatically extracts questions, choices, answers, and metadata from PDFs with high accuracy.",
-      color: "text-lime-green",
-      borderColor: "border-lime-green/20",
+      color: "text-warm-amber",
+      borderColor: "border-warm-amber/20",
     },
     {
       icon: "◎",
       title: "Track Performance",
       description:
         "Detailed analytics on student scores, domain mastery, and progress over time with visual charts.",
-      color: "text-emerald",
-      borderColor: "border-emerald/20",
+      color: "text-status-success",
+      borderColor: "border-status-success/20",
     },
   ];
 
   return (
-    <section className="py-24 px-6 border-t border-white/5">
+    <section className="py-24 px-6 border-t border-divider">
       <div className="max-w-5xl mx-auto">
-        <h2 className="text-3xl md:text-4xl font-bold text-center mb-4 text-soft-gray">
+        <h2 className="text-3xl md:text-4xl font-bold text-center mb-4 text-charcoal">
           Everything a tutoring center needs
         </h2>
-        <p className="text-soft-gray/50 text-center mb-16 max-w-xl mx-auto">
+        <p className="text-soft-mute text-center mb-16 max-w-xl mx-auto">
           From PDF upload to student analytics — fully managed, AI-powered.
         </p>
 
@@ -138,15 +138,15 @@ function FeaturesSection() {
           {features.map((feature) => (
             <div
               key={feature.title}
-              className={`p-6 rounded-2xl border ${feature.borderColor} bg-white/3 hover:bg-white/5 hover:border-white/15 transition-all duration-200`}
+              className={`p-6 rounded-2xl border ${feature.borderColor} bg-surface hover:bg-light-bg hover:border-divider transition-all duration-200`}
             >
               <div className={`text-3xl mb-4 ${feature.color}`}>
                 {feature.icon}
               </div>
-              <h3 className="font-semibold text-lg mb-2 text-soft-gray">
+              <h3 className="font-semibold text-lg mb-2 text-charcoal">
                 {feature.title}
               </h3>
-              <p className="text-soft-gray/60 text-sm leading-relaxed">
+              <p className="text-mid-gray text-sm leading-relaxed">
                 {feature.description}
               </p>
             </div>
@@ -162,29 +162,29 @@ function Footer() {
   const tBrand = useTranslations("brand");
 
   return (
-    <footer className="py-12 px-6 border-t border-white/5">
+    <footer className="py-12 px-6 border-t border-divider">
       <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-6">
         <div className="flex items-center gap-3">
           <Logo size={28} />
-          <span className="font-semibold text-soft-gray/80 text-sm">
+          <span className="font-semibold text-charcoal text-sm">
             {tBrand("name")}
           </span>
         </div>
 
-        <p className="text-soft-gray/30 text-xs text-center max-w-sm">
+        <p className="text-soft-mute text-xs text-center max-w-sm">
           {tLanding("disclaimer")}
         </p>
 
-        <div className="flex items-center gap-4 text-xs text-soft-gray/40">
+        <div className="flex items-center gap-4 text-xs text-soft-mute">
           <a
             href="/docs/LEGAL/terms.md"
-            className="hover:text-soft-gray/70 transition-colors"
+            className="hover:text-mid-gray transition-colors"
           >
             Terms
           </a>
           <a
             href="/docs/LEGAL/privacy.md"
-            className="hover:text-soft-gray/70 transition-colors"
+            className="hover:text-mid-gray transition-colors"
           >
             Privacy
           </a>
@@ -207,7 +207,7 @@ export default async function HomePage() {
 
   return (
     <main>
-      <nav className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-6 py-4 bg-deep-navy/80 backdrop-blur-md border-b border-white/5">
+      <nav className="fixed top-0 inset-x-0 z-50 flex items-center justify-between px-6 py-4 bg-surface/90 backdrop-blur-md border-b border-divider">
         <Logo size={32} />
         <LanguageSwitcher />
       </nav>

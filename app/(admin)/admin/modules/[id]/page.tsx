@@ -16,18 +16,18 @@ async function getModule(id: string) {
 }
 
 const statusStyles: Record<string, string> = {
-  pending: "bg-white/10 text-soft-gray/60",
-  parsing: "bg-amber/15 text-amber",
-  parsed: "bg-electric-blue/15 text-electric-blue",
-  approved: "bg-lime-green/15 text-lime-green",
-  failed: "bg-rose/15 text-rose",
+  pending: "bg-light-bg text-mid-gray",
+  parsing: "bg-status-warning/15 text-status-warning",
+  parsed: "bg-warm-coral/15 text-warm-coral",
+  approved: "bg-warm-amber/15 text-warm-amber",
+  failed: "bg-status-error/15 text-status-error",
 };
 
 const questionStatusColors: Record<string, string> = {
-  Draft: "bg-white/10 text-soft-gray/60",
-  Approved: "bg-lime-green/15 text-lime-green",
-  "Needs Review": "bg-amber/15 text-amber",
-  Rejected: "bg-rose/15 text-rose",
+  Draft: "bg-light-bg text-mid-gray",
+  Approved: "bg-warm-amber/15 text-warm-amber",
+  "Needs Review": "bg-status-warning/15 text-status-warning",
+  Rejected: "bg-status-error/15 text-status-error",
 };
 
 export default async function ModuleDetailPage({
@@ -53,12 +53,12 @@ export default async function ModuleDetailPage({
   return (
     <div className="max-w-3xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
-        <Link href="/admin/modules" className="text-soft-gray/50 hover:text-soft-gray transition-colors">
+        <Link href="/admin/modules" className="text-soft-mute hover:text-charcoal transition-colors">
           <ArrowLeft size={20} />
         </Link>
         <div className="flex-1">
-          <h1 className="text-2xl font-bold text-white">{mod.module_name}</h1>
-          <p className="text-soft-gray/50 text-sm mt-0.5">
+          <h1 className="text-2xl font-bold text-charcoal">{mod.module_name}</h1>
+          <p className="text-soft-mute text-sm mt-0.5">
             {mod.section} · Module {mod.module_number}
             {mod.difficulty && ` · ${mod.difficulty}`}
           </p>
@@ -66,7 +66,7 @@ export default async function ModuleDetailPage({
         <span
           className={clsx(
             "px-3 py-1 rounded-full text-xs font-medium capitalize",
-            statusStyles[mod.parsing_status] ?? "bg-white/10 text-soft-gray/60"
+            statusStyles[mod.parsing_status] ?? "bg-light-bg text-mid-gray"
           )}
         >
           {mod.parsing_status}
@@ -74,7 +74,7 @@ export default async function ModuleDetailPage({
       </div>
 
       {/* Info card */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-6 grid grid-cols-2 gap-4 text-sm">
+      <div className="bg-surface border border-divider rounded-2xl p-6 grid grid-cols-2 gap-4 text-sm">
         {[
           ["Source", mod.source_name ?? "—"],
           ["Version", mod.version ?? "—"],
@@ -86,23 +86,23 @@ export default async function ModuleDetailPage({
             : []),
         ].map(([label, value]) => (
           <div key={label}>
-            <p className="text-soft-gray/50 text-xs mb-0.5">{label}</p>
-            <p className="text-white font-medium">{value}</p>
+            <p className="text-soft-mute text-xs mb-0.5">{label}</p>
+            <p className="text-charcoal font-medium">{value}</p>
           </div>
         ))}
       </div>
 
       {/* PDF link */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-5 flex items-center justify-between">
+      <div className="bg-surface border border-divider rounded-2xl p-5 flex items-center justify-between">
         <div className="min-w-0">
-          <p className="text-soft-gray/50 text-xs mb-0.5">PDF File</p>
-          <p className="text-white text-sm truncate max-w-xs">{mod.pdf_url}</p>
+          <p className="text-soft-mute text-xs mb-0.5">PDF File</p>
+          <p className="text-charcoal text-sm truncate max-w-xs">{mod.pdf_url}</p>
         </div>
         <a
           href={mod.pdf_url}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-soft-gray text-sm transition-colors shrink-0 ml-3"
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-light-bg hover:bg-light-bg text-charcoal text-sm transition-colors shrink-0 ml-3"
         >
           <ExternalLink size={14} />
           Open PDF
@@ -111,10 +111,10 @@ export default async function ModuleDetailPage({
 
       {/* Parse section — pending */}
       {mod.parsing_status === "pending" && (
-        <div className="bg-electric-blue/10 border border-electric-blue/20 rounded-2xl p-5 flex items-center justify-between gap-4">
+        <div className="bg-warm-coral/10 border border-warm-coral/20 rounded-2xl p-5 flex items-center justify-between gap-4">
           <div>
-            <p className="text-white font-medium text-sm mb-1">Parse with AI</p>
-            <p className="text-soft-gray/60 text-xs">
+            <p className="text-charcoal font-medium text-sm mb-1">Parse with AI</p>
+            <p className="text-mid-gray text-xs">
               Trigger AI parsing to extract questions from this PDF. This takes 1-3 minutes.
             </p>
           </div>
@@ -124,10 +124,10 @@ export default async function ModuleDetailPage({
 
       {/* Parsing in progress — client polls */}
       {mod.parsing_status === "parsing" && (
-        <div className="bg-amber/10 border border-amber/20 rounded-2xl p-5 flex items-center gap-4">
+        <div className="bg-status-warning/10 border border-status-warning/20 rounded-2xl p-5 flex items-center gap-4">
           <div className="flex-1">
-            <p className="text-white text-sm font-medium mb-1">AI parsing in progress…</p>
-            <p className="text-soft-gray/60 text-xs">This takes 1-3 minutes. The page will update automatically.</p>
+            <p className="text-charcoal text-sm font-medium mb-1">AI parsing in progress…</p>
+            <p className="text-mid-gray text-xs">This takes 1-3 minutes. The page will update automatically.</p>
           </div>
           <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} />
         </div>
@@ -135,13 +135,13 @@ export default async function ModuleDetailPage({
 
       {/* Failed */}
       {mod.parsing_status === "failed" && (
-        <div className="bg-rose/10 border border-rose/20 rounded-2xl p-5 space-y-3">
+        <div className="bg-status-error/10 border border-status-error/20 rounded-2xl p-5 space-y-3">
           <div className="flex items-center gap-3">
-            <AlertCircle size={18} className="text-rose shrink-0" />
+            <AlertCircle size={18} className="text-status-error shrink-0" />
             <div className="flex-1">
-              <p className="text-white text-sm font-medium">Parsing failed</p>
+              <p className="text-charcoal text-sm font-medium">Parsing failed</p>
               {mod.parsing_error && (
-                <p className="text-rose/70 text-xs mt-0.5">{mod.parsing_error as string}</p>
+                <p className="text-status-error/70 text-xs mt-0.5">{mod.parsing_error as string}</p>
               )}
             </div>
             <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} />
@@ -151,12 +151,12 @@ export default async function ModuleDetailPage({
 
       {/* Approved */}
       {mod.parsing_status === "approved" && (
-        <div className="bg-lime-green/10 border border-lime-green/20 rounded-2xl p-5 flex items-center gap-4">
-          <CheckCircle2 size={20} className="text-lime-green shrink-0" />
-          <p className="text-soft-gray/80 text-sm">All questions approved. This module is locked.</p>
+        <div className="bg-warm-amber/10 border border-warm-amber/20 rounded-2xl p-5 flex items-center gap-4">
+          <CheckCircle2 size={20} className="text-warm-amber shrink-0" />
+          <p className="text-charcoal text-sm">All questions approved. This module is locked.</p>
           <Link
             href={`/admin/questions?moduleId=${id}`}
-            className="ml-auto text-xs text-electric-blue hover:underline shrink-0"
+            className="ml-auto text-xs text-warm-coral hover:underline shrink-0"
           >
             Preview questions
           </Link>
@@ -164,21 +164,21 @@ export default async function ModuleDetailPage({
       )}
 
       {/* Questions */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl p-5">
+      <div className="bg-surface border border-divider rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-soft-gray">Questions ({questions.length})</h2>
+          <h2 className="font-semibold text-charcoal">Questions ({questions.length})</h2>
           {questions.length > 0 && (
             <div className="flex gap-2">
               <Link
                 href={`/admin/modules/${id}/review`}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-electric-blue/15 text-electric-blue hover:bg-electric-blue/25 transition-colors"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 transition-colors"
               >
                 <ClipboardList size={12} />
                 Review queue
               </Link>
               <Link
                 href={`/admin/questions?moduleId=${id}`}
-                className="text-xs text-soft-gray/50 hover:text-soft-gray transition-colors px-2 py-1.5"
+                className="text-xs text-soft-mute hover:text-charcoal transition-colors px-2 py-1.5"
               >
                 All questions →
               </Link>
@@ -186,7 +186,7 @@ export default async function ModuleDetailPage({
           )}
         </div>
         {questions.length === 0 ? (
-          <p className="text-soft-gray/40 text-sm text-center py-6">
+          <p className="text-soft-mute text-sm text-center py-6">
             No questions yet. Parse this module to extract questions.
           </p>
         ) : (
@@ -197,7 +197,7 @@ export default async function ModuleDetailPage({
                 href={`/admin/questions?moduleId=${id}&status=${encodeURIComponent(status)}`}
                 className={clsx(
                   "px-3 py-2 rounded-xl text-sm font-medium transition-opacity hover:opacity-80",
-                  questionStatusColors[status] ?? "bg-white/8 text-soft-gray/60"
+                  questionStatusColors[status] ?? "bg-surface text-mid-gray"
                 )}
               >
                 {count} {status}

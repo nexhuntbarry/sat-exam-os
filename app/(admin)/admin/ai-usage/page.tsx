@@ -59,15 +59,15 @@ export default async function AiUsagePage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-white">AI Usage</h1>
-      <p className="text-soft-gray/50 text-sm -mt-4">This month · Claude Sonnet 4.6 · $3/M input, $15/M output</p>
+      <h1 className="text-2xl font-bold text-charcoal">AI Usage</h1>
+      <p className="text-soft-mute text-sm -mt-4">This month · Claude Sonnet 4.6 · $3/M input, $15/M output</p>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         {stats.map(({ label, value }) => (
-          <div key={label} className="bg-white/3 border border-white/8 rounded-2xl p-5">
-            <p className="text-soft-gray/50 text-xs mb-1">{label}</p>
-            <p className="text-white text-xl font-bold">{value}</p>
+          <div key={label} className="bg-surface border border-divider rounded-2xl p-5">
+            <p className="text-soft-mute text-xs mb-1">{label}</p>
+            <p className="text-charcoal text-xl font-bold">{value}</p>
           </div>
         ))}
       </div>
@@ -76,17 +76,17 @@ export default async function AiUsagePage() {
       <AiUsageCharts dailyTrend={usage.dailyTrend} />
 
       {/* Per-route table */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-white/8">
-          <h2 className="text-sm font-semibold text-soft-gray">Calls per Route</h2>
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+        <div className="px-5 py-3 border-b border-divider">
+          <h2 className="text-sm font-semibold text-charcoal">Calls per Route</h2>
         </div>
         {usage.byRoute.length === 0 ? (
-          <p className="text-soft-gray/40 text-sm text-center py-10">No usage data yet.</p>
+          <p className="text-soft-mute text-sm text-center py-10">No usage data yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-white/8 text-soft-gray/50">
+                <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Route</th>
                   <th className="text-right px-5 py-3 font-medium">Calls</th>
                   <th className="text-right px-5 py-3 font-medium">Input Tokens</th>
@@ -96,12 +96,12 @@ export default async function AiUsagePage() {
               </thead>
               <tbody>
                 {usage.byRoute.map((r) => (
-                  <tr key={r.route} className="border-b border-white/5 last:border-0 hover:bg-white/2">
-                    <td className="px-5 py-3 text-white font-medium">{r.route}</td>
-                    <td className="px-5 py-3 text-right text-soft-gray/70">{r.calls}</td>
-                    <td className="px-5 py-3 text-right text-soft-gray/70">{r.tokens_input.toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right text-soft-gray/70">{r.tokens_output.toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right text-soft-gray/70">${(r.cost_cents / 100).toFixed(4)}</td>
+                  <tr key={r.route} className="border-b border-divider last:border-0 hover:bg-light-bg/60">
+                    <td className="px-5 py-3 text-charcoal font-medium">{r.route}</td>
+                    <td className="px-5 py-3 text-right text-mid-gray">{r.calls}</td>
+                    <td className="px-5 py-3 text-right text-mid-gray">{r.tokens_input.toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right text-mid-gray">{r.tokens_output.toLocaleString()}</td>
+                    <td className="px-5 py-3 text-right text-mid-gray">${(r.cost_cents / 100).toFixed(4)}</td>
                   </tr>
                 ))}
               </tbody>

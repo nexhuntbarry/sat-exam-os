@@ -63,11 +63,11 @@ export default function QuestionAnalyticsPage() {
   );
 
   if (loading) {
-    return <div className="max-w-5xl mx-auto py-16 text-center text-soft-gray/40">Loading analytics...</div>;
+    return <div className="max-w-5xl mx-auto py-16 text-center text-soft-mute">Loading analytics...</div>;
   }
 
   if (!data) {
-    return <div className="max-w-5xl mx-auto py-16 text-center text-rose">Failed to load analytics.</div>;
+    return <div className="max-w-5xl mx-auto py-16 text-center text-status-error">Failed to load analytics.</div>;
   }
 
   const { questions, summary } = data;
@@ -106,20 +106,20 @@ export default function QuestionAnalyticsPage() {
   // Class-review questions
   const toTeach = questions.filter((q) => q.classReview);
 
-  const selectCls = "bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-soft-gray/80 focus:outline-none focus:border-electric-blue/50";
+  const selectCls = "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-soft-gray/50 text-sm flex-wrap">
-        <Link href="/teacher/tests" className="hover:text-soft-gray transition-colors">Tests</Link>
+      <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap">
+        <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
-        <Link href={`/teacher/tests/${testId}/results`} className="hover:text-soft-gray transition-colors">Results</Link>
+        <Link href={`/teacher/tests/${testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
         <span>/</span>
-        <span className="text-white">Question Analytics</span>
+        <span className="text-charcoal">Question Analytics</span>
       </div>
 
-      <h1 className="text-2xl font-bold text-white">Question-Level Analytics</h1>
+      <h1 className="text-2xl font-bold text-charcoal">Question-Level Analytics</h1>
 
       {/* Summary cards */}
       {summary && (
@@ -152,14 +152,14 @@ export default function QuestionAnalyticsPage() {
 
       {/* To-Teach panel */}
       {toTeach.length > 0 && (
-        <div className="bg-electric-blue/5 border border-electric-blue/20 rounded-2xl p-5">
-          <h2 className="text-electric-blue font-semibold mb-3">To Teach in Class ({toTeach.length})</h2>
+        <div className="bg-warm-coral/5 border border-warm-coral/20 rounded-2xl p-5">
+          <h2 className="text-warm-coral font-semibold mb-3">To Teach in Class ({toTeach.length})</h2>
           <div className="flex flex-wrap gap-2">
             {toTeach.map((q) => (
               <Link
                 key={q.questionId}
                 href={`/teacher/tests/${testId}/analytics/${q.questionId}`}
-                className="px-3 py-1.5 bg-electric-blue/15 border border-electric-blue/20 rounded-lg text-electric-blue text-sm hover:bg-electric-blue/25 transition-colors"
+                className="px-3 py-1.5 bg-warm-coral/15 border border-warm-coral/20 rounded-lg text-warm-coral text-sm hover:bg-warm-coral/25 transition-colors"
               >
                 Q{q.questionNumber}
               </Link>
@@ -181,7 +181,7 @@ export default function QuestionAnalyticsPage() {
           ))}
         </select>
         <div className="flex items-center gap-2 ml-auto">
-          <span className="text-soft-gray/40 text-sm">Sort by:</span>
+          <span className="text-soft-mute text-sm">Sort by:</span>
           <select
             value={sortField}
             onChange={(e) => setSortField(e.target.value as SortField)}
@@ -194,7 +194,7 @@ export default function QuestionAnalyticsPage() {
           </select>
           <button
             onClick={() => setSortAsc((v) => !v)}
-            className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-lg text-sm text-soft-gray/60 hover:text-white transition-colors"
+            className="px-3 py-1.5 bg-light-bg border border-divider rounded-lg text-sm text-mid-gray hover:text-charcoal transition-colors"
           >
             {sortAsc ? "↑ Asc" : "↓ Desc"}
           </button>
@@ -202,9 +202,9 @@ export default function QuestionAnalyticsPage() {
       </div>
 
       {/* Question rows */}
-      <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {/* Table header */}
-        <div className="px-5 py-3 border-b border-white/8 flex items-center gap-4 text-soft-gray/40 text-xs font-medium">
+        <div className="px-5 py-3 border-b border-divider flex items-center gap-4 text-soft-mute text-xs font-medium">
           <div className="w-4" />
           <div className="w-8">Q#</div>
           <div className="flex-1">Question</div>
@@ -214,7 +214,7 @@ export default function QuestionAnalyticsPage() {
           <div className="w-20 text-center">Review</div>
         </div>
         {sorted.length === 0 ? (
-          <div className="py-12 text-center text-soft-gray/40 text-sm">No questions match the current filters.</div>
+          <div className="py-12 text-center text-soft-mute text-sm">No questions match the current filters.</div>
         ) : (
           sorted.map((q) => (
             <QuestionAnalyticsRow
