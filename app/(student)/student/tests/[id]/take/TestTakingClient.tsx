@@ -154,7 +154,7 @@ export default function TestTakingClient({
   return (
     <div className="flex flex-col h-screen bg-deep-navy">
       {/* Top bar */}
-      <div className="shrink-0 border-b border-white/8 px-6 py-3 flex items-center justify-between gap-4">
+      <div className="shrink-0 border-b border-white/8 px-4 sm:px-6 py-3 flex items-center justify-between gap-3 overflow-x-hidden">
         <div className="font-semibold text-white truncate text-sm md:text-base">{test.name}</div>
 
         <div className="flex items-center gap-4">
@@ -172,8 +172,8 @@ export default function TestTakingClient({
       </div>
 
       {/* Main content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto p-6">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="max-w-3xl mx-auto p-4 sm:p-6">
           {currentQuestion ? (
             <div className="space-y-6">
               <QuestionRenderer

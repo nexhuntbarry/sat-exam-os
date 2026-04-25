@@ -23,8 +23,6 @@ interface AnalyticsData {
 
 type SortField = "questionNumber" | "correctRate" | "flaggedCount" | "avgTimeSeconds";
 
-const DOMAINS = ["all"] as const;
-
 export default function QuestionAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const testId = params.id;

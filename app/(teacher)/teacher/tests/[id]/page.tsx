@@ -114,6 +114,22 @@ export default async function TeacherTestDetailPage({
         </div>
       </div>
 
+      {/* Action links */}
+      <div className="flex flex-wrap gap-3">
+        <Link
+          href={`/teacher/tests/${id}/results`}
+          className="px-4 py-2 rounded-xl bg-electric-blue/10 border border-electric-blue/20 text-electric-blue text-sm font-medium hover:bg-electric-blue/20 transition-colors"
+        >
+          Full Results Dashboard
+        </Link>
+        <Link
+          href={`/teacher/tests/${id}/analytics`}
+          className="px-4 py-2 rounded-xl bg-white/5 border border-white/10 text-soft-gray/70 text-sm font-medium hover:text-soft-gray hover:bg-white/10 transition-colors"
+        >
+          Question Analytics
+        </Link>
+      </div>
+
       {/* Submissions list */}
       <div className="bg-white/3 border border-white/8 rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-white/8">
