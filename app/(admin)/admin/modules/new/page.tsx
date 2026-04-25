@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Upload } from "lucide-react";
+import { upload } from "@vercel/blob/client";
 
 export default function NewModulePage() {
   const router = useRouter();
@@ -16,6 +17,7 @@ export default function NewModulePage() {
   });
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
@@ -29,18 +31,19 @@ export default function NewModulePage() {
     }
     setLoading(true);
     setError(null);
+    setUploadPct(0);
 
     try {
-      // 1. Upload PDF
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("pathname", `modules/${Date.now()}-${file.name}`);
-      const uploadRes = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!uploadRes.ok) {
-        setError("Failed to upload PDF.");
-        return;
-      }
-      const { url: pdfUrl } = await uploadRes.json();
+      // 1. Client-direct upload to Vercel Blob (bypasses 4.5 MB function body limit).
+      const pathname = `modules/${Date.now()}-${file.name}`;
+      const blob = await upload(pathname, file, {
+        access: "public",
+        handleUploadUrl: "/api/upload/handle",
+        onUploadProgress: ({ percentage }) => {
+          setUploadPct(Math.round(percentage));
+        },
+      });
+      const pdfUrl = blob.url;
 
       // 2. Create module record
       const res = await fetch("/api/admin/modules", {
@@ -64,11 +67,20 @@ export default function NewModulePage() {
         return;
       }
 
+      // 3. Kick off AI parse (fire-and-forget; the detail page polls status).
+      if (triggerParse) {
+        fetch(`/api/admin/modules/${data.id}/parse`, { method: "POST" }).catch(
+          (err) => console.error("[new-module] parse trigger failed:", err),
+        );
+      }
+
       router.push(`/admin/modules/${data.id}`);
-    } catch {
-      setError("Unexpected error. Please try again.");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unexpected error. Please try again.";
+      setError(msg);
     } finally {
       setLoading(false);
+      setUploadPct(null);
     }
   }
 
@@ -198,14 +210,22 @@ export default function NewModulePage() {
             disabled={loading}
             className="flex-1 py-3 rounded-xl border border-white/15 text-soft-gray hover:bg-white/5 font-medium text-sm disabled:opacity-60 transition-colors"
           >
-            {loading ? "Saving..." : "Save"}
+            {loading
+              ? uploadPct !== null && uploadPct < 100
+                ? `Uploading ${uploadPct}%`
+                : "Saving..."
+              : "Save"}
           </button>
           <button
             onClick={() => handleSubmit(true)}
             disabled={loading}
             className="flex-1 py-3 rounded-xl bg-electric-blue hover:bg-electric-blue/90 text-white font-semibold text-sm disabled:opacity-60 transition-colors"
           >
-            {loading ? "Saving..." : "Save & Parse with AI"}
+            {loading
+              ? uploadPct !== null && uploadPct < 100
+                ? `Uploading ${uploadPct}%`
+                : "Saving..."
+              : "Save & Parse with AI"}
           </button>
         </div>
       </div>
