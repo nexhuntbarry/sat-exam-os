@@ -35,9 +35,13 @@ export interface ParsedQuestion {
 // Zod schema (enforces JSON output via generateObject)
 // ────────────────────────────────────────────
 
+// Anthropic's tool/JSON schema does not accept `minimum`, `maximum`,
+// `minLength`, `maxLength`, or array `maxItems` constraints — they're
+// rejected at the API boundary. Keep types pure and document constraints
+// in `.describe()` so the model still complies.
 const ParsedQuestionSchema = z.object({
-  original_question_number: z.number().int().positive(),
-  question_text: z.string().min(1),
+  original_question_number: z.number().int().describe("Positive integer question number"),
+  question_text: z.string().describe("Question text (non-empty)"),
   choices: z
     .array(
       z.object({
@@ -45,19 +49,19 @@ const ParsedQuestionSchema = z.object({
         text: z.string(),
       })
     )
-    .max(4),
+    .describe("Up to 4 multiple-choice options; empty array for SPR"),
   correct_answer: z.string().nullable(),
   explanation: z.string().nullable(),
   difficulty: z.enum(["Easy", "Medium", "Hard"]),
-  domain: z.string().min(1),
-  skill: z.string().min(1),
-  concept: z.string().min(1),
+  domain: z.string().describe("Domain (non-empty)"),
+  skill: z.string().describe("Skill (non-empty)"),
+  concept: z.string().describe("Concept (non-empty)"),
   question_type: z.enum(["Multiple Choice", "Student Produced Response"]),
   has_image: z.boolean(),
   has_table: z.boolean(),
   has_formula: z.boolean(),
-  page_number: z.number().int().positive(),
-  ai_confidence_score: z.number().min(0).max(1),
+  page_number: z.number().int().describe("Positive integer page number"),
+  ai_confidence_score: z.number().describe("Confidence between 0 and 1"),
 });
 
 const ParsedQuestionsSchema = z.object({
@@ -280,7 +284,6 @@ Extract every question you can find. Return a JSON object with a "questions" arr
     });
   } catch (err) {
     console.error("[parse-pdf] generateObject error:", err);
-    // Log failed attempt to usage log (best-effort)
     await logUsage({
       userId: callerUserId,
       route: "parse-pdf",
@@ -290,7 +293,7 @@ Extract every question you can find. Return a JSON object with a "questions" arr
       costCents: 0,
       metadata: { error: String(err), pdfUrl },
     });
-    return [];
+    throw new Error(`Extractor error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   // Log usage
