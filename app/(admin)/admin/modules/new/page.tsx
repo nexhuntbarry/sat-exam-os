@@ -33,8 +33,9 @@ export default function NewModulePage() {
     setError(null);
     setUploadPct(0);
 
+    let stage = "init";
     try {
-      // 1. Client-direct upload to Vercel Blob (bypasses 4.5 MB function body limit).
+      stage = "upload-start";
       const pathname = `modules/${Date.now()}-${file.name}`;
       const blob = await upload(pathname, file, {
         access: "public",
@@ -43,9 +44,10 @@ export default function NewModulePage() {
           setUploadPct(Math.round(percentage));
         },
       });
+      stage = "upload-done";
       const pdfUrl = blob.url;
 
-      // 2. Create module record
+      stage = "modules-post";
       const res = await fetch("/api/admin/modules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,23 +63,26 @@ export default function NewModulePage() {
           triggerParse,
         }),
       });
-      const data = await res.json();
+      stage = `modules-post-status-${res.status}`;
+      const text = await res.text();
       if (!res.ok) {
-        setError(data.error ?? "Failed to create module.");
+        setError(`[stage=${stage}] HTTP ${res.status}: ${text.slice(0, 300)}`);
         return;
       }
+      const data = JSON.parse(text);
 
-      // 3. Kick off AI parse (fire-and-forget; the detail page polls status).
+      stage = "parse-trigger";
       if (triggerParse) {
         fetch(`/api/admin/modules/${data.id}/parse`, { method: "POST" }).catch(
           (err) => console.error("[new-module] parse trigger failed:", err),
         );
       }
 
+      stage = "redirect";
       router.push(`/admin/modules/${data.id}`);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unexpected error. Please try again.";
-      setError(msg);
+      const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      setError(`[stage=${stage}] ${msg}`);
     } finally {
       setLoading(false);
       setUploadPct(null);
