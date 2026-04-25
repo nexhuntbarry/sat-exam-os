@@ -5,7 +5,11 @@ import {
   parsePdfToQuestions,
   simpleEmbedding,
   cosineSimilarity,
+  classifyPdfIsSat,
+  fetchPdfAsBase64,
 } from "@/lib/ai/parse-pdf";
+
+const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
 export const maxDuration = 300; // 5 minutes — Vercel Node.js runtime
 
@@ -47,7 +51,49 @@ export async function POST(
     })
     .eq("id", id);
 
-  // Run parse (long-running)
+  // Step A — Pre-parse classifier: is this PDF actually a SAT test?
+  // Cheap Haiku call up front so we can fail fast on garbage uploads.
+  let pdfBase64: string;
+  try {
+    pdfBase64 = await fetchPdfAsBase64(mod.pdf_url);
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error("[modules/parse] PDF fetch failed:", err);
+    await db
+      .from("modules")
+      .update({
+        parsing_status: "failed",
+        parsing_error: errorMsg,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    return NextResponse.json({ error: "PDF fetch failed", detail: errorMsg }, { status: 500 });
+  }
+
+  const classification = await classifyPdfIsSat(pdfBase64, authResult.userId);
+  if (!classification.is_sat || classification.confidence < SAT_CONFIDENCE_THRESHOLD) {
+    const reason = `${classification.reason} (confidence ${classification.confidence.toFixed(2)})`;
+    await db
+      .from("modules")
+      .update({
+        parsing_status: "rejected_not_sat",
+        parsing_error: reason,
+        parsing_completed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+    return NextResponse.json(
+      {
+        rejected: true,
+        is_sat: classification.is_sat,
+        confidence: classification.confidence,
+        reason: classification.reason,
+      },
+      { status: 200 },
+    );
+  }
+
+  // Step B — Extract questions (existing logic)
   let parsedQuestions;
   try {
     parsedQuestions = await parsePdfToQuestions(

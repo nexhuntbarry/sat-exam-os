@@ -44,16 +44,22 @@ export default function ModuleParseButton({ moduleId, initialStatus }: ModulePar
   async function handleParse() {
     setLoading(true);
     setError(null);
+    setStatus("parsing");
     try {
       const res = await fetch(`/api/admin/modules/${moduleId}/parse`, { method: "POST" });
-      const json = await res.json();
+      const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(json.error ?? "Failed to start parsing");
+        // Refresh so server-rendered status reflects the failure.
+        router.refresh();
         return;
       }
-      setStatus("parsing");
+      // Endpoint runs synchronously and returns either rejected, or success.
+      // Either way refresh the page to re-fetch the authoritative status.
+      router.refresh();
     } catch {
       setError("Network error. Please try again.");
+      router.refresh();
     } finally {
       setLoading(false);
     }
@@ -68,6 +74,13 @@ export default function ModuleParseButton({ moduleId, initialStatus }: ModulePar
     );
   }
 
+  const isRetry = status === "failed";
+  const label = loading
+    ? "Starting..."
+    : isRetry
+      ? "Retry Parse"
+      : "解析並加入題庫";
+
   return (
     <div className="flex flex-col gap-1.5">
       <button
@@ -75,8 +88,8 @@ export default function ModuleParseButton({ moduleId, initialStatus }: ModulePar
         disabled={loading}
         className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm shrink-0 disabled:opacity-60 transition-colors"
       >
-        {loading ? <Loader2 size={15} className="animate-spin" /> : status === "failed" ? <RefreshCw size={15} /> : <Cpu size={15} />}
-        {loading ? "Starting..." : status === "failed" ? "Retry Parse" : "Parse with AI"}
+        {loading ? <Loader2 size={15} className="animate-spin" /> : isRetry ? <RefreshCw size={15} /> : <Cpu size={15} />}
+        {label}
       </button>
       {error && (
         <div className="flex items-center gap-1.5 text-status-error text-xs">

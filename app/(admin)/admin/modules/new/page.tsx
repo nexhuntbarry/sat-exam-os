@@ -24,7 +24,7 @@ export default function NewModulePage() {
     setForm((p) => ({ ...p, [k]: v }));
   }
 
-  async function handleSubmit(triggerParse: boolean) {
+  async function handleSubmit() {
     if (!form.moduleName || !file) {
       setError("Module name and PDF file are required.");
       return;
@@ -76,7 +76,6 @@ export default function NewModulePage() {
           version: form.version || undefined,
           pdfUrl,
           pdfSizeBytes: file.size,
-          triggerParse,
         }),
       });
       stage = `modules-post-status-${res.status}`;
@@ -87,13 +86,8 @@ export default function NewModulePage() {
       }
       const data = JSON.parse(text);
 
-      stage = "parse-trigger";
-      if (triggerParse) {
-        fetch(`/api/admin/modules/${data.id}/parse`, { method: "POST" }).catch(
-          (err) => console.error("[new-module] parse trigger failed:", err),
-        );
-      }
-
+      // Two-step UX: redirect to the detail page where the admin clicks
+      // "Parse & Add to Question Bank" to trigger AI extraction.
       stage = "redirect";
       router.push(`/admin/modules/${data.id}`);
     } catch (err) {
@@ -225,29 +219,21 @@ export default function NewModulePage() {
           </p>
         )}
 
-        <div className="flex gap-3 pt-1">
+        <div className="pt-1">
           <button
-            onClick={() => handleSubmit(false)}
+            onClick={handleSubmit}
             disabled={loading}
-            className="flex-1 py-3 rounded-xl border border-divider text-charcoal hover:bg-light-bg font-medium text-sm disabled:opacity-60 transition-colors"
+            className="w-full py-3 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-60 transition-colors"
           >
             {loading
               ? uploadPct !== null && uploadPct < 100
                 ? `Uploading ${uploadPct}%`
                 : "Saving..."
-              : "Save"}
+              : "Upload Module"}
           </button>
-          <button
-            onClick={() => handleSubmit(true)}
-            disabled={loading}
-            className="flex-1 py-3 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-60 transition-colors"
-          >
-            {loading
-              ? uploadPct !== null && uploadPct < 100
-                ? `Uploading ${uploadPct}%`
-                : "Saving..."
-              : "Save & Parse with AI"}
-          </button>
+          <p className="text-soft-mute text-xs text-center mt-2">
+            After upload, you&apos;ll be able to trigger AI parsing from the module page.
+          </p>
         </div>
       </div>
     </div>

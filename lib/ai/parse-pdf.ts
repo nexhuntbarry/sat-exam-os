@@ -105,6 +105,115 @@ CONCEPT: Even finer-grained concept (e.g., "Solving for x", "Author's purpose", 
 OUTPUT: Return valid JSON only. No markdown, no explanation text, no code fences. Just the raw JSON object.`;
 
 // ────────────────────────────────────────────
+// Pre-parse classifier — is this PDF actually a SAT test?
+// ────────────────────────────────────────────
+
+const SAT_CLASSIFIER_SCHEMA = z.object({
+  is_sat: z.boolean(),
+  confidence: z.number().min(0).max(1),
+  reason: z.string().min(1),
+});
+
+export interface SatClassification {
+  is_sat: boolean;
+  confidence: number;
+  reason: string;
+}
+
+const CLASSIFIER_SYSTEM_PROMPT = `You are a strict SAT-content classifier. Decide whether the supplied PDF is a SAT (Scholastic Aptitude Test) practice test or test module — including SAT Math or SAT Reading & Writing modules from College Board, Khan Academy, Bluebook, Princeton Review, Kaplan, Barron's, Manhattan Prep, or any reputable SAT prep publisher. Adaptive-section modules (Module 1 / Module 2) also count.
+
+Return STRICT JSON only matching the schema. Do not add prose.
+
+Set confidence high (>=0.85) only when the PDF visibly contains numbered SAT-style questions with A/B/C/D choices or student-produced response answers, and the content matches SAT Math / Reading & Writing topics. If it's another standardized test (ACT, GRE, AP, IELTS, TOEFL, etc.), classroom worksheet, novel chapter, slide deck, invoice, or any non-SAT material, set is_sat=false. When unsure, prefer is_sat=false with a moderate confidence and a short reason.`;
+
+export async function classifyPdfIsSat(
+  pdfBase64: string,
+  callerUserId?: string,
+): Promise<SatClassification> {
+  let result;
+  try {
+    result = await generateObject({
+      model: anthropic("claude-haiku-4-5"),
+      schema: SAT_CLASSIFIER_SCHEMA,
+      system: CLASSIFIER_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              data: pdfBase64,
+              mediaType: "application/pdf",
+            },
+            {
+              type: "text",
+              text: `Is this PDF a SAT practice test or test module? Respond with strict JSON: {is_sat: boolean, confidence: 0..1, reason: string}.`,
+            },
+          ],
+        },
+      ],
+      maxRetries: 1,
+    });
+  } catch (err) {
+    console.error("[parse-pdf] classifier error:", err);
+    await logUsage({
+      userId: callerUserId,
+      route: "classify-pdf",
+      tokensInput: 0,
+      tokensOutput: 0,
+      model: "claude-haiku-4-5",
+      costCents: 0,
+      metadata: { error: String(err) },
+    });
+    // Fail-open with low confidence so caller treats it as non-SAT.
+    return {
+      is_sat: false,
+      confidence: 0,
+      reason: `Classifier error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  const usage = result.usage;
+  if (usage) {
+    const inputTokens = usage.inputTokens ?? 0;
+    const outputTokens = usage.outputTokens ?? 0;
+    // Claude Haiku 4.5: $1/M input, $5/M output
+    const costCents = Math.round(
+      (inputTokens / 1_000_000) * 100 + (outputTokens / 1_000_000) * 500,
+    );
+    await logUsage({
+      userId: callerUserId,
+      route: "classify-pdf",
+      tokensInput: inputTokens,
+      tokensOutput: outputTokens,
+      model: "claude-haiku-4-5",
+      costCents,
+      metadata: result.object,
+    });
+  }
+
+  return result.object;
+}
+
+// ────────────────────────────────────────────
+// PDF fetch helper (shared by classifier + extractor)
+// ────────────────────────────────────────────
+
+export async function fetchPdfAsBase64(pdfUrl: string): Promise<string> {
+  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
+  const headers: Record<string, string> = {};
+  if (blobToken && pdfUrl.includes(".blob.vercel-storage.com")) {
+    headers.Authorization = `Bearer ${blobToken}`;
+  }
+  const response = await fetch(pdfUrl, { headers });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+  }
+  const buffer = await response.arrayBuffer();
+  return Buffer.from(buffer).toString("base64");
+}
+
+// ────────────────────────────────────────────
 // Main function
 // ────────────────────────────────────────────
 

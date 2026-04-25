@@ -41,7 +41,6 @@ export async function POST(req: Request) {
     version?: string;
     pdfUrl: string;
     pdfSizeBytes?: number;
-    triggerParse?: boolean;
   };
 
   try {
@@ -71,7 +70,8 @@ export async function POST(req: Request) {
       version: body.version ?? null,
       pdf_url: body.pdfUrl,
       pdf_size_bytes: body.pdfSizeBytes ?? null,
-      parsing_status: body.triggerParse ? "parsing" : "pending",
+      // Two-step UX: PDF is uploaded; user must trigger parse from the detail page.
+      parsing_status: "uploaded",
       uploaded_by: admin.userId,
     })
     .select("id")
@@ -84,7 +84,7 @@ export async function POST(req: Request) {
   console.log("[modules POST] inserted id=", data.id);
 
   return NextResponse.json(
-    { ok: true, id: data.id, parseQueued: body.triggerParse ?? false },
+    { ok: true, id: data.id, parseQueued: false },
     { status: 201 }
   );
 }
