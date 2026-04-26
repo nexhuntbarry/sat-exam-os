@@ -17,6 +17,8 @@ interface Teacher {
   display_name: string | null;
   account_status: string;
   created_at: string;
+  clerk_user_id: string | null;
+  last_sign_in_at: number | null;
   teacher_profiles: TeacherProfile | TeacherProfile[] | null;
 }
 
@@ -233,6 +235,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                 <th className="text-left px-5 py-3 font-medium">Specialty</th>
                 <th className="text-left px-5 py-3 font-medium">Status</th>
                 <th className="text-left px-5 py-3 font-medium">Invited</th>
+                <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
                 <th className="text-left px-5 py-3 font-medium">Actions</th>
               </tr>
             </thead>
@@ -272,6 +275,13 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
                       {new Date(teacher.created_at).toLocaleDateString()}
+                    </td>
+                    <td className="px-5 py-3 text-soft-mute text-xs">
+                      {teacher.last_sign_in_at
+                        ? new Date(teacher.last_sign_in_at).toLocaleString()
+                        : teacher.clerk_user_id
+                          ? "—"
+                          : <span className="text-status-warning">never (pending)</span>}
                     </td>
                     <td className="px-5 py-3">
                       {teacher.account_status !== "suspended" && (
