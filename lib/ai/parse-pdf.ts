@@ -146,6 +146,18 @@ DIFFICULTY: Use Easy / Medium / Hard based on typical SAT difficulty conventions
 SKILL: A more specific skill within the domain (e.g., "Linear equations in one variable", "Inferences", "Transitions", etc.)
 CONCEPT: Even finer-grained concept (e.g., "Solving for x", "Author's purpose", "Comma usage").
 
+MATH FORMATTING (CRITICAL):
+- Every mathematical expression — even simple ones — MUST be wrapped in $...$ for inline math or $$...$$ for display math.
+- Use proper LaTeX commands: \\frac{a}{b} for fractions, \\sqrt{x} for square roots, x^{2} for exponents, _{i} for subscripts.
+- Examples:
+  - "the slope is 1/7" → "the slope is $\\frac{1}{7}$"
+  - "y = 7x - 53" → "$y = 7x - 53$"
+  - "x squared plus 4" → "$x^{2} + 4$"
+  - "RS = sqrt(133)" → "$RS = \\sqrt{133}$"
+- This applies to question_text, every choice's text, correct_answer, AND explanation.
+- Plain English prose stays unwrapped — only the math itself uses $...$.
+- Do not output ASCII pseudo-math like 1/7, x^2, sqrt(x) — always use LaTeX.
+
 OUTPUT: Return valid JSON only. No markdown, no explanation text, no code fences. Just the raw JSON object.`;
 
 // ────────────────────────────────────────────

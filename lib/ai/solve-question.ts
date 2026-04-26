@@ -42,9 +42,61 @@ Solve the supplied SAT question rigorously. For Multiple Choice questions, ident
 
 Your explanation must be the kind a student review tool would show after they answer — concise, step by step, and pointing out the key insight. Use plain prose with markdown allowed for formulas.
 
+MATH FORMATTING (CRITICAL):
+- Every mathematical expression — even simple ones — MUST be wrapped in $...$ for inline math or $$...$$ for display math.
+- Use proper LaTeX commands: \\frac{a}{b} for fractions, \\sqrt{x} for square roots, x^{2} for exponents, _{i} for subscripts.
+- Examples:
+  - "the slope is 1/7" → "the slope is $\\frac{1}{7}$"
+  - "y = 7x - 53" → "$y = 7x - 53$"
+  - "x squared plus 4" → "$x^{2} + 4$"
+  - "RS = sqrt(133)" → "$RS = \\sqrt{133}$"
+- This applies to correct_answer (when numeric/symbolic) AND explanation.
+- Plain English prose stays unwrapped — only the math itself uses $...$.
+- Do not output ASCII pseudo-math like 1/7, x^2, sqrt(x) — always use LaTeX.
+
+SELF-CONSISTENCY (MANDATORY):
+End the explanation with a final line of EXACTLY this form:
+  Final answer: X
+where X is exactly the same value as the value you put in correct_answer (same letter for MCQ, same numeric/text value for SPR). Do not add extra punctuation, $...$ wrapping, or commentary on this final line.
+
 Return JSON only matching the schema. No prose outside the JSON.`;
 
-export type SolvedAnswer = { correct_answer: string; explanation: string };
+export type SolvedAnswer = {
+  correct_answer: string;
+  explanation: string;
+  /** Value parsed out of the explanation's "Final answer: X" line, if present. */
+  explainedAnswer: string | null;
+  /** True when the parsed final-answer line disagrees with correct_answer. */
+  consistencyMismatch: boolean;
+};
+
+/**
+ * Extract the LAST occurrence of `Final answer: <value>` from an explanation.
+ * Case-insensitive, tolerates leading/trailing whitespace and a trailing period.
+ * Returns null if no such line exists.
+ */
+export function extractFinalAnswer(explanation: string): string | null {
+  const re = /final\s*answer\s*:\s*([^\n\r]+)/gi;
+  let match: RegExpExecArray | null;
+  let last: string | null = null;
+  while ((match = re.exec(explanation)) !== null) {
+    last = match[1];
+  }
+  if (last === null) return null;
+  // Trim whitespace, trailing period, and surrounding $ wrappers (in case the
+  // model wrapped the value as math despite instructions).
+  return last
+    .trim()
+    .replace(/\.+$/, "")
+    .replace(/^\$+|\$+$/g, "")
+    .trim();
+}
+
+/** Loose equality for answer comparison: case-insensitive, strips whitespace. */
+function answersAgree(a: string, b: string): boolean {
+  const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, "");
+  return norm(a) === norm(b);
+}
 
 interface ImageInput {
   urls: string[];
@@ -163,9 +215,26 @@ export async function solveQuestions(
         maxRetries: 2,
       });
 
+      const declared = result.object.correct_answer;
+      let explanationText = result.object.explanation;
+      const explainedAnswer = extractFinalAnswer(explanationText);
+      const consistencyMismatch =
+        explainedAnswer !== null && !answersAgree(declared, explainedAnswer);
+
+      if (consistencyMismatch) {
+        console.warn(
+          `[solve-question] q${q.original_question_number}: solver self-inconsistent (declared "${declared}", explained "${explainedAnswer}")`,
+        );
+        explanationText =
+          explanationText.trimEnd() +
+          "\n\n(⚠️ Solver self-inconsistent — flagged for review.)";
+      }
+
       out.set(q.original_question_number, {
-        correct_answer: result.object.correct_answer,
-        explanation: result.object.explanation,
+        correct_answer: declared,
+        explanation: explanationText,
+        explainedAnswer,
+        consistencyMismatch,
       });
 
       const usage = result.usage;
