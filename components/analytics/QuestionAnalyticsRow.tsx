@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronRight, BookOpen, Flag } from "lucide-react";
+import MathMarkdown from "@/components/MathMarkdown";
 
 export interface QuestionAnalyticsData {
   questionId: string;
@@ -80,10 +81,9 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
 
         {/* Question text preview */}
         <div className="flex-1 min-w-0">
-          <p className="text-charcoal text-sm truncate">
-            {q.questionText.slice(0, 80)}
-            {q.questionText.length > 80 ? "…" : ""}
-          </p>
+          <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-0 [&_p]:truncate">
+            {q.questionText.length > 120 ? q.questionText.slice(0, 120) + "…" : q.questionText}
+          </MathMarkdown>
           <div className="flex items-center gap-2 mt-0.5">
             {q.domain && (
               <span className="text-soft-mute text-xs">{q.domain}</span>
@@ -161,9 +161,9 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
       {/* Expanded detail */}
       {expanded && (
         <div className="px-12 pb-5 space-y-3">
-          <div className="text-mid-gray text-sm leading-relaxed bg-surface rounded-lg p-4">
+          <MathMarkdown className="text-mid-gray text-sm leading-relaxed bg-surface rounded-lg p-4 prose prose-sm max-w-none [&_p]:my-2">
             {q.questionText}
-          </div>
+          </MathMarkdown>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div>
@@ -219,7 +219,9 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
           {q.explanation && (
             <div className="bg-warm-amber/5 border border-warm-amber/10 rounded-lg p-3 text-sm text-mid-gray">
               <div className="text-warm-amber font-semibold text-xs mb-1">Explanation</div>
-              {q.explanation}
+              <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1">
+                {q.explanation}
+              </MathMarkdown>
             </div>
           )}
         </div>

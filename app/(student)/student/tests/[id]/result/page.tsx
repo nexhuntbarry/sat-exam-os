@@ -217,7 +217,9 @@ export default async function StudentResultPage({
                     {q.explanation && (
                       <div className="p-3 bg-warm-coral/5 border border-warm-coral/15 rounded-lg">
                         <div className="text-warm-coral text-xs font-medium mb-1">Explanation</div>
-                        <p className="text-mid-gray text-sm">{q.explanation}</p>
+                        <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1.5 [&_p]:leading-relaxed">
+                          {q.explanation}
+                        </MathMarkdown>
                       </div>
                     )}
                   </div>

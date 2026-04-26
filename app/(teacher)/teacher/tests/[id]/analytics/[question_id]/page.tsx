@@ -6,6 +6,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { Check, BookOpen } from "lucide-react";
 import { ResponseDistributionChart } from "@/components/analytics/ResponseDistributionChart";
+import MathMarkdown from "@/components/MathMarkdown";
 
 interface QuestionDetail {
   id: string;
@@ -163,7 +164,9 @@ export default function QuestionDetailPage() {
             {classReview ? "Marked for class review" : "Mark for class review"}
           </button>
         </div>
-        <p className="text-charcoal leading-relaxed">{question.questionText}</p>
+        <MathMarkdown className="text-charcoal leading-relaxed prose prose-base max-w-none [&_p]:my-2">
+          {question.questionText}
+        </MathMarkdown>
       </div>
 
       {/* Choices */}
@@ -190,7 +193,12 @@ export default function QuestionDetailPage() {
                   {ch.letter}
                 </span>
                 <div className="flex-1">
-                  <p className={isCorrect ? "text-warm-amber" : "text-mid-gray"}>{ch.text}</p>
+                  <MathMarkdown className={clsx(
+                    "prose prose-sm max-w-none [&_p]:my-0",
+                    isCorrect ? "text-warm-amber" : "text-mid-gray"
+                  )}>
+                    {ch.text}
+                  </MathMarkdown>
                   <div className="mt-1.5 flex items-center gap-2">
                     <div className="flex-1 bg-light-bg rounded-full h-1.5 max-w-48 overflow-hidden">
                       <div
@@ -249,7 +257,9 @@ export default function QuestionDetailPage() {
       {question.explanation && (
         <div className="bg-warm-amber/5 border border-warm-amber/10 rounded-2xl p-5">
           <div className="text-warm-amber font-semibold text-sm mb-2">Explanation</div>
-          <p className="text-mid-gray text-sm leading-relaxed">{question.explanation}</p>
+          <MathMarkdown className="prose prose-sm max-w-none text-mid-gray leading-relaxed [&_p]:my-2">
+            {question.explanation}
+          </MathMarkdown>
         </div>
       )}
 

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronRight, Check, X, Flag, BookOpen } from "lucide-react";
+import MathMarkdown from "@/components/MathMarkdown";
 
 export interface AnswerDetail {
   questionId: string;
@@ -120,9 +121,9 @@ export function SubmissionDetailPanel({
             {expanded[a.questionId] && (
               <div className="px-12 pb-5 space-y-4">
                 {/* Full question */}
-                <div className="text-charcoal text-sm leading-relaxed bg-surface rounded-lg p-4">
+                <MathMarkdown className="text-charcoal text-sm leading-relaxed bg-surface rounded-lg p-4 prose prose-sm max-w-none [&_p]:my-2">
                   {a.questionText}
-                </div>
+                </MathMarkdown>
 
                 {/* Choices */}
                 {a.choices.length > 0 && (
@@ -149,12 +150,13 @@ export function SubmissionDetailPanel({
                           )}>
                             {ch.letter}
                           </span>
-                          <span className={clsx(
+                          <MathMarkdown className={clsx(
+                            "prose prose-sm max-w-none [&_p]:my-0",
                             isCorrect ? "text-warm-amber" :
                             isStudentAnswer ? "text-status-error" : "text-mid-gray"
                           )}>
                             {ch.text}
-                          </span>
+                          </MathMarkdown>
                           {isCorrect && (
                             <Check size={14} className="text-warm-amber ml-auto flex-shrink-0 mt-0.5" />
                           )}
@@ -187,7 +189,9 @@ export function SubmissionDetailPanel({
                 {a.explanation && (
                   <div className="bg-warm-amber/5 border border-warm-amber/10 rounded-lg p-3 text-sm text-mid-gray">
                     <div className="text-warm-amber font-semibold text-xs mb-1">Explanation</div>
-                    {a.explanation}
+                    <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1">
+                      {a.explanation}
+                    </MathMarkdown>
                   </div>
                 )}
 
