@@ -258,7 +258,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
                 Source figure · Page {q.page_number ?? 1}
               </label>
               <iframe
-                src={`/api/admin/modules/${q.module_id}/pdf#page=${q.page_number ?? 1}`}
+                src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
                 className="w-full h-[360px] rounded-xl border border-divider bg-white"
                 title={`Question figure (PDF page ${q.page_number ?? 1})`}
               />

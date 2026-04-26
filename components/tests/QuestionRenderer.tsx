@@ -69,7 +69,7 @@ export default function QuestionRenderer({
               Source figure · Page {question.page_number ?? 1}
             </p>
             <a
-              href={`/api/modules/${question.module_id}/pdf#page=${question.page_number ?? 1}`}
+              href={`/api/modules/${question.module_id}/page/${question.page_number ?? 1}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-xs text-warm-coral hover:underline"
@@ -78,7 +78,7 @@ export default function QuestionRenderer({
             </a>
           </div>
           <iframe
-            src={`/api/modules/${question.module_id}/pdf#page=${question.page_number ?? 1}`}
+            src={`/api/modules/${question.module_id}/page/${question.page_number ?? 1}`}
             className="w-full h-[480px] rounded-xl border border-divider bg-white"
             title={`Question figure (PDF page ${question.page_number ?? 1})`}
           />

@@ -1,20 +1,17 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth";
+import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 
 // GET /api/modules/[id]/pdf
-// Streams the module PDF from a private Vercel Blob store, adding the
-// Authorization header that the browser cannot. Open to any signed-in user
-// (admin / teacher / student / mentor) so test-takers can view question
-// figures inline via an iframe pointed at #page=N.
+// Streams the FULL module PDF. Restricted to admin / teacher only — students
+// must use /api/modules/[id]/page/[n] which extracts a single page so they
+// can't navigate past the figure to other questions in the module.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = await requireRole(["admin", "teacher"]);
+  if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
   const db = getServiceClient();
