@@ -261,7 +261,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     key={url}
-                    src={url}
+                    src={`/api/blob-image?u=${encodeURIComponent(url)}`}
                     alt={q.image_alts?.[i] ?? "Question image"}
                     className="max-w-full md:max-w-md rounded-xl border border-divider bg-white"
                   />

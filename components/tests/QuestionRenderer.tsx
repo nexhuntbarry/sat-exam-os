@@ -86,7 +86,7 @@ export default function QuestionRenderer({
             // eslint-disable-next-line @next/next/no-img-element
             <img
               key={url}
-              src={url}
+              src={`/api/blob-image?u=${encodeURIComponent(url)}`}
               alt={question.image_alts?.[i] ?? "Question image"}
               className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
             />
