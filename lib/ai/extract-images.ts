@@ -157,9 +157,9 @@ export async function extractAndUploadQuestionImages(
   // the private PDF store if the dedicated public token isn't configured —
   // the upload itself still uses access:"public" so the resulting URL is
   // freely readable, but operators are encouraged to provision a separate
-  // store via BLOB_READ_WRITE_TOKEN_PUBLIC for cleaner billing/lifecycle.
+  // store via PUBLIC_BLOB_READ_WRITE_TOKEN for cleaner billing/lifecycle.
   const publicToken =
-    process.env.BLOB_READ_WRITE_TOKEN_PUBLIC ??
+    process.env.PUBLIC_BLOB_READ_WRITE_TOKEN ??
     process.env.BLOB_READ_WRITE_TOKEN;
   if (!publicToken) {
     errors.push("No Vercel Blob token configured for image uploads");
