@@ -379,11 +379,14 @@ Return all questions in order via the schema. Confirm you have not missed any be
           ],
         },
       ],
-      maxRetries: isReadingWriting ? 1 : 2,
-      // R&W passages are token-heavy on input; cap output to keep us well
-      // inside the 5-minute Vercel function budget. Math keeps the SDK
-      // default since it can need long step-by-step explanations.
-      ...(isReadingWriting ? { maxOutputTokens: 8000 } : {}),
+      maxRetries: 2,
+      // R&W modules contain ~22-27 questions, each with a long passage and
+      // 4 choices. 8K output tokens truncates the JSON mid-stream and the
+      // SDK fails with "No object generated: could not parse the response."
+      // Sonnet 4.6 supports up to 64K output; 32K is plenty of headroom for
+      // even the longest module while still fitting inside the 5-minute
+      // Vercel function budget.
+      ...(isReadingWriting ? { maxOutputTokens: 32000 } : {}),
     });
   } catch (err) {
     console.error("[parse-pdf] generateObject error:", err);
