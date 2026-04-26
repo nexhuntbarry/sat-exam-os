@@ -43,49 +43,88 @@ export async function POST(req: Request) {
 
   const db = getServiceClient();
 
-  // Find or create the Supabase user row.
+  // Resolve the Supabase user row. Three scenarios:
+  //   (a) clerk_user_id already linked → use it
+  //   (b) row exists by email (admin pre-created or webhook fired with
+  //       email but Clerk id wasn't linked yet) → link it
+  //   (c) no row at all → create one
   let userRowId: string;
-  const { data: existing } = await db
+  const cu = await currentUser();
+  const email =
+    cu?.primaryEmailAddress?.emailAddress ??
+    cu?.emailAddresses?.[0]?.emailAddress ??
+    "";
+  if (!email) {
+    return NextResponse.json({ error: "No email on Clerk user" }, { status: 400 });
+  }
+
+  const { data: byClerk } = await db
     .from("users")
     .select("id, role")
     .eq("clerk_user_id", clerkId)
     .maybeSingle();
 
-  if (existing?.id) {
-    userRowId = existing.id;
-    if (existing.role && existing.role !== "student") {
+  if (byClerk?.id) {
+    if (byClerk.role && byClerk.role !== "student") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    userRowId = byClerk.id;
     await db
       .from("users")
       .update({ display_name: fullName, role: "student", updated_at: new Date().toISOString() })
       .eq("id", userRowId);
   } else {
-    const cu = await currentUser();
-    const email =
-      cu?.primaryEmailAddress?.emailAddress ??
-      cu?.emailAddresses?.[0]?.emailAddress ??
-      "";
-    if (!email) {
-      return NextResponse.json({ error: "No email on Clerk user" }, { status: 400 });
-    }
-    const { data: created, error: insErr } = await db
+    const { data: byEmail } = await db
       .from("users")
-      .insert({
-        clerk_user_id: clerkId,
-        email,
-        display_name: fullName,
-        role: "student",
-        account_status: "pending",
-        avatar_url: cu?.imageUrl ?? null,
-      })
-      .select("id")
-      .single();
-    if (insErr || !created) {
-      console.error("[complete-registration] user insert error:", insErr);
-      return NextResponse.json({ error: "Failed to create user record" }, { status: 500 });
+      .select("id, role, clerk_user_id")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (byEmail?.id) {
+      if (byEmail.role && byEmail.role !== "student") {
+        return NextResponse.json(
+          { error: "An account with this email already exists in another role." },
+          { status: 409 },
+        );
+      }
+      if (byEmail.clerk_user_id && byEmail.clerk_user_id !== clerkId) {
+        return NextResponse.json(
+          { error: "This email is already linked to a different sign-in." },
+          { status: 409 },
+        );
+      }
+      userRowId = byEmail.id;
+      await db
+        .from("users")
+        .update({
+          clerk_user_id: clerkId,
+          display_name: fullName,
+          role: "student",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", userRowId);
+    } else {
+      const { data: created, error: insErr } = await db
+        .from("users")
+        .insert({
+          clerk_user_id: clerkId,
+          email,
+          display_name: fullName,
+          role: "student",
+          account_status: "pending",
+          avatar_url: cu?.imageUrl ?? null,
+        })
+        .select("id")
+        .single();
+      if (insErr || !created) {
+        console.error("[complete-registration] user insert error:", insErr);
+        return NextResponse.json(
+          { error: `Failed to create user record: ${insErr?.message ?? "unknown"} (${insErr?.code ?? "?"})` },
+          { status: 500 },
+        );
+      }
+      userRowId = created.id;
     }
-    userRowId = created.id;
   }
 
   const { error } = await db.from("student_profiles").upsert(
