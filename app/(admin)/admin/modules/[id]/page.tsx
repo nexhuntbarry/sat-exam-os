@@ -146,7 +146,7 @@ export default async function ModuleDetailPage({
           <p className="text-charcoal text-sm truncate max-w-xs">{mod.pdf_url}</p>
         </div>
         <a
-          href={mod.pdf_url}
+          href={`/api/admin/modules/${id}/pdf`}
           target="_blank"
           rel="noreferrer"
           className="flex items-center gap-2 px-4 py-2 rounded-xl bg-light-bg hover:bg-light-bg text-charcoal text-sm transition-colors shrink-0 ml-3"
