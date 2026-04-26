@@ -32,29 +32,33 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [emailWarning, setEmailWarning] = useState<string | null>(null);
+  const [resentExisting, setResentExisting] = useState(false);
+  const [duplicate, setDuplicate] = useState<{ display_name: string | null; account_status: string } | null>(null);
 
-  async function handleInvite() {
+  async function doInvite(resend = false) {
     if (!email) return;
     setLoading(true);
     setError(null);
     setEmailWarning(null);
+    setDuplicate(null);
     try {
       const res = await fetch("/api/admin/teachers/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, displayName: displayName || undefined }),
+        body: JSON.stringify({ email, displayName: displayName || undefined, resend }),
       });
       const data = await res.json();
+      if (res.status === 409 && data.error === "exists") {
+        setDuplicate(data.existingUser ?? { display_name: null, account_status: "unknown" });
+        return;
+      }
       if (!res.ok) {
         setError(data.error ?? "Failed to invite teacher");
         return;
       }
-      // DB row was created either way; only the email send may have failed.
-      if (data.emailWarning) {
-        setEmailWarning(String(data.emailWarning));
-      }
+      if (data.emailWarning) setEmailWarning(String(data.emailWarning));
+      setResentExisting(!!data.resent);
       setSuccess(true);
-      // Linger on the warning a beat longer so admins can read it.
       setTimeout(() => { onInvited(); }, data.emailWarning ? 4000 : 1500);
     } catch {
       setError("Network error");
@@ -62,6 +66,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
       setLoading(false);
     }
   }
+  const handleInvite = () => doInvite(false);
 
   const inputCls =
     "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
@@ -92,10 +97,39 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
             ) : (
               <>
                 <div className="text-4xl">✉️</div>
-                <p className="text-charcoal font-medium">Invitation sent!</p>
+                <p className="text-charcoal font-medium">
+                  {resentExisting ? "Invite resent!" : "Invitation sent!"}
+                </p>
                 <p className="text-soft-mute text-sm">An email has been sent to {email}</p>
               </>
             )}
+          </div>
+        ) : duplicate ? (
+          <div className="space-y-4">
+            <div className="bg-status-warning/10 border border-status-warning/20 rounded-xl px-4 py-3">
+              <p className="text-charcoal font-medium text-sm mb-1">User already exists</p>
+              <p className="text-mid-gray text-xs">
+                {email} is already in the system
+                {duplicate.display_name ? ` as ${duplicate.display_name}` : ""}
+                {` (status: ${duplicate.account_status})`}.
+              </p>
+            </div>
+            <p className="text-mid-gray text-sm">Send invite email again?</p>
+            <div className="flex gap-3">
+              <button
+                onClick={onClose}
+                className="flex-1 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => doInvite(true)}
+                disabled={loading}
+                className="flex-1 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-60 transition-colors"
+              >
+                {loading ? "Resending..." : "Resend invite"}
+              </button>
+            </div>
           </div>
         ) : (
           <>

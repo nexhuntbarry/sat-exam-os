@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   if (authResult instanceof NextResponse) return authResult;
   const admin = authResult;
 
-  let body: { email: string; displayName?: string };
+  let body: { email: string; displayName?: string; resend?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -24,33 +24,51 @@ export async function POST(req: Request) {
 
   const db = getServiceClient();
 
-  // Create user row with role=teacher, account_status=pending
-  const { data: newUser, error: insertErr } = await db
+  // Pre-check for existing user by email — return 409 with a flag so the
+  // admin UI can prompt "user exists, resend invite?" instead of a hard fail.
+  const { data: existing } = await db
     .from("users")
-    .insert({
-      email: body.email,
-      display_name: body.displayName ?? body.email.split("@")[0],
-      role: "teacher",
-      account_status: "pending",
-      metadata: { invited: true },
-    })
-    .select("id")
-    .single();
+    .select("id, email, display_name, role, account_status")
+    .eq("email", body.email)
+    .maybeSingle();
 
-  if (insertErr) {
-    // If duplicate email, return graceful message
-    if (insertErr.code === "23505") {
-      return NextResponse.json({ error: "A user with that email already exists" }, { status: 409 });
-    }
-    console.error("[invite-teacher] DB error:", insertErr);
-    return NextResponse.json({ error: "Failed to create teacher record" }, { status: 500 });
+  if (existing && !body.resend) {
+    return NextResponse.json(
+      {
+        error: "exists",
+        existingUser: existing,
+        message: "A user with that email already exists. Confirm to resend the invite email.",
+      },
+      { status: 409 },
+    );
   }
 
-  // Create teacher_profiles row
-  await db.from("teacher_profiles").insert({
-    user_id: newUser.id,
-    invited_by: admin.userId,
-  });
+  let userId: string;
+  if (existing) {
+    // Resend path — user row stays as-is; we just re-send the email.
+    userId = existing.id;
+  } else {
+    const { data: newUser, error: insertErr } = await db
+      .from("users")
+      .insert({
+        email: body.email,
+        display_name: body.displayName ?? body.email.split("@")[0],
+        role: "teacher",
+        account_status: "pending",
+        metadata: { invited: true },
+      })
+      .select("id")
+      .single();
+    if (insertErr || !newUser) {
+      console.error("[invite-teacher] DB error:", insertErr);
+      return NextResponse.json({ error: "Failed to create teacher record" }, { status: 500 });
+    }
+    userId = newUser.id;
+    await db.from("teacher_profiles").insert({
+      user_id: userId,
+      invited_by: admin.userId,
+    });
+  }
 
   // Build invite URL — Clerk sign-in with email pre-filled (best effort)
   const inviteUrl = `${BASE_URL}/sign-in?email=${encodeURIComponent(body.email)}`;
@@ -70,7 +88,8 @@ export async function POST(req: Request) {
 
   return NextResponse.json({
     ok: true,
-    userId: newUser.id,
+    userId,
+    resent: !!existing,
     ...(emailWarning ? { emailWarning } : {}),
   });
 }
