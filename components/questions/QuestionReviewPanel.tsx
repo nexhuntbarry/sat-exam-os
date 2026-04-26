@@ -139,7 +139,8 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
     }));
   }
 
-  const pdfUrl = q.modules?.pdf_url;
+  // Use admin-only proxy route (handles private-blob auth) instead of raw URL
+  const pdfUrl = q.modules?.pdf_url ? `/api/admin/modules/${q.module_id}/pdf` : null;
   const pageNum = q.page_number ?? 1;
 
   return (
