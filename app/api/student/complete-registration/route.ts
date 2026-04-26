@@ -81,18 +81,16 @@ export async function POST(req: Request) {
       .maybeSingle();
 
     if (byEmail?.id) {
-      if (byEmail.role && byEmail.role !== "student") {
+      // Only the super-admin email is locked from being repurposed.
+      // Any other existing role (teacher/mentor/parent/etc) gets overwritten
+      // to student — convenient for self-testing.
+      if (byEmail.role === "admin") {
         return NextResponse.json(
-          { error: "An account with this email already exists in another role." },
+          { error: "This email is the system administrator and cannot become a student." },
           { status: 409 },
         );
       }
-      if (byEmail.clerk_user_id && byEmail.clerk_user_id !== clerkId) {
-        return NextResponse.json(
-          { error: "This email is already linked to a different sign-in." },
-          { status: 409 },
-        );
-      }
+      // Same email signing in via a different Clerk identity → relink.
       userRowId = byEmail.id;
       await db
         .from("users")
@@ -100,6 +98,7 @@ export async function POST(req: Request) {
           clerk_user_id: clerkId,
           display_name: fullName,
           role: "student",
+          account_status: "pending",
           updated_at: new Date().toISOString(),
         })
         .eq("id", userRowId);
