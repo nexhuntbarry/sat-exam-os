@@ -12,11 +12,20 @@ export async function POST(
   const { id } = await params;
   const db = getServiceClient();
 
-  const { error } = await db
+  // Hard delete teacher row + cascade teacher_profiles. Per user request:
+  // "remove 後就刪掉，不需要 suspended" — admin can re-invite if needed.
+  // Verify it's a teacher first to prevent accidental admin/student deletion.
+  const { data: target } = await db
     .from("users")
-    .update({ account_status: "suspended", updated_at: new Date().toISOString() })
+    .select("id, role")
     .eq("id", id)
-    .eq("role", "teacher");
+    .single();
+  if (!target || target.role !== "teacher") {
+    return NextResponse.json({ error: "Not a teacher" }, { status: 404 });
+  }
+
+  await db.from("teacher_profiles").delete().eq("user_id", id);
+  const { error } = await db.from("users").delete().eq("id", id).eq("role", "teacher");
 
   if (error) {
     console.error("[remove-teacher] DB error:", error);

@@ -24,6 +24,8 @@ interface Student {
   display_name: string | null;
   account_status: string;
   created_at: string;
+  clerk_user_id: string | null;
+  last_sign_in_at: number | null;
   student_profiles: StudentProfile | StudentProfile[] | null;
 }
 
@@ -312,6 +314,7 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                   <th className="text-left px-5 py-3 font-medium">School</th>
                   <th className="text-left px-5 py-3 font-medium">Parent</th>
                   <th className="text-left px-5 py-3 font-medium">Registered</th>
+                  <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
                   {tab === "pending" && (
                     <th className="text-left px-5 py-3 font-medium">Actions</th>
                   )}
@@ -344,6 +347,13 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
                         {new Date(student.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="px-5 py-3 text-soft-mute text-xs">
+                        {student.last_sign_in_at
+                          ? new Date(student.last_sign_in_at).toLocaleString()
+                          : student.clerk_user_id
+                            ? "—"
+                            : <span className="text-status-warning">never (pending)</span>}
                       </td>
                       {tab === "pending" && (
                         <td className="px-5 py-3">
