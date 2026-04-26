@@ -44,7 +44,7 @@ async function getTestInfo(testId: string, studentId: string) {
     .from("questions")
     .select("id", { count: "exact", head: true })
     .eq("module_id", test.module_id ?? "")
-    .eq("parsing_status", "Approved");
+    .neq("parsing_status", "Rejected");
 
   // Get submission
   const { data: submission } = await db

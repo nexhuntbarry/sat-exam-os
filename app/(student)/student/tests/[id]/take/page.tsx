@@ -30,7 +30,7 @@ async function getActiveSubmission(testId: string, studentId: string) {
     .from("questions")
     .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, image_alts")
     .eq("module_id", test.module_id)
-    .eq("parsing_status", "Approved")
+    .neq("parsing_status", "Rejected")
     .order("original_question_number", { ascending: true });
 
   if (test.question_ids && Array.isArray(test.question_ids) && test.question_ids.length > 0) {

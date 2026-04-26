@@ -38,7 +38,7 @@ export async function GET(
     .from("questions")
     .select("id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, section, domain, skill, difficulty, correct_answer")
     .eq("module_id", test.module_id)
-    .eq("parsing_status", "Approved")
+    .neq("parsing_status", "Rejected")
     .order("original_question_number", { ascending: true });
 
   // Filter to specific question_ids if test has them

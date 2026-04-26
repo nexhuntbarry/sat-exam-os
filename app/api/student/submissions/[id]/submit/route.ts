@@ -82,7 +82,7 @@ export async function POST(
     .from("questions")
     .select("id, correct_answer, question_type, original_question_number")
     .eq("module_id", test.module_id)
-    .eq("parsing_status", "Approved")
+    .neq("parsing_status", "Rejected")
     .order("original_question_number", { ascending: true });
 
   if (test.question_ids && Array.isArray(test.question_ids) && test.question_ids.length > 0) {
