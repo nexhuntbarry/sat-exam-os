@@ -55,9 +55,22 @@ export async function POST(req: Request) {
   // Build invite URL — Clerk sign-in with email pre-filled (best effort)
   const inviteUrl = `${BASE_URL}/sign-in?email=${encodeURIComponent(body.email)}`;
 
-  // Send invite email (non-blocking)
+  // Send invite email — DB row is already created, so any failure here
+  // becomes a non-fatal warning (admin can re-invite or share the link
+  // manually). We still want to surface it so the UI doesn't lie about
+  // success.
   const { subject, html } = teacherInviteEmail(inviteUrl, admin.displayName);
-  sendEmail({ to: body.email, subject, html }).catch(() => {});
+  let emailWarning: string | null = null;
+  try {
+    await sendEmail({ to: body.email, subject, html });
+  } catch (err) {
+    emailWarning = err instanceof Error ? err.message : String(err);
+    console.error("[invite-teacher] email failed:", err);
+  }
 
-  return NextResponse.json({ ok: true, userId: newUser.id });
+  return NextResponse.json({
+    ok: true,
+    userId: newUser.id,
+    ...(emailWarning ? { emailWarning } : {}),
+  });
 }

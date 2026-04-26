@@ -31,11 +31,13 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [emailWarning, setEmailWarning] = useState<string | null>(null);
 
   async function handleInvite() {
     if (!email) return;
     setLoading(true);
     setError(null);
+    setEmailWarning(null);
     try {
       const res = await fetch("/api/admin/teachers/invite", {
         method: "POST",
@@ -47,8 +49,13 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         setError(data.error ?? "Failed to invite teacher");
         return;
       }
+      // DB row was created either way; only the email send may have failed.
+      if (data.emailWarning) {
+        setEmailWarning(String(data.emailWarning));
+      }
       setSuccess(true);
-      setTimeout(() => { onInvited(); }, 1500);
+      // Linger on the warning a beat longer so admins can read it.
+      setTimeout(() => { onInvited(); }, data.emailWarning ? 4000 : 1500);
     } catch {
       setError("Network error");
     } finally {
@@ -71,9 +78,24 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
 
         {success ? (
           <div className="text-center py-6 space-y-3">
-            <div className="text-4xl">✉️</div>
-            <p className="text-charcoal font-medium">Invitation sent!</p>
-            <p className="text-soft-mute text-sm">An email has been sent to {email}</p>
+            {emailWarning ? (
+              <>
+                <div className="text-4xl">⚠️</div>
+                <p className="text-charcoal font-medium">User invited but email failed</p>
+                <p className="text-status-warning text-sm bg-status-warning/10 border border-status-warning/20 rounded-xl px-3 py-2 text-left">
+                  {emailWarning}
+                </p>
+                <p className="text-soft-mute text-xs">
+                  The teacher record was created. Share the sign-in link manually.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="text-4xl">✉️</div>
+                <p className="text-charcoal font-medium">Invitation sent!</p>
+                <p className="text-soft-mute text-sm">An email has been sent to {email}</p>
+              </>
+            )}
           </div>
         ) : (
           <>

@@ -30,6 +30,9 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
       html: opts.html,
     });
   } catch (err) {
+    // Re-throw so callers can decide how to surface the failure (toast,
+    // status response, retry queue, etc.). Library should not swallow.
     console.error("[email] Failed to send email:", err);
+    throw err;
   }
 }

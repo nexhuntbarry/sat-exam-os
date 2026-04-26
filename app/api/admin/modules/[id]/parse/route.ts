@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { after } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import {
@@ -9,14 +10,27 @@ import {
   fetchPdfAsBase64,
 } from "@/lib/ai/parse-pdf";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
-import { solveQuestions, type SolvedAnswer } from "@/lib/ai/solve-question";
+import { solveQuestionsAndPersist } from "@/lib/ai/solve-question";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
+
+// How long a `parsing` lock is considered "fresh". Past this, treat the
+// module as recoverable so admins can re-trigger after a crash/timeout.
+const PARSE_LOCK_FRESHNESS_MS = 600_000; // 10 minutes
 
 // Vercel Hobby plan caps Serverless Functions at 300s. Revert from 800.
 export const maxDuration = 300;
 
 // POST /api/admin/modules/[id]/parse
+//
+// Two-phase parse:
+//   Phase 1 (sync, returns to client): classifier → extraction → image
+//   extraction → INSERT all questions with null answers → mark module
+//   parsed. Client can navigate away as soon as we respond.
+//   Phase 2 (background via Next.js `after()`): chunked parallel solver
+//   that UPDATEs each question row as the answer comes back. Even if the
+//   serverless budget runs out partway, the questions are already in the
+//   bank — admins can re-trigger if needed.
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -30,7 +44,9 @@ export async function POST(
   // Fetch module
   const { data: mod, error: fetchError } = await db
     .from("modules")
-    .select("id, pdf_url, section, difficulty, module_number, parsing_status")
+    .select(
+      "id, pdf_url, section, difficulty, module_number, parsing_status, parsing_started_at",
+    )
     .eq("id", id)
     .single();
 
@@ -38,8 +54,23 @@ export async function POST(
     return NextResponse.json({ error: "Module not found" }, { status: 404 });
   }
 
+  // Stuck-state reconciler — only refuse re-entry if the existing `parsing`
+  // lock is fresh (< PARSE_LOCK_FRESHNESS_MS old). A stale lock means the
+  // previous run crashed or timed out; allow recovery.
   if (mod.parsing_status === "parsing") {
-    return NextResponse.json({ error: "Already parsing" }, { status: 409 });
+    const startedAt = mod.parsing_started_at
+      ? new Date(mod.parsing_started_at as string).getTime()
+      : 0;
+    const ageMs = Date.now() - startedAt;
+    if (startedAt > 0 && ageMs < PARSE_LOCK_FRESHNESS_MS) {
+      return NextResponse.json(
+        { error: "Already parsing", lockAgeMs: ageMs },
+        { status: 409 },
+      );
+    }
+    console.warn(
+      `[modules/parse] stale parsing lock for module ${id} (age ${Math.round(ageMs / 1000)}s); recovering`,
+    );
   }
 
   // Mark as parsing
@@ -184,31 +215,6 @@ export async function POST(
     }
   }
 
-  // Step D — Solve every question (answer key + explanation)
-  // SAT module PDFs are question-only; ask Claude to solve so the bank is
-  // self-contained. Failures are non-fatal: questions still save without
-  // an AI-generated answer.
-  let answerMap = new Map<number, SolvedAnswer>();
-  try {
-    const imagesForSolver = new Map<number, { urls: string[] }>();
-    for (const [num, info] of imageMap) {
-      imagesForSolver.set(num, { urls: info.urls });
-    }
-    answerMap = await solveQuestions(
-      parsedQuestions,
-      imagesForSolver,
-      authResult.userId,
-    );
-    console.log(
-      `[modules/parse] solver produced answers for ${answerMap.size}/${parsedQuestions.length} questions`,
-    );
-  } catch (err) {
-    console.error(
-      "[modules/parse] solver failed (non-fatal, questions saved without answers):",
-      err,
-    );
-  }
-
   // Fetch existing questions in same section for duplicate detection
   const { data: existingQuestions } = await db
     .from("questions")
@@ -218,7 +224,10 @@ export async function POST(
 
   const existing = existingQuestions ?? [];
 
-  // Insert questions
+  // Step D — INSERT every question NOW with correct_answer/explanation = null.
+  // The solver runs in the background after the response is sent (see `after`
+  // block below) and UPDATES each row as solutions arrive. This unblocks the
+  // UI in ~30s instead of waiting the full ~3 min for the solver to finish.
   let needsReviewCount = 0;
   let totalInserted = 0;
   const avgConfidence =
@@ -249,26 +258,11 @@ export async function POST(
       }
     }
 
-    // Apply AI-solver fallback for missing answer/explanation. If the solver
-    // supplied either field, annotate parsing_notes so reviewers know the
-    // value isn't from an authoritative answer key.
-    const solved = answerMap.get(q.original_question_number);
-    const correctAnswer = q.correct_answer ?? solved?.correct_answer ?? null;
-    const explanation = q.explanation ?? solved?.explanation ?? null;
-    const usedSolverForAnswer = !q.correct_answer && !!solved?.correct_answer;
-    const usedSolverForExplanation = !q.explanation && !!solved?.explanation;
-    if (usedSolverForAnswer || usedSolverForExplanation) {
+    // Pending answer note — replaced by the background solver once it lands.
+    const needsSolver = !q.correct_answer || !q.explanation;
+    if (needsSolver) {
       parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
-        "Answer & explanation generated by AI solver — please verify";
-    }
-
-    // If the solver self-contradicted (declared one answer but argued for
-    // another in the explanation), force Needs Review with a precise note so
-    // reviewers know exactly which value to trust.
-    if (solved?.consistencyMismatch) {
-      parsingStatus = "Needs Review";
-      parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
-        `Solver self-contradicts: declared ${solved.correct_answer}, explained ${solved.explainedAnswer ?? "<unparsed>"}`;
+        "Pending AI answer";
     }
 
     if (parsingStatus === "Needs Review") needsReviewCount++;
@@ -280,8 +274,10 @@ export async function POST(
       original_question_number: q.original_question_number,
       question_text: q.question_text,
       choices: q.choices,
-      correct_answer: correctAnswer,
-      explanation: explanation,
+      // Solver fills these in async via the `after` callback below. Keep
+      // any answer/explanation that already came from the parser pass.
+      correct_answer: q.correct_answer ?? null,
+      explanation: q.explanation ?? null,
       difficulty: q.difficulty,
       domain: q.domain,
       skill: q.skill,
@@ -307,7 +303,10 @@ export async function POST(
     }
   }
 
-  // Mark module as parsed
+  // Mark module as parsed — questions are visible immediately, even though
+  // their answers/explanations are still being filled in by the background
+  // solver. The questions list/detail UI should poll while parsing_notes
+  // contains "Pending AI answer".
   await db
     .from("modules")
     .update({
@@ -318,10 +317,45 @@ export async function POST(
     })
     .eq("id", id);
 
+  // Phase 2 — kick off the solver after the response is flushed.
+  // `after()` runs independently of the request; the user sees questions
+  // appear instantly and the solver fills in answers over the next ~30s.
+  // On Vercel Hobby this still has a 300s budget but it's separate from
+  // the request, so partial timeouts don't roll back the inserts above.
+  const imagesForSolver = new Map<number, { urls: string[] }>();
+  for (const [num, info] of imageMap) {
+    imagesForSolver.set(num, { urls: info.urls });
+  }
+  after(async () => {
+    // Re-derive the service client inside the callback — the outer `db`
+    // would still work, but a fresh one keeps the contract obvious.
+    const bgDb = getServiceClient();
+    try {
+      const t0 = Date.now();
+      const { solved, failed } = await solveQuestionsAndPersist(
+        parsedQuestions,
+        imagesForSolver,
+        id,
+        bgDb,
+        authResult.userId,
+      );
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      console.log(
+        `[modules/parse] background solver done in ${elapsed}s — solved=${solved} failed=${failed}`,
+      );
+    } catch (err) {
+      console.error(
+        "[modules/parse] background solver crashed (questions stay with null answers):",
+        err,
+      );
+    }
+  });
+
   return NextResponse.json({
     success: true,
     questionCount: totalInserted,
     needsReview: needsReviewCount,
     avgConfidence: Math.round(avgConfidence * 100) / 100,
+    solverPending: true,
   });
 }
