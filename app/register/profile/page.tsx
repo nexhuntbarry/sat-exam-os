@@ -30,11 +30,12 @@ export default async function RegisterProfilePage() {
   if (existingUser?.id) {
     const { data: profile } = await db
       .from("student_profiles")
-      .select("grade, school")
+      .select("grade")
       .eq("user_id", existingUser.id)
       .single();
 
-    if (profile?.grade && profile?.school) {
+    // First-login minimum is name + grade. School/parent are optional.
+    if (profile?.grade) {
       redirect("/dashboard");
     }
   }

@@ -30,29 +30,27 @@ export async function POST(req: Request) {
 
   const { fullName, grade, school, parentName, parentEmail, parentPhone, targetScore, currentLevel } = body;
 
-  if (!grade || !school || !parentName || !parentEmail || !parentPhone) {
+  // First-login minimum: name + grade. Other fields can be filled later
+  // by the student (profile page) or admin.
+  if (!fullName || !grade) {
     return NextResponse.json(
-      { error: "Missing required fields: grade, school, parentName, parentEmail, parentPhone" },
+      { error: "Missing required fields: fullName, grade" },
       { status: 400 }
     );
   }
 
   const db = getServiceClient();
 
-  // Update display_name if provided
-  if (fullName) {
-    await db.from("users").update({ display_name: fullName }).eq("id", user.userId);
-  }
+  await db.from("users").update({ display_name: fullName }).eq("id", user.userId);
 
-  // Upsert student profile
   const { error } = await db.from("student_profiles").upsert(
     {
       user_id: user.userId,
       grade,
-      school,
-      parent_name: parentName,
-      parent_email: parentEmail,
-      parent_phone: parentPhone,
+      school: school ?? null,
+      parent_name: parentName ?? null,
+      parent_email: parentEmail ?? null,
+      parent_phone: parentPhone ?? null,
       target_score: targetScore ?? null,
       current_level: currentLevel ?? null,
     },

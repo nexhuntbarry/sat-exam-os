@@ -3,13 +3,21 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+function splitName(displayName: string): { first: string; last: string } {
+  const parts = displayName.trim().split(/\s+/);
+  if (parts.length <= 1) return { first: parts[0] ?? "", last: "" };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
+}
+
 export default function ProfileForm({ displayName }: { displayName: string }) {
   const router = useRouter();
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const initialName = splitName(displayName);
   const [form, setForm] = useState({
-    fullName: displayName,
+    firstName: initialName.first,
+    lastName: initialName.last,
     grade: "",
     school: "",
     parentName: "",
@@ -33,6 +41,7 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...form,
+          fullName: `${form.firstName.trim()} ${form.lastName.trim()}`.trim(),
           targetScore: form.targetScore ? parseInt(form.targetScore, 10) : undefined,
         }),
       });
@@ -84,81 +93,95 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
         </p>
       </div>
 
-      <div>
-        <label className={labelCls}>Full Name *</label>
-        <input
-          className={inputCls}
-          value={form.fullName}
-          onChange={(e) => set("fullName", e.target.value)}
-          placeholder="Your full name"
-          required
-        />
-      </div>
-
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className={labelCls}>Grade *</label>
-          <select
-            className={inputCls}
-            value={form.grade}
-            onChange={(e) => set("grade", e.target.value)}
-            required
-          >
-            <option value="">Select grade</option>
-            {["9", "10", "11", "12"].map((g) => (
-              <option key={g} value={g}>
-                Grade {g}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelCls}>School *</label>
+          <label className={labelCls}>First Name *</label>
           <input
             className={inputCls}
-            value={form.school}
-            onChange={(e) => set("school", e.target.value)}
-            placeholder="School name"
+            value={form.firstName}
+            onChange={(e) => set("firstName", e.target.value)}
+            placeholder="First"
+            required
+          />
+        </div>
+        <div>
+          <label className={labelCls}>Last Name *</label>
+          <input
+            className={inputCls}
+            value={form.lastName}
+            onChange={(e) => set("lastName", e.target.value)}
+            placeholder="Last"
             required
           />
         </div>
       </div>
 
       <div>
-        <label className={labelCls}>Parent / Guardian Name *</label>
-        <input
+        <label className={labelCls}>Grade *</label>
+        <select
           className={inputCls}
-          value={form.parentName}
-          onChange={(e) => set("parentName", e.target.value)}
-          placeholder="Parent name"
+          value={form.grade}
+          onChange={(e) => set("grade", e.target.value)}
           required
-        />
+        >
+          <option value="">Select grade</option>
+          {["9", "10", "11", "12"].map((g) => (
+            <option key={g} value={g}>
+              Grade {g}
+            </option>
+          ))}
+        </select>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={labelCls}>Parent Email *</label>
-          <input
-            type="email"
-            className={inputCls}
-            value={form.parentEmail}
-            onChange={(e) => set("parentEmail", e.target.value)}
-            placeholder="parent@example.com"
-            required
-          />
+      <details className="border border-divider rounded-xl px-3 py-2">
+        <summary className="text-mid-gray text-sm cursor-pointer">
+          Optional details (school, parent contact, target score)
+        </summary>
+        <div className="mt-3 space-y-3">
+          <div>
+            <label className={labelCls}>School</label>
+            <input
+              className={inputCls}
+              value={form.school}
+              onChange={(e) => set("school", e.target.value)}
+              placeholder="School name"
+            />
+          </div>
+
+          <div>
+            <label className={labelCls}>Parent / Guardian Name</label>
+            <input
+              className={inputCls}
+              value={form.parentName}
+              onChange={(e) => set("parentName", e.target.value)}
+              placeholder="Parent name"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Parent Email</label>
+              <input
+                type="email"
+                className={inputCls}
+                value={form.parentEmail}
+                onChange={(e) => set("parentEmail", e.target.value)}
+                placeholder="parent@example.com"
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Parent Phone</label>
+              <input
+                type="tel"
+                className={inputCls}
+                value={form.parentPhone}
+                onChange={(e) => set("parentPhone", e.target.value)}
+                placeholder="+1 (555) 000-0000"
+              />
+            </div>
+          </div>
         </div>
-        <div>
-          <label className={labelCls}>Parent Phone *</label>
-          <input
-            type="tel"
-            className={inputCls}
-            value={form.parentPhone}
-            onChange={(e) => set("parentPhone", e.target.value)}
-            placeholder="+1 (555) 000-0000"
-            required
-          />
-        </div>
-      </div>
+      </details>
 
       <div className="grid grid-cols-2 gap-3">
         <div>
