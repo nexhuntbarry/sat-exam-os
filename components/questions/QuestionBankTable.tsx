@@ -7,6 +7,7 @@ import { clsx } from "clsx";
 import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Eye, Filter, X } from "lucide-react";
 import ConfidenceBadge from "./ConfidenceBadge";
 import BulkActions from "./BulkActions";
+import MathMarkdown from "@/components/MathMarkdown";
 
 // ────────────────────────────────────────────
 // Types
@@ -419,10 +420,13 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       <td className="px-4 py-3 max-w-xs">
                         <Link
                           href={`/admin/questions/${q.id}`}
-                          className="text-charcoal hover:text-warm-coral transition-colors line-clamp-2 text-sm"
+                          className="block text-charcoal hover:text-warm-coral transition-colors text-sm"
                         >
-                          {q.question_text.slice(0, 120)}
-                          {q.question_text.length > 120 ? "…" : ""}
+                          <MathMarkdown className="prose prose-sm max-w-none [&_p]:my-0 [&_p]:line-clamp-2">
+                            {q.question_text.length > 200
+                              ? q.question_text.slice(0, 200) + "…"
+                              : q.question_text}
+                          </MathMarkdown>
                         </Link>
                       </td>
                       <td className="px-4 py-3 text-mid-gray text-xs">{q.difficulty ?? "—"}</td>

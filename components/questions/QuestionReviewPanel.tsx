@@ -321,11 +321,17 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs text-soft-mute mb-1">Correct Answer</label>
+              {q.correct_answer && (
+                <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 mb-1 [&_p]:my-0">
+                  {q.correct_answer}
+                </MathMarkdown>
+              )}
               <input
                 type="text"
                 value={q.correct_answer ?? ""}
                 onChange={(e) => setQ((prev) => ({ ...prev, correct_answer: e.target.value || null }))}
-                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
+                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50"
+                placeholder="Edit raw"
               />
             </div>
             <div>
