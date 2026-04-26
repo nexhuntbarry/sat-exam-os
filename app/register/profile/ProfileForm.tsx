@@ -133,52 +133,52 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
         </select>
       </div>
 
+      <div>
+        <label className={labelCls}>School *</label>
+        <input
+          className={inputCls}
+          value={form.school}
+          onChange={(e) => set("school", e.target.value)}
+          placeholder="School name"
+          required
+        />
+      </div>
+
+      <div>
+        <label className={labelCls}>Parent / Guardian Name *</label>
+        <input
+          className={inputCls}
+          value={form.parentName}
+          onChange={(e) => set("parentName", e.target.value)}
+          placeholder="Parent name"
+          required
+        />
+      </div>
+
       <details className="border border-divider rounded-xl px-3 py-2">
         <summary className="text-mid-gray text-sm cursor-pointer">
-          Optional details (school, parent contact, target score)
+          Optional contact + target score
         </summary>
-        <div className="mt-3 space-y-3">
+        <div className="mt-3 grid grid-cols-2 gap-3">
           <div>
-            <label className={labelCls}>School</label>
+            <label className={labelCls}>Parent Email</label>
             <input
+              type="email"
               className={inputCls}
-              value={form.school}
-              onChange={(e) => set("school", e.target.value)}
-              placeholder="School name"
+              value={form.parentEmail}
+              onChange={(e) => set("parentEmail", e.target.value)}
+              placeholder="parent@example.com"
             />
           </div>
-
           <div>
-            <label className={labelCls}>Parent / Guardian Name</label>
+            <label className={labelCls}>Parent Phone</label>
             <input
+              type="tel"
               className={inputCls}
-              value={form.parentName}
-              onChange={(e) => set("parentName", e.target.value)}
-              placeholder="Parent name"
+              value={form.parentPhone}
+              onChange={(e) => set("parentPhone", e.target.value)}
+              placeholder="+1 (555) 000-0000"
             />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelCls}>Parent Email</label>
-              <input
-                type="email"
-                className={inputCls}
-                value={form.parentEmail}
-                onChange={(e) => set("parentEmail", e.target.value)}
-                placeholder="parent@example.com"
-              />
-            </div>
-            <div>
-              <label className={labelCls}>Parent Phone</label>
-              <input
-                type="tel"
-                className={inputCls}
-                value={form.parentPhone}
-                onChange={(e) => set("parentPhone", e.target.value)}
-                placeholder="+1 (555) 000-0000"
-              />
-            </div>
           </div>
         </div>
       </details>

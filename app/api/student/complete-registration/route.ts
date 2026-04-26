@@ -30,11 +30,11 @@ export async function POST(req: Request) {
 
   const { fullName, grade, school, parentName, parentEmail, parentPhone, targetScore, currentLevel } = body;
 
-  // First-login minimum: name + grade. Other fields can be filled later
-  // by the student (profile page) or admin.
-  if (!fullName || !grade) {
+  // First-login minimum: name + grade + school + parent name.
+  // Parent contact (email/phone) + target score remain optional.
+  if (!fullName || !grade || !school || !parentName) {
     return NextResponse.json(
-      { error: "Missing required fields: fullName, grade" },
+      { error: "Missing required fields: fullName, grade, school, parentName" },
       { status: 400 }
     );
   }
