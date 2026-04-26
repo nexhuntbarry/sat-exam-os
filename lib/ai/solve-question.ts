@@ -92,6 +92,43 @@ export function extractFinalAnswer(explanation: string): string | null {
     .trim();
 }
 
+/**
+ * Fallback when the solver ignored the "Final answer: X" trailer instruction.
+ * For MCQ questions we look for the last A/B/C/D letter that appears as a
+ * standalone choice reference (e.g. "answer is C", "(C)", "option D"). For SPR
+ * we look for the last numeric/fraction value in the explanation.
+ *
+ * This is a best-effort heuristic — never returns garbage like "the". Returns
+ * null when no plausible value is found, in which case consistencyMismatch
+ * stays false (we can't accuse the solver of disagreeing with itself if we
+ * can't even parse what it argued for).
+ */
+export function inferImpliedAnswer(
+  explanation: string,
+  isMultipleChoice: boolean,
+): string | null {
+  if (isMultipleChoice) {
+    // Look for letters in contexts that strongly imply "this is the answer":
+    //   "answer is C", "answer: B", "the correct option is A", "(D)", "choice C"
+    const re =
+      /(?:answer\s*(?:is|=|:)\s*|correct\s*(?:option|choice|answer)\s*(?:is\s*)?|option\s+|choice\s+|\(\s*)([ABCD])\b/gi;
+    let m: RegExpExecArray | null;
+    let last: string | null = null;
+    while ((m = re.exec(explanation)) !== null) {
+      last = m[1].toUpperCase();
+    }
+    return last;
+  }
+  // SPR: last numeric token (integer, decimal, or simple fraction a/b).
+  const re = /(-?\d+(?:\.\d+)?(?:\/\d+)?)/g;
+  let m: RegExpExecArray | null;
+  let last: string | null = null;
+  while ((m = re.exec(explanation)) !== null) {
+    last = m[1];
+  }
+  return last;
+}
+
 /** Loose equality for answer comparison: case-insensitive, strips whitespace. */
 function answersAgree(a: string, b: string): boolean {
   const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, "");
@@ -105,12 +142,24 @@ interface ImageInput {
 /**
  * Fetch an image URL and convert it to a base64 string suitable for
  * Anthropic's image content block. Returns null on failure.
+ *
+ * Vercel Blob URLs at *.blob.vercel-storage.com require a bearer token when
+ * the underlying store is provisioned as private — extract-images falls back
+ * to access:"private" when the public-access mode is rejected, so we mirror
+ * that here.
  */
 async function fetchImageAsBase64(
   url: string,
 ): Promise<{ base64: string; mediaType: string } | null> {
   try {
-    const res = await fetch(url);
+    const headers: Record<string, string> = {};
+    const token =
+      process.env.PUBLIC_BLOB_READ_WRITE_TOKEN ??
+      process.env.BLOB_READ_WRITE_TOKEN;
+    if (token && url.includes(".blob.vercel-storage.com")) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    const res = await fetch(url, { headers });
     if (!res.ok) {
       console.warn(`[solve-question] image fetch failed (${res.status}): ${url}`);
       return null;
@@ -217,18 +266,32 @@ export async function solveQuestions(
 
       const declared = result.object.correct_answer;
       let explanationText = result.object.explanation;
-      const explainedAnswer = extractFinalAnswer(explanationText);
+      // Primary: parse the "Final answer: X" trailer line we asked for.
+      // Fallback: if the model ignored that instruction, infer the implied
+      // answer from prose ("answer is C", "(D)", or last numeric for SPR).
+      // Without the fallback the regex always misses → consistencyMismatch
+      // is always false → no protection against the Q10-style self-contradiction
+      // we just shipped this fix for.
+      const isMcq = q.question_type === "Multiple Choice";
+      const trailerAnswer = extractFinalAnswer(explanationText);
+      const inferredAnswer = trailerAnswer ?? inferImpliedAnswer(explanationText, isMcq);
+      const explainedAnswer = inferredAnswer;
       const consistencyMismatch =
-        explainedAnswer !== null && !answersAgree(declared, explainedAnswer);
+        inferredAnswer !== null && !answersAgree(declared, inferredAnswer);
 
       if (consistencyMismatch) {
         console.warn(
-          `[solve-question] q${q.original_question_number}: solver self-inconsistent (declared "${declared}", explained "${explainedAnswer}")`,
+          `[solve-question] q${q.original_question_number}: solver self-inconsistent (declared "${declared}", explained "${inferredAnswer}", source=${trailerAnswer ? "trailer" : "inferred"})`,
         );
         explanationText =
           explanationText.trimEnd() +
           "\n\n(⚠️ Solver self-inconsistent — flagged for review.)";
       }
+
+      // Audit log: every solver call's outcome so we can spot patterns later.
+      console.log(
+        `[solve-question] q${q.original_question_number} section=${section} hadImages=${imageBlocks.length > 0} declared=${declared} explained=${inferredAnswer ?? "<none>"} mismatch=${consistencyMismatch} confidence=${result.object.confidence}`,
+      );
 
       out.set(q.original_question_number, {
         correct_answer: declared,

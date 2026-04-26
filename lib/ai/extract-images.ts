@@ -46,10 +46,26 @@ async function renderPdfPages(
   // top-level package picks the correct build automatically.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-  // Disable the worker — Node.js can run the parser inline.
-  // (Not setting workerSrc would log a noisy warning.)
+  // Point workerSrc at the real worker module so the fake-worker loader can
+  // dynamically import() it. Setting it to "" makes pdfjs try `import("")`
+  // which throws "Setting up fake worker failed" in Node ESM.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (pdfjs as any).GlobalWorkerOptions.workerSrc = "";
+  const pdfjsAny = pdfjs as any;
+  if (!pdfjsAny.GlobalWorkerOptions.workerSrc) {
+    try {
+      // Resolve the worker through Node's import.meta.resolve so we get a
+      // file:// URL that works under tsx, Next dev, and Vercel functions.
+      const workerUrl = await import.meta.resolve(
+        "pdfjs-dist/legacy/build/pdf.worker.mjs",
+      );
+      pdfjsAny.GlobalWorkerOptions.workerSrc = workerUrl;
+    } catch {
+      // Last-resort relative path; tolerated by Node when the package is in
+      // node_modules adjacent to the caller.
+      pdfjsAny.GlobalWorkerOptions.workerSrc =
+        "pdfjs-dist/legacy/build/pdf.worker.mjs";
+    }
+  }
 
   const data = Uint8Array.from(Buffer.from(pdfBase64, "base64"));
   const loadingTask = pdfjs.getDocument({
@@ -193,22 +209,39 @@ export async function extractAndUploadQuestionImages(
         region,
       );
       if (!cropped) continue;
-      try {
-        const blob = await put(
-          `images/${moduleId}/${q.original_question_number}-${i}.png`,
-          cropped,
-          {
-            access: "public",
+      // Try public first (preferred — students render <img> tags directly).
+      // If the configured Blob store is provisioned as private (which it is
+      // in this project today), the API rejects access:"public" — fall back
+      // to access:"private" so the upload still succeeds. The solver passes
+      // the bearer token when fetching, and a server-side proxy route can
+      // sign URLs for the student renderer.
+      const blobKey = `images/${moduleId}/${q.original_question_number}-${i}.png`;
+      let uploadedUrl: string | null = null;
+      let lastErr: unknown = null;
+      for (const access of ["public", "private"] as const) {
+        try {
+          const blob = await put(blobKey, cropped, {
+            access,
             addRandomSuffix: true,
             contentType: "image/png",
             token: publicToken,
-          },
-        );
-        urls.push(blob.url);
+          });
+          uploadedUrl = blob.url;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          // Only retry as private when the store-config error fires — every
+          // other error (network, auth, quota) should bail immediately.
+          if (!/private store|public access/i.test(msg)) break;
+        }
+      }
+      if (uploadedUrl) {
+        urls.push(uploadedUrl);
         alts.push(region.alt ?? "");
         totalUploaded++;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+      } else {
+        const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
         console.warn(
           `[extract-images] upload failed for q${q.original_question_number}#${i}: ${msg}`,
         );
@@ -218,6 +251,19 @@ export async function extractAndUploadQuestionImages(
     if (urls.length > 0) {
       byQuestion.set(q.original_question_number, { urls, alts });
     }
+  }
+
+  if (totalUploaded === 0) {
+    const expected = questions.filter(
+      (q) => (q.image_regions?.length ?? 0) > 0,
+    ).length;
+    console.warn(
+      `[extract-images] WARNING: 0 images uploaded for module ${moduleId} (${expected} questions had image_regions; ${errors.length} errors). First 3 errors: ${errors.slice(0, 3).join(" | ")}`,
+    );
+  } else {
+    console.log(
+      `[extract-images] uploaded ${totalUploaded} images across ${byQuestion.size} questions for module ${moduleId}`,
+    );
   }
 
   return { byQuestion, totalUploaded, errors };

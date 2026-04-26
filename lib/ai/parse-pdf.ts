@@ -119,14 +119,16 @@ EXTRACTION RULES:
 10. page_number should reflect which page of the PDF the question appears on (1-indexed).
 11. Do NOT skip any questions — extract every numbered question you can find.
 12. For questions you cannot read clearly, still include them with has_image=true (if applicable) and low confidence.
-13. For EVERY image, graph, diagram, chart, scatter plot, geometric figure, or table that belongs to a question, populate image_regions with a tight bounding box around it. Coordinates are fractions of the page dimensions, where (0, 0) is the top-left corner and (1, 1) is the bottom-right corner of the rendered page. The system will literally crop these rectangles out of the PDF and store them, so be precise:
+13. **REQUIRED — IMAGE_REGIONS BOUNDING BOXES**: For EVERY image, graph, diagram, chart, scatter plot, geometric figure, or table that belongs to a question, you MUST populate image_regions with a tight bounding box around it. THIS IS NOT OPTIONAL. The downstream system literally crops these rectangles out of the PDF — without bounding boxes, students see questions like "Refer to the figure" with no figure. Coordinates are fractions of the page dimensions, where (0, 0) is the top-left corner and (1, 1) is the bottom-right corner of the rendered page.
+    - **HARD RULE**: If has_image=true OR has_table=true, image_regions MUST contain at least one entry. An empty array when has_image=true is a BUG — do not emit it.
+    - **CONCRETE EXAMPLE** of a valid region for a graph occupying the upper-middle of page 3: { "page": 3, "x_pct": 0.12, "y_pct": 0.18, "w_pct": 0.55, "h_pct": 0.32, "alt": "Scatter plot of mass vs. time with line of best fit" }. Numbers are fractions in [0, 1], NOT pixels and NOT percentages out of 100.
     - Include the FULL visual element with a small 1–3% padding on every side so axis labels, captions, and units are not clipped.
     - Do NOT include the question stem text or answer choices in the bounding box.
     - If a single question has multiple visuals (e.g., two side-by-side graphs), emit one entry per visual.
-    - If has_image=true or has_table=true, image_regions MUST contain at least one entry.
-    - If a question has no visual element, image_regions must be an empty array [].
+    - If a question has no visual element AT ALL (pure text/algebra problem), image_regions must be an empty array [] AND has_image must be false AND has_table must be false.
     - The page field on each region is 1-indexed and may differ from page_number if the visual sits on a facing page.
     - alt should briefly describe the content (e.g., "Scatter plot of x vs. y with line of best fit", "Right triangle with sides 3, 4, 5", "Frequency table of test scores").
+    - If you genuinely cannot pinpoint the bounding box but you know the visual is somewhere on page N, you may emit a full-page region { "page": N, "x_pct": 0, "y_pct": 0, "w_pct": 1, "h_pct": 1, "alt": "<best guess>" } — the cropper will use the whole page. NEVER emit an empty image_regions when has_image=true.
 
 DOMAIN CLASSIFICATION — use EXACTLY one of these SAT standard domains:
 Reading & Writing section domains:
@@ -372,7 +374,41 @@ Return all questions in order via the schema. Confirm you have not missed any be
     });
   }
 
-  return result.object.questions as ParsedQuestion[];
+  const questions = result.object.questions as ParsedQuestion[];
+
+  // Post-extraction fallback: any question flagged has_image / has_table that
+  // came back with empty image_regions gets a full-page region stamped on so
+  // the next stage at least crops the entire page. The AI sometimes ignores
+  // rule 13 in the system prompt — without this the cropper produces 0 uploads
+  // and students see "Refer to the figure" with no figure.
+  let fallbackCount = 0;
+  for (const q of questions) {
+    const needsVisual = q.has_image || q.has_table;
+    const hasRegions = Array.isArray(q.image_regions) && q.image_regions.length > 0;
+    if (needsVisual && !hasRegions) {
+      console.warn(
+        `[parse-pdf] q${q.original_question_number}: has_image=${q.has_image} has_table=${q.has_table} but image_regions=[]; stamping full-page fallback on page ${q.page_number}`,
+      );
+      q.image_regions = [
+        {
+          page: q.page_number,
+          x_pct: 0,
+          y_pct: 0,
+          w_pct: 1,
+          h_pct: 1,
+          alt: "Full-page fallback (AI did not provide bounding box)",
+        },
+      ];
+      fallbackCount++;
+    }
+  }
+  if (fallbackCount > 0) {
+    console.warn(
+      `[parse-pdf] stamped full-page fallback on ${fallbackCount}/${questions.length} questions with missing image_regions`,
+    );
+  }
+
+  return questions;
 }
 
 // ────────────────────────────────────────────
