@@ -1,6 +1,7 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { getServiceClient } from "@/lib/supabase";
 import StudentsClient from "./StudentsClient";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getStudents(status: string) {
   const db = getServiceClient();
@@ -60,5 +61,10 @@ export default async function StudentsPage({
     getClassGroups(),
   ]);
 
-  return <StudentsClient students={students} classGroups={classGroups} tab={validTab} />;
+  return (
+    <>
+      <PageIntro tKey="admin.students" />
+      <StudentsClient students={students} classGroups={classGroups} tab={validTab} />
+    </>
+  );
 }

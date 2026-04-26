@@ -1,5 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import AiUsageCharts from "./AiUsageCharts";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getUsageData() {
   const db = getServiceClient();
@@ -59,6 +60,7 @@ export default async function AiUsagePage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      <PageIntro tKey="admin.aiUsage" />
       <h1 className="text-2xl font-bold text-charcoal">AI Usage</h1>
       <p className="text-soft-mute text-sm -mt-4">This month · Claude Sonnet 4.6 · $3/M input, $15/M output</p>
 

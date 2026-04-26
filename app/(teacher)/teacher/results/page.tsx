@@ -8,6 +8,7 @@ import {
   CrossTestResultsTable,
   type CrossTestResultRow,
 } from "@/components/analytics/CrossTestResultsTable";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getCrossTestResults(teacherId: string, role: string) {
   const db = getServiceClient();
@@ -125,6 +126,7 @@ export default async function TeacherResultsPage() {
   if (data.totals.tests === 0) {
     return (
       <div className="max-w-3xl mx-auto py-16 text-center space-y-6">
+        <PageIntro tKey="teacher.results" />
         <div className="inline-flex p-5 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
           <ClipboardList size={36} className="text-warm-coral" />
         </div>
@@ -149,6 +151,7 @@ export default async function TeacherResultsPage() {
   if (data.rows.length === 0) {
     return (
       <div className="max-w-5xl mx-auto space-y-6">
+        <PageIntro tKey="teacher.results" />
         <div>
           <h1 className="text-2xl font-bold text-charcoal">Student Results / 學生成績</h1>
           <p className="text-soft-mute text-sm mt-1">
@@ -176,6 +179,7 @@ export default async function TeacherResultsPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
+      <PageIntro tKey="teacher.results" />
       <div>
         <h1 className="text-2xl font-bold text-charcoal">Student Results / 學生成績</h1>
         <p className="text-soft-mute text-sm mt-1">

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { ClipboardList, Users, BarChart2, AlertTriangle } from "lucide-react";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getTeacherDashboardData(userId: string) {
   const db = getServiceClient();
@@ -120,6 +121,7 @@ export default async function TeacherDashboardPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
+      <PageIntro tKey="teacher.dashboard" />
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-charcoal">

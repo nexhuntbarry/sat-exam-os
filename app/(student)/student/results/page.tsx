@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { BarChart2 } from "lucide-react";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getStudentResults(studentId: string) {
   const db = getServiceClient();
@@ -28,6 +29,7 @@ export default async function StudentResultsPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      <PageIntro tKey="student.results" />
       <h1 className="text-2xl font-bold text-charcoal">My Results</h1>
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">

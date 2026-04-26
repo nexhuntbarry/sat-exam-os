@@ -1,6 +1,7 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { Users, GraduationCap, BookOpen, ClipboardList, HelpCircle, Clock } from "lucide-react";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getAdminStats() {
   const db = getServiceClient();
@@ -60,6 +61,7 @@ export default async function AdminDashboardPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">
+      <PageIntro tKey="admin.dashboard" />
       <div>
         <h1 className="text-2xl font-bold text-charcoal">
           Welcome back, {user?.displayName ?? "Admin"}

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Plus, FileText } from "lucide-react";
 import { clsx } from "clsx";
 import DeleteModuleButton from "./DeleteModuleButton";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getModules() {
   const db = getServiceClient();
@@ -26,6 +27,7 @@ export default async function ModulesPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
+      <PageIntro tKey="admin.modules" />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-charcoal">Modules</h1>
         <Link

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { User, Save } from "lucide-react";
+import PageIntro from "@/components/shared/PageIntro";
 
 interface Profile {
   grade: string | null;
@@ -65,6 +66,7 @@ export default function StudentProfilePage() {
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
+      <PageIntro tKey="student.profile" />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20">
           <User size={20} className="text-warm-coral" />

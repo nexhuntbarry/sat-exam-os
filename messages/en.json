@@ -482,6 +482,90 @@
     "studentGotWrong": "Students Who Got It Wrong",
     "studentGotRight": "Students Who Got It Right"
   },
+  "intros": {
+    "admin": {
+      "dashboard": {
+        "title": "Admin Home",
+        "body": "Top-level overview of the SAT platform. Admins land here daily to scan pending student approvals, teacher counts, module status, and shortcut links into core workflows."
+      },
+      "modules": {
+        "title": "Modules",
+        "body": "Upload and manage every SAT practice module (PDF). After AI parsing, track status and question counts here, then push the module through the question-bank approval flow. Admin / content lead use only."
+      },
+      "questions": {
+        "title": "Question Bank",
+        "body": "Central review queue for AI-parsed questions. Filter by needs-review or low-confidence, then approve or reject in bulk. Only approved questions are served to students in tests."
+      },
+      "tests": {
+        "title": "Tests",
+        "body": "Create, publish, and close student tests, and track who is assigned and who has submitted. Each test is bound to a single approved module."
+      },
+      "students": {
+        "title": "Students",
+        "body": "Approve new self-registered students, manage approved/suspended rosters, and assign students to class groups. Students cannot sign in or take tests until approved here."
+      },
+      "teachers": {
+        "title": "Teachers",
+        "body": "Invite teachers by email and review who is on the platform along with their assigned classes. Invited teachers complete sign-up themselves via the email link."
+      },
+      "classes": {
+        "title": "Class Groups",
+        "body": "Create and maintain class groups (by campus / grade), then add students into them. Class groups make it fast to assign a test to an entire class at once."
+      },
+      "reports": {
+        "title": "Platform Reports",
+        "body": "Cross-center reporting — test completion rates, student performance trends, and module effectiveness. Used by admins for planning and resourcing (coming soon)."
+      },
+      "settings": {
+        "title": "Platform Settings",
+        "body": "Branding, notification preferences, AI-parse defaults, and account configuration. Admin-only (coming soon)."
+      },
+      "aiUsage": {
+        "title": "AI Usage",
+        "body": "This month's AI parse calls, token usage, and estimated cost. Use this to monitor spend and judge whether AI parsing is paying off."
+      }
+    },
+    "teacher": {
+      "dashboard": {
+        "title": "Teacher Home",
+        "body": "Overview of every test assigned to your classes. Quickly see this week's submissions, students who need attention, and your active assignments."
+      },
+      "tests": {
+        "title": "My Tests",
+        "body": "All tests an admin has assigned to you. Open a test to see student submissions, score distribution, and question-level analytics."
+      },
+      "results": {
+        "title": "Student Results",
+        "body": "Cross-test view of every student you teach with scores and time spent. Filter by test or class group, then export CSV for parent or peer discussions."
+      },
+      "analysis": {
+        "title": "Question Analysis",
+        "body": "Aggregated error rates across all your assigned tests. Find the questions and domains your class struggles with most, then prep the next class review around them."
+      },
+      "settings": {
+        "title": "Teacher Settings",
+        "body": "Profile, notification preferences, and teaching options. Personalize your account here (coming soon)."
+      }
+    },
+    "student": {
+      "dashboard": {
+        "title": "Student Home",
+        "body": "Shows your upcoming tests, profile completeness, and target score. Your first stop on every sign-in to see what's due and where you stand."
+      },
+      "tests": {
+        "title": "My Tests",
+        "body": "All tests your teacher has currently assigned to you. Watch the due dates — click Start Test on any unstarted test to enter timed mode."
+      },
+      "results": {
+        "title": "My Results",
+        "body": "Review your submitted tests with score, correct count, and time spent. When your teacher allows, dive into the answer review to study your weak spots."
+      },
+      "profile": {
+        "title": "Profile",
+        "body": "Your grade, school, class group, and target SAT score. The more complete your profile, the better your teacher can tailor instruction to you."
+      }
+    }
+  },
   "test": {
     "questions": {
       "previous": "Previous",

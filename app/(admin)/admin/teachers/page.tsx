@@ -1,6 +1,7 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { getServiceClient } from "@/lib/supabase";
 import TeachersClient from "./TeachersClient";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getTeachers() {
   const db = getServiceClient();
@@ -36,5 +37,10 @@ async function getTeachers() {
 
 export default async function TeachersPage() {
   const teachers = await getTeachers();
-  return <TeachersClient teachers={teachers} />;
+  return (
+    <>
+      <PageIntro tKey="admin.teachers" />
+      <TeachersClient teachers={teachers} />
+    </>
+  );
 }

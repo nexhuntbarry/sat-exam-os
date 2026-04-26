@@ -8,6 +8,7 @@ import {
   CrossTestQuestionTable,
   type CrossTestQuestionRow,
 } from "@/components/analytics/CrossTestQuestionTable";
+import PageIntro from "@/components/shared/PageIntro";
 
 interface DomainAgg {
   domain: string;
@@ -231,6 +232,7 @@ export default async function TeacherAnalysisPage() {
   if (!data) {
     return (
       <div className="max-w-3xl mx-auto py-16 text-center space-y-6">
+        <PageIntro tKey="teacher.analysis" />
         <div className="inline-flex p-5 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
           <BarChart2 size={36} className="text-warm-coral" />
         </div>
@@ -256,6 +258,7 @@ export default async function TeacherAnalysisPage() {
   if (data.empty) {
     return (
       <div className="max-w-5xl mx-auto space-y-6">
+        <PageIntro tKey="teacher.analysis" />
         <div>
           <h1 className="text-2xl font-bold text-charcoal">Question Analysis / 題目分析</h1>
           <p className="text-soft-mute text-sm mt-1">
@@ -281,6 +284,7 @@ export default async function TeacherAnalysisPage() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
+      <PageIntro tKey="teacher.analysis" />
       <div>
         <h1 className="text-2xl font-bold text-charcoal">Question Analysis / 題目分析</h1>
         <p className="text-soft-mute text-sm mt-1">

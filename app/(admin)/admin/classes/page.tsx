@@ -1,5 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import ClassesClient from "./ClassesClient";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getClassGroups() {
   const db = getServiceClient();
@@ -17,5 +18,10 @@ async function getClassGroups() {
 
 export default async function ClassesPage() {
   const classGroups = await getClassGroups();
-  return <ClassesClient classGroups={classGroups} />;
+  return (
+    <>
+      <PageIntro tKey="admin.classes" />
+      <ClassesClient classGroups={classGroups} />
+    </>
+  );
 }

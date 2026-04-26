@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { Clock, ClipboardList, User } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
+import PageIntro from "@/components/shared/PageIntro";
 
 async function getStudentProfile(userId: string) {
   const db = getServiceClient();
@@ -110,6 +111,7 @@ export default async function StudentDashboardPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
+      <PageIntro tKey="student.dashboard" />
       <div>
         <h1 className="text-2xl font-bold text-charcoal">
           Welcome, {user.displayName}!
