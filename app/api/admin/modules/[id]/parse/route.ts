@@ -317,45 +317,38 @@ export async function POST(
     })
     .eq("id", id);
 
-  // Phase 2 — kick off the solver after the response is flushed.
-  // `after()` runs independently of the request; the user sees questions
-  // appear instantly and the solver fills in answers over the next ~30s.
-  // On Vercel Hobby this still has a 300s budget but it's separate from
-  // the request, so partial timeouts don't roll back the inserts above.
+  // Phase 2 — solver inline. Vercel `after()` proved unreliable on Hobby
+  // (callback never executed in production for a 27-question R&W module).
+  // Solver in parallel chunks of 5 takes ~30-60s — fits inside the
+  // remaining 300s budget after extraction.
   const imagesForSolver = new Map<number, { urls: string[] }>();
   for (const [num, info] of imageMap) {
     imagesForSolver.set(num, { urls: info.urls });
   }
-  after(async () => {
-    // Re-derive the service client inside the callback — the outer `db`
-    // would still work, but a fresh one keeps the contract obvious.
-    const bgDb = getServiceClient();
-    try {
-      const t0 = Date.now();
-      const { solved, failed } = await solveQuestionsAndPersist(
-        parsedQuestions,
-        imagesForSolver,
-        id,
-        bgDb,
-        authResult.userId,
-      );
-      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-      console.log(
-        `[modules/parse] background solver done in ${elapsed}s — solved=${solved} failed=${failed}`,
-      );
-    } catch (err) {
-      console.error(
-        "[modules/parse] background solver crashed (questions stay with null answers):",
-        err,
-      );
-    }
-  });
+  let solverStats = { solved: 0, failed: 0 };
+  try {
+    const t0 = Date.now();
+    solverStats = await solveQuestionsAndPersist(
+      parsedQuestions,
+      imagesForSolver,
+      id,
+      db,
+      authResult.userId,
+    );
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log(
+      `[modules/parse] solver done in ${elapsed}s — solved=${solverStats.solved} failed=${solverStats.failed}`,
+    );
+  } catch (err) {
+    console.error("[modules/parse] solver crashed (questions saved without answers):", err);
+  }
 
   return NextResponse.json({
     success: true,
     questionCount: totalInserted,
     needsReview: needsReviewCount,
     avgConfidence: Math.round(avgConfidence * 100) / 100,
-    solverPending: true,
+    solved: solverStats.solved,
+    solverFailed: solverStats.failed,
   });
 }
