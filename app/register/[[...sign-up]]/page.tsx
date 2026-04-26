@@ -1,22 +1,57 @@
-import { redirect } from "next/navigation";
+'use client';
 
-// Permanent fix: redirect to Clerk's hosted Account Portal for sign-up.
-// Embedded <SignUp /> does not mount when a Clerk dev instance (pk_test_*)
-// is served from a production custom domain — the __clerk_db_jwt handshake
-// cookie cannot be set on arbitrary hosts. The hosted portal lives on
-// Clerk's own domain and works regardless of dev/prod instance.
-//
-// After sign-up, Clerk redirects back to /register/profile where the
-// authenticated user completes their student profile (grade, school, etc).
-const PORTAL_BASE = "https://prompt-satyr-3.accounts.dev";
-const APP_ORIGIN = "https://sat.nexhunt.xyz";
+import { SignUp } from "@clerk/nextjs";
+import Logo from "@/components/Logo";
 
-export default async function Page({
-  searchParams,
-}: {
-  searchParams: Promise<{ redirect_url?: string }>;
-}) {
-  const params = await searchParams;
-  const returnTo = params.redirect_url ?? `${APP_ORIGIN}/register/profile`;
-  redirect(`${PORTAL_BASE}/sign-up?redirect_url=${encodeURIComponent(returnTo)}`);
+export default function StudentRegisterPage() {
+  return (
+    <main className="min-h-screen flex flex-col items-center justify-center px-6 py-24 bg-cream">
+      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full opacity-15 blur-3xl bg-warm-coral pointer-events-none" />
+
+      <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-md">
+        <div className="flex flex-col items-center gap-3">
+          <Logo size={48} />
+          <h1 className="text-xl font-semibold text-charcoal">Student Registration</h1>
+          <p className="text-mid-gray text-sm">SAT Exam OS</p>
+        </div>
+
+        <SignUp
+          signInUrl="/sign-in"
+          forceRedirectUrl="/register/profile"
+          appearance={{
+            variables: {
+              colorPrimary: "#F0523D",
+              colorBackground: "#FFFFFF",
+              colorText: "#1F1F1F",
+              colorTextSecondary: "#3E3E3E",
+              colorInputBackground: "#FFFFFF",
+              colorInputText: "#1F1F1F",
+              colorNeutral: "#1F1F1F",
+              borderRadius: "0.75rem",
+              fontFamily: "var(--font-inter), Inter, system-ui, sans-serif",
+            },
+            elements: {
+              rootBox: "w-full",
+              card: "bg-surface border border-divider shadow-lg shadow-black/5 rounded-2xl",
+              headerTitle: "text-charcoal font-bold text-xl",
+              headerSubtitle: "text-mid-gray",
+              socialButtonsBlockButton:
+                "bg-surface border border-divider text-charcoal hover:bg-light-bg",
+              socialButtonsBlockButtonText: "text-charcoal font-medium",
+              dividerLine: "bg-divider",
+              dividerText: "text-soft-mute",
+              formFieldLabel: "text-charcoal font-medium",
+              formFieldInput:
+                "bg-surface border border-divider text-charcoal placeholder:text-soft-mute",
+              formButtonPrimary:
+                "bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold",
+              footer: "bg-transparent",
+              footerActionText: "text-mid-gray",
+              footerActionLink: "text-warm-coral hover:text-warm-coral-dark font-semibold",
+            },
+          }}
+        />
+      </div>
+    </main>
+  );
 }
