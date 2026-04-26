@@ -13,6 +13,15 @@ export interface ModuleMetadata {
   moduleNumber: number | null;
 }
 
+export interface ParsedImageRegion {
+  page: number;
+  x_pct: number;
+  y_pct: number;
+  w_pct: number;
+  h_pct: number;
+  alt: string;
+}
+
 export interface ParsedQuestion {
   original_question_number: number;
   question_text: string;
@@ -29,6 +38,7 @@ export interface ParsedQuestion {
   has_formula: boolean;
   page_number: number;
   ai_confidence_score: number;
+  image_regions: ParsedImageRegion[];
 }
 
 // ────────────────────────────────────────────
@@ -62,6 +72,28 @@ const ParsedQuestionSchema = z.object({
   has_formula: z.boolean(),
   page_number: z.number().describe("Positive integer page number"),
   ai_confidence_score: z.number().describe("Confidence between 0 and 1"),
+  image_regions: z
+    .array(
+      z.object({
+        page: z.number().describe("1-indexed page number this region appears on"),
+        x_pct: z
+          .number()
+          .describe("Left edge of bounding box as fraction of page width, between 0 and 1"),
+        y_pct: z
+          .number()
+          .describe("Top edge of bounding box as fraction of page height, between 0 and 1"),
+        w_pct: z
+          .number()
+          .describe("Width of bounding box as fraction of page width, between 0 and 1"),
+        h_pct: z
+          .number()
+          .describe("Height of bounding box as fraction of page height, between 0 and 1"),
+        alt: z.string().describe("Brief description of what the image/graph/table contains"),
+      }),
+    )
+    .describe(
+      "Bounding boxes of every image, graph, diagram, chart, or table belonging to this question. Empty array if the question has no visual element. Coordinates are fractions of the rendered page (0..1).",
+    ),
 });
 
 const ParsedQuestionsSchema = z.object({
@@ -87,6 +119,14 @@ EXTRACTION RULES:
 10. page_number should reflect which page of the PDF the question appears on (1-indexed).
 11. Do NOT skip any questions — extract every numbered question you can find.
 12. For questions you cannot read clearly, still include them with has_image=true (if applicable) and low confidence.
+13. For EVERY image, graph, diagram, chart, scatter plot, geometric figure, or table that belongs to a question, populate image_regions with a tight bounding box around it. Coordinates are fractions of the page dimensions, where (0, 0) is the top-left corner and (1, 1) is the bottom-right corner of the rendered page. The system will literally crop these rectangles out of the PDF and store them, so be precise:
+    - Include the FULL visual element with a small 1–3% padding on every side so axis labels, captions, and units are not clipped.
+    - Do NOT include the question stem text or answer choices in the bounding box.
+    - If a single question has multiple visuals (e.g., two side-by-side graphs), emit one entry per visual.
+    - If has_image=true or has_table=true, image_regions MUST contain at least one entry.
+    - If a question has no visual element, image_regions must be an empty array [].
+    - The page field on each region is 1-indexed and may differ from page_number if the visual sits on a facing page.
+    - alt should briefly describe the content (e.g., "Scatter plot of x vs. y with line of best fit", "Right triangle with sides 3, 4, 5", "Frequency table of test scores").
 
 DOMAIN CLASSIFICATION — use EXACTLY one of these SAT standard domains:
 Reading & Writing section domains:

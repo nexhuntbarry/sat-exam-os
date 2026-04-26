@@ -19,6 +19,8 @@ interface Question {
   has_table: boolean;
   source_pdf_url?: string | null;
   section: string;
+  image_urls?: string[] | null;
+  image_alts?: string[] | null;
 }
 
 interface Props {

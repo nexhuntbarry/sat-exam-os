@@ -8,6 +8,7 @@ import {
   classifyPdfIsSat,
   fetchPdfAsBase64,
 } from "@/lib/ai/parse-pdf";
+import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -153,6 +154,25 @@ export async function POST(
     );
   }
 
+  // Step C — Extract & upload question images (graphs, tables, diagrams)
+  // We already have pdfBase64 in memory from the classifier step; reuse it
+  // rather than re-fetching from Blob. Failures are non-fatal: questions
+  // are still saved, they just won't have inline images.
+  let imageMap: Map<number, { urls: string[]; alts: string[] }> = new Map();
+  try {
+    const result = await extractAndUploadQuestionImages(
+      pdfBase64,
+      parsedQuestions,
+      id,
+    );
+    imageMap = result.byQuestion;
+    console.log(
+      `[modules/parse] extracted ${result.totalUploaded} images across ${result.byQuestion.size} questions; ${result.errors.length} errors`,
+    );
+  } catch (err) {
+    console.error("[modules/parse] image extraction failed (non-fatal):", err);
+  }
+
   // Fetch existing questions in same section for duplicate detection
   const { data: existingQuestions } = await db
     .from("questions")
@@ -195,6 +215,7 @@ export async function POST(
 
     if (parsingStatus === "Needs Review") needsReviewCount++;
 
+    const imagesForQ = imageMap.get(q.original_question_number);
     const { error: insertError } = await db.from("questions").insert({
       module_id: id,
       section: mod.section,
@@ -217,6 +238,8 @@ export async function POST(
       parsing_notes: parsingNotes,
       ai_confidence_score: q.ai_confidence_score,
       question_text_embedding: embedding,
+      image_urls: imagesForQ?.urls ?? [],
+      image_alts: imagesForQ?.alts ?? [],
     });
 
     if (insertError) {

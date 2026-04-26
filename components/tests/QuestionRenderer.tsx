@@ -17,6 +17,8 @@ interface Question {
   has_image: boolean;
   has_table: boolean;
   source_pdf_url?: string | null;
+  image_urls?: string[] | null;
+  image_alts?: string[] | null;
 }
 
 interface QuestionRendererProps {
@@ -50,30 +52,47 @@ export default function QuestionRenderer({
         ) : null}
       </div>
 
-      {/* Image/table notice */}
-      {(question.has_image || question.has_table) && (
-        <div className="p-3 rounded-xl bg-status-warning/10 border border-status-warning/20 text-status-warning text-sm flex items-start gap-2">
-          <span className="shrink-0 mt-0.5">⚠</span>
-          <span>
-            This question references {question.has_image ? "an image" : "a table"} — see source PDF.
-            {question.source_pdf_url && (
-              <a
-                href={question.source_pdf_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-2 inline-flex items-center gap-1 underline hover:no-underline"
-              >
-                Open PDF <ExternalLink size={12} />
-              </a>
-            )}
-          </span>
-        </div>
-      )}
+      {/* Image/table fallback notice — only shown when AI flagged a visual
+          but the cropper failed to extract any image URLs. */}
+      {(question.has_image || question.has_table) &&
+        (!question.image_urls || question.image_urls.length === 0) && (
+          <div className="p-3 rounded-xl bg-status-warning/10 border border-status-warning/20 text-status-warning text-sm flex items-start gap-2">
+            <span className="shrink-0 mt-0.5">⚠</span>
+            <span>
+              This question references {question.has_image ? "an image" : "a table"} — see source PDF.
+              {question.source_pdf_url && (
+                <a
+                  href={question.source_pdf_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-2 inline-flex items-center gap-1 underline hover:no-underline"
+                >
+                  Open PDF <ExternalLink size={12} />
+                </a>
+              )}
+            </span>
+          </div>
+        )}
 
       {/* Question text */}
       <div className="text-charcoal text-base leading-relaxed whitespace-pre-wrap">
         {question.question_text}
       </div>
+
+      {/* Extracted images (graphs / tables / diagrams) */}
+      {question.image_urls && question.image_urls.length > 0 && (
+        <div className="flex flex-wrap gap-3">
+          {question.image_urls.map((url, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={url}
+              src={url}
+              alt={question.image_alts?.[i] ?? "Question image"}
+              className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
+            />
+          ))}
+        </div>
+      )}
 
       {/* Answer area */}
       {isMultipleChoice ? (

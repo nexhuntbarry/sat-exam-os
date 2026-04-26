@@ -45,6 +45,8 @@ interface Question {
   parsing_notes: string | null;
   ai_confidence_score: number | null;
   reviewed_at: string | null;
+  image_urls: string[] | null;
+  image_alts: string[] | null;
   modules: {
     module_name: string;
     source_name: string | null;
@@ -237,6 +239,26 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
               className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-none"
             />
           </div>
+
+          {/* Extracted images */}
+          {q.image_urls && q.image_urls.length > 0 && (
+            <div>
+              <label className="block text-xs text-soft-mute mb-2">
+                Extracted Images ({q.image_urls.length})
+              </label>
+              <div className="flex flex-wrap gap-3">
+                {q.image_urls.map((url, i) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={url}
+                    src={url}
+                    alt={q.image_alts?.[i] ?? "Question image"}
+                    className="max-w-full md:max-w-md rounded-xl border border-divider bg-white"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Choices */}
           {q.choices.length > 0 && (

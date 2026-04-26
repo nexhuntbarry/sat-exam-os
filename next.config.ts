@@ -4,6 +4,9 @@ import createNextIntlPlugin from "next-intl/plugin";
 const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 
 const nextConfig: NextConfig = {
+  // pdfjs-dist + @napi-rs/canvas + sharp ship native bindings that must be
+  // resolved at runtime, not bundled by Turbopack/Webpack.
+  serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas", "sharp"],
   async headers() {
     return [
       {
