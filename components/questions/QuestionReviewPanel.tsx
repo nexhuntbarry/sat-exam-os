@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import { CheckCircle2, XCircle, AlertCircle, Save } from "lucide-react";
 import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
+import MathMarkdown from "@/components/MathMarkdown";
 
 const SAT_DOMAINS = [
   "Information and Ideas",
@@ -232,12 +233,20 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           {/* Question text */}
           <div>
             <label className="block text-xs text-soft-mute mb-1">Question Text</label>
-            <textarea
-              value={q.question_text}
-              onChange={(e) => setQ((prev) => ({ ...prev, question_text: e.target.value }))}
-              rows={5}
-              className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-none"
-            />
+            <MathMarkdown
+              className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-xl px-3 py-2.5 mb-2"
+            >
+              {q.question_text}
+            </MathMarkdown>
+            <details className="text-xs text-soft-mute">
+              <summary className="cursor-pointer">Edit raw</summary>
+              <textarea
+                value={q.question_text}
+                onChange={(e) => setQ((prev) => ({ ...prev, question_text: e.target.value }))}
+                rows={5}
+                className="w-full mt-1 bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-none"
+              />
+            </details>
           </div>
 
           {/* Extracted images */}
@@ -283,12 +292,20 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
                       >
                         {c.label}
                       </span>
-                      <input
-                        type="text"
-                        value={c.text}
-                        onChange={(e) => updateChoice(c.label, e.target.value)}
-                        className="flex-1 bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
-                      />
+                      <div className="flex-1 flex flex-col gap-1">
+                        <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 [&_p]:my-0">
+                          {c.text}
+                        </MathMarkdown>
+                        <details className="text-[11px] text-soft-mute">
+                          <summary className="cursor-pointer">Edit raw</summary>
+                          <input
+                            type="text"
+                            value={c.text}
+                            onChange={(e) => updateChoice(c.label, e.target.value)}
+                            className="w-full mt-1 bg-light-bg border border-divider rounded-lg px-2 py-1 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50"
+                          />
+                        </details>
+                      </div>
                     </div>
                   );
                 })}
@@ -330,12 +347,20 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
                 <span className="text-soft-mute/70">({q.explanation.length} chars)</span>
               )}
             </label>
-            <textarea
-              value={q.explanation ?? ""}
-              onChange={(e) => setQ((prev) => ({ ...prev, explanation: e.target.value || null }))}
-              rows={8}
-              className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-y leading-relaxed"
-            />
+            {q.explanation && (
+              <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-xl px-3 py-2.5 mb-2 leading-relaxed">
+                {q.explanation}
+              </MathMarkdown>
+            )}
+            <details className="text-xs text-soft-mute">
+              <summary className="cursor-pointer">Edit raw</summary>
+              <textarea
+                value={q.explanation ?? ""}
+                onChange={(e) => setQ((prev) => ({ ...prev, explanation: e.target.value || null }))}
+                rows={8}
+                className="w-full mt-1 bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-y leading-relaxed"
+              />
+            </details>
           </div>
 
           {/* Metadata */}
