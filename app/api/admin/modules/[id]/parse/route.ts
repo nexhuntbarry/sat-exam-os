@@ -13,9 +13,8 @@ import { solveQuestions, type SolvedAnswer } from "@/lib/ai/solve-question";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
-// R&W parses can run >5 min: long passages + 32K output tokens + per-question
-// solver. Bump to 800s (Vercel Fluid Compute supports up to this).
-export const maxDuration = 800;
+// Vercel Hobby plan caps Serverless Functions at 300s. Revert from 800.
+export const maxDuration = 300;
 
 // POST /api/admin/modules/[id]/parse
 export async function POST(
