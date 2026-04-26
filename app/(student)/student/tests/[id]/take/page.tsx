@@ -28,7 +28,7 @@ async function getActiveSubmission(testId: string, studentId: string) {
 
   let questionQuery = db
     .from("questions")
-    .select("id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, section, image_urls, image_alts")
+    .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, image_alts")
     .eq("module_id", test.module_id)
     .eq("parsing_status", "Approved")
     .order("original_question_number", { ascending: true });

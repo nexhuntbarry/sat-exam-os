@@ -10,6 +10,7 @@ interface Choice {
 
 interface Question {
   id: string;
+  module_id: string;
   original_question_number: number;
   question_text: string;
   choices: Choice[];
@@ -17,6 +18,7 @@ interface Question {
   has_image: boolean;
   has_table: boolean;
   source_pdf_url?: string | null;
+  page_number?: number | null;
   image_urls?: string[] | null;
   image_alts?: string[] | null;
 }
@@ -52,34 +54,39 @@ export default function QuestionRenderer({
         ) : null}
       </div>
 
-      {/* Image/table fallback notice — only shown when AI flagged a visual
-          but the cropper failed to extract any image URLs. */}
-      {(question.has_image || question.has_table) &&
-        (!question.image_urls || question.image_urls.length === 0) && (
-          <div className="p-3 rounded-xl bg-status-warning/10 border border-status-warning/20 text-status-warning text-sm flex items-start gap-2">
-            <span className="shrink-0 mt-0.5">⚠</span>
-            <span>
-              This question references {question.has_image ? "an image" : "a table"} — see source PDF.
-              {question.source_pdf_url && (
-                <a
-                  href={question.source_pdf_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-2 inline-flex items-center gap-1 underline hover:no-underline"
-                >
-                  Open PDF <ExternalLink size={12} />
-                </a>
-              )}
-            </span>
-          </div>
-        )}
-
       {/* Question text */}
       <div className="text-charcoal text-base leading-relaxed whitespace-pre-wrap">
         {question.question_text}
       </div>
 
-      {/* Extracted images (graphs / tables / diagrams) */}
+      {/* Inline PDF page — primary path for any question flagged with a
+          visual element. The serverless image cropper is too fragile, so we
+          render the original PDF page directly via iframe + #page=N. */}
+      {(question.has_image || question.has_table) && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-soft-mute text-xs uppercase tracking-wide font-medium">
+              Source figure · Page {question.page_number ?? 1}
+            </p>
+            <a
+              href={`/api/modules/${question.module_id}/pdf#page=${question.page_number ?? 1}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs text-warm-coral hover:underline"
+            >
+              Open in new tab <ExternalLink size={12} />
+            </a>
+          </div>
+          <iframe
+            src={`/api/modules/${question.module_id}/pdf#page=${question.page_number ?? 1}`}
+            className="w-full h-[480px] rounded-xl border border-divider bg-white"
+            title={`Question figure (PDF page ${question.page_number ?? 1})`}
+          />
+        </div>
+      )}
+
+      {/* Optional fallback — extracted crops still rendered when present, as
+          an enhancement to the inline PDF view. */}
       {question.image_urls && question.image_urls.length > 0 && (
         <div className="flex flex-wrap gap-3">
           {question.image_urls.map((url, i) => (

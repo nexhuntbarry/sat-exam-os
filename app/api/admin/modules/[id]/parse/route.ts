@@ -159,19 +159,28 @@ export async function POST(
   // We already have pdfBase64 in memory from the classifier step; reuse it
   // rather than re-fetching from Blob. Failures are non-fatal: questions
   // are still saved, they just won't have inline images.
+  //
+  // Skipped entirely for Reading & Writing modules — R&W questions almost
+  // never include figures, the cropper pipeline is the slowest stage in the
+  // 5-minute Vercel function budget, and the inline-iframe renderer covers
+  // any rare R&W figure without needing per-question crops.
   let imageMap: Map<number, { urls: string[]; alts: string[] }> = new Map();
-  try {
-    const result = await extractAndUploadQuestionImages(
-      pdfBase64,
-      parsedQuestions,
-      id,
-    );
-    imageMap = result.byQuestion;
-    console.log(
-      `[modules/parse] extracted ${result.totalUploaded} images across ${result.byQuestion.size} questions; ${result.errors.length} errors`,
-    );
-  } catch (err) {
-    console.error("[modules/parse] image extraction failed (non-fatal):", err);
+  if (mod.section === "Reading & Writing") {
+    console.log("[modules/parse] skipping image extraction for R&W module");
+  } else {
+    try {
+      const result = await extractAndUploadQuestionImages(
+        pdfBase64,
+        parsedQuestions,
+        id,
+      );
+      imageMap = result.byQuestion;
+      console.log(
+        `[modules/parse] extracted ${result.totalUploaded} images across ${result.byQuestion.size} questions; ${result.errors.length} errors`,
+      );
+    } catch (err) {
+      console.error("[modules/parse] image extraction failed (non-fatal):", err);
+    }
   }
 
   // Step D — Solve every question (answer key + explanation)

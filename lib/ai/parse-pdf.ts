@@ -100,6 +100,37 @@ const ParsedQuestionsSchema = z.object({
   questions: z.array(ParsedQuestionSchema),
 });
 
+// Lighter schema for Reading & Writing modules. R&W passages are token-heavy
+// and the section rarely contains tables/formulas, so we drop image_regions /
+// has_table / has_formula entirely — saving extraction tokens and keeping
+// long modules from blowing the Vercel function timeout.
+const ParsedQuestionRwSchema = z.object({
+  original_question_number: z.number().describe("Positive integer question number"),
+  question_text: z.string().describe("Question text (non-empty)"),
+  choices: z
+    .array(
+      z.object({
+        label: z.enum(["A", "B", "C", "D"]),
+        text: z.string(),
+      }),
+    )
+    .describe("Up to 4 multiple-choice options; empty array for SPR"),
+  correct_answer: z.string().nullable(),
+  explanation: z.string().nullable(),
+  difficulty: z.enum(["Easy", "Medium", "Hard"]),
+  domain: z.string().describe("Domain (non-empty)"),
+  skill: z.string().describe("Skill (non-empty)"),
+  concept: z.string().describe("Concept (non-empty)"),
+  question_type: z.enum(["Multiple Choice", "Student Produced Response"]),
+  has_image: z.boolean(),
+  page_number: z.number().describe("Positive integer page number"),
+  ai_confidence_score: z.number().describe("Confidence between 0 and 1"),
+});
+
+const ParsedQuestionsRwSchema = z.object({
+  questions: z.array(ParsedQuestionRwSchema),
+});
+
 // ────────────────────────────────────────────
 // System prompt
 // ────────────────────────────────────────────
@@ -303,10 +334,20 @@ export async function parsePdfToQuestions(
     throw new Error(`Could not fetch PDF from URL: ${pdfUrl}`);
   }
 
+  const isReadingWriting = moduleMetadata.section === "Reading & Writing";
+
   // SAT Math/RW modules typically contain 22-27 numbered questions per module.
   // Without this explicit hint, Sonnet often stops at 15-17 thinking it's done.
   // Telling it to scan EVERY page and keep going until the last numbered
   // question yields full coverage in our tests.
+  //
+  // R&W modules: explicitly skip image_regions / has_table / has_formula in
+  // the prompt and use a lighter schema, since long passages already eat
+  // most of the token budget and the figure pipeline is being replaced by
+  // an inline-iframe approach on the rendering side anyway.
+  const rwAddendum = isReadingWriting
+    ? `\n\nThis is Reading & Writing — questions are passage-based and almost never include images, tables, or formulas. Set has_image=false unless a question literally references an embedded figure. Do NOT emit image_regions / has_table / has_formula fields; the lighter R&W schema does not include them.`
+    : "";
   const userPrompt = `This PDF is a SAT exam module. Extract EVERY numbered question. SAT modules normally contain 22-27 questions. Do NOT stop early — read every page top to bottom and keep extracting until you reach the last numbered question in the PDF.
 
 Module context:
@@ -314,13 +355,13 @@ Module context:
 - Difficulty hint: ${moduleMetadata.difficulty_hint}
 - Module number: ${moduleMetadata.moduleNumber ?? "unknown"}
 
-Return all questions in order via the schema. Confirm you have not missed any before responding.`;
+Return all questions in order via the schema. Confirm you have not missed any before responding.${rwAddendum}`;
 
   let result;
   try {
     result = await generateObject({
       model: anthropic("claude-sonnet-4-6"),
-      schema: ParsedQuestionsSchema,
+      schema: isReadingWriting ? ParsedQuestionsRwSchema : ParsedQuestionsSchema,
       system: SYSTEM_PROMPT,
       messages: [
         {
@@ -338,7 +379,11 @@ Return all questions in order via the schema. Confirm you have not missed any be
           ],
         },
       ],
-      maxRetries: 2,
+      maxRetries: isReadingWriting ? 1 : 2,
+      // R&W passages are token-heavy on input; cap output to keep us well
+      // inside the 5-minute Vercel function budget. Math keeps the SDK
+      // default since it can need long step-by-step explanations.
+      ...(isReadingWriting ? { maxOutputTokens: 8000 } : {}),
     });
   } catch (err) {
     console.error("[parse-pdf] generateObject error:", err);
@@ -374,32 +419,48 @@ Return all questions in order via the schema. Confirm you have not missed any be
     });
   }
 
-  const questions = result.object.questions as ParsedQuestion[];
+  // Normalize: the R&W schema omits image_regions / has_table / has_formula,
+  // so backfill safe defaults before downstream code accesses those fields.
+  // The new inline-iframe rendering path doesn't need image_regions, but
+  // keeping the field shape consistent avoids ad-hoc undefined checks
+  // throughout the parse route.
+  const questions: ParsedQuestion[] = result.object.questions.map((q) => ({
+    ...q,
+    has_table: "has_table" in q ? (q as { has_table: boolean }).has_table : false,
+    has_formula:
+      "has_formula" in q ? (q as { has_formula: boolean }).has_formula : false,
+    image_regions:
+      "image_regions" in q
+        ? (q as { image_regions: ParsedImageRegion[] }).image_regions
+        : [],
+  })) as ParsedQuestion[];
 
-  // Post-extraction fallback: any question flagged has_image / has_table that
-  // came back with empty image_regions gets a full-page region stamped on so
-  // the next stage at least crops the entire page. The AI sometimes ignores
-  // rule 13 in the system prompt — without this the cropper produces 0 uploads
-  // and students see "Refer to the figure" with no figure.
+  // Post-extraction fallback (Math only): any question flagged has_image /
+  // has_table that came back with empty image_regions gets a full-page region
+  // stamped on so the cropper at least crops the entire page. R&W skips this
+  // because the iframe renderer is the primary path and image_regions stays
+  // empty by design.
   let fallbackCount = 0;
-  for (const q of questions) {
-    const needsVisual = q.has_image || q.has_table;
-    const hasRegions = Array.isArray(q.image_regions) && q.image_regions.length > 0;
-    if (needsVisual && !hasRegions) {
-      console.warn(
-        `[parse-pdf] q${q.original_question_number}: has_image=${q.has_image} has_table=${q.has_table} but image_regions=[]; stamping full-page fallback on page ${q.page_number}`,
-      );
-      q.image_regions = [
-        {
-          page: q.page_number,
-          x_pct: 0,
-          y_pct: 0,
-          w_pct: 1,
-          h_pct: 1,
-          alt: "Full-page fallback (AI did not provide bounding box)",
-        },
-      ];
-      fallbackCount++;
+  if (!isReadingWriting) {
+    for (const q of questions) {
+      const needsVisual = q.has_image || q.has_table;
+      const hasRegions = Array.isArray(q.image_regions) && q.image_regions.length > 0;
+      if (needsVisual && !hasRegions) {
+        console.warn(
+          `[parse-pdf] q${q.original_question_number}: has_image=${q.has_image} has_table=${q.has_table} but image_regions=[]; stamping full-page fallback on page ${q.page_number}`,
+        );
+        q.image_regions = [
+          {
+            page: q.page_number,
+            x_pct: 0,
+            y_pct: 0,
+            w_pct: 1,
+            h_pct: 1,
+            alt: "Full-page fallback (AI did not provide bounding box)",
+          },
+        ];
+        fallbackCount++;
+      }
     }
   }
   if (fallbackCount > 0) {

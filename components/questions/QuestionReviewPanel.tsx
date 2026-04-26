@@ -250,7 +250,22 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
             </details>
           </div>
 
-          {/* Extracted images */}
+          {/* Inline PDF page for visual questions — primary path that always
+              works, since cropping is unreliable on serverless. */}
+          {(q.has_image || q.has_table) && (
+            <div>
+              <label className="block text-xs text-soft-mute mb-2">
+                Source figure · Page {q.page_number ?? 1}
+              </label>
+              <iframe
+                src={`/api/admin/modules/${q.module_id}/pdf#page=${q.page_number ?? 1}`}
+                className="w-full h-[360px] rounded-xl border border-divider bg-white"
+                title={`Question figure (PDF page ${q.page_number ?? 1})`}
+              />
+            </div>
+          )}
+
+          {/* Extracted images (best-effort enhancement when cropping worked) */}
           {q.image_urls && q.image_urls.length > 0 && (
             <div>
               <label className="block text-xs text-soft-mute mb-2">

@@ -226,7 +226,14 @@ export async function solveQuestions(
 
     // Build content blocks. Anthropic expects base64 image data, so fetch
     // any image URLs from the just-uploaded image extraction pass.
-    const imageRefs: ImageInput | undefined = imagesByQuestion.get(q.original_question_number);
+    //
+    // R&W solver runs text-only: the section is passage-driven, the cropper
+    // is skipped upstream so urls would be empty anyway, and avoiding the
+    // per-image fetch keeps long R&W modules well inside the function budget.
+    const imageRefs: ImageInput | undefined =
+      section === "Reading & Writing"
+        ? undefined
+        : imagesByQuestion.get(q.original_question_number);
     const imageBlocks: Array<{
       type: "image";
       image: string;

@@ -11,6 +11,7 @@ import SubmitModal from "@/components/tests/SubmitModal";
 
 interface Question {
   id: string;
+  module_id: string;
   original_question_number: number;
   question_text: string;
   choices: { label: string; text: string }[];
@@ -18,6 +19,7 @@ interface Question {
   has_image: boolean;
   has_table: boolean;
   source_pdf_url?: string | null;
+  page_number?: number | null;
   section: string;
   image_urls?: string[] | null;
   image_alts?: string[] | null;
