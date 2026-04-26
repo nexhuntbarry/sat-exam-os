@@ -261,24 +261,44 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           )}
 
           {/* Choices */}
-          {q.choices.length > 0 && (
-            <div>
-              <label className="block text-xs text-soft-mute mb-2">Answer Choices</label>
+          <div>
+            <label className="block text-xs text-soft-mute mb-2">
+              Answer Choices {q.choices.length === 0 && (
+                <span className="text-soft-mute/70">(none — Student Produced Response)</span>
+              )}
+            </label>
+            {q.choices.length > 0 ? (
               <div className="space-y-2">
-                {q.choices.map((c) => (
-                  <div key={c.label} className="flex items-center gap-2">
-                    <span className="text-xs text-soft-mute w-4 shrink-0">{c.label}</span>
-                    <input
-                      type="text"
-                      value={c.text}
-                      onChange={(e) => updateChoice(c.label, e.target.value)}
-                      className="flex-1 bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
-                    />
-                  </div>
-                ))}
+                {q.choices.map((c) => {
+                  const isCorrect = q.correct_answer === c.label;
+                  return (
+                    <div key={c.label} className="flex items-center gap-2">
+                      <span
+                        className={clsx(
+                          "text-xs w-5 shrink-0 font-semibold text-center rounded-full py-0.5",
+                          isCorrect
+                            ? "bg-warm-amber/25 text-warm-amber"
+                            : "text-soft-mute",
+                        )}
+                      >
+                        {c.label}
+                      </span>
+                      <input
+                        type="text"
+                        value={c.text}
+                        onChange={(e) => updateChoice(c.label, e.target.value)}
+                        className="flex-1 bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
+                      />
+                    </div>
+                  );
+                })}
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="text-xs text-soft-mute/70 italic">
+                Student writes the answer directly.
+              </div>
+            )}
+          </div>
 
           {/* Correct answer + explanation */}
           <div className="grid grid-cols-2 gap-3">
@@ -305,12 +325,16 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           </div>
 
           <div>
-            <label className="block text-xs text-soft-mute mb-1">Explanation</label>
+            <label className="block text-xs text-soft-mute mb-1">
+              Explanation {q.explanation && (
+                <span className="text-soft-mute/70">({q.explanation.length} chars)</span>
+              )}
+            </label>
             <textarea
               value={q.explanation ?? ""}
               onChange={(e) => setQ((prev) => ({ ...prev, explanation: e.target.value || null }))}
-              rows={3}
-              className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-none"
+              rows={8}
+              className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-y leading-relaxed"
             />
           </div>
 
