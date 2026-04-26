@@ -2,6 +2,7 @@
 
 import { ExternalLink } from "lucide-react";
 import { clsx } from "clsx";
+import MathMarkdown from "@/components/MathMarkdown";
 
 interface Choice {
   label: string;
@@ -55,9 +56,9 @@ export default function QuestionRenderer({
       </div>
 
       {/* Question text */}
-      <div className="text-charcoal text-base leading-relaxed whitespace-pre-wrap">
+      <MathMarkdown className="prose prose-base max-w-none text-charcoal leading-relaxed [&_p]:my-2">
         {question.question_text}
-      </div>
+      </MathMarkdown>
 
       {/* Inline PDF page — primary path for any question flagged with a
           visual element. The serverless image cropper is too fragile, so we
@@ -127,7 +128,9 @@ export default function QuestionRenderer({
                 >
                   {choice.label}
                 </span>
-                <span className="flex-1 leading-relaxed pt-0.5">{choice.text}</span>
+                <MathMarkdown className="flex-1 prose prose-sm max-w-none text-inherit leading-relaxed pt-0.5 [&_p]:my-0">
+                  {choice.text}
+                </MathMarkdown>
               </button>
             );
           })}

@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Clock, BarChart2 } from "lucide-react";
 import { clsx } from "clsx";
+import MathMarkdown from "@/components/MathMarkdown";
 
 async function getResult(testId: string, studentId: string, submissionId?: string) {
   const db = getServiceClient();
@@ -172,7 +173,7 @@ export default async function StudentResultPage({
                       }
                     </div>
                     <span className="text-soft-mute text-sm shrink-0">Q{q.original_question_number}</span>
-                    <span className="text-charcoal text-sm line-clamp-1 flex-1">{q.question_text}</span>
+                    <MathMarkdown className="text-charcoal text-sm line-clamp-1 flex-1 prose prose-sm max-w-none [&_p]:my-0">{q.question_text}</MathMarkdown>
                     <span className={clsx(
                       "text-xs font-medium shrink-0",
                       record.is_correct ? "text-warm-amber" : "text-status-error"
@@ -181,7 +182,9 @@ export default async function StudentResultPage({
                     </span>
                   </summary>
                   <div className="px-4 pb-4 pt-2 space-y-3 border-t border-divider">
-                    <p className="text-charcoal text-sm whitespace-pre-wrap">{q.question_text}</p>
+                    <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-2">
+                      {q.question_text}
+                    </MathMarkdown>
 
                     {q.question_type === "Multiple Choice" && (q.choices ?? []).length > 0 && (
                       <div className="space-y-1.5">
@@ -198,7 +201,7 @@ export default async function StudentResultPage({
                             )}
                           >
                             <span className="font-semibold shrink-0">{c.label}.</span>
-                            <span>{c.text}</span>
+                            <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">{c.text}</MathMarkdown>
                           </div>
                         ))}
                       </div>
