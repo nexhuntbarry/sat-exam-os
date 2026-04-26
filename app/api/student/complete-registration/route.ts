@@ -112,7 +112,6 @@ export async function POST(req: Request) {
           display_name: fullName,
           role: "student",
           account_status: "pending",
-          avatar_url: cu?.imageUrl ?? null,
         })
         .select("id")
         .single();
