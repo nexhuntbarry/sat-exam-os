@@ -41,7 +41,7 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
           <Logo size={80} />
         </div>
 
-        <h1 className="text-3xl md:text-5xl font-bold tracking-widest uppercase mb-12 text-charcoal">
+        <h1 className="text-3xl md:text-5xl font-bold tracking-widest uppercase mb-12 text-warm-coral">
           {tBrand("name")}
         </h1>
 
