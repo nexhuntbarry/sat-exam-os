@@ -530,6 +530,10 @@
         "title": "Teacher Home",
         "body": "Overview of every test assigned to your classes. Quickly see this week's submissions, students who need attention, and your active assignments."
       },
+      "teachingMode": {
+        "title": "Teaching Mode",
+        "body": "Walk into class with two answers ready: which questions to review from your latest test, and which skill your class is weakest on right now. Build a quick practice set in one click."
+      },
       "tests": {
         "title": "My Tests",
         "body": "All tests an admin has assigned to you. Open a test to see student submissions, score distribution, and question-level analytics."

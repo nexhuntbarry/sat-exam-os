@@ -8,11 +8,13 @@ import {
   BarChart2,
   BookOpen,
   Settings,
+  Presentation,
 } from "lucide-react";
 import { clsx } from "clsx";
 
 const navItems = [
   { href: "/teacher", icon: LayoutDashboard, label: "Dashboard", exact: true },
+  { href: "/teacher/teaching-mode", icon: Presentation, label: "Teaching Mode" },
   { href: "/teacher/tests", icon: ClipboardList, label: "My Tests" },
   { href: "/teacher/results", icon: BarChart2, label: "Student Results" },
   { href: "/teacher/analysis", icon: BookOpen, label: "Question Analysis" },
