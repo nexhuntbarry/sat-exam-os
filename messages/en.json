@@ -586,5 +586,100 @@
       "submitting": "Submitting...",
       "unansweredWarning": "{count} unanswered question(s). Unanswered questions will be marked incorrect."
     }
+  },
+  "notFound": {
+    "code": "404",
+    "title": "Page Not Found",
+    "body": "This page doesn't exist yet or is being built.",
+    "back": "Back to Home"
+  },
+  "comingSoon": {
+    "defaultDescription": "This page is being built and will be available soon.",
+    "subtitle": "This page is being built",
+    "backToDashboard": "Back to Dashboard",
+    "home": "Home"
+  },
+  "moduleDetail": {
+    "parseTitle": "Parse & Add to Question Bank",
+    "parseHint": "AI will first verify this PDF is a SAT test, then extract every question. Takes 1-3 minutes.",
+    "btnParse": "Parse & Add to Bank",
+    "btnRetry": "Retry Parse",
+    "btnStarting": "Starting…",
+    "btnParsing": "Parsing… (1-3 min)",
+    "rejectedTitle": "This PDF is not a SAT test and cannot be added to the question bank",
+    "rejectedSub": "The AI classifier rejected this file as non-SAT content.",
+    "rejectedReason": "Reason",
+    "uploadNew": "Upload New",
+    "parsingNow": "AI parsing in progress…",
+    "parsingHint": "This takes 1-3 minutes. The page will update automatically.",
+    "failed": "Parsing failed",
+    "approved": "All questions approved. This module is locked.",
+    "previewQuestions": "Preview questions",
+    "questions": "Questions",
+    "reviewQueue": "Review queue",
+    "allQuestions": "All questions",
+    "noQuestions": "No questions yet. Parse this module to extract questions.",
+    "openPdf": "Open PDF",
+    "pdfFile": "PDF File"
+  },
+  "teacherResults": {
+    "title": "Student Results",
+    "emptyBody": "You have no tests yet. Create a test to start collecting results.",
+    "createCta": "Create a test",
+    "subtitle": "Cross-test consolidated view across all your tests.",
+    "noSubmissions": "No submissions yet. Once students submit, results will appear here.",
+    "stats": {
+      "tests": "Tests",
+      "students": "Students",
+      "submissions": "Submissions",
+      "avgScore": "Avg Score"
+    }
+  },
+  "teacherAnalysis": {
+    "title": "Question Analysis",
+    "emptyBody": "You have no tests yet. Once you create tests and students submit answers, cross-test question analytics will appear here.",
+    "createCta": "Create a test",
+    "subtitleShort": "Cross-test hardest-questions view.",
+    "subtitleLong": "Cross-test hardest-questions view across all your tests.",
+    "noSubmissions": "No submissions yet. Once students submit, hardest-question analytics will appear.",
+    "stats": {
+      "tests": "Tests",
+      "submissions": "Submissions",
+      "uniqueQuestions": "Unique Questions",
+      "overallErrorRate": "Overall Error Rate"
+    },
+    "worstDomains": "Worst Domains",
+    "noDomainData": "No domain data available.",
+    "domainAttempts": "{attempts} attempts · {correct} correct",
+    "hardestOverall": "Hardest Questions Overall"
+  },
+  "analyticsTable": {
+    "allTests": "All Tests",
+    "allClasses": "All Classes",
+    "allStatuses": "All Statuses",
+    "searchStudent": "Search student",
+    "noQuestionAttempts": "No question attempts in the selected scope.",
+    "noResults": "No results match the current filters.",
+    "showingTop": "Showing top {top} of {total} questions",
+    "rowCount": "{count} row",
+    "rowCountPlural": "{count} rows",
+    "columns": {
+      "question": "Question",
+      "domain": "Domain",
+      "attempts": "Attempts",
+      "errorPct": "Error %",
+      "topWrong": "Top Wrong",
+      "action": "Action",
+      "student": "Student",
+      "class": "Class",
+      "test": "Test",
+      "status": "Status",
+      "score": "Score",
+      "correct": "Correct",
+      "time": "Time",
+      "submitted": "Submitted"
+    },
+    "view": "View",
+    "inMultipleTests": "in {count} tests"
   }
 }

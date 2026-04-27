@@ -11,28 +11,32 @@ const inter = Inter({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: {
-    default: "SAT Exam OS",
-    template: "%s | SAT Exam OS",
-  },
-  description:
-    "Upload. Parse. Assign. Analyze. — AI-powered SAT test management for tutoring centers.",
-  keywords: [
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getLocale();
+  const isZh = locale !== "en";
+  const baseKeywords = [
     "SAT Exam OS",
     "SAT test management",
     "AI education",
     "tutoring center",
     "SAT preparation",
-    "補習班",
-    "SAT 測驗管理",
-  ],
-  openGraph: {
-    title: "SAT Exam OS",
-    description: "Upload. Parse. Assign. Analyze.",
-    type: "website",
-  },
-};
+  ];
+  const zhKeywords = ["補習班", "SAT 測驗管理"];
+  return {
+    title: {
+      default: "SAT Exam OS",
+      template: "%s | SAT Exam OS",
+    },
+    description:
+      "Upload. Parse. Assign. Analyze. — AI-powered SAT test management for tutoring centers.",
+    keywords: isZh ? [...baseKeywords, ...zhKeywords] : baseKeywords,
+    openGraph: {
+      title: "SAT Exam OS",
+      description: "Upload. Parse. Assign. Analyze.",
+      type: "website",
+    },
+  };
+}
 
 export default async function RootLayout({
   children,

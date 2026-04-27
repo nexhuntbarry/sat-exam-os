@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, AlertCircle, CheckCircle2, ClipboardList, Ban, Upload } from "lucide-react";
 import { clsx } from "clsx";
-import { getLocale } from "next-intl/server";
+import { getTranslations } from "next-intl/server";
 import ModuleParseButton from "./ModuleParseButton";
 import DeleteModuleButton from "../DeleteModuleButton";
 
@@ -50,38 +50,29 @@ export default async function ModuleDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [mod, locale] = await Promise.all([getModule(id), getLocale()]);
-  const isZh = locale !== "en";
+  const [mod, tr] = await Promise.all([getModule(id), getTranslations("moduleDetail")]);
   const t = {
-    parseTitle: isZh ? "解析並加入題庫" : "Parse & Add to Question Bank",
-    parseHint: isZh
-      ? "AI 會先確認此 PDF 為 SAT 題目，再抽取每一題。約 1-3 分鐘。"
-      : "AI will first verify this PDF is a SAT test, then extract every question. Takes 1-3 minutes.",
-    btnParse: isZh ? "解析並加入題庫" : "Parse & Add to Bank",
-    btnRetry: isZh ? "重試解析" : "Retry Parse",
-    btnStarting: isZh ? "啟動中…" : "Starting…",
-    btnParsing: isZh ? "解析中… (1-3 分鐘)" : "Parsing… (1-3 min)",
-    rejectedTitle: isZh
-      ? "⚠️ 此 PDF 非 SAT 題目，無法加入題庫"
-      : "⚠️ This PDF is not a SAT test and cannot be added to the question bank",
-    rejectedSub: isZh
-      ? "AI 判定此檔案為非考試內容。"
-      : "The AI classifier rejected this file as non-SAT content.",
-    rejectedReason: isZh ? "原因" : "Reason",
-    uploadNew: isZh ? "上傳新檔" : "Upload New",
-    parsingNow: isZh ? "AI 解析中…" : "AI parsing in progress…",
-    parsingHint: isZh
-      ? "需要 1-3 分鐘，頁面會自動更新。"
-      : "This takes 1-3 minutes. The page will update automatically.",
-    failed: isZh ? "解析失敗" : "Parsing failed",
-    approved: isZh ? "所有題目已核准，此 module 已鎖定。" : "All questions approved. This module is locked.",
-    previewQuestions: isZh ? "預覽題目" : "Preview questions",
-    questions: isZh ? "題目" : "Questions",
-    reviewQueue: isZh ? "審核佇列" : "Review queue",
-    allQuestions: isZh ? "所有題目" : "All questions",
-    noQuestions: isZh ? "尚無題目。解析此 module 以抽取題目。" : "No questions yet. Parse this module to extract questions.",
-    openPdf: isZh ? "開啟 PDF" : "Open PDF",
-    pdfFile: isZh ? "PDF 檔案" : "PDF File",
+    parseTitle: tr("parseTitle"),
+    parseHint: tr("parseHint"),
+    btnParse: tr("btnParse"),
+    btnRetry: tr("btnRetry"),
+    btnStarting: tr("btnStarting"),
+    btnParsing: tr("btnParsing"),
+    rejectedTitle: `\u26A0\uFE0F ${tr("rejectedTitle")}`,
+    rejectedSub: tr("rejectedSub"),
+    rejectedReason: tr("rejectedReason"),
+    uploadNew: tr("uploadNew"),
+    parsingNow: tr("parsingNow"),
+    parsingHint: tr("parsingHint"),
+    failed: tr("failed"),
+    approved: tr("approved"),
+    previewQuestions: tr("previewQuestions"),
+    questions: tr("questions"),
+    reviewQueue: tr("reviewQueue"),
+    allQuestions: tr("allQuestions"),
+    noQuestions: tr("noQuestions"),
+    openPdf: tr("openPdf"),
+    pdfFile: tr("pdfFile"),
   };
 
   if (!mod) notFound();

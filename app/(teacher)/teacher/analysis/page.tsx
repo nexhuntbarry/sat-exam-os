@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BarChart2 } from "lucide-react";
+import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { StatCard } from "@/components/analytics/StatCard";
@@ -227,7 +228,10 @@ export default async function TeacherAnalysisPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const data = await getCrossTestAnalysis(user.userId, user.role ?? "");
+  const [data, t] = await Promise.all([
+    getCrossTestAnalysis(user.userId, user.role ?? ""),
+    getTranslations("teacherAnalysis"),
+  ]);
 
   if (!data) {
     return (
@@ -237,19 +241,14 @@ export default async function TeacherAnalysisPage() {
           <BarChart2 size={36} className="text-warm-coral" />
         </div>
         <div className="space-y-2">
-          <h1 className="text-2xl font-bold text-charcoal">Question Analysis / 題目分析</h1>
-          <p className="text-soft-mute text-sm">
-            You have no tests yet. Once you create tests and students submit answers,
-            cross-test question analytics will appear here.
-            <br />
-            您尚未建立任何測驗。建立測驗並有學生作答後，跨測驗題目分析將顯示在此。
-          </p>
+          <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
+          <p className="text-soft-mute text-sm">{t("emptyBody")}</p>
         </div>
         <Link
           href="/teacher/tests"
           className="inline-block px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white text-sm font-semibold transition-colors"
         >
-          Create a test / 建立測驗
+          {t("createCta")}
         </Link>
       </div>
     );
@@ -260,15 +259,11 @@ export default async function TeacherAnalysisPage() {
       <div className="max-w-5xl mx-auto space-y-6">
         <PageIntro tKey="teacher.analysis" />
         <div>
-          <h1 className="text-2xl font-bold text-charcoal">Question Analysis / 題目分析</h1>
-          <p className="text-soft-mute text-sm mt-1">
-            Cross-test hardest-questions view. / 跨測驗最難題目分析。
-          </p>
+          <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
+          <p className="text-soft-mute text-sm mt-1">{t("subtitleShort")}</p>
         </div>
         <div className="bg-surface border border-divider rounded-2xl py-16 text-center text-soft-mute text-sm">
-          No submissions yet. Once students submit, hardest-question analytics will appear.
-          <br />
-          尚未有學生提交。一旦有提交，難題分析將顯示在此。
+          {t("noSubmissions")}
         </div>
       </div>
     );
@@ -286,23 +281,20 @@ export default async function TeacherAnalysisPage() {
     <div className="max-w-6xl mx-auto space-y-8">
       <PageIntro tKey="teacher.analysis" />
       <div>
-        <h1 className="text-2xl font-bold text-charcoal">Question Analysis / 題目分析</h1>
-        <p className="text-soft-mute text-sm mt-1">
-          Cross-test hardest-questions view across all your tests. /
-          跨所有測驗的最難題目分析。
-        </p>
+        <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
+        <p className="text-soft-mute text-sm mt-1">{t("subtitleLong")}</p>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard label="Tests / 測驗" value={totals.tests} color="default" />
-        <StatCard label="Submissions / 提交" value={totals.submissions} color="lime" />
+        <StatCard label={t("stats.tests")} value={totals.tests} color="default" />
+        <StatCard label={t("stats.submissions")} value={totals.submissions} color="lime" />
         <StatCard
-          label="Unique Questions / 不重複題目"
+          label={t("stats.uniqueQuestions")}
           value={totals.uniqueQuestions}
           color="blue"
         />
         <StatCard
-          label="Overall Error Rate / 整體錯誤率"
+          label={t("stats.overallErrorRate")}
           value={`${overallErrorPct.toFixed(1)}%`}
           color={overallErrorPct >= 50 ? "rose" : overallErrorPct >= 30 ? "amber" : "emerald"}
         />
@@ -310,13 +302,11 @@ export default async function TeacherAnalysisPage() {
 
       {/* Worst domains */}
       <section className="space-y-3">
-        <h2 className="text-charcoal font-semibold text-lg">
-          Worst Domains / 最弱題型
-        </h2>
+        <h2 className="text-charcoal font-semibold text-lg">{t("worstDomains")}</h2>
         <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
           {domainAggs.length === 0 ? (
             <div className="py-8 text-center text-soft-mute text-sm">
-              No domain data available.
+              {t("noDomainData")}
             </div>
           ) : (
             <div className="divide-y divide-divider">
@@ -327,7 +317,10 @@ export default async function TeacherAnalysisPage() {
                       {d.domain}
                     </div>
                     <div className="text-soft-mute text-xs">
-                      {d.attempts} attempts · {d.correct} correct
+                      {t("domainAttempts", {
+                        attempts: d.attempts,
+                        correct: d.correct,
+                      })}
                     </div>
                   </div>
                   <div className="w-48 bg-light-bg rounded-full h-2 overflow-hidden">
@@ -354,9 +347,7 @@ export default async function TeacherAnalysisPage() {
 
       {/* Hardest questions overall */}
       <section className="space-y-3">
-        <h2 className="text-charcoal font-semibold text-lg">
-          Hardest Questions Overall / 整體最難題目
-        </h2>
+        <h2 className="text-charcoal font-semibold text-lg">{t("hardestOverall")}</h2>
         <CrossTestQuestionTable rows={rows} testOptions={testOptions} />
       </section>
     </div>

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
+import { useTranslations } from "next-intl";
 import MathMarkdown from "@/components/MathMarkdown";
 
 export interface CrossTestQuestionRow {
@@ -28,11 +29,12 @@ interface Props {
 }
 
 export function CrossTestQuestionTable({ rows, testOptions }: Props) {
+  const t = useTranslations("analyticsTable");
   const [testFilter, setTestFilter] = useState("all");
 
   const filtered = useMemo(() => {
     if (testFilter === "all") return rows;
-    return rows.filter((r) => r.testsAppearingIn.some((t) => t.testId === testFilter));
+    return rows.filter((r) => r.testsAppearingIn.some((tt) => tt.testId === testFilter));
   }, [rows, testFilter]);
 
   // Re-pick link target if a single test is selected
@@ -53,22 +55,22 @@ export function CrossTestQuestionTable({ rows, testOptions }: Props) {
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-center">
         <select value={testFilter} onChange={(e) => setTestFilter(e.target.value)} className={selectCls}>
-          <option value="all">All Tests / 全部測驗</option>
-          {testOptions.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
+          <option value="all">{t("allTests")}</option>
+          {testOptions.map((tt) => (
+            <option key={tt.id} value={tt.id}>
+              {tt.name}
             </option>
           ))}
         </select>
         <div className="ml-auto text-soft-mute text-sm self-center">
-          Showing top {top.length} of {enriched.length} questions
+          {t("showingTop", { top: top.length, total: enriched.length })}
         </div>
       </div>
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {top.length === 0 ? (
           <div className="py-12 text-center text-soft-mute text-sm">
-            No question attempts in the selected scope. / 此範圍內尚無作答資料
+            {t("noQuestionAttempts")}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -76,14 +78,14 @@ export function CrossTestQuestionTable({ rows, testOptions }: Props) {
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium w-12">#</th>
-                  <th className="text-left px-5 py-3 font-medium">Question / 題目</th>
-                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">Domain</th>
-                  <th className="text-right px-5 py-3 font-medium">Attempts</th>
-                  <th className="text-right px-5 py-3 font-medium">Error %</th>
+                  <th className="text-left px-5 py-3 font-medium">{t("columns.question")}</th>
+                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">{t("columns.domain")}</th>
+                  <th className="text-right px-5 py-3 font-medium">{t("columns.attempts")}</th>
+                  <th className="text-right px-5 py-3 font-medium">{t("columns.errorPct")}</th>
                   <th className="text-center px-5 py-3 font-medium hidden sm:table-cell">
-                    Top Wrong
+                    {t("columns.topWrong")}
                   </th>
-                  <th className="text-left px-5 py-3 font-medium">Action</th>
+                  <th className="text-left px-5 py-3 font-medium">{t("columns.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -101,7 +103,7 @@ export function CrossTestQuestionTable({ rows, testOptions }: Props) {
                         {q.questionNumber != null && <span>Q{q.questionNumber}</span>}
                         {q.difficulty && <span> · {q.difficulty}</span>}
                         {q.testsAppearingIn.length > 1 && (
-                          <span> · in {q.testsAppearingIn.length} tests</span>
+                          <span> · {t("inMultipleTests", { count: q.testsAppearingIn.length })}</span>
                         )}
                       </div>
                     </td>
@@ -131,7 +133,7 @@ export function CrossTestQuestionTable({ rows, testOptions }: Props) {
                         href={`/teacher/tests/${q.testIdForLink}/analytics/${q.questionId}`}
                         className="text-warm-coral text-xs hover:underline whitespace-nowrap"
                       >
-                        View
+                        {t("view")}
                       </Link>
                     </td>
                   </tr>

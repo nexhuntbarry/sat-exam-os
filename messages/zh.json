@@ -586,5 +586,100 @@
       "submitting": "繳交中...",
       "unansweredWarning": "您有 {count} 題未作答。未作答的題目將視為錯誤。"
     }
+  },
+  "notFound": {
+    "code": "404",
+    "title": "找不到頁面",
+    "body": "此頁面尚未建置或不存在。",
+    "back": "返回首頁"
+  },
+  "comingSoon": {
+    "defaultDescription": "此頁尚未建置，敬請期待。",
+    "subtitle": "此頁尚未建置",
+    "backToDashboard": "返回儀表板",
+    "home": "首頁"
+  },
+  "moduleDetail": {
+    "parseTitle": "解析並加入題庫",
+    "parseHint": "AI 會先確認此 PDF 為 SAT 題目，再抽取每一題。約 1-3 分鐘。",
+    "btnParse": "解析並加入題庫",
+    "btnRetry": "重試解析",
+    "btnStarting": "啟動中…",
+    "btnParsing": "解析中… (1-3 分鐘)",
+    "rejectedTitle": "此 PDF 非 SAT 題目，無法加入題庫",
+    "rejectedSub": "AI 判定此檔案為非考試內容。",
+    "rejectedReason": "原因",
+    "uploadNew": "上傳新檔",
+    "parsingNow": "AI 解析中…",
+    "parsingHint": "需要 1-3 分鐘，頁面會自動更新。",
+    "failed": "解析失敗",
+    "approved": "所有題目已核准，此 module 已鎖定。",
+    "previewQuestions": "預覽題目",
+    "questions": "題目",
+    "reviewQueue": "審核佇列",
+    "allQuestions": "所有題目",
+    "noQuestions": "尚無題目。解析此 module 以抽取題目。",
+    "openPdf": "開啟 PDF",
+    "pdfFile": "PDF 檔案"
+  },
+  "teacherResults": {
+    "title": "學生成績",
+    "emptyBody": "您尚未建立任何測驗。建立後即可在此查看跨測驗的學生成績。",
+    "createCta": "建立測驗",
+    "subtitle": "跨所有測驗的學生作答統整。",
+    "noSubmissions": "尚未有學生提交。一旦有提交，將顯示在此。",
+    "stats": {
+      "tests": "測驗數",
+      "students": "學生數",
+      "submissions": "提交數",
+      "avgScore": "平均分數"
+    }
+  },
+  "teacherAnalysis": {
+    "title": "題目分析",
+    "emptyBody": "您尚未建立任何測驗。建立測驗並有學生作答後，跨測驗題目分析將顯示在此。",
+    "createCta": "建立測驗",
+    "subtitleShort": "跨測驗最難題目分析。",
+    "subtitleLong": "跨所有測驗的最難題目分析。",
+    "noSubmissions": "尚未有學生提交。一旦有提交，難題分析將顯示在此。",
+    "stats": {
+      "tests": "測驗",
+      "submissions": "提交",
+      "uniqueQuestions": "不重複題目",
+      "overallErrorRate": "整體錯誤率"
+    },
+    "worstDomains": "最弱題型",
+    "noDomainData": "尚無領域資料。",
+    "domainAttempts": "{attempts} 次作答 · {correct} 答對",
+    "hardestOverall": "整體最難題目"
+  },
+  "analyticsTable": {
+    "allTests": "全部測驗",
+    "allClasses": "全部班級",
+    "allStatuses": "全部狀態",
+    "searchStudent": "搜尋學生",
+    "noQuestionAttempts": "此範圍內尚無作答資料",
+    "noResults": "沒有符合條件的結果",
+    "showingTop": "顯示前 {top} 題（共 {total} 題）",
+    "rowCount": "共 {count} 筆",
+    "rowCountPlural": "共 {count} 筆",
+    "columns": {
+      "question": "題目",
+      "domain": "領域",
+      "attempts": "作答數",
+      "errorPct": "錯誤率",
+      "topWrong": "最常選錯",
+      "action": "操作",
+      "student": "學生",
+      "class": "班級",
+      "test": "測驗",
+      "status": "狀態",
+      "score": "分數",
+      "correct": "答對",
+      "time": "時間",
+      "submitted": "繳交時間"
+    },
+    "view": "查看",
+    "inMultipleTests": "出現於 {count} 份測驗"
   }
 }

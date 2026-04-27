@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { ArrowUpDown, ChevronUp, ChevronDown, Search } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 export interface CrossTestResultRow {
   submissionId: string;
@@ -51,6 +52,7 @@ function fmtTime(s: number | null) {
 }
 
 export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props) {
+  const t = useTranslations("analyticsTable");
   const [testFilter, setTestFilter] = useState("all");
   const [classFilter, setClassFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -117,15 +119,15 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-center">
         <select value={testFilter} onChange={(e) => setTestFilter(e.target.value)} className={selectCls}>
-          <option value="all">All Tests / 全部測驗</option>
-          {testOptions.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
+          <option value="all">{t("allTests")}</option>
+          {testOptions.map((tt) => (
+            <option key={tt.id} value={tt.id}>
+              {tt.name}
             </option>
           ))}
         </select>
         <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className={selectCls}>
-          <option value="all">All Classes / 全部班級</option>
+          <option value="all">{t("allClasses")}</option>
           {classOptions.map((c) => (
             <option key={c} value={c}>
               {c}
@@ -135,7 +137,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={selectCls}>
           {statuses.map((s) => (
             <option key={s} value={s}>
-              {s === "all" ? "All Statuses / 全部狀態" : s}
+              {s === "all" ? t("allStatuses") : s}
             </option>
           ))}
         </select>
@@ -143,21 +145,23 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-soft-mute" />
           <input
             type="text"
-            placeholder="Search student / 搜尋學生"
+            placeholder={t("searchStudent")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="bg-light-bg border border-divider rounded-lg pl-8 pr-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 w-56"
           />
         </div>
         <div className="ml-auto text-soft-mute text-sm self-center">
-          {sorted.length} row{sorted.length !== 1 ? "s" : ""}
+          {sorted.length === 1
+            ? t("rowCount", { count: sorted.length })
+            : t("rowCountPlural", { count: sorted.length })}
         </div>
       </div>
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {sorted.length === 0 ? (
           <div className="py-12 text-center text-soft-mute text-sm">
-            No results match the current filters. / 沒有符合條件的結果
+            {t("noResults")}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -166,41 +170,41 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("studentName")}>
-                      Student / 學生 <SortIcon k="studentName" />
+                      {t("columns.student")} <SortIcon k="studentName" />
                     </button>
                   </th>
-                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">Class</th>
+                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">{t("columns.class")}</th>
                   <th className="text-left px-5 py-3 font-medium">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("testName")}>
-                      Test / 測驗 <SortIcon k="testName" />
+                      {t("columns.test")} <SortIcon k="testName" />
                     </button>
                   </th>
                   <th className="text-left px-5 py-3 font-medium">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("status")}>
-                      Status <SortIcon k="status" />
+                      {t("columns.status")} <SortIcon k="status" />
                     </button>
                   </th>
                   <th className="text-left px-5 py-3 font-medium">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("percentage")}>
-                      Score <SortIcon k="percentage" />
+                      {t("columns.score")} <SortIcon k="percentage" />
                     </button>
                   </th>
                   <th className="text-left px-5 py-3 font-medium hidden sm:table-cell">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("correctCount")}>
-                      Correct <SortIcon k="correctCount" />
+                      {t("columns.correct")} <SortIcon k="correctCount" />
                     </button>
                   </th>
                   <th className="text-left px-5 py-3 font-medium hidden md:table-cell">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("timeSpentSeconds")}>
-                      Time <SortIcon k="timeSpentSeconds" />
+                      {t("columns.time")} <SortIcon k="timeSpentSeconds" />
                     </button>
                   </th>
                   <th className="text-left px-5 py-3 font-medium hidden lg:table-cell">
                     <button className="flex items-center gap-1" onClick={() => toggleSort("submittedAt")}>
-                      Submitted <SortIcon k="submittedAt" />
+                      {t("columns.submitted")} <SortIcon k="submittedAt" />
                     </button>
                   </th>
-                  <th className="text-left px-5 py-3 font-medium">Action</th>
+                  <th className="text-left px-5 py-3 font-medium">{t("columns.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -257,7 +261,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                           href={`/teacher/tests/${row.testId}/results/${row.submissionId}`}
                           className="text-warm-coral text-xs hover:underline"
                         >
-                          View
+                          {t("view")}
                         </Link>
                       )}
                     </td>

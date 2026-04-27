@@ -1,16 +1,28 @@
 import { getCurrentUser } from "@/lib/auth";
 import Link from "next/link";
 import { Construction } from "lucide-react";
+import { getTranslations } from "next-intl/server";
 
-function getDashboardLink(role: string | null): { href: string; label: string } {
-  if (role === "admin") return { href: "/admin", label: "Admin Dashboard" };
-  if (role === "teacher") return { href: "/teacher", label: "Teacher Dashboard" };
-  return { href: "/student", label: "Student Dashboard" };
+function getDashboardLink(
+  role: string | null,
+  labels: { admin: string; teacher: string; student: string }
+): { href: string; label: string } {
+  if (role === "admin") return { href: "/admin", label: labels.admin };
+  if (role === "teacher") return { href: "/teacher", label: labels.teacher };
+  return { href: "/student", label: labels.student };
 }
 
 export default async function NotFound() {
   const user = await getCurrentUser();
-  const { href, label } = getDashboardLink(user?.role ?? null);
+  const [tNotFound, tDash] = await Promise.all([
+    getTranslations("notFound"),
+    getTranslations("dashboard"),
+  ]);
+  const { href, label } = getDashboardLink(user?.role ?? null, {
+    admin: tDash("admin.title"),
+    teacher: tDash("teacher.title"),
+    student: tDash("student.title"),
+  });
 
   return (
     <div className="min-h-screen bg-cream text-charcoal flex items-center justify-center px-4">
@@ -21,14 +33,11 @@ export default async function NotFound() {
 
         <div className="space-y-2">
           <p className="text-warm-coral text-sm font-semibold tracking-widest uppercase">
-            404
+            {tNotFound("code")}
           </p>
-          <h1 className="text-3xl font-bold text-charcoal">Page Not Found</h1>
+          <h1 className="text-3xl font-bold text-charcoal">{tNotFound("title")}</h1>
           <p className="text-soft-mute text-sm leading-relaxed">
-            This page doesn&apos;t exist yet or is being built.
-          </p>
-          <p className="text-soft-mute text-xs">
-            此頁尚未建置 / This page is being built
+            {tNotFound("body")}
           </p>
         </div>
 
@@ -45,7 +54,7 @@ export default async function NotFound() {
             href="/"
             className="px-5 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal hover:border-divider text-sm transition-colors"
           >
-            Back to Home
+            {tNotFound("back")}
           </Link>
         </div>
       </div>

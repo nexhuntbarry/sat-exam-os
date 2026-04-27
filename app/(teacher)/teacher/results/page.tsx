@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ClipboardList } from "lucide-react";
+import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { StatCard } from "@/components/analytics/StatCard";
@@ -121,7 +122,10 @@ export default async function TeacherResultsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const data = await getCrossTestResults(user.userId, user.role ?? "");
+  const [data, t] = await Promise.all([
+    getCrossTestResults(user.userId, user.role ?? ""),
+    getTranslations("teacherResults"),
+  ]);
 
   if (data.totals.tests === 0) {
     return (
@@ -131,18 +135,14 @@ export default async function TeacherResultsPage() {
           <ClipboardList size={36} className="text-warm-coral" />
         </div>
         <div className="space-y-2">
-          <h1 className="text-2xl font-bold text-charcoal">Student Results / 學生成績</h1>
-          <p className="text-soft-mute text-sm">
-            You have no tests yet. Create a test to start collecting results.
-            <br />
-            您尚未建立任何測驗。建立後即可在此查看跨測驗的學生成績。
-          </p>
+          <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
+          <p className="text-soft-mute text-sm">{t("emptyBody")}</p>
         </div>
         <Link
           href="/teacher/tests"
           className="inline-block px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white text-sm font-semibold transition-colors"
         >
-          Create a test / 建立測驗
+          {t("createCta")}
         </Link>
       </div>
     );
@@ -153,16 +153,11 @@ export default async function TeacherResultsPage() {
       <div className="max-w-5xl mx-auto space-y-6">
         <PageIntro tKey="teacher.results" />
         <div>
-          <h1 className="text-2xl font-bold text-charcoal">Student Results / 學生成績</h1>
-          <p className="text-soft-mute text-sm mt-1">
-            Cross-test consolidated view across all your tests. /
-            跨所有測驗的學生作答統整。
-          </p>
+          <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
+          <p className="text-soft-mute text-sm mt-1">{t("subtitle")}</p>
         </div>
         <div className="bg-surface border border-divider rounded-2xl py-16 text-center text-soft-mute text-sm">
-          No submissions yet. Once students submit, results will appear here.
-          <br />
-          尚未有學生提交。一旦有提交，將顯示在此。
+          {t("noSubmissions")}
         </div>
       </div>
     );
@@ -181,19 +176,16 @@ export default async function TeacherResultsPage() {
     <div className="max-w-6xl mx-auto space-y-8">
       <PageIntro tKey="teacher.results" />
       <div>
-        <h1 className="text-2xl font-bold text-charcoal">Student Results / 學生成績</h1>
-        <p className="text-soft-mute text-sm mt-1">
-          Cross-test consolidated view across all your tests. /
-          跨所有測驗的學生作答統整。
-        </p>
+        <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
+        <p className="text-soft-mute text-sm mt-1">{t("subtitle")}</p>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard label="Tests / 測驗數" value={data.totals.tests} color="default" />
-        <StatCard label="Students / 學生數" value={data.totals.students} color="blue" />
-        <StatCard label="Submissions / 提交數" value={completed.length} color="lime" />
+        <StatCard label={t("stats.tests")} value={data.totals.tests} color="default" />
+        <StatCard label={t("stats.students")} value={data.totals.students} color="blue" />
+        <StatCard label={t("stats.submissions")} value={completed.length} color="lime" />
         <StatCard
-          label="Avg Score / 平均分數"
+          label={t("stats.avgScore")}
           value={avgPct != null ? `${avgPct.toFixed(1)}%` : "—"}
           color="emerald"
         />
