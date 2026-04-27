@@ -41,17 +41,9 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
           <Logo size={80} />
         </div>
 
-        <p className="text-warm-coral text-sm font-semibold tracking-widest uppercase mb-4">
+        <h1 className="text-3xl md:text-5xl font-bold tracking-widest uppercase mb-12 text-charcoal">
           {tBrand("name")}
-        </p>
-
-        <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight mb-6 gradient-text">
-          {t("title")}
         </h1>
-
-        <p className="text-mid-gray text-lg md:text-xl max-w-2xl mx-auto mb-12 leading-relaxed">
-          {t("subtitle")}
-        </p>
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           {dashboardHref ? (
@@ -213,7 +205,6 @@ export default async function HomePage() {
       </nav>
 
       <HeroSection dashboardHref={dashboardHref} />
-      <FeaturesSection />
       <Footer />
     </main>
   );
