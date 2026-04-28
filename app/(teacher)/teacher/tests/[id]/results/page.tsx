@@ -2,11 +2,11 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { Download } from "lucide-react";
 import { StatCard } from "@/components/analytics/StatCard";
 import { ScoreDistributionChart } from "@/components/analytics/ScoreDistributionChart";
 import { StudentResultsTable } from "@/components/analytics/StudentResultsTable";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
+import { ExportCsvButton } from "@/components/analytics/ExportCsvButton";
 
 async function getResultsData(testId: string, userId: string, role: string) {
   const db = getServiceClient();
@@ -156,13 +156,8 @@ export default async function TestResultsPage({
           >
             Question Analytics
           </Link>
-          <a
-            href={`/api/teacher/tests/${id}/export`}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-amber/10 border border-warm-amber/20 text-warm-amber text-sm font-medium hover:bg-warm-amber/20 transition-colors"
-          >
-            <Download size={14} />
-            Export CSV
-          </a>
+          <ExportCsvButton testId={id} />
+
         </div>
       </div>
 

@@ -55,6 +55,7 @@ export default function TestTakingClient({
   const [tabSwitchCount, setTabSwitchCount] = useState(
     typeof initialMetadata.tab_switches === "number" ? initialMetadata.tab_switches : 0
   );
+  const [tabSwitchBannerVisible, setTabSwitchBannerVisible] = useState(false);
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const answersRef = useRef(answers);
@@ -87,12 +88,20 @@ export default function TestTakingClient({
     function handleVisibilityChange() {
       if (document.visibilityState === "hidden") {
         setTabSwitchCount((c) => c + 1);
+        setTabSwitchBannerVisible(true);
         scheduleSave();
       }
     }
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [scheduleSave]);
+
+  // Auto-dismiss tab-switch banner after 6 seconds.
+  useEffect(() => {
+    if (!tabSwitchBannerVisible) return;
+    const t = setTimeout(() => setTabSwitchBannerVisible(false), 6000);
+    return () => clearTimeout(t);
+  }, [tabSwitchBannerVisible]);
 
   // Save on unmount
   useEffect(() => {
@@ -157,6 +166,15 @@ export default function TestTakingClient({
 
   return (
     <div className="flex flex-col h-screen bg-cream">
+      {tabSwitchBannerVisible && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="shrink-0 bg-warm-amber/15 border-b border-warm-amber/30 text-warm-amber-dark text-sm px-4 py-2 text-center"
+        >
+          Tab switch recorded ({tabSwitchCount}). Stay on this tab during the test.
+        </div>
+      )}
       {/* Top bar */}
       <div className="shrink-0 border-b border-divider px-4 sm:px-6 py-3 flex items-center justify-between gap-3 overflow-x-hidden">
         <div className="font-semibold text-charcoal truncate text-sm md:text-base">{test.name}</div>

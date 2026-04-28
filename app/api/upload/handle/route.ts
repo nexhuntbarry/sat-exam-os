@@ -12,20 +12,11 @@ import { requireRole } from "@/lib/rbac";
 //      internally — gating with Clerk auth here would 401 the callback and
 //      cause the SDK to retry forever.
 export async function POST(req: Request) {
-  console.log("[upload/handle] POST received");
-
   const body = (await req.json()) as HandleUploadBody;
-  console.log("[upload/handle] body type:", body.type);
 
   if (body.type === "blob.generate-client-token") {
     const authResult = await requireRole("admin");
-    if (authResult instanceof NextResponse) {
-      console.warn("[upload/handle] token request auth failed", authResult.status);
-      return authResult;
-    }
-    console.log("[upload/handle] token auth ok userId=", authResult.userId);
-  } else {
-    console.log("[upload/handle] callback received, skipping Clerk auth (signature-verified)");
+    if (authResult instanceof NextResponse) return authResult;
   }
 
   try {
@@ -48,8 +39,8 @@ export async function POST(req: Request) {
           }),
         };
       },
-      onUploadCompleted: async ({ blob, tokenPayload }) => {
-        console.log("[upload/handle] onUploadCompleted url=", blob.url, "payload=", tokenPayload);
+      onUploadCompleted: async () => {
+        // Vercel Blob signature-verified callback; no app-side action needed.
       },
     });
 

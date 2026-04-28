@@ -23,14 +23,9 @@ export async function GET() {
 
 // POST /api/admin/modules — create module
 export async function POST(req: Request) {
-  console.log("[modules POST] received");
   const authResult = await requireRole("admin");
-  if (authResult instanceof NextResponse) {
-    console.warn("[modules POST] auth failed", authResult.status);
-    return authResult;
-  }
+  if (authResult instanceof NextResponse) return authResult;
   const admin = authResult;
-  console.log("[modules POST] auth ok userId=", admin.userId);
 
   let body: {
     moduleName: string;
@@ -50,13 +45,11 @@ export async function POST(req: Request) {
   }
 
   if (!body.moduleName || !body.section || !body.moduleNumber || !body.pdfUrl) {
-    console.warn("[modules POST] missing fields", { hasName: !!body.moduleName, hasSection: !!body.section, hasNum: !!body.moduleNumber, hasUrl: !!body.pdfUrl });
     return NextResponse.json(
       { error: "moduleName, section, moduleNumber, pdfUrl are required" },
       { status: 400 }
     );
   }
-  console.log("[modules POST] inserting moduleName=", body.moduleName, "pdfUrl=", body.pdfUrl, "size=", body.pdfSizeBytes);
 
   const db = getServiceClient();
   const { data, error } = await db
@@ -81,7 +74,6 @@ export async function POST(req: Request) {
     console.error("[modules/post] DB error:", error);
     return NextResponse.json({ error: "Failed to create module" }, { status: 500 });
   }
-  console.log("[modules POST] inserted id=", data.id);
 
   return NextResponse.json(
     { ok: true, id: data.id, parseQueued: false },

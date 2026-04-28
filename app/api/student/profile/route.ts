@@ -35,6 +35,25 @@ export async function PATCH(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  // Trim + length-cap free-text fields to keep DB rows bounded and to
+  // reject obviously bogus payloads (e.g. multi-MB blobs from a manual POST).
+  const grade = typeof body.grade === "string" ? body.grade.trim().slice(0, 50) : null;
+  const school = typeof body.school === "string" ? body.school.trim().slice(0, 200) : null;
+  const classGroup = typeof body.class_group === "string" ? body.class_group.trim().slice(0, 100) : null;
+
+  // SAT score range: 400-1600. Reject anything outside this band.
+  let targetScore: number | null = null;
+  if (body.target_score !== null && body.target_score !== undefined) {
+    const n = Number(body.target_score);
+    if (!Number.isFinite(n) || n < 400 || n > 1600) {
+      return NextResponse.json(
+        { error: "target_score must be between 400 and 1600" },
+        { status: 400 }
+      );
+    }
+    targetScore = Math.round(n);
+  }
+
   const db = getServiceClient();
 
   const { error } = await db
@@ -42,10 +61,10 @@ export async function PATCH(req: Request) {
     .upsert(
       {
         user_id: user.userId,
-        grade: body.grade ?? null,
-        school: body.school ?? null,
-        target_score: body.target_score ?? null,
-        class_group: body.class_group ?? null,
+        grade,
+        school,
+        target_score: targetScore,
+        class_group: classGroup,
       },
       { onConflict: "user_id" }
     );

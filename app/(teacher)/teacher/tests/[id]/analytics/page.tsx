@@ -214,7 +214,9 @@ export default function QuestionAnalyticsPage() {
           <div className="w-20 text-center">Review</div>
         </div>
         {sorted.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">No questions match the current filters.</div>
+          <div className="py-12 text-center text-soft-mute text-sm">
+            {data?.summary?.totalSubmissions ? "No questions match the current filters." : "No submissions yet."}
+          </div>
         ) : (
           sorted.map((q) => (
             <QuestionAnalyticsRow

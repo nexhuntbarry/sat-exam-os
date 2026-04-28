@@ -197,9 +197,7 @@ export async function POST(
   // 5-minute Vercel function budget, and the inline-iframe renderer covers
   // any rare R&W figure without needing per-question crops.
   let imageMap: Map<number, { urls: string[]; alts: string[] }> = new Map();
-  if (mod.section === "Reading & Writing") {
-    console.log("[modules/parse] skipping image extraction for R&W module");
-  } else {
+  if (mod.section !== "Reading & Writing") {
     try {
       const result = await extractAndUploadQuestionImages(
         pdfBase64,
@@ -207,9 +205,6 @@ export async function POST(
         id,
       );
       imageMap = result.byQuestion;
-      console.log(
-        `[modules/parse] extracted ${result.totalUploaded} images across ${result.byQuestion.size} questions; ${result.errors.length} errors`,
-      );
     } catch (err) {
       console.error("[modules/parse] image extraction failed (non-fatal):", err);
     }
@@ -327,17 +322,12 @@ export async function POST(
   }
   let solverStats = { solved: 0, failed: 0 };
   try {
-    const t0 = Date.now();
     solverStats = await solveQuestionsAndPersist(
       parsedQuestions,
       imagesForSolver,
       id,
       db,
       authResult.userId,
-    );
-    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-    console.log(
-      `[modules/parse] solver done in ${elapsed}s — solved=${solverStats.solved} failed=${solverStats.failed}`,
     );
   } catch (err) {
     console.error("[modules/parse] solver crashed (questions saved without answers):", err);
