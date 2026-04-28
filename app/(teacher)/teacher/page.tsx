@@ -169,7 +169,20 @@ export default async function TeacherDashboardPage() {
             <Link href="/teacher/tests" className="text-warm-coral text-xs hover:underline">View all</Link>
           </div>
           {tests.length === 0 ? (
-            <div className="py-10 text-center text-soft-mute text-sm">No active tests.</div>
+            <div className="py-10 px-6 text-center text-sm space-y-2">
+              <p className="text-soft-mute">No active tests yet.</p>
+              <p className="text-mid-gray">
+                Build a quick practice test in{" "}
+                <Link href="/teacher/teaching-mode" className="text-warm-coral hover:underline">
+                  Teaching Mode
+                </Link>
+                , or ask your admin to assign one. New here?{" "}
+                <Link href="/teacher/help" className="text-warm-coral hover:underline">
+                  Read the Quick Start
+                </Link>
+                .
+              </p>
+            </div>
           ) : (
             <div className="divide-y divide-white/5">
               {tests.map((t) => {
@@ -204,7 +217,12 @@ export default async function TeacherDashboardPage() {
             <h2 className="text-charcoal font-semibold">Recent Submissions</h2>
           </div>
           {recentSubmissions.length === 0 ? (
-            <div className="py-10 text-center text-soft-mute text-sm">No submissions this week.</div>
+            <div className="py-10 px-6 text-center text-sm space-y-2">
+              <p className="text-soft-mute">No submissions this week.</p>
+              <p className="text-mid-gray text-xs">
+                Submissions appear here as students finish their tests.
+              </p>
+            </div>
           ) : (
             <div className="divide-y divide-white/5">
               {recentSubmissions.map((s) => (

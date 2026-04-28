@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import { getTranslations } from "next-intl/server";
 import ModuleParseButton from "./ModuleParseButton";
 import DeleteModuleButton from "../DeleteModuleButton";
+import { friendlyParseError } from "@/lib/friendly-parse-error";
 
 async function getModule(id: string) {
   const db = getServiceClient();
@@ -197,20 +198,31 @@ export default async function ModuleDetailPage({
       )}
 
       {/* Failed */}
-      {mod.parsing_status === "failed" && (
-        <div className="bg-status-error/10 border border-status-error/20 rounded-2xl p-5 space-y-3">
-          <div className="flex items-center gap-3">
-            <AlertCircle size={18} className="text-status-error shrink-0" />
-            <div className="flex-1">
-              <p className="text-charcoal text-sm font-medium">{t.failed}</p>
-              {mod.parsing_error && (
-                <p className="text-status-error/70 text-xs mt-0.5">{mod.parsing_error as string}</p>
-              )}
+      {mod.parsing_status === "failed" && (() => {
+        const friendly = friendlyParseError(mod.parsing_error as string | null);
+        return (
+          <div className="bg-status-error/10 border border-status-error/20 rounded-2xl p-5 space-y-3">
+            <div className="flex items-start gap-3">
+              <AlertCircle size={18} className="text-status-error shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <p className="text-charcoal text-sm font-medium">{friendly.summary}</p>
+                <p className="text-mid-gray text-xs">{friendly.hint}</p>
+                {mod.parsing_error && (
+                  <details className="mt-2">
+                    <summary className="text-status-error/60 text-xs cursor-pointer hover:text-status-error">
+                      Raw error (for dev team)
+                    </summary>
+                    <pre className="mt-1 text-status-error/70 text-xs whitespace-pre-wrap break-words font-mono">
+                      {mod.parsing_error as string}
+                    </pre>
+                  </details>
+                )}
+              </div>
+              <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} labels={{ parse: t.btnParse, retry: t.btnRetry, starting: t.btnStarting, parsing: t.btnParsing }} />
             </div>
-            <ModuleParseButton moduleId={id} initialStatus={mod.parsing_status as string} labels={{ parse: t.btnParse, retry: t.btnRetry, starting: t.btnStarting, parsing: t.btnParsing }} />
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Approved */}
       {mod.parsing_status === "approved" && (

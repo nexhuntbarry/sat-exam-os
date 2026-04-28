@@ -79,9 +79,20 @@ export default async function TeacherTestsPage() {
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {tests.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
+          <div className="py-16 px-6 text-center space-y-3 max-w-md mx-auto">
             <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
             <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
+            <p className="text-mid-gray text-xs">
+              Build a Draft test in{" "}
+              <Link href="/teacher/teaching-mode" className="text-warm-coral hover:underline">
+                Teaching Mode
+              </Link>
+              {" "}or ask your admin to assign one. The{" "}
+              <Link href="/teacher/help" className="text-warm-coral hover:underline">
+                Quick Start
+              </Link>
+              {" "}walks through the full flow.
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">

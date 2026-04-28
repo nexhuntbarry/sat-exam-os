@@ -9,6 +9,7 @@ import {
   BookOpen,
   Settings,
   Presentation,
+  HelpCircle,
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -18,6 +19,7 @@ const navItems = [
   { href: "/teacher/tests", icon: ClipboardList, label: "My Tests" },
   { href: "/teacher/results", icon: BarChart2, label: "Student Results" },
   { href: "/teacher/analysis", icon: BookOpen, label: "Question Analysis" },
+  { href: "/teacher/help", icon: HelpCircle, label: "Quick Start" },
   { href: "/teacher/settings", icon: Settings, label: "Settings" },
 ];
 

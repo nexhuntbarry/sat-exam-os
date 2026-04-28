@@ -245,7 +245,7 @@ export default async function TeacherAnalysisPage() {
           <p className="text-soft-mute text-sm">{t("emptyBody")}</p>
         </div>
         <Link
-          href="/teacher/tests"
+          href="/teacher/teaching-mode"
           className="inline-block px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white text-sm font-semibold transition-colors"
         >
           {t("createCta")}

@@ -546,6 +546,10 @@
         "title": "Question Analysis",
         "body": "Aggregated error rates across all your assigned tests. Find the questions and domains your class struggles with most, then prep the next class review around them."
       },
+      "help": {
+        "title": "Quick Start",
+        "body": "Five-step walkthrough for new teachers. Skim this before your first class to know what to click, in what order."
+      },
       "settings": {
         "title": "Teacher Settings",
         "body": "Profile, notification preferences, and teaching options. Personalize your account here (coming soon)."
@@ -624,8 +628,8 @@
   },
   "teacherResults": {
     "title": "Student Results",
-    "emptyBody": "You have no tests yet. Create a test to start collecting results.",
-    "createCta": "Create a test",
+    "emptyBody": "You have no tests yet. Build a Draft test in Teaching Mode, or ask your admin to assign one — student results show up here as soon as anyone submits.",
+    "createCta": "Open Teaching Mode",
     "subtitle": "Cross-test consolidated view across all your tests.",
     "noSubmissions": "No submissions yet. Once students submit, results will appear here.",
     "stats": {
@@ -637,8 +641,8 @@
   },
   "teacherAnalysis": {
     "title": "Question Analysis",
-    "emptyBody": "You have no tests yet. Once you create tests and students submit answers, cross-test question analytics will appear here.",
-    "createCta": "Create a test",
+    "emptyBody": "You have no tests yet. Once a test is assigned (build one in Teaching Mode or wait for your admin) and students submit, cross-test question analytics will appear here.",
+    "createCta": "Open Teaching Mode",
     "subtitleShort": "Cross-test hardest-questions view.",
     "subtitleLong": "Cross-test hardest-questions view across all your tests.",
     "noSubmissions": "No submissions yet. Once students submit, hardest-question analytics will appear.",
@@ -681,5 +685,35 @@
     },
     "view": "View",
     "inMultipleTests": "in {count} tests"
+  },
+  "teacherHelp": {
+    "title": "Quick Start for Teachers",
+    "intro": "Welcome — these five steps cover the entire flow from setting up your class to reviewing student results. Each step links to the page you need.",
+    "step1": {
+      "title": "Confirm your profile and class",
+      "body": "Check your displayed name and time zone in Settings. If your admin sent you a class group, it should already be linked. If not, ask the admin to add you to the right class group before students join.",
+      "cta": "Open Settings"
+    },
+    "step2": {
+      "title": "Build a quick test in Teaching Mode",
+      "body": "Teaching Mode lets you assemble a practice test from any approved module in one click — pick a module, pick the questions, and a Draft test is created and pushed to the class. Use this for skill drills and warm-ups.",
+      "cta": "Open Teaching Mode"
+    },
+    "step3": {
+      "title": "Review and publish tests",
+      "body": "All tests assigned to you (whether you built them in Teaching Mode or your admin created them) live under My Tests. Set the time limit, due date, and confirm the assigned students before publishing — students cannot start until the test is Published.",
+      "cta": "Open My Tests"
+    },
+    "step4": {
+      "title": "Track student submissions and per-question analytics",
+      "body": "Once students submit, open the test to see score distribution, who's done, who's late, and per-question correctness. Use Question Analysis to find the items your whole class missed and plan your next class around them.",
+      "cta": "Open Student Results"
+    },
+    "step5": {
+      "title": "Export results for parent or admin reports",
+      "body": "On any test results page, click Export CSV to download a spreadsheet of every student's score, time spent, and per-question answers. Open it in Excel or Google Sheets to share with parents or the admin team."
+    },
+    "supportTitle": "Stuck? Tell us.",
+    "supportBody": "If something is unclear or broken during your trial, message Barry directly with a screenshot — we are actively iterating based on teacher feedback this week."
   }
 }
