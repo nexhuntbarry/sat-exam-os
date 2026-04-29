@@ -5,7 +5,6 @@ import {
   Presentation,
   ClipboardList,
   BarChart2,
-  Download,
   HelpCircle,
 } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
@@ -37,12 +36,6 @@ export default async function TeacherHelpPage() {
       title: t("step4.title"),
       body: t("step4.body"),
       cta: { href: "/teacher/results", label: t("step4.cta") },
-    },
-    {
-      icon: Download,
-      title: t("step5.title"),
-      body: t("step5.body"),
-      cta: null,
     },
   ];
 

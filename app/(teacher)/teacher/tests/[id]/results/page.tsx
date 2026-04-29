@@ -6,7 +6,6 @@ import { StatCard } from "@/components/analytics/StatCard";
 import { ScoreDistributionChart } from "@/components/analytics/ScoreDistributionChart";
 import { StudentResultsTable } from "@/components/analytics/StudentResultsTable";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
-import { ExportCsvButton } from "@/components/analytics/ExportCsvButton";
 
 async function getResultsData(testId: string, userId: string, role: string) {
   const db = getServiceClient();
@@ -156,8 +155,6 @@ export default async function TestResultsPage({
           >
             Question Analytics
           </Link>
-          <ExportCsvButton testId={id} />
-
         </div>
       </div>
 
