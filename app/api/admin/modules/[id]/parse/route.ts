@@ -31,8 +31,17 @@ export const maxDuration = 300;
 //   that UPDATEs each question row as the answer comes back. Even if the
 //   serverless budget runs out partway, the questions are already in the
 //   bank — admins can re-trigger if needed.
+//
+// Optional body: { answerKey: { [questionNumber: number]: string } }
+// When provided (typically from a prior /probe-answer-key call), the
+// parser stores each official answer alongside the AI-derived solver
+// answer. After the solver runs, mismatches are flagged
+// (mismatch_with_official=true, parsing_status="Needs Review",
+// parsing_notes appended with "AI: X, official: Y") and correct_answer
+// is overwritten to match the official answer — official is the source
+// of truth for what students see.
 export async function POST(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const authResult = await requireRole("admin");
@@ -40,6 +49,26 @@ export async function POST(
 
   const { id } = await params;
   const db = getServiceClient();
+
+  // Optional answer key from probe step.
+  let answerKey: Record<number, string> | null = null;
+  try {
+    const body = (await req.clone().json()) as
+      | { answerKey?: Record<string, string> }
+      | undefined;
+    if (body?.answerKey) {
+      answerKey = {};
+      for (const [k, v] of Object.entries(body.answerKey)) {
+        const n = Number(k);
+        if (Number.isFinite(n) && typeof v === "string" && v.trim()) {
+          answerKey[n] = v.trim();
+        }
+      }
+      if (Object.keys(answerKey).length === 0) answerKey = null;
+    }
+  } catch {
+    // No body / invalid JSON → parse without answer key (legacy behaviour).
+  }
 
   // Fetch module
   const { data: mod, error: fetchError } = await db
@@ -263,6 +292,7 @@ export async function POST(
     if (parsingStatus === "Needs Review") needsReviewCount++;
 
     const imagesForQ = imageMap.get(q.original_question_number);
+    const officialAns = answerKey?.[q.original_question_number] ?? null;
     const { error: insertError } = await db.from("questions").insert({
       module_id: id,
       section: mod.section,
@@ -271,7 +301,9 @@ export async function POST(
       choices: q.choices,
       // Solver fills these in async via the `after` callback below. Keep
       // any answer/explanation that already came from the parser pass.
-      correct_answer: q.correct_answer ?? null,
+      // If we have an official answer, seed correct_answer with it so
+      // students never see the AI's guess as authoritative.
+      correct_answer: officialAns ?? q.correct_answer ?? null,
       explanation: q.explanation ?? null,
       difficulty: q.difficulty,
       domain: q.domain,
@@ -289,6 +321,7 @@ export async function POST(
       question_text_embedding: embedding,
       image_urls: imagesForQ?.urls ?? [],
       image_alts: imagesForQ?.alts ?? [],
+      official_answer: officialAns,
     });
 
     if (insertError) {
@@ -333,12 +366,104 @@ export async function POST(
     console.error("[modules/parse] solver crashed (questions saved without answers):", err);
   }
 
+  // Phase 3 — official-answer reconciliation. Only runs when the upload
+  // included an answer key. Solver wrote correct_answer with its own
+  // best guess; for every question that has an official_answer we now
+  // compare the two, overwrite correct_answer with the official one,
+  // and flag mismatches for admin review.
+  let mismatchCount = 0;
+  if (answerKey) {
+    const { data: solvedRows } = await db
+      .from("questions")
+      .select("id, original_question_number, correct_answer, official_answer, parsing_notes, parsing_status")
+      .eq("module_id", id)
+      .not("official_answer", "is", null);
+
+    for (const row of solvedRows ?? []) {
+      const aiAns = row.correct_answer as string | null;
+      const officialAns = row.official_answer as string;
+      // Solver may not have answered yet (timeout) — skip until next run.
+      if (!aiAns) continue;
+
+      if (!answersAgree(aiAns, officialAns)) {
+        mismatchCount++;
+        const hint = `Mismatch: AI answered ${aiAns}, official ${officialAns}`;
+        const existingNotes = (row.parsing_notes as string | null) ?? "";
+        const newNotes = existingNotes ? `${existingNotes}; ${hint}` : hint;
+        await db
+          .from("questions")
+          .update({
+            correct_answer: officialAns,
+            mismatch_with_official: true,
+            parsing_status: "Needs Review",
+            parsing_notes: newNotes,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", row.id);
+      } else {
+        // Already correct — clear the "Pending AI answer" placeholder
+        // note since we've now confirmed the answer matches official.
+        if (typeof row.parsing_notes === "string") {
+          const cleaned = row.parsing_notes
+            .split(";")
+            .map((s) => s.trim())
+            .filter((s) => s && s !== "Pending AI answer")
+            .join("; ");
+          if (cleaned !== row.parsing_notes) {
+            await db
+              .from("questions")
+              .update({ parsing_notes: cleaned || null })
+              .eq("id", row.id);
+          }
+        }
+      }
+    }
+  }
+
   return NextResponse.json({
     success: true,
     questionCount: totalInserted,
-    needsReview: needsReviewCount,
+    needsReview: needsReviewCount + mismatchCount,
     avgConfidence: Math.round(avgConfidence * 100) / 100,
     solved: solverStats.solved,
     solverFailed: solverStats.failed,
+    answerKeyUsed: answerKey ? Object.keys(answerKey).length : 0,
+    mismatches: mismatchCount,
   });
+}
+
+/**
+ * Loose equality for SAT answers. Letters compared case-insensitive +
+ * trimmed. Numeric SPR answers compared as floats so "1/2" == "0.5"
+ * == ".5". Falls back to trimmed string compare when neither side
+ * parses as a number.
+ */
+function answersAgree(a: string, b: string): boolean {
+  const ta = a.trim();
+  const tb = b.trim();
+  if (ta.length === 1 && tb.length === 1) {
+    return ta.toUpperCase() === tb.toUpperCase();
+  }
+  const na = parseAnswerAsNumber(ta);
+  const nb = parseAnswerAsNumber(tb);
+  if (na !== null && nb !== null) {
+    return Math.abs(na - nb) < 1e-6;
+  }
+  return ta.replace(/\s+/g, "") === tb.replace(/\s+/g, "");
+}
+
+function parseAnswerAsNumber(v: string): number | null {
+  // Strip $...$ LaTeX wrapping.
+  const cleaned = v.replace(/^\$+|\$+$/g, "").trim();
+  // Fraction like "3/4".
+  const frac = cleaned.match(/^(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)$/);
+  if (frac) {
+    const num = parseFloat(frac[1]);
+    const den = parseFloat(frac[2]);
+    if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) {
+      return num / den;
+    }
+  }
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : null;
 }

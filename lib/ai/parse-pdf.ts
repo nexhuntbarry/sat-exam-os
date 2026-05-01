@@ -286,6 +286,120 @@ export async function classifyPdfIsSat(
 }
 
 // ────────────────────────────────────────────
+// Answer-key extractor — read the last page(s) of the PDF and pull the
+// official answer for every numbered question if present.
+// ────────────────────────────────────────────
+
+const ANSWER_KEY_SCHEMA = z.object({
+  found: z.boolean().describe("True only if a clear, unambiguous answer key is visible. Bibliographies, scratch work, or stray letters do not count."),
+  answers: z
+    .array(
+      z.object({
+        question_number: z.number().describe("Question number (positive integer)"),
+        answer: z
+          .string()
+          .describe(
+            'Exact answer: A | B | C | D for multiple choice, or the numeric/expression value for student-produced response (e.g. "12", "3/4", "0.5")',
+          ),
+      }),
+    )
+    .describe("Empty array when found=false."),
+  notes: z.string().nullable().describe("Optional one-line note about ambiguity or partial extraction."),
+});
+
+export interface AnswerKey {
+  found: boolean;
+  /** question_number → official answer */
+  answers: Record<number, string>;
+  notes: string | null;
+}
+
+const ANSWER_KEY_SYSTEM_PROMPT = `You are an SAT module answer-key extractor. The PDF you receive contains a SAT practice module that may or may not include an answer key — typically printed on the last page or last 1-2 pages, sometimes labelled "Answer Key", "Answers", "Solutions", or rendered as a simple table or list.
+
+Your job:
+1. Scan ONLY the final pages of the PDF (look at the last 1-3 pages with priority on the very last). Ignore practice questions on earlier pages — those answers are NOT the answer key, the answer key is a separate roster of correct answers.
+2. If a clear answer key is present, extract every (question_number, answer) pair you can read.
+3. For multiple-choice questions answer must be exactly one of: A, B, C, D.
+4. For student-produced response (numeric / fill-in-the-blank) answers, return the literal value as printed (e.g. "12", "3/4", "0.5", "1.25", "7"). Do NOT wrap in LaTeX or quotes. Do NOT convert decimals to fractions or vice versa — return what the key prints.
+5. If you can only read part of the key (e.g. some letters are smudged or missing), still return what you can. Set notes to describe the gap.
+6. If no answer key is visible at all, set found=false and answers=[]. Do not invent answers.
+
+Return STRICT JSON matching the schema. No prose, no markdown, no explanations.`;
+
+export async function extractAnswerKey(
+  pdfBase64: string,
+  callerUserId?: string,
+): Promise<AnswerKey> {
+  let result;
+  try {
+    result = await generateObject({
+      model: anthropic("claude-haiku-4-5"),
+      schema: ANSWER_KEY_SCHEMA,
+      system: ANSWER_KEY_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "file",
+              data: pdfBase64,
+              mediaType: "application/pdf",
+            },
+            {
+              type: "text",
+              text: `Look for an answer key on the last 1-3 pages of this PDF. Extract every (question_number, answer) pair.`,
+            },
+          ],
+        },
+      ],
+      maxRetries: 1,
+    });
+  } catch (err) {
+    console.error("[parse-pdf] answer-key extractor error:", err);
+    await logUsage({
+      userId: callerUserId,
+      route: "extract-answer-key",
+      tokensInput: 0,
+      tokensOutput: 0,
+      model: "claude-haiku-4-5",
+      costCents: 0,
+      metadata: { error: String(err) },
+    });
+    throw new Error(
+      `Answer-key extractor error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  const usage = result.usage;
+  if (usage) {
+    const inputTokens = usage.inputTokens ?? 0;
+    const outputTokens = usage.outputTokens ?? 0;
+    const costCents = Math.round(
+      (inputTokens / 1_000_000) * 100 + (outputTokens / 1_000_000) * 500,
+    );
+    await logUsage({
+      userId: callerUserId,
+      route: "extract-answer-key",
+      tokensInput: inputTokens,
+      tokensOutput: outputTokens,
+      model: "claude-haiku-4-5",
+      costCents,
+      metadata: { found: result.object.found, count: result.object.answers.length },
+    });
+  }
+
+  const out: AnswerKey = {
+    found: result.object.found,
+    answers: {},
+    notes: result.object.notes ?? null,
+  };
+  for (const a of result.object.answers) {
+    out.answers[a.question_number] = a.answer.trim();
+  }
+  return out;
+}
+
+// ────────────────────────────────────────────
 // PDF fetch helper (shared by classifier + extractor)
 // ────────────────────────────────────────────
 
