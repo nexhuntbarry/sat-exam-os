@@ -628,7 +628,21 @@
     "allQuestions": "All questions",
     "noQuestions": "No questions yet. Parse this module to extract questions.",
     "openPdf": "Open PDF",
-    "pdfFile": "PDF File"
+    "pdfFile": "PDF File",
+    "probeScanning": "Scanning last pages for an answer key…",
+    "probeScanningHint": "This usually takes 10-30 seconds. Reading the final 1-3 pages with Claude Haiku.",
+    "probeFoundTitle": "Answer key found — {count} answers extracted",
+    "probeFoundHint": "Each question will be parsed AND solved by AI, then cross-checked against the official key. Mismatches will be flagged for review.",
+    "probeNote": "Note: {note}",
+    "probeMissingTitle": "No answer key found on the last pages",
+    "probeMissingHint": "The AI will solve every question on its own. Low-confidence answers will still be flagged as \"Needs Review\", but there is no ground truth to verify against. We recommend uploading a PDF that includes the official answer key.",
+    "btnParseWithKey": "Parse with Answer Key",
+    "btnParseAiOnly": "Parse with AI Only",
+    "btnCancel": "Cancel",
+    "errProbe": "Probe failed",
+    "errProbeNetwork": "Network error during probe",
+    "errParse": "Failed to start parsing",
+    "errParseNetwork": "Network error during parse"
   },
   "teacherResults": {
     "title": "Student Results",

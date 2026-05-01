@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { Cpu, Loader2, AlertCircle, RefreshCw, CheckCircle2, KeyRound, ScanSearch } from "lucide-react";
 
 interface ModuleParseButtonProps {
@@ -25,6 +26,7 @@ type Phase =
 
 export default function ModuleParseButton({ moduleId, initialStatus, labels }: ModuleParseButtonProps) {
   const router = useRouter();
+  const t = useTranslations("moduleDetail");
   const [status, setStatus] = useState(initialStatus);
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -62,7 +64,7 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setPhase({ kind: "error", message: json.error ?? "Probe failed" });
+        setPhase({ kind: "error", message: json.error ?? t("errProbe") });
         return;
       }
       if (json.found && json.count > 0) {
@@ -76,7 +78,7 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
         setPhase({ kind: "probe-missing", notes: json.notes ?? null });
       }
     } catch {
-      setPhase({ kind: "error", message: "Network error during probe" });
+      setPhase({ kind: "error", message: t("errProbeNetwork") });
     }
   }
 
@@ -91,14 +93,14 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setPhase({ kind: "error", message: json.error ?? "Failed to start parsing" });
+        setPhase({ kind: "error", message: json.error ?? t("errParse") });
         router.refresh();
         return;
       }
       setPhase({ kind: "idle" });
       router.refresh();
     } catch {
-      setPhase({ kind: "error", message: "Network error during parse" });
+      setPhase({ kind: "error", message: t("errParseNetwork") });
       router.refresh();
     }
   }
@@ -126,11 +128,9 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
       <div className="rounded-xl border border-warm-amber/30 bg-warm-amber/10 p-4 max-w-md">
         <div className="flex items-center gap-2 text-warm-amber text-sm font-medium mb-1">
           <ScanSearch size={15} className="animate-pulse" />
-          Scanning last pages for an answer key…
+          {t("probeScanning")}
         </div>
-        <p className="text-mid-gray text-xs">
-          This usually takes 10-30 seconds. Reading the final 1-3 pages with Claude Haiku.
-        </p>
+        <p className="text-mid-gray text-xs">{t("probeScanningHint")}</p>
       </div>
     );
   }
@@ -142,14 +142,13 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
           <CheckCircle2 size={16} className="text-status-success shrink-0 mt-0.5" />
           <div>
             <p className="text-charcoal text-sm font-semibold">
-              Answer key found — {phase.count} answers extracted
+              {t("probeFoundTitle", { count: phase.count })}
             </p>
-            <p className="text-mid-gray text-xs mt-1">
-              Each question will be parsed AND solved by AI, then cross-checked against the
-              official key. Mismatches will be flagged for review.
-            </p>
+            <p className="text-mid-gray text-xs mt-1">{t("probeFoundHint")}</p>
             {phase.notes && (
-              <p className="text-soft-mute text-xs mt-1 italic">Note: {phase.notes}</p>
+              <p className="text-soft-mute text-xs mt-1 italic">
+                {t("probeNote", { note: phase.notes })}
+              </p>
             )}
           </div>
         </div>
@@ -159,13 +158,13 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
           >
             <KeyRound size={14} />
-            Parse with Answer Key
+            {t("btnParseWithKey")}
           </button>
           <button
             onClick={cancel}
             className="px-3 py-2 rounded-xl text-mid-gray hover:text-charcoal text-sm transition-colors"
           >
-            Cancel
+            {t("btnCancel")}
           </button>
         </div>
       </div>
@@ -178,16 +177,12 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
         <div className="flex items-start gap-2">
           <AlertCircle size={16} className="text-status-warning shrink-0 mt-0.5" />
           <div>
-            <p className="text-charcoal text-sm font-semibold">
-              No answer key found on the last pages
-            </p>
-            <p className="text-mid-gray text-xs mt-1">
-              The AI will solve every question on its own. Low-confidence answers will still be
-              flagged as &ldquo;Needs Review&rdquo;, but there is no ground truth to verify
-              against. We recommend uploading a PDF that includes the official answer key.
-            </p>
+            <p className="text-charcoal text-sm font-semibold">{t("probeMissingTitle")}</p>
+            <p className="text-mid-gray text-xs mt-1">{t("probeMissingHint")}</p>
             {phase.notes && (
-              <p className="text-soft-mute text-xs mt-1 italic">Note: {phase.notes}</p>
+              <p className="text-soft-mute text-xs mt-1 italic">
+                {t("probeNote", { note: phase.notes })}
+              </p>
             )}
           </div>
         </div>
@@ -197,13 +192,13 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
           >
             <Cpu size={14} />
-            Parse with AI Only
+            {t("btnParseAiOnly")}
           </button>
           <button
             onClick={cancel}
             className="px-3 py-2 rounded-xl text-mid-gray hover:text-charcoal text-sm transition-colors"
           >
-            Cancel
+            {t("btnCancel")}
           </button>
         </div>
       </div>

@@ -628,7 +628,21 @@
     "allQuestions": "所有題目",
     "noQuestions": "尚無題目。解析此 module 以抽取題目。",
     "openPdf": "開啟 PDF",
-    "pdfFile": "PDF 檔案"
+    "pdfFile": "PDF 檔案",
+    "probeScanning": "正在掃描最後幾頁尋找答案頁…",
+    "probeScanningHint": "通常需要 10-30 秒。AI 正在讀取最後 1-3 頁。",
+    "probeFoundTitle": "找到答案頁 — 已擷取 {count} 題答案",
+    "probeFoundHint": "每題會由 AI 解析並自行 solve，然後跟官方答案交叉比對。不一致的會標記為待審核。",
+    "probeNote": "備註：{note}",
+    "probeMissingTitle": "最後幾頁找不到答案頁",
+    "probeMissingHint": "AI 會自己解每一題。低信心答案仍會標記為「Needs Review」，但沒有官方答案可比對。建議上傳含答案頁的 PDF。",
+    "btnParseWithKey": "用答案頁解析",
+    "btnParseAiOnly": "AI 自行解析",
+    "btnCancel": "取消",
+    "errProbe": "答案頁掃描失敗",
+    "errProbeNetwork": "掃描時網路錯誤",
+    "errParse": "啟動解析失敗",
+    "errParseNetwork": "解析時網路錯誤"
   },
   "teacherResults": {
     "title": "學生成績",
