@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireRole } from "@/lib/rbac";
+import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 
 // GET /api/admin/questions/[id]
@@ -7,7 +7,7 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireRole("admin");
+  const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
@@ -31,7 +31,7 @@ export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const authResult = await requireRole("admin");
+  const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;

@@ -7,7 +7,7 @@ async function getTeachers() {
   const db = getServiceClient();
   const { data } = await db
     .from("users")
-    .select(`id, email, display_name, account_status, created_at, clerk_user_id, teacher_profiles!teacher_profiles_user_id_fkey(assigned_classes, bio, specialty)`)
+    .select(`id, email, display_name, account_status, created_at, clerk_user_id, can_review_questions, teacher_profiles!teacher_profiles_user_id_fkey(assigned_classes, bio, specialty)`)
     .eq("role", "teacher")
     .order("created_at", { ascending: false });
   const teachers = data ?? [];

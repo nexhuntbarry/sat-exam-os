@@ -32,7 +32,10 @@ export async function POST(
   return NextResponse.json({ ok: true });
 }
 
-// PATCH /api/admin/teachers/[id] — edit teacher (e.g., assigned_classes)
+// PATCH /api/admin/teachers/[id] — edit teacher (assigned_classes,
+// can_review_questions). When canReviewQuestions is supplied the users
+// table is touched too so the reviewer permission can be flipped without
+// a separate endpoint.
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -41,7 +44,7 @@ export async function PATCH(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
-  let body: { assignedClasses?: unknown[] };
+  let body: { assignedClasses?: unknown[]; canReviewQuestions?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -57,6 +60,23 @@ export async function PATCH(
       .eq("user_id", id);
     if (error) {
       return NextResponse.json({ error: "Failed to update teacher profile" }, { status: 500 });
+    }
+  }
+
+  if (typeof body.canReviewQuestions === "boolean") {
+    const { error } = await db
+      .from("users")
+      .update({
+        can_review_questions: body.canReviewQuestions,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .eq("role", "teacher");
+    if (error) {
+      return NextResponse.json(
+        { error: "Failed to update reviewer flag" },
+        { status: 500 },
+      );
     }
   }
 

@@ -11,6 +11,8 @@ export interface CurrentUser {
   accountStatus: string;
   /** Only meaningful when role === "admin". Gates the invite-admin flow. */
   isSuperAdmin: boolean;
+  /** Implicit TRUE for admins; explicit toggle for "key teacher" reviewers. */
+  canReviewQuestions: boolean;
 }
 
 /**
@@ -28,19 +30,24 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   const supabase = getServiceClient();
   const { data: user, error } = await supabase
     .from("users")
-    .select("id, role, display_name, email, account_status, is_super_admin")
+    .select(
+      "id, role, display_name, email, account_status, is_super_admin, can_review_questions",
+    )
     .eq("clerk_user_id", clerkId)
     .single();
 
   if (error || !user) return null;
 
+  const role = user.role as UserRole | null;
   return {
     clerkId,
     email: user.email,
-    role: user.role as UserRole | null,
+    role,
     userId: user.id,
     displayName: user.display_name,
     accountStatus: user.account_status,
     isSuperAdmin: Boolean(user.is_super_admin),
+    // Admins implicitly review; teachers only when the explicit flag is on.
+    canReviewQuestions: role === "admin" || Boolean(user.can_review_questions),
   };
 }

@@ -11,7 +11,12 @@ export async function POST(req: Request) {
   if (authResult instanceof NextResponse) return authResult;
   const admin = authResult;
 
-  let body: { email: string; displayName?: string; resend?: boolean };
+  let body: {
+    email: string;
+    displayName?: string;
+    resend?: boolean;
+    canReviewQuestions?: boolean;
+  };
   try {
     body = await req.json();
   } catch {
@@ -22,6 +27,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "email is required" }, { status: 400 });
   }
 
+  const canReview = Boolean(body.canReviewQuestions);
   const db = getServiceClient();
 
   // Pre-check for existing user by email — return 409 with a flag so the
@@ -45,8 +51,13 @@ export async function POST(req: Request) {
 
   let userId: string;
   if (existing) {
-    // Resend path — user row stays as-is; we just re-send the email.
+    // Resend path — keep the row but update the reviewer flag if the
+    // admin chose differently this time.
     userId = existing.id;
+    await db
+      .from("users")
+      .update({ can_review_questions: canReview, updated_at: new Date().toISOString() })
+      .eq("id", userId);
   } else {
     const { data: newUser, error: insertErr } = await db
       .from("users")
@@ -55,6 +66,7 @@ export async function POST(req: Request) {
         display_name: body.displayName ?? body.email.split("@")[0],
         role: "teacher",
         account_status: "pending",
+        can_review_questions: canReview,
         metadata: { invited: true },
       })
       .select("id")

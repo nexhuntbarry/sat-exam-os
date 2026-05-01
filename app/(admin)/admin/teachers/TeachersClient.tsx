@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { UserPlus, X, Mail } from "lucide-react";
+import { UserPlus, X, Mail, ShieldCheck } from "lucide-react";
 
 interface TeacherProfile {
   assigned_classes: unknown[];
@@ -19,6 +19,7 @@ interface Teacher {
   created_at: string;
   clerk_user_id: string | null;
   last_sign_in_at: number | null;
+  can_review_questions: boolean;
   teacher_profiles: TeacherProfile | TeacherProfile[] | null;
 }
 
@@ -30,6 +31,7 @@ function getProfile(t: Teacher): TeacherProfile | null {
 function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: () => void }) {
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [canReview, setCanReview] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -47,7 +49,12 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
       const res = await fetch("/api/admin/teachers/invite", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, displayName: displayName || undefined, resend }),
+        body: JSON.stringify({
+          email,
+          displayName: displayName || undefined,
+          resend,
+          canReviewQuestions: canReview,
+        }),
       });
       const data = await res.json();
       if (res.status === 409 && data.error === "exists") {
@@ -156,6 +163,23 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
                   placeholder="Optional"
                 />
               </div>
+              <label className="flex items-start gap-2.5 cursor-pointer rounded-xl border border-divider bg-warm-coral/5 px-3 py-2.5 hover:border-warm-coral/40 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={canReview}
+                  onChange={(e) => setCanReview(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-warm-coral"
+                />
+                <span className="text-xs leading-relaxed">
+                  <span className="block font-semibold text-charcoal mb-0.5">
+                    Allow this teacher to review &amp; edit answers
+                  </span>
+                  <span className="text-mid-gray">
+                    Key teachers can approve, reject, and resolve mismatches in the question
+                    bank. Leave off for regular teachers.
+                  </span>
+                </span>
+              </label>
             </div>
 
             {error && (
@@ -199,6 +223,17 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
     }
   }
 
+  async function handleToggleReviewer(teacherId: string, current: boolean) {
+    const res = await fetch(`/api/admin/teachers/${teacherId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ canReviewQuestions: !current }),
+    });
+    if (res.ok) {
+      startTransition(() => router.refresh());
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {showInvite && (
@@ -233,6 +268,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
               <tr className="border-b border-divider text-soft-mute">
                 <th className="text-left px-5 py-3 font-medium">Teacher</th>
                 <th className="text-left px-5 py-3 font-medium">Specialty</th>
+                <th className="text-left px-5 py-3 font-medium">Reviewer</th>
                 <th className="text-left px-5 py-3 font-medium">Status</th>
                 <th className="text-left px-5 py-3 font-medium">Invited</th>
                 <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
@@ -258,6 +294,27 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                     </td>
                     <td className="px-5 py-3 text-mid-gray">
                       {profile?.specialty ?? "—"}
+                    </td>
+                    <td className="px-5 py-3">
+                      <button
+                        onClick={() =>
+                          handleToggleReviewer(teacher.id, teacher.can_review_questions)
+                        }
+                        className={clsx(
+                          "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
+                          teacher.can_review_questions
+                            ? "bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25"
+                            : "bg-light-bg text-mid-gray hover:bg-divider",
+                        )}
+                        title={
+                          teacher.can_review_questions
+                            ? "Click to revoke question-review permission"
+                            : "Click to grant question-review permission"
+                        }
+                      >
+                        <ShieldCheck size={11} />
+                        {teacher.can_review_questions ? "Reviewer" : "Off"}
+                      </button>
                     </td>
                     <td className="px-5 py-3">
                       <span

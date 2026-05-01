@@ -10,10 +10,11 @@ import {
   Settings,
   Presentation,
   HelpCircle,
+  ShieldCheck,
 } from "lucide-react";
 import { clsx } from "clsx";
 
-const navItems = [
+const baseNavItems = [
   { href: "/teacher", icon: LayoutDashboard, label: "Dashboard", exact: true },
   { href: "/teacher/teaching-mode", icon: Presentation, label: "Teaching Mode" },
   { href: "/teacher/tests", icon: ClipboardList, label: "My Tests" },
@@ -23,8 +24,22 @@ const navItems = [
   { href: "/teacher/settings", icon: Settings, label: "Settings" },
 ];
 
-export default function TeacherSidebar() {
+const reviewerItem = {
+  href: "/reviewer/questions",
+  icon: ShieldCheck,
+  label: "Question Review",
+  exact: false,
+};
+
+interface Props {
+  canReview?: boolean;
+}
+
+export default function TeacherSidebar({ canReview = false }: Props) {
   const pathname = usePathname();
+  const navItems = canReview
+    ? [...baseNavItems.slice(0, 5), reviewerItem, ...baseNavItems.slice(5)]
+    : baseNavItems;
 
   return (
     <aside className="w-56 shrink-0 border-r border-divider flex flex-col bg-cream min-h-0">

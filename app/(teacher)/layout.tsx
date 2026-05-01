@@ -22,7 +22,7 @@ export default async function TeacherLayout({
     <div className="flex flex-col h-screen bg-cream text-charcoal">
       <Topbar title="Teacher" />
       <div className="flex flex-1 min-h-0">
-        <TeacherSidebar />
+        <TeacherSidebar canReview={user.canReviewQuestions} />
         <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
     </div>

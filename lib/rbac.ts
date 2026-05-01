@@ -34,3 +34,23 @@ export async function requireRole(roles: RoleOrRoles) {
  * Alias for requireRole — semantically clearer when multiple roles are fine.
  */
 export const requireAnyRole = requireRole;
+
+/**
+ * Question-bank reviewer guard. Grants admins automatically; allows
+ * teachers only when their `can_review_questions` flag is on. Use this
+ * in question approve/reject/resolve-mismatch endpoints so a "key
+ * teacher" can act without being promoted to admin.
+ */
+export async function requireQuestionReviewer() {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (!user.canReviewQuestions) {
+    return NextResponse.json(
+      { error: "You do not have question-review permission" },
+      { status: 403 },
+    );
+  }
+  return user;
+}

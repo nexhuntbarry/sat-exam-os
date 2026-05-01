@@ -121,6 +121,11 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  // Question detail lives at /admin/questions/[id] for admins and at
+  // /reviewer/questions/[id] for reviewer-teachers. Detect from the
+  // current path so links resolve to the matching layout.
+  const detailBase = pathname.startsWith("/reviewer") ? "/reviewer/questions" : "/admin/questions";
+
   const [filters, setFilters] = useState<Filters>({
     ...DEFAULT_FILTERS,
     moduleId: initialModuleId ?? searchParams.get("moduleId") ?? "",
@@ -419,7 +424,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       </td>
                       <td className="px-4 py-3 max-w-xs">
                         <Link
-                          href={`/admin/questions/${q.id}`}
+                          href={`${detailBase}/${q.id}`}
                           className="block text-charcoal hover:text-warm-coral transition-colors text-sm"
                         >
                           <MathMarkdown className="prose prose-sm max-w-none [&_p]:my-0 [&_p]:line-clamp-2">
@@ -449,7 +454,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
                           <Link
-                            href={`/admin/questions/${q.id}`}
+                            href={`${detailBase}/${q.id}`}
                             className="p-1 rounded hover:bg-surface text-soft-mute hover:text-charcoal transition-colors"
                             title="View / Edit"
                           >
