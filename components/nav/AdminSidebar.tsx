@@ -13,6 +13,7 @@ import {
   BarChart2,
   Settings,
   Zap,
+  ShieldCheck,
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -23,6 +24,7 @@ const navItems = [
   { href: "/admin/tests", icon: ClipboardList, label: "Tests" },
   { href: "/admin/students", icon: Users, label: "Students" },
   { href: "/admin/teachers", icon: GraduationCap, label: "Teachers" },
+  { href: "/admin/admins", icon: ShieldCheck, label: "Admins" },
   { href: "/admin/classes", icon: FolderKanban, label: "Classes" },
   { href: "/admin/reports", icon: BarChart2, label: "Reports" },
   { href: "/admin/ai-usage", icon: Zap, label: "AI Usage" },

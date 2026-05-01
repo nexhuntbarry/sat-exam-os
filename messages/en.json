@@ -508,6 +508,10 @@
         "title": "Teachers",
         "body": "Invite teachers by email and review who is on the platform along with their assigned classes. Invited teachers complete sign-up themselves via the email link."
       },
+      "admins": {
+        "title": "Admins",
+        "body": "Manage everyone with admin access. Super admins can invite or remove other admins; regular admins see the roster but cannot grant admin access. Use this list to keep track of who can change platform-wide settings."
+      },
       "classes": {
         "title": "Class Groups",
         "body": "Create and maintain class groups (by campus / grade), then add students into them. Class groups make it fast to assign a test to an entire class at once."

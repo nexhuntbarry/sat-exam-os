@@ -9,6 +9,8 @@ export interface CurrentUser {
   userId: string; // Supabase UUID
   displayName: string;
   accountStatus: string;
+  /** Only meaningful when role === "admin". Gates the invite-admin flow. */
+  isSuperAdmin: boolean;
 }
 
 /**
@@ -26,7 +28,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   const supabase = getServiceClient();
   const { data: user, error } = await supabase
     .from("users")
-    .select("id, role, display_name, email, account_status")
+    .select("id, role, display_name, email, account_status, is_super_admin")
     .eq("clerk_user_id", clerkId)
     .single();
 
@@ -39,5 +41,6 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     userId: user.id,
     displayName: user.display_name,
     accountStatus: user.account_status,
+    isSuperAdmin: Boolean(user.is_super_admin),
   };
 }
