@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { CheckCircle2, XCircle, AlertCircle, Save } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles } from "lucide-react";
 import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
@@ -48,6 +48,8 @@ interface Question {
   reviewed_at: string | null;
   image_urls: string[] | null;
   image_alts: string[] | null;
+  official_answer: string | null;
+  mismatch_with_official: boolean;
   modules: {
     module_name: string;
     source_name: string | null;
@@ -132,6 +134,43 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
     }
   }
 
+  async function handleResolveMismatch(trust: "ai" | "official") {
+    setActionLoading(`resolve-${trust}`);
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/resolve-mismatch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trust }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setQ((prev) => ({
+          ...prev,
+          correct_answer: json.data.correct_answer,
+          official_answer: json.data.official_answer,
+          mismatch_with_official: false,
+          parsing_status: json.data.parsing_status,
+          parsing_notes: json.data.parsing_notes,
+        }));
+        showToast(
+          trust === "ai" ? "Approved using AI's answer" : "Approved using answer key",
+        );
+        router.refresh();
+      } else {
+        showToast(json.error ?? "Resolve failed", false);
+      }
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // Pull AI's original answer out of the "Mismatch: AI answered X, official Y"
+  // hint stored in parsing_notes. Displayed alongside the official answer
+  // so the admin can compare without parsing the note string by eye.
+  const aiAnswer = q.parsing_notes
+    ? q.parsing_notes.match(/Mismatch:\s*AI answered\s+([^,;]+?)\s*,\s*official/i)?.[1]?.trim() ?? null
+    : null;
+
   function updateChoice(label: string, text: string) {
     setQ((prev) => ({
       ...prev,
@@ -210,6 +249,79 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
       {q.parsing_notes && (
         <div className="bg-status-warning/8 border border-status-warning/20 rounded-xl px-4 py-2.5 text-status-warning text-xs">
           {q.parsing_notes}
+        </div>
+      )}
+
+      {/* Mismatch resolver — visible only when AI disagreed with the answer
+          key at parse time. One-click to pick which answer wins. */}
+      {q.mismatch_with_official && (
+        <div className="bg-status-warning/10 border border-status-warning/30 rounded-2xl p-4 space-y-3">
+          <div className="flex items-start gap-2">
+            <AlertCircle size={16} className="text-status-warning shrink-0 mt-0.5" />
+            <div>
+              <p className="text-charcoal text-sm font-semibold">
+                Answer mismatch — pick which one to trust
+              </p>
+              <p className="text-mid-gray text-xs mt-0.5">
+                The AI solver disagreed with the answer key on this question. Read both, then
+                approve the correct one. Choosing &ldquo;Trust AI&rdquo; will overwrite
+                <code className="px-1"> correct_answer</code> with the AI&rsquo;s value.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="bg-surface border border-divider rounded-xl p-3 space-y-2">
+              <p className="text-xs uppercase tracking-wider text-soft-mute font-semibold flex items-center gap-1.5">
+                <Sparkles size={12} className="text-warm-coral" />
+                AI answered
+              </p>
+              <p className="text-2xl font-bold text-warm-coral">
+                {aiAnswer ?? "?"}
+              </p>
+              {q.explanation && (
+                <div className="text-mid-gray text-xs leading-relaxed border-t border-divider pt-2 max-h-32 overflow-y-auto">
+                  <p className="font-medium text-charcoal mb-1">AI&rsquo;s explanation</p>
+                  <MathMarkdown>{q.explanation}</MathMarkdown>
+                </div>
+              )}
+              <button
+                onClick={() => handleResolveMismatch("ai")}
+                disabled={actionLoading !== null || !aiAnswer}
+                className="w-full mt-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-warm-coral hover:bg-warm-coral-dark text-white text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                <Sparkles size={13} />
+                {actionLoading === "resolve-ai" ? "Resolving..." : "Trust AI's answer"}
+              </button>
+            </div>
+
+            <div className="bg-surface border border-divider rounded-xl p-3 space-y-2">
+              <p className="text-xs uppercase tracking-wider text-soft-mute font-semibold flex items-center gap-1.5">
+                <KeyRound size={12} className="text-status-success" />
+                Official answer key
+              </p>
+              <p className="text-2xl font-bold text-status-success">
+                {q.official_answer ?? "?"}
+              </p>
+              <p className="text-mid-gray text-xs leading-relaxed border-t border-divider pt-2">
+                Pulled from the answer key on the last page of the source PDF. Currently set as{" "}
+                <code className="px-1">correct_answer</code>.
+              </p>
+              <button
+                onClick={() => handleResolveMismatch("official")}
+                disabled={actionLoading !== null || !q.official_answer}
+                className="w-full mt-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-status-success hover:bg-status-success/90 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+              >
+                <KeyRound size={13} />
+                {actionLoading === "resolve-official" ? "Resolving..." : "Trust answer key"}
+              </button>
+            </div>
+          </div>
+
+          <p className="text-soft-mute text-xs italic">
+            Need a third option? Edit <code>correct_answer</code> below and click Save +
+            Approve manually.
+          </p>
         </div>
       )}
 

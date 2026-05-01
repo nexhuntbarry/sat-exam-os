@@ -54,6 +54,8 @@ export async function PATCH(
     "parsing_status",
     "parsing_notes",
     "page_number",
+    "official_answer",
+    "mismatch_with_official",
   ] as const;
 
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
