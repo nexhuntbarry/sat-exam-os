@@ -36,6 +36,7 @@ export async function GET(
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, answers,
+      tutor_notes, attempt_number,
       users!inner(display_name, email),
       student_profiles(grade, class_group)
     `)
@@ -131,7 +132,65 @@ export async function GET(
       timeSpentSeconds: submission.time_spent_seconds,
       startedAt: submission.started_at,
       submittedAt: submission.submitted_at,
+      tutorNotes: submission.tutor_notes ?? "",
+      attemptNumber: submission.attempt_number ?? 1,
     },
     answers,
   });
+}
+
+// PATCH /api/teacher/tests/[id]/results/[submission_id]
+// Accepts { tutorNotes } so a teacher can save 1-on-1 tutoring follow-up
+// notes scoped to this attempt. Reuses the GET access check.
+export async function PATCH(
+  req: Request,
+  { params }: { params: Promise<{ id: string; submission_id: string }> },
+) {
+  const authResult = await requireRole(["teacher", "admin"]);
+  if (authResult instanceof NextResponse) return authResult;
+  const user = authResult;
+
+  const { id: testId, submission_id: submissionId } = await params;
+
+  const db = getServiceClient();
+  const { data: assignment } = await db
+    .from("test_assignments")
+    .select("teacher_ids")
+    .eq("test_id", testId)
+    .single();
+
+  if (!assignment) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (
+    user.role !== "admin" &&
+    !(assignment.teacher_ids as string[]).includes(user.userId)
+  ) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  let body: { tutorNotes?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  if (typeof body.tutorNotes !== "string") {
+    return NextResponse.json({ error: "tutorNotes is required" }, { status: 400 });
+  }
+
+  const { error } = await db
+    .from("submissions")
+    .update({
+      tutor_notes: body.tutorNotes.slice(0, 8000), // hard cap to keep rows bounded
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", submissionId)
+    .eq("test_id", testId);
+
+  if (error) {
+    console.error("[teacher/results/PATCH]", error);
+    return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }

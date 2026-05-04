@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { Check, X } from "lucide-react";
+import { Check, X, Save } from "lucide-react";
 import { SubmissionDetailPanel } from "@/components/analytics/SubmissionDetailPanel";
 import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel";
 
@@ -25,6 +25,8 @@ interface SubmissionInfo {
   timeSpentSeconds: number | null;
   startedAt: string | null;
   submittedAt: string | null;
+  tutorNotes: string;
+  attemptNumber: number;
 }
 
 interface DetailData {
@@ -88,6 +90,37 @@ export default function SubmissionDetailPage() {
     },
     [testId]
   );
+
+  // Tutor notes — debounced save so the teacher can type freely without
+  // a "Save" click. Visible status: "Saving…" / "Saved".
+  const [tutorNotes, setTutorNotes] = useState("");
+  const [tutorStatus, setTutorStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const tutorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (data?.submission.tutorNotes !== undefined) {
+      setTutorNotes(data.submission.tutorNotes);
+    }
+  }, [data?.submission.tutorNotes]);
+
+  function handleTutorChange(v: string) {
+    setTutorNotes(v);
+    setTutorStatus("saving");
+    if (tutorTimer.current) clearTimeout(tutorTimer.current);
+    tutorTimer.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/teacher/tests/${testId}/results/${submissionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tutorNotes: v }),
+        });
+        if (res.ok) setTutorStatus("saved");
+        else setTutorStatus("idle");
+      } catch {
+        setTutorStatus("idle");
+      }
+    }, 700);
+  }
 
   if (loading) {
     return (
@@ -172,6 +205,41 @@ export default function SubmissionDetailPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Tutor notes — for 1-on-1 follow-up. Not visible to the student. */}
+      <div className="bg-warm-amber/5 border border-warm-amber/20 rounded-2xl p-5">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <h2 className="text-charcoal font-semibold flex items-center gap-2">
+              Tutor notes
+              {submission.attemptNumber > 1 && (
+                <span className="text-xs font-normal text-soft-mute">
+                  · attempt #{submission.attemptNumber}
+                </span>
+              )}
+            </h2>
+            <p className="text-soft-mute text-xs mt-0.5">
+              Private to teachers and admins. Use for tutoring follow-ups, what was covered,
+              what to revisit next time.
+            </p>
+          </div>
+          <span className="text-xs text-soft-mute flex items-center gap-1">
+            {tutorStatus === "saving" && "Saving…"}
+            {tutorStatus === "saved" && (
+              <>
+                <Save size={11} className="text-warm-amber" /> Saved
+              </>
+            )}
+          </span>
+        </div>
+        <textarea
+          value={tutorNotes}
+          onChange={(e) => handleTutorChange(e.target.value)}
+          rows={4}
+          placeholder="What was covered in this 1-on-1? What does the student still need help with?"
+          className="w-full bg-surface border border-divider rounded-xl px-3 py-2 text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-warm-amber/50 transition-colors"
+        />
       </div>
 
       {/* Per-question review */}
