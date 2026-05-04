@@ -50,12 +50,28 @@ export async function POST(req: Request) {
     .limit(1)
     .maybeSingle();
 
+  // Look up an unconsumed retake grant up front so we can both honour
+  // it as an override AND consume it after the new attempt is created.
+  let grantId: string | null = null;
+  if (existing && existing.status !== "In Progress") {
+    const { data: grant } = await db
+      .from("test_retake_grants")
+      .select("id")
+      .eq("test_id", body.testId)
+      .eq("student_id", user.userId)
+      .is("consumed_at", null)
+      .order("granted_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    grantId = grant?.id ?? null;
+  }
+
   if (existing) {
     if (existing.status === "In Progress") {
       // Resume existing
       return NextResponse.json({ data: { id: existing.id, resumed: true } });
     }
-    if (!test.allow_retake) {
+    if (!test.allow_retake && !grantId) {
       return NextResponse.json({ error: "Retake not allowed" }, { status: 403 });
     }
   }
@@ -79,6 +95,15 @@ export async function POST(req: Request) {
   if (subError || !submission) {
     console.error("[student/submissions/post]", subError);
     return NextResponse.json({ error: "Failed to create submission" }, { status: 500 });
+  }
+
+  // Mark the grant consumed once the new attempt is safely on disk so a
+  // network blip during create doesn't burn the grant.
+  if (grantId) {
+    await db
+      .from("test_retake_grants")
+      .update({ consumed_at: new Date().toISOString() })
+      .eq("id", grantId);
   }
 
   return NextResponse.json({ data: { id: submission.id, resumed: false } }, { status: 201 });

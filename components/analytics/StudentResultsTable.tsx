@@ -1,12 +1,15 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import Link from "next/link";
-import { ArrowUpDown, ChevronUp, ChevronDown } from "lucide-react";
+import { ArrowUpDown, ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
 
 export interface StudentResultRow {
   submissionId: string;
+  studentId: string;
+  attemptNumber: number;
   studentName: string;
   email: string;
   grade: string | null;
@@ -18,6 +21,7 @@ export interface StudentResultRow {
   totalQuestions: number;
   timeSpentSeconds: number | null;
   submittedAt: string | null;
+  retakePending: boolean;
 }
 
 interface StudentResultsTableProps {
@@ -41,7 +45,24 @@ function fmtTime(s: number | null) {
 }
 
 export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) {
+  const router = useRouter();
   const [statusFilter, setStatusFilter] = useState("all");
+  const [grantingFor, setGrantingFor] = useState<string | null>(null);
+
+  async function grantRetake(studentId: string, studentName: string) {
+    if (!confirm(`Allow ${studentName} to take this test again?`)) return;
+    setGrantingFor(studentId);
+    try {
+      const res = await fetch(`/api/teacher/tests/${testId}/grant-retake`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentId }),
+      });
+      if (res.ok) router.refresh();
+    } finally {
+      setGrantingFor(null);
+    }
+  }
   const [gradeFilter, setGradeFilter] = useState("all");
   const [classFilter, setClassFilter] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("submittedAt");
@@ -193,14 +214,39 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                       {row.submittedAt ? new Date(row.submittedAt).toLocaleString() : "—"}
                     </td>
                     <td className="px-5 py-3">
-                      {(row.status === "Submitted" || row.status === "Late") && (
-                        <Link
-                          href={`/teacher/tests/${testId}/results/${row.submissionId}`}
-                          className="text-warm-coral text-xs hover:underline"
-                        >
-                          View
-                        </Link>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {(row.status === "Submitted" || row.status === "Late") && (
+                          <Link
+                            href={`/teacher/tests/${testId}/results/${row.submissionId}`}
+                            className="text-warm-coral text-xs hover:underline"
+                          >
+                            View
+                          </Link>
+                        )}
+                        {(row.status === "Submitted" || row.status === "Late") &&
+                          (row.retakePending ? (
+                            <span
+                              className="inline-flex items-center gap-1 text-status-success text-xs"
+                              title="Retake unlocked — student can start a new attempt"
+                            >
+                              <RotateCcw size={11} />
+                              Retake unlocked
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => grantRetake(row.studentId, row.studentName)}
+                              disabled={grantingFor === row.studentId}
+                              className="inline-flex items-center gap-1 text-warm-coral text-xs hover:underline disabled:opacity-50"
+                              title="Allow this student to take the test again"
+                            >
+                              <RotateCcw size={11} />
+                              {grantingFor === row.studentId ? "…" : "Allow retake"}
+                            </button>
+                          ))}
+                        {row.attemptNumber > 1 && (
+                          <span className="text-xs text-soft-mute">#{row.attemptNumber}</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

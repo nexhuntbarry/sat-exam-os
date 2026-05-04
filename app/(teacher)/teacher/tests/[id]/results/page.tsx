@@ -34,7 +34,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
-      percentage, submitted_at, time_spent_seconds,
+      percentage, submitted_at, time_spent_seconds, attempt_number,
       users!inner(display_name, email),
       student_profiles(grade, class_group)
     `)
@@ -42,6 +42,15 @@ async function getResultsData(testId: string, userId: string, role: string) {
     .order("submitted_at", { ascending: false });
 
   const subs = submissions ?? [];
+
+  // Pending retake grants — student_id → grant exists. Used to surface
+  // "retake unlocked" badge in the row UI.
+  const { data: pendingGrants } = await db
+    .from("test_retake_grants")
+    .select("student_id")
+    .eq("test_id", testId)
+    .is("consumed_at", null);
+  const pendingSet = new Set((pendingGrants ?? []).map((g) => g.student_id as string));
   const submitted = subs.filter((s) => s.status === "Submitted" || s.status === "Late");
 
   const scores = submitted.map((s) => Number(s.percentage ?? 0));
@@ -73,6 +82,8 @@ async function getResultsData(testId: string, userId: string, role: string) {
     const sp = s.student_profiles as unknown as { grade?: string; class_group?: string } | null;
     return {
       submissionId: s.id,
+      studentId: s.student_id,
+      attemptNumber: s.attempt_number ?? 1,
       studentName: u.display_name,
       email: u.email,
       grade: sp?.grade ?? null,
@@ -84,6 +95,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
       totalQuestions: s.total_questions ?? 0,
       timeSpentSeconds: s.time_spent_seconds ?? null,
       submittedAt: s.submitted_at ?? null,
+      retakePending: pendingSet.has(s.student_id),
     };
   });
 

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowLeft, ExternalLink, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
+import EditStudentButton from "./EditStudentButton";
 
 interface StudentRow {
   id: string;
@@ -110,6 +111,23 @@ export default async function AdminStudentDetailPage({
         >
           {student.account_status}
         </span>
+        <EditStudentButton
+          student={{
+            id: student.id,
+            display_name: student.display_name,
+            email: student.email,
+            grade: profile?.grade ?? null,
+            school: profile?.school ?? null,
+            campus: profile?.campus ?? null,
+            class_group: profile?.class_group ?? null,
+            target_score: profile?.target_score ?? null,
+            current_level: profile?.current_level ?? null,
+            parent_name: profile?.parent_name ?? null,
+            parent_email: profile?.parent_email ?? null,
+            parent_phone: profile?.parent_phone ?? null,
+            notes: profile?.notes ?? null,
+          }}
+        />
       </div>
 
       {/* Profile card */}
