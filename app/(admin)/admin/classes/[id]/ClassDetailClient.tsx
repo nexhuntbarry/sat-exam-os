@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck } from "lucide-react";
+import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle } from "lucide-react";
 
 interface ClassGroup {
   id: string;
@@ -116,6 +116,34 @@ export default function ClassDetailClient({
     }
   }
 
+  // Delete-class double-confirm flow: open a modal, require typing the
+  // class name, then issue DELETE.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const deleteConfirmsMatch = deleteText.trim() === classGroup.name.trim();
+
+  async function confirmDelete() {
+    setDeleteError(null);
+    setDeleteSubmitting(true);
+    try {
+      const res = await fetch(`/api/admin/class-groups/${classGroup.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setDeleteError(j.error ?? "Failed to delete");
+        return;
+      }
+      router.push("/admin/classes");
+    } catch {
+      setDeleteError("Network error");
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  }
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
@@ -125,7 +153,7 @@ export default function ClassDetailClient({
         >
           <ArrowLeft size={20} />
         </a>
-        <div>
+        <div className="flex-1">
           <h1 className="text-2xl font-bold text-charcoal">{classGroup.name}</h1>
           <p className="text-soft-mute text-sm">
             {classGroup.campus && `${classGroup.campus} · `}
@@ -133,7 +161,69 @@ export default function ClassDetailClient({
             {members.length} member{members.length !== 1 ? "s" : ""}
           </p>
         </div>
+        <button
+          onClick={() => {
+            setDeleteOpen(true);
+            setDeleteText("");
+            setDeleteError(null);
+          }}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-status-error/10 hover:bg-status-error/20 text-status-error text-sm font-medium transition-colors"
+        >
+          <Trash2 size={14} />
+          Delete class
+        </button>
       </div>
+
+      {/* Delete-class double-confirm modal */}
+      {deleteOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="p-5 border-b border-divider flex items-start gap-3">
+              <AlertTriangle size={20} className="text-status-error shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-charcoal text-base">Delete this class?</h3>
+                <p className="text-mid-gray text-xs mt-0.5 leading-relaxed">
+                  This permanently removes <strong>{classGroup.name}</strong> along with all
+                  its student memberships ({members.length}) and teacher assignments
+                  ({assignedTeachers.length}). Tests already assigned to this class are NOT
+                  deleted, but their class link becomes orphan. This cannot be undone.
+                </p>
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-2">
+              <label className="block text-charcoal text-sm font-medium">
+                Type the class name to confirm:{" "}
+                <span className="font-mono text-warm-coral">{classGroup.name}</span>
+              </label>
+              <input
+                value={deleteText}
+                onChange={(e) => setDeleteText(e.target.value)}
+                className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2 text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-status-error/50"
+                placeholder="Class name"
+                autoFocus
+              />
+              {deleteError && (
+                <p className="text-status-error text-sm">{deleteError}</p>
+              )}
+            </div>
+            <div className="p-5 border-t border-divider flex items-center justify-end gap-2">
+              <button
+                onClick={() => setDeleteOpen(false)}
+                className="px-4 py-2 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={!deleteConfirmsMatch || deleteSubmitting}
+                className="px-4 py-2 rounded-xl bg-status-error hover:bg-status-error/90 text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {deleteSubmitting ? "Deleting…" : "Delete forever"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Teachers */}
       <div className="bg-surface border border-divider rounded-2xl p-5">

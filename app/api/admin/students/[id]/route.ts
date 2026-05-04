@@ -90,3 +90,46 @@ export async function PATCH(
 
   return NextResponse.json({ ok: true });
 }
+
+// DELETE /api/admin/students/[id]
+//
+// Permanently removes a student account. ON DELETE CASCADE on the
+// dependent tables (student_profiles, class_group_members, submissions,
+// answer_records, test_retake_grants) handles cleanup. Refuses to
+// delete non-student users to prevent accidental misuse.
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const authResult = await requireRole("admin");
+  if (authResult instanceof NextResponse) return authResult;
+
+  const { id } = await params;
+  const db = getServiceClient();
+
+  const { data: target } = await db
+    .from("users")
+    .select("role, display_name, email")
+    .eq("id", id)
+    .maybeSingle();
+  if (!target) {
+    return NextResponse.json({ error: "Student not found" }, { status: 404 });
+  }
+  if (target.role !== "student") {
+    return NextResponse.json(
+      { error: "User is not a student — refusing to delete via this endpoint" },
+      { status: 400 },
+    );
+  }
+
+  const { error } = await db.from("users").delete().eq("id", id);
+  if (error) {
+    console.error("[admin/students/DELETE]", error);
+    return NextResponse.json({ error: "Failed to delete student" }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    deleted: { id, display_name: target.display_name, email: target.email },
+  });
+}

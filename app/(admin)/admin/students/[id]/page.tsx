@@ -4,6 +4,7 @@ import { ArrowLeft, ExternalLink, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
 import EditStudentButton from "./EditStudentButton";
+import DeleteStudentButton from "./DeleteStudentButton";
 
 interface StudentRow {
   id: string;
@@ -128,6 +129,11 @@ export default async function AdminStudentDetailPage({
             parent_phone: profile?.parent_phone ?? null,
             notes: profile?.notes ?? null,
           }}
+        />
+        <DeleteStudentButton
+          studentId={student.id}
+          studentName={student.display_name ?? student.email}
+          email={student.email}
         />
       </div>
 
