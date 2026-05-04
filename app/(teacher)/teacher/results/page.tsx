@@ -52,7 +52,7 @@ async function getCrossTestResults(teacherId: string, role: string) {
     .select(
       `
       id, test_id, student_id, status, score, correct_count, total_questions,
-      percentage, submitted_at, time_spent_seconds,
+      percentage, scaled_score, scaled_section, submitted_at, time_spent_seconds,
       users!inner(display_name, email)
     `
     )
@@ -89,6 +89,7 @@ async function getCrossTestResults(teacherId: string, role: string) {
       status: s.status,
       score: s.score != null ? Number(s.score) : null,
       percentage: s.percentage != null ? Number(s.percentage) : null,
+      scaledScore: s.scaled_score ?? null,
       correctCount: s.correct_count ?? 0,
       totalQuestions: s.total_questions ?? 0,
       timeSpentSeconds: s.time_spent_seconds ?? null,

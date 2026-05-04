@@ -5,6 +5,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { ArrowUpDown, ChevronUp, ChevronDown, Search } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { scaleSectionScore } from "@/lib/scoring";
 
 export interface CrossTestResultRow {
   submissionId: string;
@@ -18,10 +19,17 @@ export interface CrossTestResultRow {
   status: string;
   score: number | null;
   percentage: number | null;
+  scaledScore: number | null;
   correctCount: number;
   totalQuestions: number;
   timeSpentSeconds: number | null;
   submittedAt: string | null;
+}
+
+function effectiveScaled(row: { scaledScore: number | null; percentage: number | null }): number | null {
+  if (row.scaledScore != null) return row.scaledScore;
+  if (row.percentage != null) return scaleSectionScore(Number(row.percentage));
+  return null;
 }
 
 interface Props {
@@ -233,20 +241,33 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                       </span>
                     </td>
                     <td className="px-5 py-3">
-                      <span
-                        className={clsx(
-                          "font-semibold",
-                          row.percentage != null && row.percentage >= 70
-                            ? "text-warm-amber"
-                            : row.percentage != null && row.percentage >= 50
-                              ? "text-status-warning"
-                              : row.percentage != null
-                                ? "text-status-error"
-                                : "text-soft-mute"
-                        )}
-                      >
-                        {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
-                      </span>
+                      <div className="flex flex-col">
+                        <span
+                          className={clsx(
+                            "font-semibold",
+                            row.percentage != null && row.percentage >= 70
+                              ? "text-warm-amber"
+                              : row.percentage != null && row.percentage >= 50
+                                ? "text-status-warning"
+                                : row.percentage != null
+                                  ? "text-status-error"
+                                  : "text-soft-mute"
+                          )}
+                        >
+                          {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
+                        </span>
+                        {(() => {
+                          const s = effectiveScaled(row);
+                          return s != null ? (
+                            <span
+                              className="text-warm-coral text-xs"
+                              title="Estimated SAT scaled score (200-800)"
+                            >
+                              {s}/800
+                            </span>
+                          ) : null;
+                        })()}
+                      </div>
                     </td>
                     <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">
                       {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
