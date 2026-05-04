@@ -70,16 +70,47 @@ async function getApprovedStudents() {
   return data ?? [];
 }
 
+async function getAllTeachers() {
+  const db = getServiceClient();
+  const { data } = await db
+    .from("users")
+    .select("id, email, display_name, can_review_questions")
+    .eq("role", "teacher")
+    .eq("account_status", "approved")
+    .order("display_name");
+  return data ?? [];
+}
+
+async function getAssignedTeachers(classGroupId: string) {
+  const db = getServiceClient();
+  const { data } = await db
+    .from("class_group_teachers")
+    .select(`teacher_id, assigned_at, users!inner(id, email, display_name, can_review_questions)`)
+    .eq("class_group_id", classGroupId);
+  return (data ?? []).map((row) => {
+    const u = Array.isArray(row.users) ? row.users[0] : row.users;
+    return {
+      id: u.id as string,
+      email: u.email as string,
+      display_name: (u.display_name ?? null) as string | null,
+      can_review_questions: Boolean(u.can_review_questions),
+      assigned_at: row.assigned_at as string,
+    };
+  });
+}
+
 export default async function ClassDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [classGroup, members, allStudents] = await Promise.all([
+  const [classGroup, members, allStudents, allTeachers, assignedTeachers] = await Promise.all([
     getClassGroup(id),
     getMembers(id),
     getApprovedStudents(),
+    getAllTeachers(),
+    getAssignedTeachers(id),
   ]);
 
   if (!classGroup) notFound();
@@ -89,6 +120,8 @@ export default async function ClassDetailPage({
       classGroup={classGroup}
       members={members}
       allStudents={allStudents}
+      allTeachers={allTeachers}
+      assignedTeachers={assignedTeachers}
     />
   );
 }
