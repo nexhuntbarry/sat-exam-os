@@ -17,6 +17,7 @@ export interface StudentResultRow {
   status: string;
   score: number | null;
   percentage: number | null;
+  scaledScore: number | null;
   correctCount: number;
   totalQuestions: number;
   timeSpentSeconds: number | null;
@@ -205,6 +206,14 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                       )}>
                         {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
                       </span>
+                      {row.scaledScore != null && (
+                        <span
+                          className="ml-2 text-xs text-warm-coral"
+                          title="Estimated SAT scaled score (200-800)"
+                        >
+                          {row.scaledScore}/800
+                        </span>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">
                       {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}

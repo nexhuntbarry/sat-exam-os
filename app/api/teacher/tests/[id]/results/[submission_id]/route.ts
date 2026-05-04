@@ -39,7 +39,7 @@ export async function GET(
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, answers,
-      tutor_notes, attempt_number,
+      tutor_notes, attempt_number, scaled_score, scaled_section,
       users!inner(display_name, email)
     `)
     .eq("id", submissionId)
@@ -145,6 +145,8 @@ export async function GET(
       submittedAt: submission.submitted_at,
       tutorNotes: submission.tutor_notes ?? "",
       attemptNumber: submission.attempt_number ?? 1,
+      scaledScore: submission.scaled_score ?? null,
+      scaledSection: submission.scaled_section ?? null,
     },
     answers,
   });

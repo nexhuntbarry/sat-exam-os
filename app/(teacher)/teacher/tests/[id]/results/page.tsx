@@ -35,6 +35,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, attempt_number,
+      scaled_score, scaled_section,
       users!inner(display_name, email, student_profiles(grade, class_group))
     `)
     .eq("test_id", testId)
@@ -95,6 +96,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
       status: s.status,
       score: s.score != null ? Number(s.score) : null,
       percentage: s.percentage != null ? Number(s.percentage) : null,
+      scaledScore: s.scaled_score ?? null,
       correctCount: s.correct_count ?? 0,
       totalQuestions: s.total_questions ?? 0,
       timeSpentSeconds: s.time_spent_seconds ?? null,

@@ -14,6 +14,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     .select(`
       id, status, score, correct_count, total_questions, percentage,
       started_at, submitted_at, time_spent_seconds, attempt_number,
+      scaled_score, scaled_section,
       tests!inner(
         test_name, show_answers_after_submission,
         modules!inner(module_name, section)
@@ -122,6 +123,20 @@ export default async function StudentResultPage({
         <div className="text-charcoal text-lg">
           {submission.correct_count} / {submission.total_questions} correct
         </div>
+        {submission.scaled_score != null && (
+          <div className="inline-flex flex-col items-center gap-1 px-6 py-3 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
+            <span className="text-soft-mute text-xs uppercase tracking-wider">
+              Estimated SAT score{submission.scaled_section ? ` · ${submission.scaled_section}` : ""}
+            </span>
+            <span className="text-warm-coral text-3xl font-bold">
+              {submission.scaled_score}
+              <span className="text-base text-soft-mute font-normal">/800</span>
+            </span>
+            <span className="text-soft-mute text-[10px] italic">
+              estimate — not adaptive scoring
+            </span>
+          </div>
+        )}
         {submission.status === "Late" && (
           <div className="inline-block px-3 py-1 bg-status-warning/15 text-status-warning rounded-full text-xs font-medium">
             Submitted Late

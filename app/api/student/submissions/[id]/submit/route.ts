@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { scaleSectionScore } from "@/lib/scoring";
 
 /** Normalize answer for comparison */
 function normalizeAnswer(answer: string | null | undefined): string {
@@ -58,16 +59,29 @@ export async function POST(
     return NextResponse.json({ error: "Submission already submitted" }, { status: 400 });
   }
 
-  // Fetch test
+  // Fetch test (and the section of its module so we can label the
+  // scaled SAT score we compute below).
   const { data: test, error: testError } = await db
     .from("tests")
-    .select("id, module_id, time_limit_minutes, due_date, question_ids")
+    .select(
+      "id, module_id, time_limit_minutes, due_date, question_ids, modules!inner(section)",
+    )
     .eq("id", submission.test_id)
     .single();
 
   if (testError || !test) {
     return NextResponse.json({ error: "Test not found" }, { status: 500 });
   }
+
+  const modulesField = test.modules as unknown as
+    | { section?: string }
+    | { section?: string }[]
+    | null;
+  const moduleSection = modulesField
+    ? Array.isArray(modulesField)
+      ? modulesField[0]?.section ?? null
+      : modulesField.section ?? null
+    : null;
 
   const now = new Date();
   const startedAt = new Date(submission.started_at);
@@ -113,6 +127,7 @@ export async function POST(
 
   const correctCount = answerRecords.filter((r) => r.is_correct).length;
   const percentage = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100 * 10) / 10 : 0;
+  const scaledScore = totalQuestions > 0 ? scaleSectionScore(percentage) : null;
 
   // Insert answer records (batch)
   const { error: arError } = await db.from("answer_records").insert(answerRecords);
@@ -131,6 +146,8 @@ export async function POST(
       correct_count: correctCount,
       total_questions: totalQuestions,
       percentage,
+      scaled_score: scaledScore,
+      scaled_section: moduleSection,
       time_spent_seconds: timeSpentSeconds,
     })
     .eq("id", id);

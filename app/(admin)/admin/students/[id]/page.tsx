@@ -39,6 +39,7 @@ async function getStudentSubmissions(studentId: string) {
     .select(
       `id, test_id, status, score, correct_count, total_questions, percentage,
        started_at, submitted_at, time_spent_seconds, attempt_number,
+       scaled_score, scaled_section,
        tests!inner(test_name, modules!inner(module_name, section, module_number))`,
     )
     .eq("student_id", studentId)
@@ -195,6 +196,7 @@ export default async function AdminStudentDetailPage({
                   <th className="text-left px-5 py-3 font-medium">Status</th>
                   <th className="text-left px-5 py-3 font-medium">Score</th>
                   <th className="text-left px-5 py-3 font-medium">%</th>
+                  <th className="text-left px-5 py-3 font-medium">Est. SAT</th>
                   <th className="text-left px-5 py-3 font-medium">Time</th>
                   <th className="text-left px-5 py-3 font-medium">Submitted</th>
                   <th className="text-left px-5 py-3 font-medium">Attempt</th>
@@ -237,6 +239,9 @@ export default async function AdminStudentDetailPage({
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
                         {sub.percentage != null ? `${Number(sub.percentage).toFixed(1)}%` : "—"}
+                      </td>
+                      <td className="px-5 py-3 text-warm-coral text-sm font-medium">
+                        {sub.scaled_score != null ? `${sub.scaled_score}/800` : "—"}
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
                         {formatDuration(sub.time_spent_seconds)}

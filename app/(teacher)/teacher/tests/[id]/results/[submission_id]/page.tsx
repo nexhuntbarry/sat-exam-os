@@ -27,6 +27,8 @@ interface SubmissionInfo {
   submittedAt: string | null;
   tutorNotes: string;
   attemptNumber: number;
+  scaledScore: number | null;
+  scaledSection: string | null;
 }
 
 interface DetailData {
@@ -171,7 +173,7 @@ export default function SubmissionDetailPage() {
       </div>
 
       {/* Score summary */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         <div className="bg-surface border border-divider rounded-xl p-4 col-span-2 sm:col-span-1">
           <div className="text-soft-mute text-xs mb-1">Score</div>
           <div className={clsx(
@@ -182,6 +184,21 @@ export default function SubmissionDetailPage() {
             {submission.percentage != null ? `${Number(submission.percentage).toFixed(1)}%` : "—"}
           </div>
         </div>
+        {submission.scaledScore != null && (
+          <div
+            className="bg-warm-coral/10 border border-warm-coral/20 rounded-xl p-4"
+            title="Estimated SAT scaled score (200-800). Based on TestNinja-style approximation; not adaptive yet."
+          >
+            <div className="text-soft-mute text-xs mb-1">
+              Est. SAT score
+              {submission.scaledSection ? ` · ${submission.scaledSection}` : ""}
+            </div>
+            <div className="text-3xl font-bold text-warm-coral">
+              {submission.scaledScore}
+              <span className="text-sm text-soft-mute font-normal">/800</span>
+            </div>
+          </div>
+        )}
         <div className="bg-surface border border-divider rounded-xl p-4">
           <div className="text-soft-mute text-xs mb-1">Correct</div>
           <div className="text-charcoal text-2xl font-bold flex items-center gap-1">
