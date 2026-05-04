@@ -156,7 +156,10 @@ export default function TestTakingClient({
     }
   }
 
+  const [autoSubmitting, setAutoSubmitting] = useState(false);
+
   function handleTimerExpire() {
+    setAutoSubmitting(true);
     handleSubmit();
   }
 
@@ -166,6 +169,15 @@ export default function TestTakingClient({
 
   return (
     <div className="flex flex-col h-screen bg-cream">
+      {autoSubmitting && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="shrink-0 bg-status-warning text-white text-sm px-4 py-2 text-center font-medium"
+        >
+          ⏱ Time&rsquo;s up — submitting your test automatically. Please wait…
+        </div>
+      )}
       {tabSwitchBannerVisible && (
         <div
           role="status"

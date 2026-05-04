@@ -6,13 +6,16 @@ import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
 
-async function getTeacherTests(teacherId: string) {
+async function getTeacherTests(teacherId: string, isAdmin: boolean) {
   const db = getServiceClient();
 
-  const { data: assignments } = await db
-    .from("test_assignments")
-    .select("test_id, student_ids, class_group_ids")
-    .contains("teacher_ids", JSON.stringify([teacherId]));
+  // Admins see every test on the platform; teachers only see assignments
+  // that include their user id.
+  let query = db.from("test_assignments").select("test_id, student_ids, class_group_ids");
+  if (!isAdmin) {
+    query = query.contains("teacher_ids", JSON.stringify([teacherId]));
+  }
+  const { data: assignments } = await query;
 
   if (!assignments || assignments.length === 0) return [];
 
@@ -70,7 +73,7 @@ export default async function TeacherTestsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const tests = await getTeacherTests(user.userId);
+  const tests = await getTeacherTests(user.userId, user.role === "admin");
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">

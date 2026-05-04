@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 import { clsx } from "clsx";
 import { Check, X, Search, ChevronDown } from "lucide-react";
 
@@ -329,10 +330,15 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                       className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                     >
                       <td className="px-5 py-3">
-                        <div className="font-medium text-charcoal">
-                          {student.display_name ?? "—"}
-                        </div>
-                        <div className="text-soft-mute text-xs">{student.email}</div>
+                        <Link
+                          href={`/admin/students/${student.id}`}
+                          className="block hover:text-warm-coral transition-colors"
+                        >
+                          <div className="font-medium text-charcoal">
+                            {student.display_name ?? "—"}
+                          </div>
+                          <div className="text-soft-mute text-xs">{student.email}</div>
+                        </Link>
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
                         {profile?.grade ? `Grade ${profile.grade}` : "—"}

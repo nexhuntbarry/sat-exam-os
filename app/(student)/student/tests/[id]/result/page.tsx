@@ -176,9 +176,17 @@ export default async function StudentResultPage({
                     <MathMarkdown className="text-charcoal text-sm line-clamp-1 flex-1 prose prose-sm max-w-none [&_p]:my-0">{q.question_text}</MathMarkdown>
                     <span className={clsx(
                       "text-xs font-medium shrink-0",
-                      record.is_correct ? "text-warm-amber" : "text-status-error"
+                      record.is_correct
+                        ? "text-warm-amber"
+                        : !record.student_answer || record.student_answer.trim() === ""
+                        ? "text-status-warning"
+                        : "text-status-error"
                     )}>
-                      {record.is_correct ? "Correct" : "Incorrect"}
+                      {record.is_correct
+                        ? "Correct"
+                        : !record.student_answer || record.student_answer.trim() === ""
+                        ? "Blank"
+                        : "Incorrect"}
                     </span>
                   </summary>
                   <div className="px-4 pb-4 pt-2 space-y-3 border-t border-divider">
@@ -209,7 +217,16 @@ export default async function StudentResultPage({
 
                     {q.question_type === "Student Produced Response" && (
                       <div className="space-y-1">
-                        <div className="text-soft-mute text-xs">Your answer: <span className={record.is_correct ? "text-warm-amber" : "text-status-error"}>{record.student_answer ?? "—"}</span></div>
+                        <div className="text-soft-mute text-xs">
+                          Your answer:{" "}
+                          {record.student_answer && record.student_answer.trim() !== "" ? (
+                            <span className={record.is_correct ? "text-warm-amber" : "text-status-error"}>
+                              {record.student_answer}
+                            </span>
+                          ) : (
+                            <span className="text-status-warning italic">Blank</span>
+                          )}
+                        </div>
                         <div className="text-soft-mute text-xs">Correct answer: <span className="text-warm-amber">{record.correct_answer}</span></div>
                       </div>
                     )}

@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import TestDetailActions from "./TestDetailActions";
+import AddStudentsButton from "./AddStudentsButton";
 
 async function getTest(id: string) {
   const db = getServiceClient();
@@ -102,7 +103,10 @@ export default async function TestDetailPage({
             {mod.source_name ? ` · ${mod.source_name}` : ""}
           </p>
         </div>
-        <TestDetailActions testId={test.id} status={test.status} />
+        <div className="flex items-center gap-2 shrink-0">
+          <AddStudentsButton testId={test.id} alreadyAssigned={test.assignment.studentIds} />
+          <TestDetailActions testId={test.id} status={test.status} />
+        </div>
       </div>
 
       {/* Config summary */}

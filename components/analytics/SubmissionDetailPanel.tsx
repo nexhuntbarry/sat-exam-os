@@ -174,9 +174,13 @@ export function SubmissionDetailPanel({
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div className="bg-surface rounded-lg p-3">
                       <div className="text-soft-mute text-xs mb-1">Your answer</div>
-                      <div className={clsx("font-mono font-bold", a.isCorrect ? "text-warm-amber" : "text-status-error")}>
-                        {a.studentAnswer ?? "—"}
-                      </div>
+                      {a.studentAnswer && a.studentAnswer.trim() !== "" ? (
+                        <div className={clsx("font-mono font-bold", a.isCorrect ? "text-warm-amber" : "text-status-error")}>
+                          {a.studentAnswer}
+                        </div>
+                      ) : (
+                        <div className="font-mono font-bold text-status-warning italic">Blank</div>
+                      )}
                     </div>
                     <div className="bg-surface rounded-lg p-3">
                       <div className="text-soft-mute text-xs mb-1">Correct answer</div>
