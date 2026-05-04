@@ -30,21 +30,32 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Fetch submission
-  const { data: submission } = await db
+  // Fetch submission. student_profiles is joined separately since
+  // PostgREST can't infer the indirect submission → user → profile path
+  // through the existing FKs and nested inline syntax fails with
+  // PGRST200 ("Could not find a relationship").
+  const { data: submission, error: submissionError } = await db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, answers,
       tutor_notes, attempt_number,
-      users!inner(display_name, email),
-      student_profiles(grade, class_group)
+      users!inner(display_name, email)
     `)
     .eq("id", submissionId)
     .eq("test_id", testId)
     .single();
 
-  if (!submission) return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+  if (submissionError || !submission) {
+    if (submissionError) console.error("[teacher/results/GET]", submissionError);
+    return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+  }
+
+  const { data: profile } = await db
+    .from("student_profiles")
+    .select("grade, class_group")
+    .eq("user_id", submission.student_id)
+    .maybeSingle();
 
   // Fetch answer records with question details
   const { data: answerRecords } = await db
@@ -78,7 +89,7 @@ export async function GET(
   }
 
   const u = submission.users as unknown as { display_name: string; email: string };
-  const sp = submission.student_profiles as unknown as { grade?: string; class_group?: string } | null;
+  const sp = (profile ?? null) as { grade?: string; class_group?: string } | null;
 
   const answers = (answerRecords ?? []).map((ar) => {
     const q = ar.questions as unknown as {

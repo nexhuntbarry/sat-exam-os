@@ -50,8 +50,7 @@ export async function GET(
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds,
-      users!inner(display_name, email),
-      student_profiles(grade, class_group)
+      users!inner(display_name, email, student_profiles(grade, class_group))
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: false });
@@ -60,8 +59,13 @@ export async function GET(
 
   // Build student rows
   const studentRows = subs.map((s) => {
-    const u = s.users as unknown as { display_name: string; email: string };
-    const sp = s.student_profiles as unknown as { grade?: string; class_group?: string } | null;
+    const u = s.users as unknown as {
+      display_name: string;
+      email: string;
+      student_profiles?: { grade?: string; class_group?: string } | { grade?: string; class_group?: string }[] | null;
+    };
+    const spRaw = u.student_profiles ?? null;
+    const sp = (Array.isArray(spRaw) ? spRaw[0] : spRaw) as { grade?: string; class_group?: string } | null;
     return {
       submissionId: s.id,
       studentName: u.display_name,
