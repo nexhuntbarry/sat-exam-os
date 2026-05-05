@@ -7,6 +7,7 @@ import { clsx } from "clsx";
 import { Check, X, Save } from "lucide-react";
 import { SubmissionDetailPanel } from "@/components/analytics/SubmissionDetailPanel";
 import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel";
+import { scaleSectionScore } from "@/lib/scoring";
 
 interface StudentInfo {
   name: string;
@@ -184,21 +185,31 @@ export default function SubmissionDetailPage() {
             {submission.percentage != null ? `${Number(submission.percentage).toFixed(1)}%` : "—"}
           </div>
         </div>
-        {submission.scaledScore != null && (
-          <div
-            className="bg-warm-coral/10 border border-warm-coral/20 rounded-xl p-4"
-            title="Estimated SAT scaled score (200-800). Based on TestNinja-style approximation; not adaptive yet."
-          >
-            <div className="text-soft-mute text-xs mb-1">
-              Est. SAT score
-              {submission.scaledSection ? ` · ${submission.scaledSection}` : ""}
+        {(() => {
+          // Fall back to live computation when the submission predates
+          // migration 0015 (scaled_score IS NULL in older rows).
+          const effectiveScaled =
+            submission.scaledScore ??
+            (submission.percentage != null
+              ? scaleSectionScore(Number(submission.percentage))
+              : null);
+          if (effectiveScaled == null) return null;
+          return (
+            <div
+              className="bg-warm-coral/10 border border-warm-coral/20 rounded-xl p-4"
+              title="Estimated SAT scaled score (200-800). Based on TestNinja-style approximation; not adaptive yet."
+            >
+              <div className="text-soft-mute text-xs mb-1">
+                Est. SAT score
+                {submission.scaledSection ? ` · ${submission.scaledSection}` : ""}
+              </div>
+              <div className="text-3xl font-bold text-warm-coral">
+                {effectiveScaled}
+                <span className="text-sm text-soft-mute font-normal">/800</span>
+              </div>
             </div>
-            <div className="text-3xl font-bold text-warm-coral">
-              {submission.scaledScore}
-              <span className="text-sm text-soft-mute font-normal">/800</span>
-            </div>
-          </div>
-        )}
+          );
+        })()}
         <div className="bg-surface border border-divider rounded-xl p-4">
           <div className="text-soft-mute text-xs mb-1">Correct</div>
           <div className="text-charcoal text-2xl font-bold flex items-center gap-1">

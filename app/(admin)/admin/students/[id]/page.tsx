@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowLeft, ExternalLink, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
+import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
 import DeleteStudentButton from "./DeleteStudentButton";
 
@@ -247,7 +248,14 @@ export default async function AdminStudentDetailPage({
                         {sub.percentage != null ? `${Number(sub.percentage).toFixed(1)}%` : "—"}
                       </td>
                       <td className="px-5 py-3 text-warm-coral text-sm font-medium">
-                        {sub.scaled_score != null ? `${sub.scaled_score}/800` : "—"}
+                        {(() => {
+                          const eff =
+                            sub.scaled_score ??
+                            (sub.percentage != null
+                              ? scaleSectionScore(Number(sub.percentage))
+                              : null);
+                          return eff != null ? `${eff}/800` : "—";
+                        })()}
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
                         {formatDuration(sub.time_spent_seconds)}

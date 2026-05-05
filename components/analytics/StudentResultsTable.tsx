@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import Link from "next/link";
 import { ArrowUpDown, ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
+import { scaleSectionScore } from "@/lib/scoring";
 
 export interface StudentResultRow {
   submissionId: string;
@@ -206,14 +207,21 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                       )}>
                         {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
                       </span>
-                      {row.scaledScore != null && (
-                        <span
-                          className="ml-2 text-xs text-warm-coral"
-                          title="Estimated SAT scaled score (200-800)"
-                        >
-                          {row.scaledScore}/800
-                        </span>
-                      )}
+                      {(() => {
+                        const eff =
+                          row.scaledScore ??
+                          (row.percentage != null
+                            ? scaleSectionScore(Number(row.percentage))
+                            : null);
+                        return eff != null ? (
+                          <span
+                            className="ml-2 text-xs text-warm-coral"
+                            title="Estimated SAT scaled score (200-800)"
+                          >
+                            {eff}/800
+                          </span>
+                        ) : null;
+                      })()}
                     </td>
                     <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">
                       {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
