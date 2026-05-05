@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { ShieldCheck, UserPlus, X, Mail, Lock } from "lucide-react";
+import { ShieldCheck, UserPlus, X, Mail, Lock, Check, Pause, Trash2, AlertTriangle } from "lucide-react";
 
 interface Admin {
   id: string;
@@ -189,7 +189,56 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
 export default function AdminsClient({ admins, currentUserId, canInvite }: Props) {
   const router = useRouter();
   const [showInvite, setShowInvite] = useState(false);
+  const [actingId, setActingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Admin | null>(null);
+  const [deleteText, setDeleteText] = useState("");
+  const [deleteSubmitting, setDeleteSubmitting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  // canInvite is the super-admin gate from the page; reuse it for the
+  // approve / suspend / delete buttons since the same permission applies.
+  const isSuper = canInvite;
+
+  async function callAction(adminId: string, action: "approve" | "suspend") {
+    setActingId(`${adminId}:${action}`);
+    try {
+      const res = await fetch(`/api/admin/admins/${adminId}/${action}`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error ?? "Action failed");
+        return;
+      }
+      startTransition(() => router.refresh());
+    } finally {
+      setActingId(null);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteError(null);
+    setDeleteSubmitting(true);
+    try {
+      const res = await fetch(`/api/admin/admins/${deleteTarget.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setDeleteError(j.error ?? "Failed to delete");
+        return;
+      }
+      setDeleteTarget(null);
+      setDeleteText("");
+      startTransition(() => router.refresh());
+    } catch {
+      setDeleteError("Network error");
+    } finally {
+      setDeleteSubmitting(false);
+    }
+  }
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -245,6 +294,9 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
                 <th className="text-left px-5 py-3 font-medium">Status</th>
                 <th className="text-left px-5 py-3 font-medium">Created</th>
                 <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
+                {isSuper && (
+                  <th className="text-left px-5 py-3 font-medium">Actions</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -303,6 +355,53 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
                         ? "—"
                         : <span className="text-status-warning">never (pending)</span>}
                     </td>
+                    {isSuper && (
+                      <td className="px-5 py-3">
+                        {isMe ? (
+                          <span className="text-soft-mute text-xs italic">—</span>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            {a.account_status === "approved" ? (
+                              <button
+                                onClick={() => callAction(a.id, "suspend")}
+                                disabled={actingId === `${a.id}:suspend`}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-status-warning/15 hover:bg-status-warning/25 text-status-warning text-xs font-medium transition-colors disabled:opacity-50"
+                                title="Block this admin from signing in"
+                              >
+                                <Pause size={11} />
+                                Suspend
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => callAction(a.id, "approve")}
+                                disabled={actingId === `${a.id}:approve`}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-xs font-medium transition-colors disabled:opacity-50"
+                                title={
+                                  a.account_status === "pending"
+                                    ? "Mark this admin as approved"
+                                    : "Reactivate this admin"
+                                }
+                              >
+                                <Check size={11} />
+                                {a.account_status === "pending" ? "Approve" : "Reactivate"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => {
+                                setDeleteTarget(a);
+                                setDeleteText("");
+                                setDeleteError(null);
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-status-error/10 hover:bg-status-error/20 text-status-error text-xs font-medium transition-colors"
+                              title="Permanently remove this admin"
+                            >
+                              <Trash2 size={11} />
+                              Delete
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -310,6 +409,64 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
           </table>
         )}
       </div>
+
+      {/* Delete-admin double-confirm */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="p-5 border-b border-divider flex items-start gap-3">
+              <AlertTriangle size={20} className="text-status-error shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-charcoal text-base">
+                  Delete this admin?
+                </h3>
+                <p className="text-mid-gray text-xs mt-0.5 leading-relaxed">
+                  This permanently removes <strong>{deleteTarget.display_name ?? deleteTarget.email}</strong>
+                  {" "}({deleteTarget.email}) from the platform along with their session.
+                  This cannot be undone. If you only want to block sign-in temporarily, use
+                  Suspend instead.
+                </p>
+              </div>
+            </div>
+            <div className="px-5 py-4 space-y-2">
+              <label className="block text-charcoal text-sm font-medium">
+                Type the admin&rsquo;s email to confirm:{" "}
+                <span className="font-mono text-warm-coral">{deleteTarget.email}</span>
+              </label>
+              <input
+                value={deleteText}
+                onChange={(e) => setDeleteText(e.target.value)}
+                className="w-full bg-light-bg border border-divider rounded-xl px-3 py-2 text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-status-error/50"
+                placeholder="email@example.com"
+                autoFocus
+              />
+              {deleteError && (
+                <p className="text-status-error text-sm">{deleteError}</p>
+              )}
+            </div>
+            <div className="p-5 border-t border-divider flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteText("");
+                }}
+                className="px-4 py-2 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={
+                  deleteText.trim() !== deleteTarget.email.trim() || deleteSubmitting
+                }
+                className="px-4 py-2 rounded-xl bg-status-error hover:bg-status-error/90 text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {deleteSubmitting ? "Deleting…" : "Delete forever"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
