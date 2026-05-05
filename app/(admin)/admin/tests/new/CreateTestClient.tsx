@@ -48,6 +48,14 @@ export default function CreateTestClient({ modules, teachers, students, classGro
   // Step 1: Module selection
   const [selectedModuleId, setSelectedModuleId] = useState("");
 
+  // Adaptive mode (#1) — when on, the test serves Module 1 then routes
+  // students to Module 2 (easy or hard) based on Module 1 score.
+  const [isAdaptive, setIsAdaptive] = useState(false);
+  const [module1Id, setModule1Id] = useState("");
+  const [module2EasyId, setModule2EasyId] = useState("");
+  const [module2HardId, setModule2HardId] = useState("");
+  const [adaptiveThreshold, setAdaptiveThreshold] = useState<number>(60);
+
   // Step 2: Config
   const [testName, setTestName] = useState("");
   const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(64);
@@ -82,7 +90,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           testName,
-          moduleId: selectedModuleId,
+          moduleId: isAdaptive ? undefined : selectedModuleId,
           timeLimitMinutes,
           openDate: openDate || undefined,
           dueDate: dueDate || undefined,
@@ -91,6 +99,11 @@ export default function CreateTestClient({ modules, teachers, students, classGro
           teacherIds: selectedTeacherIds,
           studentIds: selectedStudentIds,
           classGroupIds: selectedClassGroupIds,
+          isAdaptive,
+          module1Id: isAdaptive ? module1Id : undefined,
+          module2EasyId: isAdaptive ? module2EasyId || undefined : undefined,
+          module2HardId: isAdaptive ? module2HardId || undefined : undefined,
+          adaptiveThreshold: isAdaptive ? adaptiveThreshold : undefined,
         }),
       });
       const json = await res.json();
@@ -146,39 +159,163 @@ export default function CreateTestClient({ modules, teachers, students, classGro
             <p className="text-soft-mute text-sm">
               Only modules with approved status or ≥5 approved questions are shown.
             </p>
-            {eligibleModules.length === 0 ? (
-              <p className="text-soft-mute text-sm py-8 text-center">
-                No eligible modules. Approve at least one module first.
-              </p>
-            ) : (
-              <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                {eligibleModules.map((mod) => (
-                  <button
-                    key={mod.id}
-                    onClick={() => handleModuleSelect(mod)}
-                    className={clsx(
-                      "w-full flex items-center justify-between p-4 rounded-xl border text-left transition-all",
-                      selectedModuleId === mod.id
-                        ? "border-warm-coral bg-warm-coral/10"
-                        : "border-divider bg-light-bg/60 hover:border-white/16 hover:bg-surface"
-                    )}
-                  >
-                    <div>
-                      <div className="text-charcoal font-medium">{mod.module_name}</div>
-                      <div className="text-soft-mute text-xs mt-0.5">
-                        {mod.section}{mod.module_number ? ` · M${mod.module_number}` : ""} · {mod.total_questions} questions
+
+            {/* Adaptive toggle */}
+            <div className="flex items-center justify-between rounded-2xl border border-warm-coral/15 bg-warm-coral/5 px-4 py-3">
+              <div>
+                <p className="text-charcoal text-sm font-medium">Adaptive (2-module SAT)</p>
+                <p className="text-soft-mute text-xs mt-0.5 leading-relaxed">
+                  When on, the test serves Module 1 then routes the student to Module 2
+                  (easy or hard) based on the Module 1 score, mirroring real SAT.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsAdaptive((v) => !v)}
+                className={clsx(
+                  "relative w-11 h-6 rounded-full transition-colors shrink-0",
+                  isAdaptive ? "bg-warm-coral" : "bg-light-bg",
+                )}
+              >
+                <span
+                  className={clsx(
+                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-transform",
+                    isAdaptive ? "translate-x-6" : "translate-x-1",
+                  )}
+                />
+              </button>
+            </div>
+
+            {!isAdaptive ? (
+              eligibleModules.length === 0 ? (
+                <p className="text-soft-mute text-sm py-8 text-center">
+                  No eligible modules. Approve at least one module first.
+                </p>
+              ) : (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {eligibleModules.map((mod) => (
+                    <button
+                      key={mod.id}
+                      onClick={() => handleModuleSelect(mod)}
+                      className={clsx(
+                        "w-full flex items-center justify-between p-4 rounded-xl border text-left transition-all",
+                        selectedModuleId === mod.id
+                          ? "border-warm-coral bg-warm-coral/10"
+                          : "border-divider bg-light-bg/60 hover:border-white/16 hover:bg-surface"
+                      )}
+                    >
+                      <div>
+                        <div className="text-charcoal font-medium">{mod.module_name}</div>
+                        <div className="text-soft-mute text-xs mt-0.5">
+                          {mod.section}{mod.module_number ? ` · M${mod.module_number}` : ""} · {mod.total_questions} questions
+                        </div>
                       </div>
-                    </div>
-                    {selectedModuleId === mod.id && (
-                      <Check size={16} className="text-warm-coral shrink-0" />
-                    )}
-                  </button>
-                ))}
+                      {selectedModuleId === mod.id && (
+                        <Check size={16} className="text-warm-coral shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )
+            ) : (
+              <div className="space-y-3">
+                {/* Module 1 picker */}
+                <div>
+                  <label className="block text-sm font-medium text-charcoal mb-1">
+                    Module 1 <span className="text-status-error">*</span>
+                  </label>
+                  <select
+                    value={module1Id}
+                    onChange={(e) => {
+                      setModule1Id(e.target.value);
+                      const m = eligibleModules.find((mm) => mm.id === e.target.value);
+                      if (m && !testName) setTestName(`${m.module_name} (Adaptive)`);
+                      if (m) setTimeLimitMinutes(DEFAULT_TIME_LIMITS[m.section] ?? 64);
+                    }}
+                    className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
+                  >
+                    <option value="">Select Module 1…</option>
+                    {eligibleModules.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.module_name} · {m.section}{m.module_number ? ` M${m.module_number}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-charcoal mb-1">
+                      Module 2 — Easy track
+                    </label>
+                    <select
+                      value={module2EasyId}
+                      onChange={(e) => setModule2EasyId(e.target.value)}
+                      className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
+                    >
+                      <option value="">— None —</option>
+                      {eligibleModules.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.module_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-charcoal mb-1">
+                      Module 2 — Hard track
+                    </label>
+                    <select
+                      value={module2HardId}
+                      onChange={(e) => setModule2HardId(e.target.value)}
+                      className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
+                    >
+                      <option value="">— None —</option>
+                      {eligibleModules.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.module_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-charcoal mb-1">
+                    Adaptive threshold (Module 1 score % → hard track)
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={5}
+                      value={adaptiveThreshold}
+                      onChange={(e) => setAdaptiveThreshold(Number(e.target.value))}
+                      className="flex-1 accent-warm-coral"
+                    />
+                    <span className="font-mono text-warm-coral w-12 text-right">
+                      {adaptiveThreshold}%
+                    </span>
+                  </div>
+                  <p className="text-soft-mute text-xs mt-1">
+                    Score this % or higher on Module 1 → hard Module 2. Below → easy Module 2.
+                  </p>
+                </div>
+
+                <p className="text-mid-gray text-xs italic">
+                  Note: take-flow + auto-routing land in the next batch — for now this just
+                  records which modules a test will use.
+                </p>
               </div>
             )}
+
             <div className="flex justify-end pt-2">
               <button
-                disabled={!selectedModuleId}
+                disabled={
+                  isAdaptive
+                    ? !module1Id || (!module2EasyId && !module2HardId)
+                    : !selectedModuleId
+                }
                 onClick={() => setStep(2)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >

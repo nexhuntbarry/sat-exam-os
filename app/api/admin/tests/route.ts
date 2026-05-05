@@ -79,7 +79,7 @@ export async function POST(req: Request) {
 
   let body: {
     testName: string;
-    moduleId: string;
+    moduleId?: string;
     timeLimitMinutes?: number;
     openDate?: string;
     dueDate?: string;
@@ -89,6 +89,11 @@ export async function POST(req: Request) {
     teacherIds?: string[];
     studentIds?: string[];
     classGroupIds?: string[];
+    isAdaptive?: boolean;
+    module1Id?: string;
+    module2EasyId?: string;
+    module2HardId?: string;
+    adaptiveThreshold?: number;
   };
 
   try {
@@ -100,7 +105,21 @@ export async function POST(req: Request) {
   if (!body.testName?.trim()) {
     return NextResponse.json({ error: "Test name is required" }, { status: 400 });
   }
-  if (!body.moduleId) {
+
+  if (body.isAdaptive) {
+    if (!body.module1Id) {
+      return NextResponse.json(
+        { error: "Adaptive test requires Module 1" },
+        { status: 400 },
+      );
+    }
+    if (!body.module2EasyId && !body.module2HardId) {
+      return NextResponse.json(
+        { error: "Adaptive test requires at least one Module 2 track (easy or hard)" },
+        { status: 400 },
+      );
+    }
+  } else if (!body.moduleId) {
     return NextResponse.json({ error: "Module is required" }, { status: 400 });
   }
 
@@ -111,7 +130,20 @@ export async function POST(req: Request) {
     .from("tests")
     .insert({
       test_name: body.testName.trim(),
-      module_id: body.moduleId,
+      // Single-module flag uses module_id; adaptive flag uses
+      // module_1_id / module_2_*_id. The two paths are mutually
+      // exclusive at create time, but stored separately so a future
+      // admin tool can promote a single-module test to adaptive
+      // without re-creating.
+      module_id: body.isAdaptive ? null : body.moduleId ?? null,
+      is_adaptive: Boolean(body.isAdaptive),
+      module_1_id: body.isAdaptive ? body.module1Id ?? null : null,
+      module_2_easy_id: body.isAdaptive ? body.module2EasyId ?? null : null,
+      module_2_hard_id: body.isAdaptive ? body.module2HardId ?? null : null,
+      adaptive_threshold:
+        body.isAdaptive && typeof body.adaptiveThreshold === "number"
+          ? Math.max(0, Math.min(100, Math.round(body.adaptiveThreshold)))
+          : 60,
       time_limit_minutes: body.timeLimitMinutes ?? null,
       open_date: body.openDate ?? null,
       due_date: body.dueDate ?? null,
