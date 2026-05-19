@@ -5,6 +5,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { BarChart2 } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getStudentResults(studentId: string) {
   const db = getServiceClient();
@@ -13,7 +14,7 @@ async function getStudentResults(studentId: string) {
     .select(`
       id, test_id, status, score, correct_count, total_questions,
       percentage, submitted_at, attempt_number,
-      tests!inner(test_name, modules!inner(module_name, section))
+      tests!inner(test_name, modules!module_id(module_name, section))
     `)
     .eq("student_id", studentId)
     .in("status", ["Submitted", "Late"])
@@ -60,15 +61,15 @@ export default async function StudentResultsPage() {
               </thead>
               <tbody>
                 {results.map((r) => {
-                  const test = r.tests as unknown as { test_name: string; modules: { module_name: string; section: string } };
+                  const test = r.tests as unknown as { test_name: string; modules: { module_name: string; section: string } | null };
                   const pct = r.percentage != null ? Number(r.percentage) : null;
                   return (
                     <tr key={r.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                       <td className="px-5 py-3">
                         <div className="text-charcoal font-medium">{test.test_name}</div>
-                        <div className="text-soft-mute text-xs">{test.modules.module_name}</div>
+                        <div className="text-soft-mute text-xs">{test.modules?.module_name ?? "Adaptive · multi-module"}</div>
                       </td>
-                      <td className="px-5 py-3 text-mid-gray">{test.modules.section}</td>
+                      <td className="px-5 py-3 text-mid-gray">{test.modules?.section ?? "—"}</td>
                       <td className="px-5 py-3">
                         {pct != null ? (
                           <span className={clsx(
@@ -91,7 +92,7 @@ export default async function StudentResultsPage() {
                         </span>
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
-                        {r.submitted_at ? new Date(r.submitted_at).toLocaleDateString() : "—"}
+                        {r.submitted_at ? formatDate(r.submitted_at) : "—"}
                       </td>
                       <td className="px-5 py-3">
                         <Link

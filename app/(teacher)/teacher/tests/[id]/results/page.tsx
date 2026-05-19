@@ -6,6 +6,7 @@ import { StatCard } from "@/components/analytics/StatCard";
 import { ScoreDistributionChart } from "@/components/analytics/ScoreDistributionChart";
 import { StudentResultsTable } from "@/components/analytics/StudentResultsTable";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getResultsData(testId: string, userId: string, role: string) {
   const db = getServiceClient();
@@ -22,7 +23,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
 
   const { data: test } = await db
     .from("tests")
-    .select("id, test_name, time_limit_minutes, due_date, status, modules!inner(module_name, section, module_number)")
+    .select("id, test_name, time_limit_minutes, due_date, status, modules!module_id(module_name, section, module_number)")
     .eq("id", testId)
     .single();
 
@@ -143,7 +144,9 @@ export default async function TestResultsPage({
   if (!data) notFound();
 
   const { test, stats, scoreDistribution, students } = data;
-  const mod = test.modules as unknown as { module_name: string; section: string; module_number: number | null };
+  const mod = test.modules as unknown as
+    | { module_name: string; section: string; module_number: number | null }
+    | null;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -161,9 +164,11 @@ export default async function TestResultsPage({
         <div>
           <h1 className="text-2xl font-bold text-charcoal">{test.test_name} — Results</h1>
           <p className="text-soft-mute text-sm mt-1">
-            {mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}
+            {mod
+              ? <>{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</>
+              : "Adaptive · multi-module"}
             {test.time_limit_minutes && ` · ${test.time_limit_minutes} min`}
-            {test.due_date && ` · Due ${new Date(test.due_date).toLocaleDateString()}`}
+            {test.due_date && ` · Due ${formatDate(test.due_date)}`}
           </p>
         </div>
         <div className="flex items-center gap-3">

@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import { ShieldCheck, UserPlus, X, Mail, Lock, Check, Pause, Trash2, AlertTriangle } from "lucide-react";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 interface Admin {
   id: string;
@@ -346,11 +347,11 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
                       </span>
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
-                      {new Date(a.created_at).toLocaleDateString()}
+                      {formatDate(a.created_at)}
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
                       {a.last_sign_in_at
-                        ? new Date(a.last_sign_in_at).toLocaleString()
+                        ? formatDateTime(a.last_sign_in_at)
                         : a.clerk_user_id
                         ? "—"
                         : <span className="text-status-warning">never (pending)</span>}

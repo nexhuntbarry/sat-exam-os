@@ -3,6 +3,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
+import { formatDate, formatDateTime } from "@/lib/datetime";
+import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 
 async function getTeacherTest(testId: string, teacherId: string) {
   const db = getServiceClient();
@@ -22,8 +24,8 @@ async function getTeacherTest(testId: string, teacherId: string) {
     .from("tests")
     .select(`
       id, test_name, status, time_limit_minutes, due_date, open_date,
-      show_answers_after_submission, allow_retake,
-      modules!inner(module_name, section, module_number)
+      show_answers_after_submission, allow_retake, review_unlocked,
+      modules!module_id(module_name, section, module_number)
     `)
     .eq("id", testId)
     .single();
@@ -73,7 +75,9 @@ export default async function TeacherTestDetailPage({
   if (!data) notFound();
 
   const { test, submissions } = data;
-  const mod = test.modules as unknown as { module_name: string; section: string; module_number: number | null };
+  const mod = test.modules as unknown as
+    | { module_name: string; section: string; module_number: number | null }
+    | null;
   const submitted = submissions.filter((s) => s.status === "Submitted" || s.status === "Late");
   const avgScore = submitted.length > 0
     ? submitted.reduce((sum, s) => sum + (Number(s.percentage) || 0), 0) / submitted.length
@@ -90,9 +94,16 @@ export default async function TeacherTestDetailPage({
       <div>
         <h1 className="text-2xl font-bold text-charcoal">{test.test_name}</h1>
         <p className="text-soft-mute text-sm mt-1">
-          {mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}
+          {mod
+            ? <>{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</>
+            : "Adaptive · Module 1 + Module 2 (easy/hard)"}
         </p>
       </div>
+
+      <ReviewModeToggle
+        testId={test.id}
+        initialUnlocked={Boolean((test as { review_unlocked?: boolean }).review_unlocked)}
+      />
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
@@ -109,7 +120,7 @@ export default async function TeacherTestDetailPage({
         <div className="bg-surface border border-divider rounded-xl p-4">
           <div className="text-soft-mute text-xs mb-1">Due Date</div>
           <div className="text-charcoal font-semibold text-sm">
-            {test.due_date ? new Date(test.due_date).toLocaleString() : "—"}
+            {test.due_date ? formatDateTime(test.due_date) : "—"}
           </div>
         </div>
       </div>
@@ -172,7 +183,7 @@ export default async function TeacherTestDetailPage({
                       </td>
                       <td className="px-5 py-3 text-mid-gray">{formatDuration(sub.time_spent_seconds)}</td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
-                        {sub.submitted_at ? new Date(sub.submitted_at).toLocaleString() : "—"}
+                        {sub.submitted_at ? formatDateTime(sub.submitted_at) : "—"}
                       </td>
                     </tr>
                   );

@@ -4,6 +4,7 @@ import { Plus, FileText } from "lucide-react";
 import { clsx } from "clsx";
 import DeleteModuleButton from "./DeleteModuleButton";
 import PageIntro from "@/components/shared/PageIntro";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getModules() {
   const db = getServiceClient();
@@ -95,7 +96,7 @@ export default async function ModulesPage() {
                       </span>
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
-                      {new Date(mod.created_at).toLocaleDateString()}
+                      {formatDate(mod.created_at)}
                     </td>
                     <td className="px-5 py-3 text-right">
                       <DeleteModuleButton moduleId={mod.id} moduleName={mod.module_name} />

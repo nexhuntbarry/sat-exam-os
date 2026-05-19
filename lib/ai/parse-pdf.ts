@@ -191,6 +191,35 @@ MATH FORMATTING (CRITICAL):
 - Plain English prose stays unwrapped — only the math itself uses $...$.
 - Do not output ASCII pseudo-math like 1/7, x^2, sqrt(x) — always use LaTeX.
 
+CURRENCY (CRITICAL — this has caused production bugs):
+- Dollar amounts in word problems (e.g. \\$950, \\$1,150, \\$0.40) are PROSE, not math.
+- ALWAYS write currency with an escaped backslash-dollar: "\\$950 for the first 2 hours" — never bare "$950" and never math-wrapped "$\\$950$" or "$950$".
+- A bare "$" followed by a number will be interpreted by the markdown renderer as opening inline math, swallowing the rest of the sentence into italicised KaTeX.
+- Right: "Bennett opened an account with \\$600 and earned \\$2.40 in interest."
+- Wrong: "Bennett opened an account with $600 and earned $2.40 in interest."
+- Wrong: "Bennett opened an account with $\\$600$ and earned $\\$2.40$ in interest."
+- This rule applies to question_text, choice text, correct_answer, AND explanation.
+
+MIXED CURRENCY + EQUATION (CRITICAL — production bug 2026-05-11):
+When a choice or sentence has BOTH currency AND a non-trivial equation (operators, variables, parentheses), DO NOT lump the whole thing inside a single escaped-dollar wrap or a math wrap. Currency stays escaped, equation pieces stay in math wrap, English connectors stay as prose.
+
+- WRONG: "\\$950 + 50(t - 2) = 1{,}150\\$"
+  (whole string treated as literal currency; the LaTeX thin-space macro for thousand grouping is meaningless outside a math context and renders as garbage)
+- WRONG: "$950 + 50(t - 2) = 1{,}150$"
+  (the outer dollars are taken as math delimiters, so the leading \\$950 opens math instead of being currency)
+- WRONG: "$\\$950 + 50(t - 2) = \\$1{,}150$"
+  (escaped currency inside a math wrap — escapes don't work that way)
+- RIGHT: "\\$950 + $50(t - 2)$ = \\$1{,}150"
+  (currency escaped with backslash-dollar; only the algebraic middle is in math wrap)
+- RIGHT (equation form, no currency on LHS/RHS): "$950(t - 2) + 50t = 1{,}150$"
+  (no currency anywhere → the whole equation is math; the LaTeX thin-space macro is fine inside math)
+
+Decision rule:
+  1. Identify each dollar-amount token. If it's a real monetary amount in prose ("rent the bus for \\$950"), write it with the backslash-dollar — never inside math.
+  2. Identify each algebraic chunk (variables, operators, =, parentheses around variables). Wrap each chunk in single-dollar math delimiters.
+  3. Connectors like " for ", " and ", " is " stay as plain English between the math chunks.
+  4. NEVER emit raw LaTeX macros (the thin-space comma macro, \\frac, \\sqrt, etc.) outside a math wrap. If you see a number with the LaTeX thin-space for thousand grouping, that ONLY belongs inside math; otherwise write the comma directly (1,150, not the LaTeX thin-space form).
+
 OUTPUT: Return valid JSON only. No markdown, no explanation text, no code fences. Just the raw JSON object.`;
 
 // ────────────────────────────────────────────
@@ -314,15 +343,15 @@ export interface AnswerKey {
   notes: string | null;
 }
 
-const ANSWER_KEY_SYSTEM_PROMPT = `You are an SAT module answer-key extractor. The PDF you receive contains a SAT practice module that may or may not include an answer key — typically printed on the last page or last 1-2 pages, sometimes labelled "Answer Key", "Answers", "Solutions", or rendered as a simple table or list.
+const ANSWER_KEY_SYSTEM_PROMPT = `You are an SAT module answer-key extractor. The PDF you receive contains a SAT practice module that may or may not include an answer key — typically printed on the last page or last few pages, sometimes labelled "Answer Key", "Answers", "Solutions", "Answer Explanations", or rendered as a simple table, list, or grid.
 
 Your job:
-1. Scan ONLY the final pages of the PDF (look at the last 1-3 pages with priority on the very last). Ignore practice questions on earlier pages — those answers are NOT the answer key, the answer key is a separate roster of correct answers.
-2. If a clear answer key is present, extract every (question_number, answer) pair you can read.
+1. Scan EVERY page of the PDF for an answer-key block. The block is most often on the very last page, but it can also appear earlier (e.g. mid-document for combined Math + R&W booklets). It is a separate roster of correct answers, NOT the practice questions themselves.
+2. If a clear answer key is present, extract EVERY (question_number, answer) pair printed in the key. Do not skip questions just because they appear later in the list — keep reading until the key roster ends. Common SAT modules have 22-27 numbered answers; missing the last few is a known failure mode you must avoid.
 3. For multiple-choice questions answer must be exactly one of: A, B, C, D.
 4. For student-produced response (numeric / fill-in-the-blank) answers, return the literal value as printed (e.g. "12", "3/4", "0.5", "1.25", "7"). Do NOT wrap in LaTeX or quotes. Do NOT convert decimals to fractions or vice versa — return what the key prints.
-5. If you can only read part of the key (e.g. some letters are smudged or missing), still return what you can. Set notes to describe the gap.
-6. If no answer key is visible at all, set found=false and answers=[]. Do not invent answers.
+5. If you can only read part of the key (e.g. some letters are smudged or cut off at a page break), still return what you can. Set notes to describe which question numbers you couldn't read.
+6. If no answer key is visible at all, set found=false and answers=[]. Do not invent answers from your own solving.
 
 Return STRICT JSON matching the schema. No prose, no markdown, no explanations.`;
 
@@ -332,8 +361,13 @@ export async function extractAnswerKey(
 ): Promise<AnswerKey> {
   let result;
   try {
+    // Sonnet 4.6 instead of Haiku 4.5: answer-key extraction was
+    // missing the last 1-2 entries on Haiku for SAT modules with 22+
+    // questions, leaving those questions to fall back on the (less
+    // reliable) AI solver. Sonnet is slower but the probe still fits
+    // comfortably in the 60s `maxDuration` of the route.
     result = await generateObject({
-      model: anthropic("claude-haiku-4-5"),
+      model: anthropic("claude-sonnet-4-6"),
       schema: ANSWER_KEY_SCHEMA,
       system: ANSWER_KEY_SYSTEM_PROMPT,
       messages: [
@@ -347,7 +381,7 @@ export async function extractAnswerKey(
             },
             {
               type: "text",
-              text: `Look for an answer key on the last 1-3 pages of this PDF. Extract every (question_number, answer) pair.`,
+              text: `Scan the entire PDF for an answer-key block (likely the last page, but scan every page). Extract every (question_number, answer) pair printed in the key — do not stop early.`,
             },
           ],
         },
@@ -404,17 +438,46 @@ export async function extractAnswerKey(
 // ────────────────────────────────────────────
 
 export async function fetchPdfAsBase64(pdfUrl: string): Promise<string> {
-  const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const headers: Record<string, string> = {};
-  if (blobToken && pdfUrl.includes(".blob.vercel-storage.com")) {
-    headers.Authorization = `Bearer ${blobToken}`;
+  // SECURITY: hard-restrict to the Vercel Blob host. `modules.pdf_url`
+  // ultimately comes from a request body, and forwarding arbitrary URLs
+  // to fetch() is SSRF — an attacker could point this at internal
+  // metadata services (e.g. 169.254.169.254) or any host that receives
+  // the Authorization Bearer header below.
+  let parsed: URL;
+  try {
+    parsed = new URL(pdfUrl);
+  } catch {
+    throw new Error("Invalid PDF URL");
   }
-  const response = await fetch(pdfUrl, { headers });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
+  if (parsed.protocol !== "https:" || !parsed.hostname.endsWith(".blob.vercel-storage.com")) {
+    throw new Error("PDF URL must be a Vercel Blob URL");
   }
-  const buffer = await response.arrayBuffer();
-  return Buffer.from(buffer).toString("base64");
+
+  // Project may have multiple Vercel Blob stores (each with its own
+  // read-write token). A token from store A returns 403 against store
+  // B. Try every available token in turn so the parser works no
+  // matter which store the PDF lives in.
+  const tokens = [
+    process.env.BLOB_READ_WRITE_TOKEN,
+    process.env.PUBLIC_BLOB_READ_WRITE_TOKEN,
+  ].filter((t): t is string => Boolean(t));
+
+  let lastStatus = 0;
+  let lastStatusText = "";
+  for (const token of tokens.length > 0 ? tokens : [undefined]) {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(pdfUrl, { headers });
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      return Buffer.from(buffer).toString("base64");
+    }
+    lastStatus = response.status;
+    lastStatusText = response.statusText;
+    // If it's not an auth issue, no point trying another token.
+    if (response.status !== 401 && response.status !== 403) break;
+  }
+  throw new Error(`Failed to fetch PDF: ${lastStatus} ${lastStatusText}`);
 }
 
 // ────────────────────────────────────────────
@@ -432,20 +495,12 @@ export async function parsePdfToQuestions(
   // for either store mode.
   let pdfBase64: string;
   try {
-    const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
-    const headers: Record<string, string> = {};
-    if (blobToken && pdfUrl.includes(".blob.vercel-storage.com")) {
-      headers.Authorization = `Bearer ${blobToken}`;
-    }
-    const response = await fetch(pdfUrl, { headers });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch PDF: ${response.status} ${response.statusText}`);
-    }
-    const buffer = await response.arrayBuffer();
-    pdfBase64 = Buffer.from(buffer).toString("base64");
+    pdfBase64 = await fetchPdfAsBase64(pdfUrl);
   } catch (err) {
     console.error("[parse-pdf] PDF fetch error:", err);
-    throw new Error(`Could not fetch PDF from URL: ${pdfUrl}`);
+    throw new Error(
+      `Could not fetch PDF from URL: ${pdfUrl} — ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   const isReadingWriting = moduleMetadata.section === "Reading & Writing";
@@ -471,9 +526,14 @@ Module context:
 
 Return all questions in order via the schema. Confirm you have not missed any before responding.${rwAddendum}`;
 
-  let result;
-  try {
-    result = await generateObject({
+  // Run extraction; if Sonnet returns way too few questions (sometimes it
+  // treats a single passage cluster as "done" and stops at 2-5), retry
+  // once with an explicit short-count callout so it scans the whole PDF.
+  // SAT modules are reliably 22-27 questions, so anything <15 is a parse
+  // miss, not a tiny custom module.
+  const MIN_EXPECTED_QUESTIONS = 15;
+  async function runExtraction(extraInstruction: string) {
+    return await generateObject({
       model: anthropic("claude-sonnet-4-6"),
       schema: isReadingWriting ? ParsedQuestionsRwSchema : ParsedQuestionsSchema,
       system: SYSTEM_PROMPT,
@@ -488,7 +548,7 @@ Return all questions in order via the schema. Confirm you have not missed any be
             },
             {
               type: "text",
-              text: userPrompt,
+              text: userPrompt + extraInstruction,
             },
           ],
         },
@@ -500,8 +560,31 @@ Return all questions in order via the schema. Confirm you have not missed any be
       // Sonnet 4.6 supports up to 64K output; 32K is plenty of headroom for
       // even the longest module while still fitting inside the 5-minute
       // Vercel function budget.
-      ...(isReadingWriting ? { maxOutputTokens: 32000 } : {}),
+      ...(isReadingWriting ? { maxOutputTokens: 32000 } : { maxOutputTokens: 16000 }),
     });
+  }
+
+  let result;
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  try {
+    result = await runExtraction("");
+    totalInputTokens += result.usage?.inputTokens ?? 0;
+    totalOutputTokens += result.usage?.outputTokens ?? 0;
+
+    if (result.object.questions.length < MIN_EXPECTED_QUESTIONS) {
+      console.warn(
+        `[parse-pdf] First pass returned only ${result.object.questions.length} questions (< ${MIN_EXPECTED_QUESTIONS}). Retrying with stronger instruction.`,
+      );
+      const retry = await runExtraction(
+        `\n\nIMPORTANT — RETRY: A previous extraction attempt against this same PDF returned only ${result.object.questions.length} questions, but every SAT module reliably contains 22-27 numbered questions. You MUST scan EVERY single page in this PDF from page 1 to the last page and extract ALL numbered questions. Do not stop after the first passage block. Do not skip questions just because their passage is shared with an earlier question. Re-check page ranges you may have skipped: middle pages, the second half of the booklet, and any pages immediately before the answer key. Return the complete set.`,
+      );
+      totalInputTokens += retry.usage?.inputTokens ?? 0;
+      totalOutputTokens += retry.usage?.outputTokens ?? 0;
+      if (retry.object.questions.length > result.object.questions.length) {
+        result = retry;
+      }
+    }
   } catch (err) {
     console.error("[parse-pdf] generateObject error:", err);
     await logUsage({
@@ -516,20 +599,18 @@ Return all questions in order via the schema. Confirm you have not missed any be
     throw new Error(`Extractor error: ${err instanceof Error ? err.message : String(err)}`);
   }
 
-  // Log usage
-  const usage = result.usage;
-  if (usage) {
-    const inputTokens = usage.inputTokens ?? 0;
-    const outputTokens = usage.outputTokens ?? 0;
+  // Log usage. totalInputTokens / totalOutputTokens cover the initial
+  // pass plus any retry pass, so cost reflects what was actually spent.
+  if (totalInputTokens || totalOutputTokens) {
     // Claude Sonnet 4.6: $3/M input, $15/M output
     const costCents = Math.round(
-      (inputTokens / 1_000_000) * 300 + (outputTokens / 1_000_000) * 1500
+      (totalInputTokens / 1_000_000) * 300 + (totalOutputTokens / 1_000_000) * 1500
     );
     await logUsage({
       userId: callerUserId,
       route: "parse-pdf",
-      tokensInput: inputTokens,
-      tokensOutput: outputTokens,
+      tokensInput: totalInputTokens,
+      tokensOutput: totalOutputTokens,
       model: "claude-sonnet-4-6",
       costCents,
       metadata: { pdfUrl, questionCount: result.object.questions.length },

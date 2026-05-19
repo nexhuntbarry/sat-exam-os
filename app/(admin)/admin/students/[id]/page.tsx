@@ -6,6 +6,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
 import DeleteStudentButton from "./DeleteStudentButton";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 interface StudentRow {
   id: string;
@@ -42,7 +43,7 @@ async function getStudentSubmissions(studentId: string) {
       `id, test_id, status, score, correct_count, total_questions, percentage,
        started_at, submitted_at, time_spent_seconds, attempt_number,
        scaled_score, scaled_section,
-       tests!inner(test_name, modules!inner(module_name, section, module_number))`,
+       tests!inner(test_name, modules!module_id(module_name, section, module_number))`,
     )
     .eq("student_id", studentId)
     .order("submitted_at", { ascending: false, nullsFirst: false });
@@ -223,11 +224,11 @@ export default async function AdminStudentDetailPage({
                     >
                       <td className="px-5 py-3">
                         <div className="font-medium text-charcoal">{testRel.test_name}</div>
-                        <div className="text-soft-mute text-xs">{testRel.modules.module_name}</div>
+                        <div className="text-soft-mute text-xs">{testRel.modules?.module_name ?? "Adaptive · multi-module"}</div>
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
-                        {testRel.modules.section}
-                        {testRel.modules.module_number ? ` M${testRel.modules.module_number}` : ""}
+                        {testRel.modules?.section ?? "—"}
+                        {testRel.modules?.module_number ? ` M${testRel.modules.module_number}` : ""}
                       </td>
                       <td className="px-5 py-3">
                         <span
@@ -262,7 +263,7 @@ export default async function AdminStudentDetailPage({
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
                         {sub.submitted_at
-                          ? new Date(sub.submitted_at).toLocaleString()
+                          ? formatDateTime(sub.submitted_at)
                           : "—"}
                       </td>
                       <td className="px-5 py-3 text-mid-gray text-xs">{sub.attempt_number ?? 1}</td>

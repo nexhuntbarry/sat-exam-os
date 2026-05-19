@@ -2,8 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { clsx } from "clsx";
 import { UserPlus, X, Mail, ShieldCheck } from "lucide-react";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 interface TeacherProfile {
   assigned_classes: unknown[];
@@ -284,13 +286,18 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                     className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                   >
                     <td className="px-5 py-3">
-                      <div className="font-medium text-charcoal">
-                        {teacher.display_name ?? "—"}
-                      </div>
-                      <div className="flex items-center gap-1 text-soft-mute text-xs mt-0.5">
-                        <Mail size={11} />
-                        {teacher.email}
-                      </div>
+                      <Link
+                        href={`/admin/teachers/${teacher.id}`}
+                        className="block hover:text-warm-coral transition-colors"
+                      >
+                        <div className="font-medium text-charcoal hover:text-warm-coral">
+                          {teacher.display_name ?? "—"}
+                        </div>
+                        <div className="flex items-center gap-1 text-soft-mute text-xs mt-0.5">
+                          <Mail size={11} />
+                          {teacher.email}
+                        </div>
+                      </Link>
                     </td>
                     <td className="px-5 py-3 text-mid-gray">
                       {profile?.specialty ?? "—"}
@@ -331,11 +338,11 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                       </span>
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
-                      {new Date(teacher.created_at).toLocaleDateString()}
+                      {formatDate(teacher.created_at)}
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
                       {teacher.last_sign_in_at
-                        ? new Date(teacher.last_sign_in_at).toLocaleString()
+                        ? formatDateTime(teacher.last_sign_in_at)
                         : teacher.clerk_user_id
                           ? "—"
                           : <span className="text-status-warning">never (pending)</span>}

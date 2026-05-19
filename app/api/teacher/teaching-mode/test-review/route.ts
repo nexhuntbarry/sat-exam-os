@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestScope } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/test-review?testId=optional
 // Returns the latest (or specified) published/closed test that the teacher's
@@ -16,12 +17,23 @@ export async function GET(req: Request) {
 
   const db = getServiceClient();
 
-  const { data: assignments } = await db
-    .from("test_assignments")
-    .select("test_id")
-    .contains("teacher_ids", JSON.stringify([user.userId]));
+  // Visible tests = direct assigned ∪ class-student-derived. Class
+  // teachers were previously locked out entirely because this endpoint
+  // only checked test_assignments.teacher_ids.
+  const scope = await getTeacherTestScope(db, user);
+  let testIds: string[];
+  if (scope.isAdmin) {
+    const { data: all } = await db.from("test_assignments").select("test_id");
+    testIds = (all ?? []).map((a) => a.test_id as string);
+  } else {
+    const union = new Set<string>([
+      ...Array.from(scope.directTestIds),
+      ...Array.from(scope.classTestIds),
+    ]);
+    testIds = Array.from(union);
+  }
 
-  if (!assignments || assignments.length === 0) {
+  if (testIds.length === 0) {
     return NextResponse.json({
       tests: [],
       selectedTest: null,
@@ -29,8 +41,6 @@ export async function GET(req: Request) {
       totalSubmissions: 0,
     });
   }
-
-  const testIds = assignments.map((a) => a.test_id);
 
   // List of tests teacher's classes have access to — for the dropdown
   const { data: tests } = await db
@@ -53,12 +63,23 @@ export async function GET(req: Request) {
   let selected = requestedTestId ? tests.find((t) => t.id === requestedTestId) : null;
   if (!selected) selected = tests[0];
 
-  // Find submissions for selected test
-  const { data: submissions } = await db
+  // Find submissions for selected test. For class teachers, restrict
+  // the denominator to their own class students unless the test was
+  // also directly assigned to them (full-scope mode).
+  let submissionsQuery = db
     .from("submissions")
     .select("id")
     .eq("test_id", selected.id)
     .in("status", ["Submitted", "Late"]);
+  const directScopeOnSelected =
+    scope.isAdmin || scope.directTestIds.has(selected.id);
+  if (!directScopeOnSelected && scope.myStudentIds.size > 0) {
+    submissionsQuery = submissionsQuery.in(
+      "student_id",
+      Array.from(scope.myStudentIds),
+    );
+  }
+  const { data: submissions } = await submissionsQuery;
 
   const subIds = (submissions ?? []).map((s) => s.id);
   const totalSubmissions = subIds.length;

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { ClipboardList, Users, BarChart2, AlertTriangle } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getTeacherDashboardData(userId: string) {
   const db = getServiceClient();
@@ -24,7 +25,7 @@ async function getTeacherDashboardData(userId: string) {
 
   const { data: tests } = await db
     .from("tests")
-    .select("id, test_name, status, due_date, modules!inner(module_name, section)")
+    .select("id, test_name, status, due_date, modules!module_id(module_name, section)")
     .in("id", testIds)
     .eq("status", "Published")
     .order("due_date", { ascending: true })
@@ -186,7 +187,7 @@ export default async function TeacherDashboardPage() {
           ) : (
             <div className="divide-y divide-white/5">
               {tests.map((t) => {
-                const mod = t.modules as unknown as { module_name: string; section: string };
+                const mod = t.modules as unknown as { module_name: string; section: string } | null;
                 return (
                   <div key={t.id} className="px-5 py-3 flex items-center justify-between gap-4">
                     <div className="flex-1 min-w-0">
@@ -196,12 +197,12 @@ export default async function TeacherDashboardPage() {
                       >
                         {t.test_name}
                       </Link>
-                      <div className="text-soft-mute text-xs">{mod.section}</div>
+                      <div className="text-soft-mute text-xs">{mod?.section ?? "Adaptive"}</div>
                     </div>
                     <div className="text-right flex-shrink-0 text-xs text-soft-mute">
                       <div>{t.submittedCount}/{t.studentCount} submitted</div>
                       {t.due_date && (
-                        <div>Due {new Date(t.due_date).toLocaleDateString()}</div>
+                        <div>Due {formatDate(t.due_date)}</div>
                       )}
                     </div>
                   </div>
@@ -230,7 +231,7 @@ export default async function TeacherDashboardPage() {
                   <div className="flex-1 min-w-0">
                     <div className="text-charcoal text-sm font-medium">{s.student.display_name}</div>
                     <div className="text-soft-mute text-xs">
-                      {s.submitted_at ? new Date(s.submitted_at).toLocaleString() : ""}
+                      {s.submitted_at ? formatDateTime(s.submitted_at) : ""}
                     </div>
                   </div>
                   <span className={clsx(

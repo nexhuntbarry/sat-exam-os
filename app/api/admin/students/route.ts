@@ -31,7 +31,16 @@ export async function GET(req: Request) {
   if (onlyApproved) query = query.eq("account_status", "approved");
   if (q.length > 0) {
     // OR across display_name + email; ilike handles spaces fine.
-    query = query.or(`display_name.ilike.%${q}%,email.ilike.%${q}%`);
+    // SECURITY: PostgREST .or() parses commas, parens, and dots as
+    // operator separators. Raw user input would let a caller inject
+    // sibling filters (e.g. ",role.eq.admin") and pull rows outside
+    // the intended search scope. Strip those meta-characters before
+    // interpolation. Wildcards (% _) are left in since they remain
+    // bounded by the ilike pattern.
+    const safeQ = q.replace(/[,().*]/g, "");
+    if (safeQ.length > 0) {
+      query = query.or(`display_name.ilike.%${safeQ}%,email.ilike.%${safeQ}%`);
+    }
   }
 
   const { data, error } = await query;

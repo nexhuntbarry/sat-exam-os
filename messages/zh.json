@@ -345,7 +345,7 @@
         "configure": "設定測驗",
         "testName": "測驗名稱",
         "timeLimitMinutes": "時間限制（分鐘）",
-        "timeLimitHint": "SAT 標準：數學 64 分鐘，閱讀與寫作 32 分鐘",
+        "timeLimitHint": "每個模組獨立計時。SAT 標準：數學 35 分鐘/模組、閱讀與寫作 32 分鐘/模組。",
         "openDate": "開放日期",
         "dueDate": "截止日期",
         "showAnswers": "繳交後顯示解答",
@@ -537,6 +537,10 @@
       "teachingMode": {
         "title": "教學模式",
         "body": "走進教室前一頁搞定：最近模考要講的題目，加上班上目前最弱的 skill。一鍵就能組好對應練習小考派出去。"
+      },
+      "classes": {
+        "title": "我的班級",
+        "body": "管理員指派給您的班級群組。點開任一班級可查看完整名單，以及每位學生跨測驗的學習進度。"
       },
       "tests": {
         "title": "我的測驗",

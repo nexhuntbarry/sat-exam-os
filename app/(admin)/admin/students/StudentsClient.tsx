@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { Check, X, Search, ChevronDown } from "lucide-react";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 interface StudentProfile {
   grade: string | null;
@@ -352,11 +353,11 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                         <div className="text-soft-mute text-xs">{profile?.parent_phone ?? ""}</div>
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
-                        {new Date(student.created_at).toLocaleDateString()}
+                        {formatDate(student.created_at)}
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
                         {student.last_sign_in_at
-                          ? new Date(student.last_sign_in_at).toLocaleString()
+                          ? formatDateTime(student.last_sign_in_at)
                           : student.clerk_user_id
                             ? "—"
                             : <span className="text-status-warning">never (pending)</span>}

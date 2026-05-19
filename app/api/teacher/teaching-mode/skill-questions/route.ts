@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestScope } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/skill-questions?skill=Linear+equations&limit=10
 // Returns candidate practice questions for that skill, sorted by class error
@@ -32,40 +33,43 @@ export async function GET(req: Request) {
     return NextResponse.json({ questions: [] });
   }
 
-  // 2. Find the teacher's classes' error history for these questions
-  const { data: assignments } = await db
-    .from("test_assignments")
-    .select("test_id")
-    .contains("teacher_ids", JSON.stringify([user.userId]));
-
-  const testIds = (assignments ?? []).map((a) => a.test_id);
+  // 2. Find the teacher's classes' error history for these questions.
+  // Sources of history:
+  //  - admin: every submission
+  //  - direct-assigned tests: every submission on those tests
+  //  - class teacher: every submission of their class students (any test)
+  const scope = await getTeacherTestScope(db, user);
   const errorRateByQ = new Map<string, { total: number; wrong: number }>();
 
-  if (testIds.length > 0) {
-    const { data: subs } = await db
-      .from("submissions")
-      .select("id")
-      .in("test_id", testIds)
-      .in("status", ["Submitted", "Late"]);
+  let subsQuery = db
+    .from("submissions")
+    .select("id, test_id, student_id")
+    .in("status", ["Submitted", "Late"]);
+  const { data: allSubs } = await subsQuery;
+  const subs = (allSubs ?? []).filter((s) => {
+    if (scope.isAdmin) return true;
+    if (scope.directTestIds.has(s.test_id as string)) return true;
+    return scope.myStudentIds.has(s.student_id as string);
+  });
+  void subsQuery;
 
-    const subIds = (subs ?? []).map((s) => s.id);
-    if (subIds.length > 0) {
-      const qIds = candidates.map((q) => q.id);
-      const { data: ars } = await db
-        .from("answer_records")
-        .select("question_id, is_correct")
-        .in("submission_id", subIds)
-        .in("question_id", qIds);
+  const subIds = subs.map((s) => s.id as string);
+  if (subIds.length > 0) {
+    const qIds = candidates.map((q) => q.id);
+    const { data: ars } = await db
+      .from("answer_records")
+      .select("question_id, is_correct")
+      .in("submission_id", subIds)
+      .in("question_id", qIds);
 
-      for (const ar of ars ?? []) {
-        let e = errorRateByQ.get(ar.question_id);
-        if (!e) {
-          e = { total: 0, wrong: 0 };
-          errorRateByQ.set(ar.question_id, e);
-        }
-        e.total++;
-        if (!ar.is_correct) e.wrong++;
+    for (const ar of ars ?? []) {
+      let e = errorRateByQ.get(ar.question_id);
+      if (!e) {
+        e = { total: 0, wrong: 0 };
+        errorRateByQ.set(ar.question_id, e);
       }
+      e.total++;
+      if (!ar.is_correct) e.wrong++;
     }
   }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // GET /api/teacher/tests/[id]/analytics/[question_id]
 export async function GET(
@@ -14,20 +15,12 @@ export async function GET(
   const { id: testId, question_id: questionId } = await params;
   const db = getServiceClient();
 
-  // Verify access
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("teacher_ids")
-    .eq("test_id", testId)
-    .single();
-
-  if (!assignment) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (
-    user.role !== "admin" &&
-    !(assignment.teacher_ids as string[]).includes(user.userId)
-  ) {
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  const studentAllowlist =
+    access.mode === "class" ? access.studentAllowlist : null;
 
   // Fetch question
   const { data: question } = await db
@@ -38,12 +31,22 @@ export async function GET(
 
   if (!question) return NextResponse.json({ error: "Question not found" }, { status: 404 });
 
-  // Submitted submission IDs for this test
-  const { data: submissionRows } = await db
+  // Submitted submission IDs for this test, optionally scoped to the
+  // teacher's class students. Without the scope a class teacher would
+  // see other classes' answer patterns aggregated in — that's the bug
+  // the OR/class-group rule fixes.
+  let submissionsQuery = db
     .from("submissions")
     .select("id, student_id")
     .eq("test_id", testId)
     .in("status", ["Submitted", "Late"]);
+  if (studentAllowlist) {
+    submissionsQuery = submissionsQuery.in(
+      "student_id",
+      Array.from(studentAllowlist),
+    );
+  }
+  const { data: submissionRows } = await submissionsQuery;
 
   const subIds = (submissionRows ?? []).map((s) => s.id);
   const studentIdMap: Record<string, string> = {};

@@ -1,9 +1,12 @@
+import { escapeHtml } from "../escape";
+
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://sat.nexhunt.xyz";
 
 export function welcomeStudentEmail(displayName: string): {
   subject: string;
   html: string;
 } {
+  const safeName = escapeHtml(displayName);
   return {
     subject: "Welcome to SAT Exam OS — Account Pending Approval",
     html: `<!DOCTYPE html>
@@ -28,7 +31,7 @@ export function welcomeStudentEmail(displayName: string): {
           <tr>
             <td>
               <h1 style="color:#FFFFFF;font-size:22px;font-weight:700;margin:0 0 16px;">
-                Welcome, ${displayName}!
+                Welcome, ${safeName}!
               </h1>
               <p style="color:#CBD5E1;font-size:15px;line-height:1.7;margin:0 0 24px;">
                 Thank you for registering for SAT Exam OS. Your account has been received and is

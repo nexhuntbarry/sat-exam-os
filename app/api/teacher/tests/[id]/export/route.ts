@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // GET /api/teacher/tests/[id]/export
 // Streams a CSV of all student results
@@ -15,25 +16,19 @@ export async function GET(
   const { id: testId } = await params;
   const db = getServiceClient();
 
-  // Verify access
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("teacher_ids")
-    .eq("test_id", testId)
-    .single();
-
-  if (!assignment) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (
-    user.role !== "admin" &&
-    !(assignment.teacher_ids as string[]).includes(user.userId)
-  ) {
+  // Class teachers can export their class's results. Direct-assigned
+  // teachers get the full test export.
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   // Fetch test name + questions
   const { data: test } = await db
     .from("tests")
-    .select("id, test_name, module_id, question_ids")
+    .select(
+      "id, test_name, module_id, module_2_id, question_ids, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id",
+    )
     .eq("id", testId)
     .single();
 
@@ -45,17 +40,31 @@ export async function GET(
     .order("original_question_number", { ascending: true });
 
   const qIds = test.question_ids as string[] | null;
-  if (qIds && qIds.length > 0) {
+  if (!test.is_adaptive && qIds && qIds.length > 0) {
     questionQuery = questionQuery.in("id", qIds);
-  } else {
+  } else if (test.is_adaptive) {
+    const adaptiveModuleIds = [
+      test.module_1_id,
+      test.module_2_easy_id,
+      test.module_2_hard_id,
+    ].filter((x): x is string => Boolean(x));
+    if (adaptiveModuleIds.length > 0) {
+      questionQuery = questionQuery.in("module_id", adaptiveModuleIds);
+    }
+  } else if (test.module_2_id) {
+    questionQuery = questionQuery.in(
+      "module_id",
+      [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x)),
+    );
+  } else if (test.module_id) {
     questionQuery = questionQuery.eq("module_id", test.module_id);
   }
 
   const { data: questions } = await questionQuery;
   const questionList = questions ?? [];
 
-  // Fetch submissions
-  const { data: submissions } = await db
+  // Fetch submissions. Class teachers see only their class roster.
+  let submissionsQuery = db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
@@ -64,6 +73,13 @@ export async function GET(
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: true });
+  if (access.mode === "class" && access.studentAllowlist) {
+    submissionsQuery = submissionsQuery.in(
+      "student_id",
+      Array.from(access.studentAllowlist),
+    );
+  }
+  const { data: submissions } = await submissionsQuery;
 
   const subs = submissions ?? [];
   if (subs.length === 0) {

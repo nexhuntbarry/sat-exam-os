@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { Clock, BookOpen, Calendar } from "lucide-react";
 import StartTestButton from "./StartTestButton";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getTestInfo(testId: string, studentId: string) {
   const db = getServiceClient();
@@ -32,19 +33,25 @@ async function getTestInfo(testId: string, studentId: string) {
     .select(`
       id, test_name, status, time_limit_minutes, due_date, open_date,
       allow_retake, show_answers_after_submission, module_id,
-      modules!inner(module_name, section, module_number)
+      is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, review_unlocked,
+      modules!module_id(module_name, section, module_number)
     `)
     .eq("id", testId)
     .single();
 
   if (!test || test.status === "Draft") return null;
 
-  // Get approved question count
-  const { count } = await db
-    .from("questions")
-    .select("id", { count: "exact", head: true })
-    .eq("module_id", test.module_id ?? "")
-    .neq("parsing_status", "Rejected");
+  // Approved question count — for adaptive tests we count Module 1
+  // since that's what the student starts with; legacy tests use the
+  // single tests.module_id.
+  const countModuleId = test.is_adaptive ? test.module_1_id : test.module_id;
+  const { count } = countModuleId
+    ? await db
+        .from("questions")
+        .select("id", { count: "exact", head: true })
+        .eq("module_id", countModuleId)
+        .neq("parsing_status", "Rejected")
+    : { count: 0 };
 
   // Get submission
   const { data: submission } = await db
@@ -72,7 +79,9 @@ export default async function StudentTestLandingPage({
   if (!data) notFound();
 
   const { test, questionCount, submission } = data;
-  const mod = test.modules as unknown as { module_name: string; section: string; module_number: number | null };
+  const mod = test.modules as unknown as
+    | { module_name: string; section: string; module_number: number | null }
+    | null;
 
   const isPastDue = test.due_date && new Date(test.due_date) < new Date();
   const isInProgress = submission?.status === "In Progress";
@@ -90,7 +99,11 @@ export default async function StudentTestLandingPage({
       <div className="bg-surface border border-divider rounded-2xl p-8 space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-charcoal mb-1">{test.test_name}</h1>
-          <p className="text-soft-mute">{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</p>
+          <p className="text-soft-mute">
+            {mod
+              ? <>{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</>
+              : "Adaptive · Module 1 + Module 2 (easy/hard)"}
+          </p>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
@@ -107,7 +120,7 @@ export default async function StudentTestLandingPage({
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
             <Calendar size={20} className="text-warm-coral mb-2" />
             <div className="text-charcoal font-semibold text-sm">
-              {test.due_date ? new Date(test.due_date).toLocaleDateString() : "No deadline"}
+              {test.due_date ? formatDate(test.due_date) : "No deadline"}
             </div>
             <div className="text-soft-mute text-xs">Due Date</div>
           </div>
@@ -146,6 +159,15 @@ export default async function StudentTestLandingPage({
               isResume={isInProgress}
             />
           </div>
+        )}
+
+        {Boolean((test as { review_unlocked?: boolean }).review_unlocked) && (
+          <Link
+            href={`/student/tests/${test.id}/review`}
+            className="block w-full py-3 text-center rounded-xl border border-warm-amber/30 bg-warm-amber/10 text-warm-amber font-semibold transition-colors hover:bg-warm-amber/20"
+          >
+            Open class review (answers unlocked)
+          </Link>
         )}
       </div>
     </div>

@@ -21,51 +21,104 @@ interface DomainAgg {
 async function getCrossTestAnalysis(teacherId: string, role: string) {
   const db = getServiceClient();
 
-  // 1. Teacher's assignments
-  let assignmentsQuery = db
-    .from("test_assignments")
-    .select("test_id, teacher_ids");
+  // 1. Build the visible test+student scope. Admin sees every test and
+  // every submission. A teacher's analytics aggregate over:
+  //   (a) tests they're directly on test_assignments.teacher_ids — count
+  //       every submission for those tests (legacy/global scope, useful
+  //       for non-class-teacher reviewers), AND
+  //   (b) every other test whose submissions come from a student in one
+  //       of the teacher's class_groups — counted by student.
+  // teacher_ids assignment is now optional. Class-membership is the
+  // primary scoping signal.
+  const directTestIds = new Set<string>();
+  const myStudentIds = new Set<string>();
 
-  if (role !== "admin") {
-    assignmentsQuery = assignmentsQuery.contains(
-      "teacher_ids",
-      JSON.stringify([teacherId])
-    );
+  if (role === "admin") {
+    // Admin scope is global — bypass both filters below.
+  } else {
+    const { data: directly } = await db
+      .from("test_assignments")
+      .select("test_id")
+      .contains("teacher_ids", JSON.stringify([teacherId]));
+    for (const a of directly ?? []) directTestIds.add(a.test_id as string);
+
+    const { data: myGroups } = await db
+      .from("class_group_teachers")
+      .select("class_group_id")
+      .eq("teacher_id", teacherId);
+    const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
+    if (groupIds.length > 0) {
+      const { data: members } = await db
+        .from("class_group_members")
+        .select("student_id")
+        .in("class_group_id", groupIds);
+      for (const m of members ?? []) myStudentIds.add(m.student_id as string);
+    }
   }
 
-  const { data: assignments } = await assignmentsQuery;
-  if (!assignments || assignments.length === 0) {
-    return null;
+  // 2. Fetch submitted/late submissions in scope. For non-admins, that's
+  // submissions whose test is in directTestIds OR whose student is in
+  // myStudentIds. We can't express the OR cleanly in a single PostgREST
+  // filter, so fetch each side then merge.
+  let submissions: { id: string; test_id: string; student_id: string }[] = [];
+  if (role === "admin") {
+    const { data } = await db
+      .from("submissions")
+      .select("id, test_id, student_id")
+      .in("status", ["Submitted", "Late"]);
+    submissions = (data ?? []) as typeof submissions;
+  } else {
+    const dedup = new Map<string, { id: string; test_id: string; student_id: string }>();
+    if (directTestIds.size > 0) {
+      const { data } = await db
+        .from("submissions")
+        .select("id, test_id, student_id")
+        .in("test_id", Array.from(directTestIds))
+        .in("status", ["Submitted", "Late"]);
+      for (const s of data ?? []) dedup.set(s.id as string, s as never);
+    }
+    if (myStudentIds.size > 0) {
+      const { data } = await db
+        .from("submissions")
+        .select("id, test_id, student_id")
+        .in("student_id", Array.from(myStudentIds))
+        .in("status", ["Submitted", "Late"]);
+      for (const s of data ?? []) dedup.set(s.id as string, s as never);
+    }
+    submissions = Array.from(dedup.values());
   }
-  const testIds = assignments.map((a) => a.test_id);
 
-  // 2. Test metadata + which question_ids each test uses (or fall back to module_id)
-  const { data: tests } = await db
-    .from("tests")
-    .select("id, test_name, module_id, question_ids");
-  const teacherTests = (tests ?? []).filter((t) => testIds.includes(t.id));
-
-  const testNameMap = new Map<string, string>(
-    teacherTests.map((t) => [t.id, t.test_name])
-  );
-
-  // 3. Submitted/Late submissions only
-  const { data: submissions } = await db
-    .from("submissions")
-    .select("id, test_id")
-    .in("test_id", testIds)
-    .in("status", ["Submitted", "Late"]);
-
-  const subList = submissions ?? [];
-  if (subList.length === 0) {
+  if (submissions.length === 0) {
+    const { data: teacherTestsForEmpty } = await db
+      .from("tests")
+      .select("id, test_name")
+      .in(
+        "id",
+        Array.from(directTestIds.size > 0 ? directTestIds : new Set([""])),
+      );
     return {
       empty: true as const,
-      totals: { tests: testIds.length, submissions: 0, uniqueQuestions: 0 },
-      testOptions: teacherTests
-        .map((t) => ({ id: t.id, name: t.test_name }))
+      totals: { tests: directTestIds.size, submissions: 0, uniqueQuestions: 0 },
+      testOptions: (teacherTestsForEmpty ?? [])
+        .map((t) => ({ id: t.id, name: t.test_name as string }))
         .sort((a, b) => a.name.localeCompare(b.name)),
     };
   }
+
+  const testIds = Array.from(new Set(submissions.map((s) => s.test_id)));
+
+  // 3. Test metadata + which question_ids each test uses (or fall back to module_id)
+  const { data: tests } = await db
+    .from("tests")
+    .select("id, test_name, module_id, question_ids")
+    .in("id", testIds);
+  const teacherTests = tests ?? [];
+
+  const testNameMap = new Map<string, string>(
+    teacherTests.map((t) => [t.id, t.test_name as string])
+  );
+
+  const subList = submissions;
 
   const subIds = subList.map((s) => s.id);
   const subToTestMap = new Map<string, string>(subList.map((s) => [s.id, s.test_id]));

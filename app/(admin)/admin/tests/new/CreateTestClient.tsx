@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, ChevronLeft, Check } from "lucide-react";
+import { ChevronRight, ChevronLeft, Check, Calculator, Image as ImageIcon } from "lucide-react";
 import { clsx } from "clsx";
 
 interface Module {
@@ -34,8 +34,10 @@ interface Props {
   classGroups: ClassGroup[];
 }
 
+// Per-module SAT timing: each section delivers two modules with its own
+// timer. Math gets 35 min/module, Reading & Writing 32 min/module.
 const DEFAULT_TIME_LIMITS: Record<string, number> = {
-  Math: 64,
+  Math: 35,
   "Reading & Writing": 32,
 };
 
@@ -45,8 +47,10 @@ export default function CreateTestClient({ modules, teachers, students, classGro
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  // Step 1: Module selection
+  // Step 1: Module selection. Non-adaptive tests serve two modules in
+  // sequence (Module 1 = selectedModuleId, Module 2 = module2Id).
   const [selectedModuleId, setSelectedModuleId] = useState("");
+  const [module2Id, setModule2Id] = useState("");
 
   // Adaptive mode (#1) — when on, the test serves Module 1 then routes
   // students to Module 2 (easy or hard) based on Module 1 score.
@@ -58,11 +62,19 @@ export default function CreateTestClient({ modules, teachers, students, classGro
 
   // Step 2: Config
   const [testName, setTestName] = useState("");
-  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(64);
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(35);
+  const [timeLimitMinutesModule2, setTimeLimitMinutesModule2] = useState<number | "">("");
   const [openDate, setOpenDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [showAnswers, setShowAnswers] = useState(false);
   const [allowRetake, setAllowRetake] = useState(false);
+
+  // Desmos calculator toggle. Default ON: the real SAT allows Desmos
+  // on every Math section, so admins were forgetting to flip the
+  // switch and students reported missing-calculator on Math tests.
+  // R&W tests ignore the setting anyway (the take page gates on
+  // section), so defaulting true here is safe for non-Math tests too.
+  const [desmosEnabled, setDesmosEnabled] = useState(true);
 
   // Step 3: Assignment
   const [selectedTeacherIds, setSelectedTeacherIds] = useState<string[]>([]);
@@ -70,6 +82,13 @@ export default function CreateTestClient({ modules, teachers, students, classGro
   const [selectedClassGroupIds, setSelectedClassGroupIds] = useState<string[]>([]);
 
   const selectedModule = modules.find((m) => m.id === selectedModuleId);
+
+  // Section gate for math aids — for adaptive tests we look at Module 1
+  // since both Module 2 tracks share its section.
+  const activeModuleForSection = isAdaptive
+    ? modules.find((m) => m.id === module1Id)
+    : selectedModule;
+  const isMathTest = activeModuleForSection?.section === "Math";
 
   function handleModuleSelect(mod: Module) {
     setSelectedModuleId(mod.id);
@@ -91,6 +110,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
         body: JSON.stringify({
           testName,
           moduleId: isAdaptive ? undefined : selectedModuleId,
+          module2Id: isAdaptive ? undefined : module2Id || undefined,
           timeLimitMinutes,
           openDate: openDate || undefined,
           dueDate: dueDate || undefined,
@@ -104,6 +124,11 @@ export default function CreateTestClient({ modules, teachers, students, classGro
           module2EasyId: isAdaptive ? module2EasyId || undefined : undefined,
           module2HardId: isAdaptive ? module2HardId || undefined : undefined,
           adaptiveThreshold: isAdaptive ? adaptiveThreshold : undefined,
+          desmosEnabled: isMathTest ? desmosEnabled : false,
+          timeLimitMinutesModule2:
+            (isAdaptive || (!isAdaptive && module2Id)) && typeof timeLimitMinutesModule2 === "number"
+              ? timeLimitMinutesModule2
+              : null,
         }),
       });
       const json = await res.json();
@@ -191,29 +216,51 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                   No eligible modules. Approve at least one module first.
                 </p>
               ) : (
-                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {eligibleModules.map((mod) => (
-                    <button
-                      key={mod.id}
-                      onClick={() => handleModuleSelect(mod)}
-                      className={clsx(
-                        "w-full flex items-center justify-between p-4 rounded-xl border text-left transition-all",
-                        selectedModuleId === mod.id
-                          ? "border-warm-coral bg-warm-coral/10"
-                          : "border-divider bg-light-bg/60 hover:border-white/16 hover:bg-surface"
-                      )}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-sm font-medium text-charcoal mb-1">
+                      Module 1 <span className="text-status-error">*</span>
+                    </label>
+                    <select
+                      value={selectedModuleId}
+                      onChange={(e) => {
+                        const m = eligibleModules.find((mm) => mm.id === e.target.value);
+                        if (m) handleModuleSelect(m);
+                        else setSelectedModuleId("");
+                      }}
+                      className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
                     >
-                      <div>
-                        <div className="text-charcoal font-medium">{mod.module_name}</div>
-                        <div className="text-soft-mute text-xs mt-0.5">
-                          {mod.section}{mod.module_number ? ` · M${mod.module_number}` : ""} · {mod.total_questions} questions
-                        </div>
-                      </div>
-                      {selectedModuleId === mod.id && (
-                        <Check size={16} className="text-warm-coral shrink-0" />
-                      )}
-                    </button>
-                  ))}
+                      <option value="">Select Module 1…</option>
+                      {eligibleModules.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.module_name} · {m.section}{m.module_number ? ` M${m.module_number}` : ""} · {m.total_questions}q
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-charcoal mb-1">
+                      Module 2 <span className="text-status-error">*</span>
+                    </label>
+                    <select
+                      value={module2Id}
+                      onChange={(e) => setModule2Id(e.target.value)}
+                      className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
+                    >
+                      <option value="">Select Module 2…</option>
+                      {eligibleModules
+                        .filter((m) => m.id !== selectedModuleId)
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.module_name} · {m.section}{m.module_number ? ` M${m.module_number}` : ""} · {m.total_questions}q
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <p className="text-soft-mute text-xs">
+                    Students take Module 1 then Module 2 in sequence (no adaptive routing).
+                    Each module has its own timer.
+                  </p>
                 </div>
               )
             ) : (
@@ -314,7 +361,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                 disabled={
                   isAdaptive
                     ? !module1Id || (!module2EasyId && !module2HardId)
-                    : !selectedModuleId
+                    : !selectedModuleId || !module2Id || selectedModuleId === module2Id
                 }
                 onClick={() => setStep(2)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -342,19 +389,45 @@ export default function CreateTestClient({ modules, teachers, students, classGro
             </div>
 
             <div className="space-y-1">
-              <label className="text-mid-gray text-sm font-medium">Time Limit (minutes)</label>
+              <label className="text-mid-gray text-sm font-medium">
+                {isAdaptive || module2Id ? "Module 1 time limit (minutes)" : "Time Limit (minutes)"}
+              </label>
               <input
                 type="number"
                 value={timeLimitMinutes}
-                onChange={(e) => setTimeLimitMinutes(parseInt(e.target.value) || 64)}
+                onChange={(e) => setTimeLimitMinutes(parseInt(e.target.value) || 35)}
                 min={1}
                 max={180}
                 className="w-32 px-4 py-2.5 rounded-xl bg-light-bg border border-divider text-charcoal focus:outline-none focus:border-warm-coral/60 transition-colors"
               />
               <p className="text-soft-mute text-xs">
-                SAT standard: 64 min (Math), 32 min (Reading &amp; Writing)
+                Per module. SAT standard: 35 min (Math), 32 min (Reading &amp; Writing). Each module times independently.
               </p>
             </div>
+
+            {(isAdaptive || module2Id) && (
+              <div className="space-y-1">
+                <label className="text-mid-gray text-sm font-medium">
+                  Module 2 time limit (minutes)
+                </label>
+                <input
+                  type="number"
+                  value={timeLimitMinutesModule2}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "") setTimeLimitMinutesModule2("");
+                    else setTimeLimitMinutesModule2(parseInt(v) || 35);
+                  }}
+                  min={1}
+                  max={180}
+                  placeholder={`Same as Module 1 (${timeLimitMinutes})`}
+                  className="w-48 px-4 py-2.5 rounded-xl bg-light-bg border border-divider text-charcoal placeholder-soft-mute focus:outline-none focus:border-warm-coral/60 transition-colors"
+                />
+                <p className="text-soft-mute text-xs">
+                  Leave blank to reuse Module 1&rsquo;s limit. Adaptive tests apply this to both Module 2 easy and hard tracks.
+                </p>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
@@ -416,6 +489,50 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                 </div>
               </label>
             </div>
+
+            {isMathTest && (
+              <div className="space-y-3 pt-2 border-t border-divider">
+                <div className="text-charcoal text-sm font-semibold flex items-center gap-2">
+                  <Calculator size={14} className="text-warm-coral" />
+                  Math aids
+                </div>
+
+                <label className="flex items-center justify-between p-3 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
+                  <div>
+                    <div className="text-charcoal text-sm font-medium">Desmos calculator</div>
+                    <div className="text-soft-mute text-xs">Side panel iframe — same as digital SAT</div>
+                  </div>
+                  <div
+                    onClick={() => setDesmosEnabled(!desmosEnabled)}
+                    className={clsx(
+                      "w-10 h-6 rounded-full transition-colors relative shrink-0",
+                      desmosEnabled ? "bg-warm-coral" : "bg-light-bg",
+                    )}
+                  >
+                    <span
+                      className={clsx(
+                        "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                        desmosEnabled ? "translate-x-5" : "translate-x-1",
+                      )}
+                    />
+                  </div>
+                </label>
+
+                <div className="p-3 rounded-xl bg-surface border border-divider space-y-1.5">
+                  <div className="text-charcoal text-sm font-medium flex items-center gap-1.5">
+                    <ImageIcon size={13} className="text-warm-coral" />
+                    Formula reference sheet
+                  </div>
+                  <p className="text-soft-mute text-xs leading-relaxed">
+                    Now a global setting — admin uploads once and every Math test uses
+                    the same sheet.{" "}
+                    <a href="/admin/settings" className="text-warm-coral hover:underline">
+                      Manage in Platform settings →
+                    </a>
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-between pt-2">
               <button onClick={() => setStep(1)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal hover:border-divider transition-colors text-sm">

@@ -7,6 +7,7 @@ import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles } from "lu
 import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 const SAT_DOMAINS = [
   "Information and Ideas",
@@ -590,7 +591,7 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           {q.ai_confidence_score !== null && (
             <div className="bg-surface border border-divider rounded-xl p-3 text-xs text-soft-mute space-y-1">
               <p>AI confidence: {Math.round((q.ai_confidence_score ?? 0) * 100)}%</p>
-              {q.reviewed_at && <p>Reviewed: {new Date(q.reviewed_at).toLocaleString()}</p>}
+              {q.reviewed_at && <p>Reviewed: {formatDateTime(q.reviewed_at)}</p>}
             </div>
           )}
         </div>

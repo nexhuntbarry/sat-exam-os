@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestScope } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/skill-stats?domain=Algebra
 // Returns top weakest skills (by error rate) within the requested domain,
@@ -17,22 +18,38 @@ export async function GET(req: Request) {
 
   const db = getServiceClient();
 
-  const { data: assignments } = await db
-    .from("test_assignments")
-    .select("test_id")
-    .contains("teacher_ids", JSON.stringify([user.userId]));
-
-  if (!assignments || assignments.length === 0) {
+  const scope = await getTeacherTestScope(db, user);
+  let testIds: string[];
+  if (scope.isAdmin) {
+    const { data: all } = await db.from("test_assignments").select("test_id");
+    testIds = (all ?? []).map((a) => a.test_id as string);
+  } else {
+    const union = new Set<string>([
+      ...Array.from(scope.directTestIds),
+      ...Array.from(scope.classTestIds),
+    ]);
+    testIds = Array.from(union);
+  }
+  if (testIds.length === 0) {
     return NextResponse.json({ domains: [], skills: [] });
   }
-  const testIds = assignments.map((a) => a.test_id);
 
-  // Get every Submitted/Late submission for those tests
-  const { data: subs } = await db
+  // Get every Submitted/Late submission for those tests. Class teachers
+  // get a denominator restricted to their own students (so their
+  // weakest-skill ranking reflects their actual class, not a global
+  // population they don't teach).
+  let subsQuery = db
     .from("submissions")
-    .select("id")
+    .select("id, student_id, test_id")
     .in("test_id", testIds)
     .in("status", ["Submitted", "Late"]);
+  const { data: subsRaw } = await subsQuery;
+  const subs = (subsRaw ?? []).filter((s) => {
+    if (scope.isAdmin) return true;
+    if (scope.directTestIds.has(s.test_id as string)) return true;
+    return scope.myStudentIds.has(s.student_id as string);
+  });
+  void subsQuery;
 
   const subIds = (subs ?? []).map((s) => s.id);
   if (subIds.length === 0) return NextResponse.json({ domains: [], skills: [] });

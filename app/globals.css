@@ -131,3 +131,70 @@ body {
 .cl-internal-b3fm6y {
   color: #D97706 !important;
 }
+
+/* Student-applied highlights inside R&W test questions. Yellow is the
+   only color (matches digital SAT). The mark element is injected at
+   render-time by HighlightableBlock; styling is global so re-renders
+   pick it up without per-render Tailwind class wiring. */
+mark.satos-highlight {
+  background-color: #FEF08A;
+  color: inherit;
+  padding: 0;
+  border-radius: 2px;
+}
+
+mark.satos-highlight.has-note {
+  border-bottom: 2px dotted #D97706;
+  cursor: help;
+}
+mark.satos-highlight {
+  cursor: pointer;
+}
+
+/* Print stylesheet for /teacher/tests/[id]/results/[submission_id]
+   and similar reviewable detail pages. Strip nav chrome, force every
+   collapsed <details> open, and tighten background colors so coloured
+   answer-correctness pills survive the system print pipeline. */
+@media print {
+  /* Hide global app shell. */
+  aside,
+  nav,
+  header,
+  [data-sidebar],
+  .print\:hidden {
+    display: none !important;
+  }
+  body {
+    background: #FFFFFF !important;
+    color: #1F1F1F !important;
+  }
+  main {
+    padding: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+  /* Ensure the detail-review panel expands every <details> and
+     keeps the contents visible regardless of original `open` state. */
+  details {
+    page-break-inside: avoid;
+  }
+  details > *:not(summary) {
+    display: block !important;
+  }
+  details summary {
+    list-style: none;
+  }
+  details summary::-webkit-details-marker {
+    display: none;
+  }
+  /* Ask the browser to honour our coloured backgrounds (red/green
+     pills for correctness) instead of stripping them for ink saving. */
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+}

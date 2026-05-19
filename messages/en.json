@@ -345,7 +345,7 @@
         "configure": "Configure Test",
         "testName": "Test Name",
         "timeLimitMinutes": "Time Limit (minutes)",
-        "timeLimitHint": "SAT standard: 64 min (Math), 32 min (Reading & Writing)",
+        "timeLimitHint": "Per module. SAT standard: 35 min (Math), 32 min (Reading & Writing). Each module times independently.",
         "openDate": "Open Date",
         "dueDate": "Due Date",
         "showAnswers": "Show answers after submission",
@@ -537,6 +537,10 @@
       "teachingMode": {
         "title": "Teaching Mode",
         "body": "Walk into class with two answers ready: which questions to review from your latest test, and which skill your class is weakest on right now. Build a quick practice set in one click."
+      },
+      "classes": {
+        "title": "My Classes",
+        "body": "Class groups your admin has assigned you to. Open a class to see its full roster and per-student progress across every test you've assigned."
       },
       "tests": {
         "title": "My Tests",

@@ -140,13 +140,103 @@ function wrapExponents(text: string): string {
   );
 }
 
+// Currency-handling: two stored variants need normalising before
+// remark-math sees them, otherwise stray `$` glyphs end up paired into
+// math regions that swallow whole paragraphs of prose into italic KaTeX.
+//
+// 1. `$\$NNN$` — parser-wrapped currency-as-math. remark-math 6 closes
+//    the math run at the `$` *inside* `\$` (backslash doesn't escape
+//    the delimiter for its scanner) so the trailing `$` of the wrapper
+//    becomes an opener for whatever comes next. Strip the wrapper and
+//    keep the markdown-literal `\$` so currency renders as plain "$".
+//
+// 2. Bare `$NNN` (no escape, no wrapper) — older parses skipped the
+//    currency rule entirely. Each bare `$` followed by a sentence-final
+//    digit becomes one half of a phantom math pair when another
+//    currency `$` shows up later in the paragraph. We detect "currency
+//    shaped" — `$` then a number then a non-math boundary (whitespace,
+//    sentence punctuation, end of string) — and escape it. Leaves real
+//    math like `$2x+1=5$` alone because those follow with operators or
+//    letters, which are NOT in the currency boundary set.
+function unwrapMathCurrency(text: string): string {
+  return text.replace(/\$\\\$([0-9][\d,.]*)\$/g, (_m, num) => `\\$${num}`);
+}
+
+function escapeBareCurrency(text: string): string {
+  return text.replace(
+    // Lookbehind: must NOT be preceded by `\` (already escaped) or `$`
+    //   (would be inside `$$..$$` display math we want to leave alone).
+    // Number: 1+ digits with optional thousands grouping and decimal.
+    // Lookahead: a sentence-boundary character or end-of-string —
+    //   excludes digits/letters/operators that signal real math.
+    /(^|[^\\$])\$(\d{1,3}(?:,\d{3})*(?:\.\d+)?)(?=[\s,.;:!?)\]}'"”’—–-]|$)/g,
+    (_m, lead, num) => `${lead}\\$${num}`,
+  );
+}
+
+// Collapse orphan `{,}` thin-space marks left behind when the AI
+// thought it was emitting math but skipped the `$...$` wrap (so
+// `1{,}150` lands as literal text instead of rendering as `1,150`).
+// Safe globally: `{,}` is only meaningful inside a math context, and
+// `1,150` renders identically once it's back inside math.
+function collapseOrphanThinSpace(text: string): string {
+  return text.replace(/\{,\}/g, ",");
+}
+
+// AI parser failure mode (Q12 Oct 2024 SAT Math):
+// stores choices like `$950 + 50(t - 2) = 1{,}150$` (bare bookend
+// dollars) or `\$950 + 50(t - 2) = 1{,}150\$` (escaped bookends).
+// Either way the AI's intent was a math wrap but the bookend looks
+// like currency, so the downstream escapeBareCurrency step rewrote
+// the leading `$<digits>` as `\$<digits>` and the trailing `$` ended
+// up dangling — the whole thing rendered as literal text.
+//
+// Fix: if a WHOLE string is bookended by either bare `$` or escaped
+// `\$` AND the interior contains an `=` AND an algebraic operator
+// or variable letter, treat it as a math wrap. Normalize to a clean
+// `$...$` so renderers see balanced math delimiters.
+//
+// Only runs on the whole string (after trim) — we never grab
+// arbitrary substrings out of long prose.
+function rewriteBookendCurrencyEquation(text: string): string {
+  const trimmed = text.trim();
+  let inner: string | null = null;
+  if (trimmed.startsWith("\\$") && trimmed.endsWith("\\$") && trimmed.length >= 8) {
+    inner = trimmed.slice(2, -2);
+  } else if (
+    trimmed.startsWith("$") &&
+    !trimmed.startsWith("\\$") &&
+    trimmed.endsWith("$") &&
+    !trimmed.endsWith("\\$") &&
+    trimmed.length >= 6
+  ) {
+    inner = trimmed.slice(1, -1);
+  }
+  if (inner == null) return text;
+  if (!inner.includes("=")) return text;
+  if (!/[+\-*/()a-zA-Z]/.test(inner)) return text;
+  // Inner already has math delimiters → AI partially wrapped; leave
+  // it alone rather than risk double-wrapping.
+  if (inner.includes("$")) return text;
+  return `$${inner}$`;
+}
+
 export function normalizeMath(text: string): string {
   if (!text) return text;
+  text = rewriteBookendCurrencyEquation(text);
+  text = collapseOrphanThinSpace(text);
+  text = unwrapMathCurrency(text);
+  // Protect existing math/code/url spans BEFORE the currency escape
+  // step. Otherwise a legitimate `$950 + … = …$` math wrap looks like
+  // currency to escapeBareCurrency, which then breaks the wrap. The
+  // escape only needs to run on the UNPROTECTED prose between math
+  // chunks.
   const { parts, protectedSpans } = splitProtected(text);
   const transformed = parts
     .map((part) => {
       if (part.startsWith(PLACEHOLDER_PREFIX)) return part;
       let p = part;
+      p = escapeBareCurrency(p);
       p = wrapBalancedCommand(p, "frac", 2);
       p = wrapBalancedCommand(p, "sqrt", 1);
       p = wrapStandaloneTokens(p);

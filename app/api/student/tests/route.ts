@@ -44,8 +44,8 @@ export async function GET() {
     .from("tests")
     .select(`
       id, test_name, module_id, time_limit_minutes, open_date, due_date,
-      allow_retake, status, created_at,
-      modules!inner(module_name, section, module_number)
+      allow_retake, status, created_at, is_adaptive,
+      modules!module_id(module_name, section, module_number)
     `)
     .in("id", testIds)
     .in("status", ["Published", "Closed"])

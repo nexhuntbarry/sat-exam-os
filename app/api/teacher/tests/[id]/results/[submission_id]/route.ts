@@ -1,6 +1,25 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
+
+// Two-track access model:
+// 1) admin → unrestricted
+// 2) direct teacher (test_assignments.teacher_ids contains caller)
+// 3) class teacher whose group contains the submitting student
+async function teacherCanReadSubmission(
+  db: ReturnType<typeof getServiceClient>,
+  user: { userId: string; role: string | null | undefined },
+  testId: string,
+  studentId: string,
+): Promise<boolean> {
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === "admin" || access.mode === "direct") return true;
+  if (access.mode === "class" && access.studentAllowlist?.has(studentId)) {
+    return true;
+  }
+  return false;
+}
 
 // GET /api/teacher/tests/[id]/results/[submission_id]
 export async function GET(
@@ -14,20 +33,30 @@ export async function GET(
   const { id: testId, submission_id: submissionId } = await params;
   const db = getServiceClient();
 
-  // Verify teacher access
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("teacher_ids")
+  // Look up the submission once up front so the class-group authz path
+  // has the student_id to match against. 404 if the submission isn't on
+  // this test, which is also what we want to return for cross-test
+  // probing attempts.
+  const { data: subOwner } = await db
+    .from("submissions")
+    .select("student_id")
+    .eq("id", submissionId)
     .eq("test_id", testId)
-    .single();
+    .maybeSingle();
+  if (!subOwner) {
+    return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+  }
 
-  if (!assignment) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  if (
-    user.role !== "admin" &&
-    !(assignment.teacher_ids as string[]).includes(user.userId)
-  ) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (user.role !== "admin") {
+    const ok = await teacherCanReadSubmission(
+      db,
+      user,
+      testId,
+      subOwner.student_id as string,
+    );
+    if (!ok) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   // Fetch submission. student_profiles is joined separately since
@@ -39,7 +68,7 @@ export async function GET(
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, answers,
-      tutor_notes, attempt_number, scaled_score, scaled_section,
+      tutor_notes, attempt_number, scaled_score, scaled_section, metadata,
       users!inner(display_name, email)
     `)
     .eq("id", submissionId)
@@ -91,6 +120,14 @@ export async function GET(
   const u = submission.users as unknown as { display_name: string; email: string };
   const sp = (profile ?? null) as { grade?: string; class_group?: string } | null;
 
+  // Highlights/notes the student attached during the take. Stored under
+  // metadata.annotations[questionId][anchor] = Annotation[]. Anchor is
+  // currently always "stem" since v1 only allows highlighting the stem.
+  const meta = (submission.metadata ?? {}) as {
+    annotations?: Record<string, Record<string, Array<{ start: number; end: number; note?: string }>>>;
+  };
+  const annotationsByQid = meta.annotations ?? {};
+
   const answers = (answerRecords ?? []).map((ar) => {
     const q = ar.questions as unknown as {
       id: string;
@@ -123,6 +160,7 @@ export async function GET(
       difficulty: q.difficulty,
       classReview: noteData.classReview,
       privateNote: noteData.privateNote,
+      studentAnnotations: annotationsByQid[q.id] ?? null,
     };
   });
 
@@ -166,18 +204,25 @@ export async function PATCH(
   const { id: testId, submission_id: submissionId } = await params;
 
   const db = getServiceClient();
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("teacher_ids")
+  const { data: subOwner } = await db
+    .from("submissions")
+    .select("student_id")
+    .eq("id", submissionId)
     .eq("test_id", testId)
-    .single();
-
-  if (!assignment) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (
-    user.role !== "admin" &&
-    !(assignment.teacher_ids as string[]).includes(user.userId)
-  ) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    .maybeSingle();
+  if (!subOwner) {
+    return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+  }
+  if (user.role !== "admin") {
+    const ok = await teacherCanReadSubmission(
+      db,
+      user,
+      testId,
+      subOwner.student_id as string,
+    );
+    if (!ok) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
   }
 
   let body: { tutorNotes?: string };

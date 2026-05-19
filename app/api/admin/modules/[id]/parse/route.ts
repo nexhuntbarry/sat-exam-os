@@ -14,6 +14,35 @@ import { solveQuestionsAndPersist } from "@/lib/ai/solve-question";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
+// In-memory token bucket per admin. Parse runs an AI extraction +
+// solver + optional answer-key reconciliation, each invoking Claude
+// Sonnet against full PDFs. Cost per call is ~$0.50-$2. Without a
+// limit a compromised admin can run thousands of dollars through the
+// API in minutes. 10 parses/hour gives plenty of headroom for normal
+// onboarding (bulk module uploads come in batches of 4-8) while still
+// catching runaway loops.
+//
+// Vercel Fluid Compute reuses function instances, so the bucket lives
+// long enough to be meaningful between calls. Resets when the
+// container recycles — that's fine; the goal is cost protection, not
+// hard policy enforcement (use a CDN/edge limiter for that).
+const PARSE_RATE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const PARSE_RATE_MAX = 10;
+const parseRateBuckets = new Map<string, number[]>();
+function consumeParseQuota(adminId: string): { ok: boolean; retryInSec: number } {
+  const now = Date.now();
+  const hits = (parseRateBuckets.get(adminId) ?? []).filter(
+    (t) => now - t < PARSE_RATE_WINDOW_MS,
+  );
+  if (hits.length >= PARSE_RATE_MAX) {
+    const oldest = Math.min(...hits);
+    return { ok: false, retryInSec: Math.ceil((PARSE_RATE_WINDOW_MS - (now - oldest)) / 1000) };
+  }
+  hits.push(now);
+  parseRateBuckets.set(adminId, hits);
+  return { ok: true, retryInSec: 0 };
+}
+
 // How long a `parsing` lock is considered "fresh". Past this, treat the
 // module as recoverable so admins can re-trigger after a crash/timeout.
 const PARSE_LOCK_FRESHNESS_MS = 600_000; // 10 minutes
@@ -46,6 +75,16 @@ export async function POST(
 ) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+
+  const rl = consumeParseQuota(authResult.userId);
+  if (!rl.ok) {
+    return NextResponse.json(
+      {
+        error: `Rate limit: max ${PARSE_RATE_MAX} parses/hour per admin. Retry in ${rl.retryInSec}s.`,
+      },
+      { status: 429, headers: { "Retry-After": String(rl.retryInSec) } },
+    );
+  }
 
   const { id } = await params;
   const db = getServiceClient();
@@ -289,10 +328,20 @@ export async function POST(
         "Pending AI answer";
     }
 
-    if (parsingStatus === "Needs Review") needsReviewCount++;
-
     const imagesForQ = imageMap.get(q.original_question_number);
     const officialAns = answerKey?.[q.original_question_number] ?? null;
+
+    // Partial answer key: an answer key was uploaded BUT this specific
+    // question's official answer wasn't captured. The AI solver runs
+    // anyway, but the admin should treat the result as unverified.
+    // Flag for review so it sticks out in the question list.
+    if (answerKey && !officialAns) {
+      parsingStatus = "Needs Review";
+      parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
+        `No official answer in key for Q${q.original_question_number} — AI solver only, please verify`;
+    }
+
+    if (parsingStatus === "Needs Review") needsReviewCount++;
     const { error: insertError } = await db.from("questions").insert({
       module_id: id,
       section: mod.section,

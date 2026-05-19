@@ -85,7 +85,9 @@ async function getAssignedTeachers(classGroupId: string) {
   const db = getServiceClient();
   const { data } = await db
     .from("class_group_teachers")
-    .select(`teacher_id, assigned_at, users!inner(id, email, display_name, can_review_questions)`)
+    // class_group_teachers has two FKs to users (teacher_id +
+    // assigned_by). Disambiguate so PostgREST embeds the right one.
+    .select(`teacher_id, assigned_at, users!teacher_id(id, email, display_name, can_review_questions)`)
     .eq("class_group_id", classGroupId);
   return (data ?? []).map((row) => {
     const u = Array.isArray(row.users) ? row.users[0] : row.users;

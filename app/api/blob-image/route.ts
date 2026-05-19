@@ -23,13 +23,34 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Forbidden host" }, { status: 403 });
   }
 
-  const headers: Record<string, string> = {};
-  const token = process.env.PUBLIC_BLOB_READ_WRITE_TOKEN ?? process.env.BLOB_READ_WRITE_TOKEN;
-  if (token) headers.Authorization = `Bearer ${token}`;
+  // Project has two Vercel Blob stores (general + the older "PUBLIC"
+  // store from when question images had to be public-readable). Each
+  // store has its own read-write token, and a token from store A
+  // returns 403 against store B. We try both tokens in order so the
+  // proxy works for either store without us having to encode which
+  // hostname maps to which token.
+  const tokens = [
+    process.env.BLOB_READ_WRITE_TOKEN,
+    process.env.PUBLIC_BLOB_READ_WRITE_TOKEN,
+  ].filter((t): t is string => Boolean(t));
 
-  const upstream = await fetch(target.toString(), { headers });
-  if (!upstream.ok || !upstream.body) {
-    return NextResponse.json({ error: `Upstream ${upstream.status}` }, { status: upstream.status === 404 ? 404 : 502 });
+  let upstream: Response | null = null;
+  for (const token of tokens.length > 0 ? tokens : [undefined]) {
+    const headers: Record<string, string> = {};
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const r = await fetch(target.toString(), { headers });
+    if (r.ok) {
+      upstream = r;
+      break;
+    }
+    upstream = r;
+    if (r.status !== 401 && r.status !== 403) break;
+  }
+  if (!upstream || !upstream.ok || !upstream.body) {
+    return NextResponse.json(
+      { error: `Upstream ${upstream?.status ?? "no-response"}` },
+      { status: upstream?.status === 404 ? 404 : 502 },
+    );
   }
   return new Response(upstream.body, {
     status: 200,

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Plus, ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getTests() {
   const db = getServiceClient();
@@ -10,7 +11,8 @@ async function getTests() {
     .from("tests")
     .select(`
       id, test_name, status, open_date, due_date, created_at,
-      modules!inner(module_name, section, module_number)
+      is_adaptive,
+      modules!module_id(module_name, section, module_number)
     `)
     .order("created_at", { ascending: false });
 
@@ -95,7 +97,13 @@ export default async function TestsPage() {
               </thead>
               <tbody>
                 {tests.map((test) => {
-                  const mod = test.modules as unknown as { module_name: string; section: string; module_number: number | null };
+                  // Adaptive tests have no `tests.module_id`; the join
+                  // is now LEFT and may return null. Fall back to a
+                  // placeholder for the table column rather than
+                  // dereferencing undefined.
+                  const mod = test.modules as unknown as
+                    | { module_name: string; section: string; module_number: number | null }
+                    | null;
                   return (
                     <tr
                       key={test.id}
@@ -104,13 +112,22 @@ export default async function TestsPage() {
                       <td className="px-5 py-3">
                         <Link href={`/admin/tests/${test.id}`} className="hover:text-warm-coral transition-colors">
                           <div className="font-medium text-charcoal">{test.test_name}</div>
+                          {test.is_adaptive && (
+                            <span className="text-[10px] uppercase tracking-wider text-warm-coral font-semibold">Adaptive</span>
+                          )}
                         </Link>
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
-                        {mod.module_name}
-                        <div className="text-xs text-soft-mute">
-                          {mod.section}{mod.module_number ? ` · M${mod.module_number}` : ""}
-                        </div>
+                        {mod ? (
+                          <>
+                            {mod.module_name}
+                            <div className="text-xs text-soft-mute">
+                              {mod.section}{mod.module_number ? ` · M${mod.module_number}` : ""}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-soft-mute italic text-xs">Adaptive · multi-module</span>
+                        )}
                       </td>
                       <td className="px-5 py-3">
                         <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
@@ -124,7 +141,7 @@ export default async function TestsPage() {
                         {test.submissions.done} / {test.submissions.total}
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
-                        {test.due_date ? new Date(test.due_date).toLocaleDateString() : "—"}
+                        {test.due_date ? formatDate(test.due_date) : "—"}
                       </td>
                       <td className="px-5 py-3">
                         <Link

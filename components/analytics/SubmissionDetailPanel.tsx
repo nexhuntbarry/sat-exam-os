@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronRight, Check, X, Flag, BookOpen } from "lucide-react";
 import MathMarkdown from "@/components/MathMarkdown";
+import HighlightableBlock, { type Annotation } from "@/components/tests/HighlightableBlock";
 
 export interface AnswerDetail {
   questionId: string;
@@ -21,6 +22,8 @@ export interface AnswerDetail {
   difficulty: string | null;
   classReview: boolean;
   privateNote: string;
+  /** Student-applied highlights/notes captured during the take. */
+  studentAnnotations?: Record<string, Annotation[]> | null;
 }
 
 interface SubmissionDetailPanelProps {
@@ -44,6 +47,18 @@ export function SubmissionDetailPanel({
   function toggle(id: string) {
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   }
+
+  // The parent's "Print / Save PDF" button fires this event before
+  // calling window.print() so every collapsed row renders before the
+  // print snapshot. The expanded body is gated by React state (not a
+  // <details> element) so a CSS-only print rule wouldn't expose it.
+  useEffect(() => {
+    function expandAll() {
+      setExpanded(Object.fromEntries(answers.map((a) => [a.questionId, true])));
+    }
+    window.addEventListener("submission-detail-expand-all", expandAll);
+    return () => window.removeEventListener("submission-detail-expand-all", expandAll);
+  }, [answers]);
 
   function fmtTime(s: number | null) {
     if (!s) return "—";
@@ -78,7 +93,7 @@ export function SubmissionDetailPanel({
               {/* Correct/wrong icon */}
               <div className="flex-shrink-0">
                 {a.isCorrect === true ? (
-                  <Check size={16} className="text-warm-amber" />
+                  <Check size={16} className="text-status-success" />
                 ) : a.isCorrect === false ? (
                   <X size={16} className="text-status-error" />
                 ) : (
@@ -86,11 +101,13 @@ export function SubmissionDetailPanel({
                 )}
               </div>
 
-              {/* Question preview */}
+              {/* Question preview — render through MathMarkdown so $...$
+                  expressions display as KaTeX instead of raw "$\frac{1}{7}$"
+                  text. Tailwind's line-clamp-1 keeps it on one line. */}
               <div className="flex-1 min-w-0">
-                <p className="text-mid-gray text-sm truncate">
-                  {a.questionText.slice(0, 70)}{a.questionText.length > 70 ? "…" : ""}
-                </p>
+                <MathMarkdown className="text-mid-gray text-sm line-clamp-1 prose prose-sm max-w-none [&_p]:my-0">
+                  {a.questionText}
+                </MathMarkdown>
                 {a.domain && (
                   <span className="text-soft-mute text-xs">{a.domain}</span>
                 )}
@@ -100,7 +117,7 @@ export function SubmissionDetailPanel({
               <div className="flex-shrink-0 text-sm">
                 <span className={clsx(
                   "px-2 py-0.5 rounded font-mono font-bold",
-                  a.isCorrect ? "bg-warm-amber/15 text-warm-amber" : "bg-status-error/15 text-status-error"
+                  a.isCorrect ? "bg-status-success/15 text-status-success" : "bg-status-error/15 text-status-error"
                 )}>
                   {a.studentAnswer ?? "—"}
                 </span>
@@ -120,10 +137,33 @@ export function SubmissionDetailPanel({
             {/* Expanded */}
             {expanded[a.questionId] && (
               <div className="px-12 pb-5 space-y-4">
-                {/* Full question */}
-                <MathMarkdown className="text-charcoal text-sm leading-relaxed bg-surface rounded-lg p-4 prose prose-sm max-w-none [&_p]:my-2">
-                  {a.questionText}
-                </MathMarkdown>
+                {/* Full question with student's highlights overlaid (read-only) */}
+                <div className="bg-surface rounded-lg p-4">
+                  {(() => {
+                    const stemAnnos = a.studentAnnotations?.["stem"] ?? [];
+                    const hasAnnos = stemAnnos.length > 0;
+                    return (
+                      <>
+                        <HighlightableBlock
+                          anchor="stem"
+                          annotations={stemAnnos}
+                          enabled={false}
+                        >
+                          <MathMarkdown className="text-charcoal text-sm leading-relaxed prose prose-sm max-w-none [&_p]:my-2">
+                            {a.questionText}
+                          </MathMarkdown>
+                        </HighlightableBlock>
+                        {hasAnnos && (
+                          <p className="text-soft-mute text-[11px] mt-2 italic">
+                            Student highlighted {stemAnnos.length}{" "}
+                            {stemAnnos.length === 1 ? "passage" : "passages"}
+                            {stemAnnos.some((x) => x.note) ? " (click yellow to see notes)" : ""}.
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
+                </div>
 
                 {/* Choices */}
                 {a.choices.length > 0 && (
@@ -137,7 +177,7 @@ export function SubmissionDetailPanel({
                           className={clsx(
                             "flex items-start gap-3 px-3 py-2 rounded-lg text-sm",
                             isCorrect
-                              ? "bg-warm-amber/10 border border-warm-amber/20"
+                              ? "bg-status-success/10 border border-status-success/30"
                               : isStudentAnswer
                               ? "bg-status-error/10 border border-status-error/20"
                               : "bg-surface border border-transparent"
@@ -145,20 +185,26 @@ export function SubmissionDetailPanel({
                         >
                           <span className={clsx(
                             "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold",
-                            isCorrect ? "bg-warm-amber text-charcoal" :
+                            isCorrect ? "bg-status-success text-white" :
                             isStudentAnswer ? "bg-status-error text-white" : "bg-light-bg text-mid-gray"
                           )}>
                             {ch.letter}
                           </span>
-                          <MathMarkdown className={clsx(
-                            "prose prose-sm max-w-none [&_p]:my-0",
-                            isCorrect ? "text-warm-amber" :
-                            isStudentAnswer ? "text-status-error" : "text-mid-gray"
-                          )}>
-                            {ch.text}
-                          </MathMarkdown>
+                          <HighlightableBlock
+                            anchor={`choice:${ch.letter}`}
+                            annotations={a.studentAnnotations?.[`choice:${ch.letter}`] ?? []}
+                            enabled={false}
+                          >
+                            <MathMarkdown className={clsx(
+                              "prose prose-sm max-w-none [&_p]:my-0",
+                              isCorrect ? "text-status-success" :
+                              isStudentAnswer ? "text-status-error" : "text-mid-gray"
+                            )}>
+                              {ch.text}
+                            </MathMarkdown>
+                          </HighlightableBlock>
                           {isCorrect && (
-                            <Check size={14} className="text-warm-amber ml-auto flex-shrink-0 mt-0.5" />
+                            <Check size={14} className="text-status-success ml-auto flex-shrink-0 mt-0.5" />
                           )}
                           {isStudentAnswer && !isCorrect && (
                             <X size={14} className="text-status-error ml-auto flex-shrink-0 mt-0.5" />
@@ -175,7 +221,7 @@ export function SubmissionDetailPanel({
                     <div className="bg-surface rounded-lg p-3">
                       <div className="text-soft-mute text-xs mb-1">Your answer</div>
                       {a.studentAnswer && a.studentAnswer.trim() !== "" ? (
-                        <div className={clsx("font-mono font-bold", a.isCorrect ? "text-warm-amber" : "text-status-error")}>
+                        <div className={clsx("font-mono font-bold", a.isCorrect ? "text-status-success" : "text-status-error")}>
                           {a.studentAnswer}
                         </div>
                       ) : (
@@ -184,7 +230,7 @@ export function SubmissionDetailPanel({
                     </div>
                     <div className="bg-surface rounded-lg p-3">
                       <div className="text-soft-mute text-xs mb-1">Correct answer</div>
-                      <div className="text-warm-amber font-mono font-bold">{a.correctAnswer ?? "—"}</div>
+                      <div className="text-status-success font-mono font-bold">{a.correctAnswer ?? "—"}</div>
                     </div>
                   </div>
                 )}

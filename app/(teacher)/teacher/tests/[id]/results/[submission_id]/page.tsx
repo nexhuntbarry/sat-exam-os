@@ -4,10 +4,11 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { Check, X, Save } from "lucide-react";
+import { Check, X, Save, Printer } from "lucide-react";
 import { SubmissionDetailPanel } from "@/components/analytics/SubmissionDetailPanel";
 import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel";
 import { scaleSectionScore } from "@/lib/scoring";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 interface StudentInfo {
   name: string;
@@ -140,15 +141,38 @@ export default function SubmissionDetailPage() {
   const { student, submission, answers } = data;
   const correctCount = answers.filter((a) => a.isCorrect).length;
 
+  function handlePrint() {
+    // The per-question rows in SubmissionDetailPanel are gated by
+    // React state, so a plain DOM mutation can't reveal them. Fire a
+    // custom event the panel listens for, then wait two animation
+    // frames so React commits the state update + the layout reflow
+    // before we hand off to the print pipeline.
+    document.querySelectorAll<HTMLDetailsElement>("details").forEach((d) => {
+      d.open = true;
+    });
+    window.dispatchEvent(new Event("submission-detail-expand-all"));
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => window.print());
+    });
+  }
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6 print:max-w-none">
       {/* Breadcrumb */}
-      <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap">
+      <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap print:hidden">
         <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
         <Link href={`/teacher/tests/${testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
         <span>/</span>
         <span className="text-charcoal">{student.name}</span>
+        <button
+          onClick={handlePrint}
+          className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-coral hover:bg-warm-coral-dark text-white text-xs font-semibold transition-colors"
+          title="Open every answer and trigger the print dialog (Save as PDF works from there)"
+        >
+          <Printer size={13} />
+          Print / Save PDF
+        </button>
       </div>
 
       {/* Student header */}
@@ -229,7 +253,7 @@ export default function SubmissionDetailPage() {
           <div className="text-charcoal font-semibold">{fmtTime(submission.timeSpentSeconds)}</div>
           {submission.submittedAt && (
             <div className="text-soft-mute text-xs mt-1">
-              {new Date(submission.submittedAt).toLocaleString()}
+              {formatDateTime(submission.submittedAt)}
             </div>
           )}
         </div>

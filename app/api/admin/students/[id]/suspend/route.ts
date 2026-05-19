@@ -21,10 +21,14 @@ export async function POST(
 
   const db = getServiceClient();
 
+  // SECURITY: scope to role='student' so an admin (or compromised admin
+  // session) can't suspend a teacher or another admin by passing their
+  // user_id to this student-only endpoint.
   const { error } = await db
     .from("users")
     .update({ account_status: "suspended", updated_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("role", "student");
 
   if (error) {
     console.error("[suspend] Failed to update user:", error);

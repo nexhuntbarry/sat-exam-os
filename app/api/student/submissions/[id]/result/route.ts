@@ -21,7 +21,7 @@ export async function GET(
       percentage, started_at, submitted_at, time_spent_seconds, attempt_number,
       tests!inner(
         test_name, show_answers_after_submission,
-        modules!inner(module_name, section)
+        modules!module_id(module_name, section)
       )
     `)
     .eq("id", id)

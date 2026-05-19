@@ -1,9 +1,12 @@
+import { escapeHtml } from "../escape";
+
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://sat.nexhunt.xyz";
 
 export function approvalEmail(displayName: string): {
   subject: string;
   html: string;
 } {
+  const safeName = escapeHtml(displayName);
   return {
     subject: "Your SAT Exam OS account is approved!",
     html: `<!DOCTYPE html>
@@ -31,7 +34,7 @@ export function approvalEmail(displayName: string): {
                 <span style="font-size:48px;">✅</span>
               </div>
               <h1 style="color:#FFFFFF;font-size:22px;font-weight:700;margin:0 0 16px;text-align:center;">
-                You&rsquo;re approved, ${displayName}!
+                You&rsquo;re approved, ${safeName}!
               </h1>
               <p style="color:#CBD5E1;font-size:15px;line-height:1.7;margin:0 0 24px;text-align:center;">
                 Your SAT Exam OS account has been approved by an administrator.

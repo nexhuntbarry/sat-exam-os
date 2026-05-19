@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getTeacherTests(teacherId: string, isAdmin: boolean) {
   const db = getServiceClient();
@@ -25,7 +26,7 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean) {
     db.from("tests")
       .select(`
         id, test_name, status, due_date, time_limit_minutes,
-        modules!inner(module_name, section, module_number)
+        modules!module_id(module_name, section, module_number)
       `)
       .in("id", testIds)
       .order("due_date", { ascending: true }),
@@ -114,7 +115,9 @@ export default async function TeacherTestsPage() {
               </thead>
               <tbody>
                 {tests.map((test) => {
-                  const mod = test.modules as unknown as { module_name: string; section: string; module_number: number | null };
+                  const mod = test.modules as unknown as
+                    | { module_name: string; section: string; module_number: number | null }
+                    | null;
                   return (
                     <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                       <td className="px-5 py-3">
@@ -123,7 +126,7 @@ export default async function TeacherTestsPage() {
                         </Link>
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
-                        {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}
+                        {mod ? <>{mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</> : "Adaptive"}
                       </td>
                       <td className="px-5 py-3">
                         <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
@@ -136,7 +139,7 @@ export default async function TeacherTestsPage() {
                         {test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}
                       </td>
                       <td className="px-5 py-3 text-soft-mute text-xs">
-                        {test.due_date ? new Date(test.due_date).toLocaleDateString() : "—"}
+                        {test.due_date ? formatDate(test.due_date) : "—"}
                       </td>
                       <td className="px-5 py-3">
                         <Link href={`/teacher/tests/${test.id}`} className="text-xs text-warm-coral hover:underline">

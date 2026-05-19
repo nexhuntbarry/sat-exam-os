@@ -14,30 +14,66 @@ import PageIntro from "@/components/shared/PageIntro";
 async function getCrossTestResults(teacherId: string, role: string) {
   const db = getServiceClient();
 
-  // 1. Find all assignments where this teacher is listed
-  let assignmentsQuery = db
-    .from("test_assignments")
-    .select("test_id, student_ids, class_group_ids, teacher_ids");
+  // 1. Build the visible test set. Admin sees everything. A teacher sees
+  // (a) tests they're directly assigned to AND (b) every test that any
+  // student in their class_groups has a submission for — that's what
+  // "my students' results" actually means once admin creates tests
+  // without putting the teacher on test_assignments.teacher_ids.
+  let visibleTestIds = new Set<string>();
+  // Tracks the student-id allowlist for the non-admin "class group"
+  // path. Submissions in this set show even if their test isn't on the
+  // direct-assignment list. Empty for admin (no filter).
+  const myStudentIds = new Set<string>();
+  // Tests where the teacher is on the test_assignments.teacher_ids
+  // array directly. For those, ANY submission shows (legacy behavior).
+  const directTestIds = new Set<string>();
 
-  if (role !== "admin") {
-    assignmentsQuery = assignmentsQuery.contains(
-      "teacher_ids",
-      JSON.stringify([teacherId])
-    );
+  if (role === "admin") {
+    const { data: all } = await db.from("test_assignments").select("test_id");
+    visibleTestIds = new Set((all ?? []).map((a) => a.test_id as string));
+  } else {
+    const { data: directly } = await db
+      .from("test_assignments")
+      .select("test_id")
+      .contains("teacher_ids", JSON.stringify([teacherId]));
+    for (const a of directly ?? []) {
+      visibleTestIds.add(a.test_id as string);
+      directTestIds.add(a.test_id as string);
+    }
+
+    // Class-group derived: every test any of my students has a
+    // submission for.
+    const { data: myGroups } = await db
+      .from("class_group_teachers")
+      .select("class_group_id")
+      .eq("teacher_id", teacherId);
+    const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
+    if (groupIds.length > 0) {
+      const { data: members } = await db
+        .from("class_group_members")
+        .select("student_id")
+        .in("class_group_id", groupIds);
+      for (const m of members ?? []) myStudentIds.add(m.student_id as string);
+      if (myStudentIds.size > 0) {
+        const { data: studentSubs } = await db
+          .from("submissions")
+          .select("test_id")
+          .in("student_id", Array.from(myStudentIds));
+        for (const s of studentSubs ?? []) visibleTestIds.add(s.test_id as string);
+      }
+    }
   }
 
-  const { data: assignments } = await assignmentsQuery;
-
-  if (!assignments || assignments.length === 0) {
+  if (visibleTestIds.size === 0) {
     return { rows: [], testOptions: [], classOptions: [], totals: { tests: 0, submissions: 0, students: 0 } };
   }
 
-  const testIds = assignments.map((a) => a.test_id);
+  const testIds = Array.from(visibleTestIds);
 
   // 2. Get test metadata
   const { data: tests } = await db
     .from("tests")
-    .select(`id, test_name, modules!inner(section, module_name)`)
+    .select(`id, test_name, modules!module_id(section, module_name)`)
     .in("id", testIds);
 
   const testMap = new Map<string, { name: string; section: string | null }>();
@@ -59,7 +95,17 @@ async function getCrossTestResults(teacherId: string, role: string) {
     .in("test_id", testIds)
     .order("submitted_at", { ascending: false });
 
-  const subs = submissions ?? [];
+  // Non-admin filter: keep a submission only if EITHER the test was
+  // directly assigned to the teacher (then any student is fair game,
+  // legacy semantics) OR the submitting student is in one of the
+  // teacher's class_groups. Without this, the class-group-derived test
+  // set would leak co-students from other classes who happened to
+  // take the same test.
+  const subs = (submissions ?? []).filter((s) => {
+    if (role === "admin") return true;
+    if (directTestIds.has(s.test_id as string)) return true;
+    return myStudentIds.has(s.student_id as string);
+  });
 
   // 3b. Class groups via student_profiles (separate query — no FK to submissions)
   const studentIds = Array.from(new Set(subs.map((s) => s.student_id)));

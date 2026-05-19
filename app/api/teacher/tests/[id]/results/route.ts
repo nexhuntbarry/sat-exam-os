@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // GET /api/teacher/tests/[id]/results
 export async function GET(
@@ -14,38 +15,44 @@ export async function GET(
   const { id: testId } = await params;
   const db = getServiceClient();
 
-  // Verify teacher access
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === null) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   const { data: assignment } = await db
     .from("test_assignments")
-    .select("teacher_ids, student_ids, class_group_ids")
+    .select("student_ids, class_group_ids")
     .eq("test_id", testId)
-    .single();
-
+    .maybeSingle();
   if (!assignment) {
     return NextResponse.json({ error: "Test not found" }, { status: 404 });
   }
-
-  if (
-    user.role !== "admin" &&
-    !(assignment.teacher_ids as string[]).includes(user.userId)
-  ) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+  const studentAllowlist =
+    access.mode === "class" ? access.studentAllowlist : null;
 
   // Fetch test
   const { data: test } = await db
     .from("tests")
     .select(`id, test_name, time_limit_minutes, due_date, open_date, status,
-      modules!inner(module_name, section, module_number)`)
+      modules!module_id(module_name, section, module_number)`)
     .eq("id", testId)
     .single();
 
   if (!test) return NextResponse.json({ error: "Test not found" }, { status: 404 });
 
-  const studentIds: string[] = assignment.student_ids ?? [];
+  // Roster size for "not started" calculation. For a class-scoped
+  // teacher, "assigned" means the intersection of their class roster
+  // with the test's student_ids — that's the count they actually
+  // teach for this test.
+  const assignmentStudentIds: string[] = (assignment.student_ids as string[] | null) ?? [];
+  const studentIds = studentAllowlist
+    ? assignmentStudentIds.filter((sid) => studentAllowlist!.has(sid))
+    : assignmentStudentIds;
 
-  // Fetch submissions with student profiles
-  const { data: submissions } = await db
+  // Fetch submissions with student profiles. Filter to the allowlist
+  // when present so the class teacher only sees their own students'
+  // rows + averages.
+  let submissionsQuery = db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
@@ -54,6 +61,13 @@ export async function GET(
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: false });
+  if (studentAllowlist) {
+    submissionsQuery = submissionsQuery.in(
+      "student_id",
+      Array.from(studentAllowlist),
+    );
+  }
+  const { data: submissions } = await submissionsQuery;
 
   const subs = submissions ?? [];
 
@@ -84,7 +98,13 @@ export async function GET(
 
   // Summary stats
   const submitted = subs.filter((s) => s.status === "Submitted" || s.status === "Late");
-  const notStarted = studentIds.length - subs.length;
+  // Clamp at 0 — for class-scoped teachers, `studentIds` is the
+  // intersection of assignment.student_ids and the class roster, while
+  // `subs` already filters to that roster. Students who submitted but
+  // weren't explicitly on assignment.student_ids (e.g. test was assigned
+  // by class_group, not by individual) would otherwise produce a
+  // negative "not started" count.
+  const notStarted = Math.max(0, studentIds.length - subs.length);
   const inProgress = subs.filter((s) => s.status === "In Progress").length;
   const late = subs.filter((s) => s.status === "Late").length;
 

@@ -6,7 +6,9 @@ import { clsx } from "clsx";
 import { getTranslations } from "next-intl/server";
 import ModuleParseButton from "./ModuleParseButton";
 import DeleteModuleButton from "../DeleteModuleButton";
+import EditModuleButton from "./EditModuleButton";
 import { friendlyParseError } from "@/lib/friendly-parse-error";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getModule(id: string) {
   const db = getServiceClient();
@@ -109,6 +111,17 @@ export default async function ModuleDetailPage({
         >
           {statusLabels[mod.parsing_status] ?? mod.parsing_status}
         </span>
+        <EditModuleButton
+          mod={{
+            id: mod.id,
+            module_name: mod.module_name,
+            section: mod.section,
+            module_number: mod.module_number,
+            difficulty: mod.difficulty,
+            source_name: mod.source_name,
+            version: mod.version,
+          }}
+        />
         <DeleteModuleButton moduleId={id} moduleName={mod.module_name} />
       </div>
 
@@ -118,10 +131,10 @@ export default async function ModuleDetailPage({
           ["Source", mod.source_name ?? "—"],
           ["Version", mod.version ?? "—"],
           ["Questions", String(mod.total_questions)],
-          ["Uploaded", new Date(mod.created_at).toLocaleDateString()],
+          ["Uploaded", formatDate(mod.created_at)],
           ...(mod.parsing_model ? [["AI Model", mod.parsing_model as string]] : []),
           ...(mod.parsing_completed_at
-            ? [["Parsed at", new Date(mod.parsing_completed_at as string).toLocaleString()]]
+            ? [["Parsed at", formatDateTime(mod.parsing_completed_at as string)]]
             : []),
         ].map(([label, value]) => (
           <div key={label}>

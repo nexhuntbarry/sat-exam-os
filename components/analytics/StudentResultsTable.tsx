@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import Link from "next/link";
 import { ArrowUpDown, ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
 import { scaleSectionScore } from "@/lib/scoring";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export interface StudentResultRow {
   submissionId: string;
@@ -228,7 +229,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                     </td>
                     <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{fmtTime(row.timeSpentSeconds)}</td>
                     <td className="px-5 py-3 text-soft-mute text-xs hidden lg:table-cell">
-                      {row.submittedAt ? new Date(row.submittedAt).toLocaleString() : "—"}
+                      {row.submittedAt ? formatDateTime(row.submittedAt) : "—"}
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2">

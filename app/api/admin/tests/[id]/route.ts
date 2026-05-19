@@ -19,7 +19,9 @@ export async function GET(
       id, test_name, module_id, time_limit_minutes, open_date, due_date,
       show_answers_after_submission, allow_retake, status, question_ids,
       created_by, created_at, updated_at,
-      modules!inner(module_name, section, module_number, source_name)
+      is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, adaptive_threshold,
+      desmos_enabled, formula_sheet_url,
+      modules!module_id(module_name, section, module_number, source_name)
     `)
     .eq("id", id)
     .single();
@@ -71,12 +73,28 @@ export async function PATCH(
 
   if (body.testName !== undefined) updates.test_name = String(body.testName).trim();
   if (body.timeLimitMinutes !== undefined) updates.time_limit_minutes = body.timeLimitMinutes;
+  if (body.timeLimitMinutesModule2 !== undefined)
+    updates.time_limit_minutes_module_2 = body.timeLimitMinutesModule2;
   if (body.openDate !== undefined) updates.open_date = body.openDate;
   if (body.dueDate !== undefined) updates.due_date = body.dueDate;
   if (body.showAnswersAfterSubmission !== undefined) updates.show_answers_after_submission = body.showAnswersAfterSubmission;
   if (body.allowRetake !== undefined) updates.allow_retake = body.allowRetake;
   if (body.status !== undefined) updates.status = body.status;
   if (body.questionIds !== undefined) updates.question_ids = body.questionIds;
+  if (body.desmosEnabled !== undefined) updates.desmos_enabled = Boolean(body.desmosEnabled);
+  if (body.formulaSheetUrl !== undefined) updates.formula_sheet_url = body.formulaSheetUrl;
+  // Module swaps. is_adaptive is intentionally NOT mutable here — once
+  // a test is created adaptive vs non-adaptive, switching mid-stream
+  // would orphan existing submissions whose adaptive_track/session_id
+  // were keyed on the original mode. Admins who need a different mode
+  // create a new test.
+  if (body.moduleId !== undefined) updates.module_id = body.moduleId;
+  if (body.module2Id !== undefined) updates.module_2_id = body.module2Id;
+  if (body.module1Id !== undefined) updates.module_1_id = body.module1Id;
+  if (body.module2EasyId !== undefined) updates.module_2_easy_id = body.module2EasyId;
+  if (body.module2HardId !== undefined) updates.module_2_hard_id = body.module2HardId;
+  if (body.adaptiveThreshold !== undefined)
+    updates.adaptive_threshold = body.adaptiveThreshold;
 
   const { error } = await db.from("tests").update(updates).eq("id", id);
   if (error) {
@@ -95,4 +113,49 @@ export async function PATCH(
   }
 
   return NextResponse.json({ success: true });
+}
+
+// DELETE /api/admin/tests/[id]
+//
+// Permanently removes a test plus everything that hangs off it
+// (assignments, submissions, answer_records, retake grants). All those
+// child tables already declare ON DELETE CASCADE on their test_id FK, so
+// the row delete is enough.
+//
+// We intentionally allow deletion of Published tests too — the admin UI
+// double-confirms, and there are legitimate "I created this in error,
+// scrap it" cases. If we wanted a softer guarantee later, swap to a
+// soft-delete flag on tests.
+export async function DELETE(
+  _req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const authResult = await requireRole("admin");
+  if (authResult instanceof NextResponse) return authResult;
+
+  const { id } = await params;
+  const db = getServiceClient();
+
+  const { data: target } = await db
+    .from("tests")
+    .select("id, test_name")
+    .eq("id", id)
+    .maybeSingle();
+  if (!target) {
+    return NextResponse.json({ error: "Test not found" }, { status: 404 });
+  }
+
+  const { error } = await db.from("tests").delete().eq("id", id);
+  if (error) {
+    console.error("[admin/tests/DELETE]", error);
+    return NextResponse.json(
+      { error: `Failed to delete test: ${error.message}` },
+      { status: 500 },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    deleted: { id, test_name: target.test_name },
+  });
 }

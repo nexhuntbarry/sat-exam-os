@@ -11,12 +11,14 @@ import {
   Presentation,
   HelpCircle,
   ShieldCheck,
+  Users,
 } from "lucide-react";
 import { clsx } from "clsx";
 
 const baseNavItems = [
   { href: "/teacher", icon: LayoutDashboard, label: "Dashboard", exact: true },
   { href: "/teacher/teaching-mode", icon: Presentation, label: "Teaching Mode" },
+  { href: "/teacher/classes", icon: Users, label: "My Classes" },
   { href: "/teacher/tests", icon: ClipboardList, label: "My Tests" },
   { href: "/teacher/results", icon: BarChart2, label: "Student Results" },
   { href: "/teacher/analysis", icon: BookOpen, label: "Question Analysis" },
@@ -38,7 +40,7 @@ interface Props {
 export default function TeacherSidebar({ canReview = false }: Props) {
   const pathname = usePathname();
   const navItems = canReview
-    ? [...baseNavItems.slice(0, 5), reviewerItem, ...baseNavItems.slice(5)]
+    ? [...baseNavItems.slice(0, 6), reviewerItem, ...baseNavItems.slice(6)]
     : baseNavItems;
 
   return (

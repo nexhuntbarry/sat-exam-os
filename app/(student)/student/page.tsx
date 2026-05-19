@@ -5,6 +5,7 @@ import { Clock, ClipboardList, User } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getStudentProfile(userId: string) {
   const db = getServiceClient();
@@ -43,7 +44,7 @@ async function getUpcomingTests(userId: string) {
   const testIds = Array.from(matchedTestIds);
   const { data: tests } = await db
     .from("tests")
-    .select("id, test_name, due_date, status, modules!inner(section)")
+    .select("id, test_name, due_date, status, modules!module_id(section)")
     .in("id", testIds)
     .eq("status", "Published")
     .order("due_date", { ascending: true })
@@ -180,7 +181,7 @@ export default async function StudentDashboardPage() {
         ) : (
           <div className="divide-y divide-white/5">
             {upcomingTests.map((t) => {
-              const mod = t.modules as unknown as { section: string };
+              const mod = t.modules as unknown as { section: string } | null;
               const isInProgress = t.testStatus === "In Progress";
               const isSubmitted = t.testStatus === "Submitted" || t.testStatus === "Late";
               return (
@@ -188,8 +189,8 @@ export default async function StudentDashboardPage() {
                   <div className="flex-1 min-w-0">
                     <p className="text-charcoal text-sm font-medium truncate">{t.test_name}</p>
                     <p className="text-soft-mute text-xs">
-                      {mod.section}
-                      {t.due_date ? ` · Due ${new Date(t.due_date).toLocaleDateString()}` : ""}
+                      {mod?.section ?? "Adaptive"}
+                      {t.due_date ? ` · Due ${formatDate(t.due_date)}` : ""}
                     </p>
                   </div>
                   {isSubmitted ? (

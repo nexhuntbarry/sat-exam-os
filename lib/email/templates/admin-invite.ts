@@ -1,8 +1,11 @@
+import { escapeHtml, safeUrl } from "../escape";
+
 export function adminInviteEmail(
   inviteUrl: string,
   inviterName?: string,
 ): { subject: string; html: string } {
-  const fromText = inviterName ? ` from ${inviterName}` : "";
+  const safeInviteUrl = safeUrl(inviteUrl);
+  const fromText = inviterName ? ` from ${escapeHtml(inviterName)}` : "";
   return {
     subject: "You're invited as an admin on SAT Exam OS",
     html: `<!DOCTYPE html>
@@ -40,7 +43,7 @@ export function adminInviteEmail(
               <table width="100%">
                 <tr>
                   <td align="center">
-                    <a href="${inviteUrl}"
+                    <a href="${safeInviteUrl}"
                        style="display:inline-block;padding:14px 32px;background-color:#84CC16;color:#0A1330;font-weight:700;font-size:15px;text-decoration:none;border-radius:10px;">
                       Accept Invitation
                     </a>
@@ -48,7 +51,7 @@ export function adminInviteEmail(
                 </tr>
               </table>
               <p style="color:#64748B;font-size:13px;margin:24px 0 0;text-align:center;">
-                Or copy this link: <a href="${inviteUrl}" style="color:#84CC16;">${inviteUrl}</a>
+                Or copy this link: <a href="${safeInviteUrl}" style="color:#84CC16;">${safeInviteUrl}</a>
               </p>
             </td>
           </tr>

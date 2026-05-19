@@ -28,11 +28,14 @@ export async function POST(
 
   const db = getServiceClient();
 
-  // Fetch user info for email
+  // Fetch user info for email. SECURITY: scope to role='student' so
+  // this student-only endpoint can't be used to approve a teacher or
+  // admin by passing their user_id.
   const { data: userRow, error: userErr } = await db
     .from("users")
     .select("id, email, display_name, account_status")
     .eq("id", id)
+    .eq("role", "student")
     .single();
 
   if (userErr || !userRow) {
@@ -43,7 +46,8 @@ export async function POST(
   const { error: updateErr } = await db
     .from("users")
     .update({ account_status: "approved", updated_at: new Date().toISOString() })
-    .eq("id", id);
+    .eq("id", id)
+    .eq("role", "student");
 
   if (updateErr) {
     console.error("[approve] Failed to update user status:", updateErr);

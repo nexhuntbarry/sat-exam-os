@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // GET /api/teacher/tests/[id]/analytics
 export async function GET(
@@ -14,41 +15,54 @@ export async function GET(
   const { id: testId } = await params;
   const db = getServiceClient();
 
-  // Verify access
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("teacher_ids")
-    .eq("test_id", testId)
-    .single();
-
-  if (!assignment) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  if (
-    user.role !== "admin" &&
-    !(assignment.teacher_ids as string[]).includes(user.userId)
-  ) {
+  // Two-track auth + class-scoped denominator for class teachers.
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   // Fetch test questions (via question_ids or module)
   const { data: test } = await db
     .from("tests")
-    .select("id, test_name, module_id, question_ids")
+    .select(
+      "id, test_name, module_id, module_2_id, question_ids, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id",
+    )
     .eq("id", testId)
     .single();
 
   if (!test) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Get questions for this test
+  // Get questions for this test. Adaptive tests pull from every
+  // module slot since the analytics dashboard surfaces all questions
+  // students might have seen across Module 1 + the chosen Module 2.
   let questionQuery = db
     .from("questions")
     .select("id, original_question_number, question_text, correct_answer, difficulty, domain, skill, explanation, question_type")
     .order("original_question_number", { ascending: true });
 
   const qIds = test.question_ids as string[] | null;
-  if (qIds && qIds.length > 0) {
+  if (!test.is_adaptive && qIds && qIds.length > 0) {
     questionQuery = questionQuery.in("id", qIds);
+  } else if (test.is_adaptive) {
+    const adaptiveModuleIds = [
+      test.module_1_id,
+      test.module_2_easy_id,
+      test.module_2_hard_id,
+    ].filter((x): x is string => Boolean(x));
+    if (adaptiveModuleIds.length === 0) {
+      return NextResponse.json({ questions: [], summary: null });
+    }
+    questionQuery = questionQuery.in("module_id", adaptiveModuleIds);
+  } else if (test.module_2_id) {
+    // Non-adaptive 2-module test → pull questions from both modules.
+    questionQuery = questionQuery.in(
+      "module_id",
+      [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x)),
+    );
   } else {
+    if (!test.module_id) {
+      return NextResponse.json({ questions: [], summary: null });
+    }
     questionQuery = questionQuery.eq("module_id", test.module_id);
   }
 
@@ -61,11 +75,18 @@ export async function GET(
 
   // Aggregate answer records across all submissions for this test
   // One query: get all answer records for these questions in this test's submissions
-  const { data: submissionIds } = await db
+  let submissionIdsQuery = db
     .from("submissions")
     .select("id")
     .eq("test_id", testId)
     .in("status", ["Submitted", "Late"]);
+  if (access.mode === "class" && access.studentAllowlist) {
+    submissionIdsQuery = submissionIdsQuery.in(
+      "student_id",
+      Array.from(access.studentAllowlist),
+    );
+  }
+  const { data: submissionIds } = await submissionIdsQuery;
 
   const subIds = (submissionIds ?? []).map((s) => s.id);
   const totalSubmissions = subIds.length;

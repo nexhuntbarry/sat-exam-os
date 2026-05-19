@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import { ArrowUpDown, ChevronUp, ChevronDown, Search } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { scaleSectionScore } from "@/lib/scoring";
+import { formatDate, formatDateTime } from "@/lib/datetime";
 
 export interface CrossTestResultRow {
   submissionId: string;
@@ -274,7 +275,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                     </td>
                     <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{fmtTime(row.timeSpentSeconds)}</td>
                     <td className="px-5 py-3 text-soft-mute text-xs hidden lg:table-cell">
-                      {row.submittedAt ? new Date(row.submittedAt).toLocaleString() : "—"}
+                      {row.submittedAt ? formatDateTime(row.submittedAt) : "—"}
                     </td>
                     <td className="px-5 py-3">
                       {(row.status === "Submitted" || row.status === "Late") && (

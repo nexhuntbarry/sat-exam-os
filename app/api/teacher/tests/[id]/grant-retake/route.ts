@@ -1,13 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // POST /api/teacher/tests/[id]/grant-retake
 // Body: { studentId: string, notes?: string }
 //
-// Same as the admin variant but gated by teacher_ids includes user
-// (admins bypass) — lets the assigned teacher unlock a retake without
-// admin ping-pong.
+// Either the directly-assigned teacher OR the student's class teacher
+// can grant a retake. Class teacher path additionally requires the
+// target student to be in their class roster — prevents granting
+// retakes to students they don't actually teach.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -20,19 +22,8 @@ export async function POST(
 
   const db = getServiceClient();
 
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("teacher_ids")
-    .eq("test_id", testId)
-    .single();
-
-  if (!assignment) {
-    return NextResponse.json({ error: "Test not found" }, { status: 404 });
-  }
-  if (
-    grantor.role !== "admin" &&
-    !(assignment.teacher_ids as string[]).includes(grantor.userId)
-  ) {
+  const access = await getTeacherTestAccess(db, grantor, testId);
+  if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -44,6 +35,13 @@ export async function POST(
   }
   if (!body.studentId) {
     return NextResponse.json({ error: "studentId is required" }, { status: 400 });
+  }
+  // Class teacher cannot grant retakes to students outside their class.
+  if (access.mode === "class" && !access.studentAllowlist?.has(body.studentId)) {
+    return NextResponse.json(
+      { error: "Forbidden: student is not in your class" },
+      { status: 403 },
+    );
   }
 
   const { data: existing } = await db
