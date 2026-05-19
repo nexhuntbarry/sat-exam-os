@@ -18,12 +18,15 @@ ALTER TABLE submissions
   ADD COLUMN IF NOT EXISTS module_id UUID REFERENCES modules(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS adaptive_track TEXT;
 
+-- The original CHECK in this migration whitelisted only
+-- ('module_1', 'module_2_easy', 'module_2_hard'). Non-adaptive
+-- two-module tests landed afterwards and use 'module_2', so any
+-- environment that started serving the non-adaptive flow before this
+-- migration was run can have rows that the narrow CHECK would reject.
+-- We drop any pre-existing constraint here so it can't trip; the
+-- correct, broader CHECK is installed by migration 0022.
 ALTER TABLE submissions
   DROP CONSTRAINT IF EXISTS submissions_adaptive_track_check;
-
-ALTER TABLE submissions
-  ADD CONSTRAINT submissions_adaptive_track_check
-    CHECK (adaptive_track IS NULL OR adaptive_track IN ('module_1', 'module_2_easy', 'module_2_hard'));
 
 -- Backfill module_id for existing single-module submissions so the
 -- submit/grade path can read it uniformly. Adaptive submissions are
