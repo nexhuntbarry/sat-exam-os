@@ -40,6 +40,10 @@ export async function POST(
   // would otherwise survive into the next attempt.
   await db.from("answer_records").delete().eq("submission_id", id);
 
+  // correct_count / total_questions / score / percentage are NOT NULL
+  // in the schema (defaults are 0), so reset has to write zeros rather
+  // than nulls. scaled_score / scaled_section / submitted_at are
+  // nullable and stay null until the next submit.
   const { error } = await db
     .from("submissions")
     .update({
@@ -47,10 +51,10 @@ export async function POST(
       answers: {},
       metadata: {},
       submitted_at: null,
-      score: null,
-      correct_count: null,
-      total_questions: null,
-      percentage: null,
+      score: 0,
+      correct_count: 0,
+      total_questions: 0,
+      percentage: 0,
       scaled_score: null,
       scaled_section: null,
       time_spent_seconds: 0,

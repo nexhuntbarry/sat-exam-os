@@ -457,17 +457,19 @@ function Toggle({
         {hint && <p className="text-soft-mute text-xs">{hint}</p>}
       </div>
       <button
+        type="button"
         onClick={() => onChange(!on)}
-        className={
-          "relative w-10 h-5 rounded-full transition-colors shrink-0 " +
-          (on ? "bg-warm-coral" : "bg-light-bg border border-divider")
-        }
         aria-pressed={on}
+        className={
+          "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border-0 p-0 transition-colors focus:outline-none focus:ring-2 focus:ring-warm-coral/40 " +
+          (on ? "bg-warm-coral" : "bg-divider")
+        }
       >
         <span
+          aria-hidden
           className={
-            "absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform " +
-            (on ? "translate-x-5" : "translate-x-0.5")
+            "inline-block h-5 w-5 transform rounded-full bg-white shadow ring-1 ring-black/5 transition-transform " +
+            (on ? "translate-x-[22px]" : "translate-x-[2px]")
           }
         />
       </button>

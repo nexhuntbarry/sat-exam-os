@@ -121,8 +121,22 @@ export default async function TestDetailPage({
     total_questions: number | null;
     questions: { parsing_status: string }[] | null;
   };
+  // Whatever modules this test already uses must remain in the dropdown
+  // even if they no longer pass the eligibility filter (e.g. an admin
+  // un-approved a Module that's still wired to a published test). Skip
+  // and the select falls back to "— None —" and looks broken.
+  const currentModuleIds = new Set(
+    [
+      test.module_id,
+      test.module_2_id,
+      test.module_1_id,
+      test.module_2_easy_id,
+      test.module_2_hard_id,
+    ].filter((x): x is string => Boolean(x)),
+  );
   const eligibleModules = ((modulesRaw ?? []) as ModRow[])
     .filter((m) => {
+      if (currentModuleIds.has(m.id)) return true;
       if (m.parsing_status === "approved") return true;
       const approvedCount = (m.questions ?? []).filter(
         (q) => q.parsing_status === "Approved",
