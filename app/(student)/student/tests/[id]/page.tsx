@@ -31,8 +31,9 @@ async function getTestInfo(testId: string, studentId: string) {
   const { data: test } = await db
     .from("tests")
     .select(`
-      id, test_name, status, time_limit_minutes, due_date, open_date,
-      allow_retake, show_answers_after_submission, module_id,
+      id, test_name, status, time_limit_minutes, time_limit_minutes_module_2,
+      due_date, open_date,
+      allow_retake, show_answers_after_submission, module_id, module_2_id,
       is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, review_unlocked,
       modules!module_id(module_name, section, module_number)
     `)
@@ -41,29 +42,109 @@ async function getTestInfo(testId: string, studentId: string) {
 
   if (!test || test.status === "Draft") return null;
 
-  // Approved question count — for adaptive tests we count Module 1
-  // since that's what the student starts with; legacy tests use the
-  // single tests.module_id.
-  const countModuleId = test.is_adaptive ? test.module_1_id : test.module_id;
-  const { count } = countModuleId
-    ? await db
-        .from("questions")
-        .select("id", { count: "exact", head: true })
-        .eq("module_id", countModuleId)
-        .neq("parsing_status", "Rejected")
-    : { count: 0 };
+  // For two-module tests (adaptive or non-adaptive module_2_id) we
+  // also need to pull Module 2's metadata + question count so the
+  // landing card can show the right "Module 1 + Module 2" subtitle and
+  // the combined question count.
+  const isTwoModule = Boolean(test.is_adaptive) || Boolean(test.module_2_id);
+  const m2ModuleIdForMeta = test.is_adaptive
+    ? test.module_2_easy_id ?? test.module_2_hard_id
+    : test.module_2_id;
+  let module2Meta:
+    | { module_name: string; section: string; module_number: number | null }
+    | null = null;
+  if (m2ModuleIdForMeta) {
+    const { data: m2 } = await db
+      .from("modules")
+      .select("module_name, section, module_number")
+      .eq("id", m2ModuleIdForMeta)
+      .maybeSingle();
+    module2Meta = (m2 as { module_name: string; section: string; module_number: number | null } | null) ?? null;
+  }
 
-  // Get submission
-  const { data: submission } = await db
+  // Approved question count — for two-module tests we sum Module 1 +
+  // Module 2 counts so the student sees the full attempt size, not
+  // half of it.
+  const m1ModuleId = test.is_adaptive ? test.module_1_id : test.module_id;
+  const m2ModuleId = test.is_adaptive ? test.module_2_easy_id : test.module_2_id;
+  const [{ count: m1Count }, { count: m2Count }] = await Promise.all([
+    m1ModuleId
+      ? db
+          .from("questions")
+          .select("id", { count: "exact", head: true })
+          .eq("module_id", m1ModuleId)
+          .neq("parsing_status", "Rejected")
+      : Promise.resolve({ count: 0 }),
+    m2ModuleId
+      ? db
+          .from("questions")
+          .select("id", { count: "exact", head: true })
+          .eq("module_id", m2ModuleId)
+          .neq("parsing_status", "Rejected")
+      : Promise.resolve({ count: 0 }),
+  ]);
+  const totalQuestionCount = (m1Count ?? 0) + (m2Count ?? 0);
+
+  // Pull every submission for this student on this test so we can
+  // build a combined headline for two-module attempts. Sorted by
+  // started_at ascending so [0] = Module 1, [1] = Module 2 when both
+  // exist. The legacy single-row path picks the only row out of this.
+  const { data: subs } = await db
     .from("submissions")
-    .select("id, status, score, percentage, submitted_at")
+    .select(
+      "id, status, score, percentage, correct_count, total_questions, submitted_at, attempt_number, session_id, adaptive_track, started_at",
+    )
     .eq("test_id", testId)
     .eq("student_id", studentId)
     .order("attempt_number", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("started_at", { ascending: true });
 
-  return { test, questionCount: count ?? 0, submission };
+  let submission:
+    | {
+        id: string;
+        status: string;
+        percentage: number | null;
+        submitted_at: string | null;
+      }
+    | null = null;
+  let combinedPct: number | null = null;
+  if (subs && subs.length > 0) {
+    const latestAttempt = subs[0].attempt_number;
+    const sessionRows = subs.filter((s) => s.attempt_number === latestAttempt);
+    const allSubmitted = sessionRows.every(
+      (s) => s.status === "Submitted" || s.status === "Late",
+    );
+    if (sessionRows.length > 1 && allSubmitted) {
+      const correct = sessionRows.reduce((a, s) => a + (s.correct_count ?? 0), 0);
+      const total = sessionRows.reduce((a, s) => a + (s.total_questions ?? 0), 0);
+      combinedPct = total > 0 ? Math.round((correct / total) * 1000) / 10 : 0;
+    }
+    // Headline submission row: prefer the most recently submitted
+    // row so the "View Result" link routes the student to a fully
+    // graded submission. In Progress falls back to whichever is open.
+    const sorted = [...sessionRows].sort((a, b) => {
+      if (a.submitted_at && b.submitted_at)
+        return b.submitted_at.localeCompare(a.submitted_at);
+      if (a.submitted_at) return -1;
+      if (b.submitted_at) return 1;
+      return 0;
+    });
+    submission = {
+      id: sorted[0].id,
+      status: sorted[0].status,
+      percentage: sorted[0].percentage != null ? Number(sorted[0].percentage) : null,
+      submitted_at: sorted[0].submitted_at,
+    };
+  }
+
+  return {
+    test,
+    questionCount: totalQuestionCount,
+    submission,
+    module2Meta,
+    isTwoModule,
+    combinedPct,
+  };
 }
 
 export default async function StudentTestLandingPage({
@@ -78,10 +159,17 @@ export default async function StudentTestLandingPage({
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 
-  const { test, questionCount, submission } = data;
+  const { test, questionCount, submission, module2Meta, isTwoModule, combinedPct } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
+  const m1Limit = test.time_limit_minutes;
+  const m2Limit = test.time_limit_minutes_module_2 ?? m1Limit;
+  const timeLimitDisplay = isTwoModule && m1Limit
+    ? `${m1Limit} + ${m2Limit} min`
+    : m1Limit
+    ? `${m1Limit} min`
+    : "—";
 
   const isPastDue = test.due_date && new Date(test.due_date) < new Date();
   const isInProgress = submission?.status === "In Progress";
@@ -100,16 +188,29 @@ export default async function StudentTestLandingPage({
         <div>
           <h1 className="text-2xl font-bold text-charcoal mb-1">{test.test_name}</h1>
           <p className="text-soft-mute">
-            {mod
-              ? <>{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</>
-              : "Adaptive · Module 1 + Module 2 (easy/hard)"}
+            {mod ? (
+              <>
+                {mod.module_name} · {mod.section}
+                {mod.module_number ? ` M${mod.module_number}` : ""}
+                {module2Meta && (
+                  <>
+                    {" "}
+                    <span className="text-charcoal/40">+</span>{" "}
+                    {module2Meta.module_name} · {module2Meta.section}
+                    {module2Meta.module_number ? ` M${module2Meta.module_number}` : ""}
+                  </>
+                )}
+              </>
+            ) : (
+              "Adaptive · Module 1 + Module 2 (easy/hard)"
+            )}
           </p>
         </div>
 
         <div className="grid grid-cols-3 gap-4">
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
             <Clock size={20} className="text-warm-coral mb-2" />
-            <div className="text-charcoal font-semibold">{test.time_limit_minutes ?? "—"} min</div>
+            <div className="text-charcoal font-semibold">{timeLimitDisplay}</div>
             <div className="text-soft-mute text-xs">Time Limit</div>
           </div>
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
@@ -130,9 +231,15 @@ export default async function StudentTestLandingPage({
         {isSubmitted && !canRetake ? (
           <div className="space-y-3">
             <div className="p-4 bg-warm-amber/10 border border-warm-amber/20 rounded-xl text-center">
-              <div className="text-warm-amber font-semibold mb-1">Test Submitted</div>
+              <div className="text-warm-amber font-semibold mb-1">
+                Test Submitted{isTwoModule ? " · combined" : ""}
+              </div>
               <div className="text-charcoal text-2xl font-bold">
-                {submission?.percentage != null ? `${Number(submission.percentage).toFixed(1)}%` : ""}
+                {combinedPct != null
+                  ? `${combinedPct.toFixed(1)}%`
+                  : submission?.percentage != null
+                  ? `${Number(submission.percentage).toFixed(1)}%`
+                  : ""}
               </div>
             </div>
             <Link

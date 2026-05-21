@@ -260,16 +260,21 @@ export default function TestTakingClient({
       });
       if (res.ok) {
         // Adaptive flow: the submit endpoint creates the Module 2 row
-        // and returns its id. Send the student back into /take so the
-        // server picks up the new In-Progress submission and renders
-        // Module 2 questions.
+        // and returns its id. We use a HARD browser navigation
+        // (window.location.assign) instead of router.push because
+        // router.push to the same URL doesn't reliably remount the
+        // take client — Module 1's answer state was leaking into
+        // Module 2 (DB showed Module 2 rows with 44 answers = 22+22).
+        // A real navigation guarantees a fresh React tree, fresh
+        // state, fresh server fetch, and a fresh timer.
         const payload = await res.json().catch(() => null);
         const nextId = payload?.data?.nextSubmissionId as string | undefined;
         if (nextId) {
-          router.push(`/student/tests/${testId}/take`);
-          router.refresh();
+          window.location.assign(`/student/tests/${testId}/take`);
         } else {
-          router.push(`/student/tests/${testId}/result?submission=${submissionId}`);
+          window.location.assign(
+            `/student/tests/${testId}/result?submission=${submissionId}`,
+          );
         }
       } else {
         setIsSubmitting(false);
