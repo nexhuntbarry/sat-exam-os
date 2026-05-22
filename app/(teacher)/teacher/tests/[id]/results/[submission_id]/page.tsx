@@ -259,8 +259,10 @@ export default function SubmissionDetailPage() {
         </div>
       </div>
 
-      {/* Tutor notes — for 1-on-1 follow-up. Not visible to the student. */}
-      <div className="bg-warm-amber/5 border border-warm-amber/20 rounded-2xl p-5">
+      {/* Tutor notes — for 1-on-1 follow-up. Not visible to the
+          student, and hidden in print so the printout stays condensed
+          (teacher just wants questions + correct answers). */}
+      <div className="bg-warm-amber/5 border border-warm-amber/20 rounded-2xl p-5 print:hidden">
         <div className="flex items-center justify-between mb-2">
           <div>
             <h2 className="text-charcoal font-semibold flex items-center gap-2">

@@ -75,10 +75,15 @@ export function SubmissionDetailPanel({
       </div>
       <div>
         {answers.map((a) => (
-          <div key={a.questionId} className="border-b border-divider last:border-0">
-            {/* Row */}
+          <div
+            key={a.questionId}
+            className="border-b border-divider last:border-0 print:break-inside-avoid-page"
+          >
+            {/* Row — collapsed preview. The expanded card below has the
+                full text, so the one-liner preview is redundant in
+                print and we hide it. */}
             <div
-              className="px-5 py-3 flex items-center gap-3 cursor-pointer hover:bg-light-bg/60 transition-colors"
+              className="px-5 py-3 flex items-center gap-3 cursor-pointer hover:bg-light-bg/60 transition-colors print:hidden"
               onClick={() => toggle(a.questionId)}
             >
               <div className="text-soft-mute flex-shrink-0">
@@ -134,9 +139,16 @@ export function SubmissionDetailPanel({
               )}
             </div>
 
-            {/* Expanded */}
+            {/* Expanded — full question + choices. For print, drop the
+                left gutter (px-12) so the page uses full width, and
+                tighten the vertical rhythm. */}
             {expanded[a.questionId] && (
-              <div className="px-12 pb-5 space-y-4">
+              <div className="px-12 pb-5 space-y-4 print:px-2 print:pb-3 print:pt-2 print:space-y-2">
+                <div className="hidden print:block text-soft-mute text-xs font-mono mb-1">
+                  Q{a.questionNumber}
+                  {" "}{a.isCorrect ? "✓" : "✗"}
+                  {" "}— student: {a.studentAnswer ?? "—"}, correct: {a.correctAnswer ?? "—"}
+                </div>
                 {/* Full question with student's highlights overlaid (read-only) */}
                 <div className="bg-surface rounded-lg p-4">
                   {(() => {
@@ -235,9 +247,11 @@ export function SubmissionDetailPanel({
                   </div>
                 )}
 
-                {/* Explanation */}
+                {/* Explanation — hidden in print since teachers asked
+                    for a condensed printout (questions + correct
+                    answers only, no walk-through prose). */}
                 {a.explanation && (
-                  <div className="bg-warm-amber/5 border border-warm-amber/10 rounded-lg p-3 text-sm text-mid-gray">
+                  <div className="bg-warm-amber/5 border border-warm-amber/10 rounded-lg p-3 text-sm text-mid-gray print:hidden">
                     <div className="text-warm-amber font-semibold text-xs mb-1">Explanation</div>
                     <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1">
                       {a.explanation}
@@ -245,8 +259,8 @@ export function SubmissionDetailPanel({
                   </div>
                 )}
 
-                {/* Teacher tools */}
-                <div className="flex flex-col gap-3 pt-2 border-t border-divider">
+                {/* Teacher tools — interactive controls, never print. */}
+                <div className="flex flex-col gap-3 pt-2 border-t border-divider print:hidden">
                   {/* Class review toggle */}
                   <button
                     onClick={() => onToggleClassReview(a.questionId, a.classReview)}
