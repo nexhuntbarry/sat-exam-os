@@ -69,6 +69,7 @@ export async function GET(
       id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, answers,
       tutor_notes, attempt_number, scaled_score, scaled_section, metadata,
+      session_id, adaptive_track,
       users!inner(display_name, email)
     `)
     .eq("id", submissionId)
@@ -80,23 +81,65 @@ export async function GET(
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
 
+  // For two-module / adaptive attempts the answer view should cover
+  // every submission in the session (Module 1 + Module 2) rather than
+  // just the one we landed on. Pull session siblings here; legacy
+  // single-module submissions yield a one-row list.
+  const { data: sessionSiblings } = submission.session_id
+    ? await db
+        .from("submissions")
+        .select(
+          "id, status, percentage, correct_count, total_questions, scaled_score, adaptive_track, time_spent_seconds, started_at, metadata",
+        )
+        .eq("session_id", submission.session_id)
+        .order("started_at", { ascending: true })
+    : { data: null as null };
+  type SibRow = {
+    id: string;
+    status: string;
+    percentage: number | string | null;
+    correct_count: number | null;
+    total_questions: number | null;
+    scaled_score: number | null;
+    adaptive_track: string | null;
+    time_spent_seconds: number | null;
+    started_at: string | null;
+    metadata: Record<string, unknown> | null;
+  };
+  const siblings: SibRow[] = (sessionSiblings as SibRow[] | null) ?? [
+    {
+      id: submission.id,
+      status: submission.status,
+      percentage: submission.percentage,
+      correct_count: submission.correct_count,
+      total_questions: submission.total_questions,
+      scaled_score: submission.scaled_score,
+      adaptive_track: submission.adaptive_track,
+      time_spent_seconds: submission.time_spent_seconds,
+      started_at: submission.started_at,
+      metadata: submission.metadata as Record<string, unknown> | null,
+    },
+  ];
+
   const { data: profile } = await db
     .from("student_profiles")
     .select("grade, class_group")
     .eq("user_id", submission.student_id)
     .maybeSingle();
 
-  // Fetch answer records with question details
+  // Fetch answer records for every submission in this session. Sorted
+  // by question number; we'll partition by submission_id below.
+  const siblingIds = siblings.map((s) => s.id);
   const { data: answerRecords } = await db
     .from("answer_records")
     .select(`
-      id, question_id, student_answer, correct_answer, is_correct, time_spent_seconds,
+      id, submission_id, question_id, student_answer, correct_answer, is_correct, time_spent_seconds,
       questions!inner(
         id, original_question_number, question_text, choices,
         correct_answer, explanation, difficulty, domain, skill, question_type
       )
     `)
-    .eq("submission_id", submissionId)
+    .in("submission_id", siblingIds)
     .order("questions(original_question_number)", { ascending: true });
 
   // Fetch flagged questions from submission answers jsonb
@@ -128,8 +171,15 @@ export async function GET(
   };
   const annotationsByQid = meta.annotations ?? {};
 
-  const answers = (answerRecords ?? []).map((ar) => {
-    const q = ar.questions as unknown as {
+  type RawAnswer = {
+    id: string;
+    submission_id: string;
+    question_id: string;
+    student_answer: string | null;
+    correct_answer: string | null;
+    is_correct: boolean;
+    time_spent_seconds: number | null;
+    questions: {
       id: string;
       original_question_number: number;
       question_text: string;
@@ -141,9 +191,11 @@ export async function GET(
       skill: string | null;
       question_type: string;
     };
+  };
+  const mapAnswer = (ar: RawAnswer) => {
+    const q = ar.questions;
     const noteData = notesMap[q.id] ?? { classReview: false, privateNote: "" };
     const wasFlagged = answersJson[q.id]?.flagged === true;
-
     return {
       questionId: q.id,
       questionNumber: q.original_question_number,
@@ -162,7 +214,54 @@ export async function GET(
       privateNote: noteData.privateNote,
       studentAnnotations: annotationsByQid[q.id] ?? null,
     };
-  });
+  };
+  const recordsByModule = new Map<string, RawAnswer[]>();
+  for (const ar of ((answerRecords ?? []) as unknown) as RawAnswer[]) {
+    const list = recordsByModule.get(ar.submission_id) ?? [];
+    list.push(ar);
+    recordsByModule.set(ar.submission_id, list);
+  }
+
+  const TRACK_LABEL: Record<string, string> = {
+    module_1: "Module 1",
+    module_2: "Module 2",
+    module_2_easy: "Module 2 · Easy",
+    module_2_hard: "Module 2 · Hard",
+  };
+
+  const modules = siblings.map((sib) => ({
+    submissionId: sib.id,
+    label: TRACK_LABEL[sib.adaptive_track ?? ""] ?? "Module",
+    isCurrent: sib.id === submission.id,
+    status: sib.status,
+    correctCount: sib.correct_count ?? 0,
+    totalQuestions: sib.total_questions ?? 0,
+    percentage: sib.percentage != null ? Number(sib.percentage) : null,
+    scaledScore: sib.scaled_score ?? null,
+    timeSpentSeconds: sib.time_spent_seconds ?? 0,
+    answers: (recordsByModule.get(sib.id) ?? []).map(mapAnswer),
+  }));
+
+  // Combined headline numbers — when this is a multi-module session
+  // the UI should show one Math/R&W score on top, not just the row we
+  // navigated to. scaleSectionScore lives in lib/scoring; do it here
+  // so the client doesn't have to reach for it again.
+  const isMultiModule = modules.length > 1;
+  const correctSum = modules.reduce((s, m) => s + m.correctCount, 0);
+  const totalSum = modules.reduce((s, m) => s + m.totalQuestions, 0);
+  const timeSum = modules.reduce((s, m) => s + m.timeSpentSeconds, 0);
+  const combinedPct =
+    totalSum > 0 ? Math.round((correctSum / totalSum) * 1000) / 10 : null;
+  // Per-section scaling kept inline to avoid a new import — same table
+  // as lib/scoring. For non-multi-module rows the original submission
+  // numbers stay in the payload.
+  const { scaleSectionScore } = await import("@/lib/scoring");
+  const combinedScaled = combinedPct != null ? scaleSectionScore(combinedPct) : null;
+
+  // Flat answers stay in the response for backwards-compatible
+  // single-module rendering; the new `modules` field is the source of
+  // truth for the two-module breakdown.
+  const flatAnswers = modules.flatMap((m) => m.answers);
 
   return NextResponse.json({
     student: {
@@ -175,18 +274,20 @@ export async function GET(
       id: submission.id,
       status: submission.status,
       score: submission.score,
-      percentage: submission.percentage,
-      correctCount: submission.correct_count,
-      totalQuestions: submission.total_questions,
-      timeSpentSeconds: submission.time_spent_seconds,
+      percentage: isMultiModule ? combinedPct : submission.percentage,
+      correctCount: isMultiModule ? correctSum : submission.correct_count,
+      totalQuestions: isMultiModule ? totalSum : submission.total_questions,
+      timeSpentSeconds: isMultiModule ? timeSum : submission.time_spent_seconds,
       startedAt: submission.started_at,
       submittedAt: submission.submitted_at,
       tutorNotes: submission.tutor_notes ?? "",
       attemptNumber: submission.attempt_number ?? 1,
-      scaledScore: submission.scaled_score ?? null,
+      scaledScore: isMultiModule ? combinedScaled : submission.scaled_score ?? null,
       scaledSection: submission.scaled_section ?? null,
+      isMultiModule,
     },
-    answers,
+    answers: flatAnswers,
+    modules,
   });
 }
 

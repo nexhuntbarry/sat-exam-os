@@ -31,12 +31,27 @@ interface SubmissionInfo {
   attemptNumber: number;
   scaledScore: number | null;
   scaledSection: string | null;
+  isMultiModule: boolean;
+}
+
+interface ModuleBreakdown {
+  submissionId: string;
+  label: string;
+  isCurrent: boolean;
+  status: string;
+  correctCount: number;
+  totalQuestions: number;
+  percentage: number | null;
+  scaledScore: number | null;
+  timeSpentSeconds: number;
+  answers: AnswerDetail[];
 }
 
 interface DetailData {
   student: StudentInfo;
   submission: SubmissionInfo;
   answers: AnswerDetail[];
+  modules?: ModuleBreakdown[];
 }
 
 function fmtTime(s: number | null) {
@@ -296,13 +311,52 @@ export default function SubmissionDetailPage() {
         />
       </div>
 
-      {/* Per-question review */}
-      <SubmissionDetailPanel
-        answers={answers}
-        testId={testId}
-        onToggleClassReview={handleToggleClassReview}
-        onSaveNote={handleSaveNote}
-      />
+      {/* Per-module breakdown — one card per module with its own
+          score pills, then its own per-question review panel below.
+          Two-module sessions render Module 1 + Module 2 stacked;
+          single-module submissions fall back to a single panel. */}
+      {data.modules && data.modules.length > 1 ? (
+        <div className="space-y-6">
+          {data.modules.map((m) => {
+            const effScaled =
+              m.scaledScore ??
+              (m.percentage != null ? scaleSectionScore(m.percentage) : null);
+            return (
+              <div key={m.submissionId} className="space-y-3">
+                <div className="flex items-center justify-between gap-3 bg-surface border border-divider rounded-2xl px-5 py-3">
+                  <div>
+                    <h2 className="text-charcoal font-semibold text-base">{m.label}</h2>
+                    <p className="text-soft-mute text-xs mt-0.5">
+                      {m.correctCount}/{m.totalQuestions} correct
+                      {m.percentage != null && ` · ${m.percentage.toFixed(1)}%`}
+                      {effScaled != null && ` · ${effScaled}/800`}
+                      {" · "}{fmtTime(m.timeSpentSeconds)}
+                    </p>
+                  </div>
+                  {m.isCurrent && (
+                    <span className="text-warm-coral text-[11px] font-semibold uppercase tracking-wider">
+                      Current
+                    </span>
+                  )}
+                </div>
+                <SubmissionDetailPanel
+                  answers={m.answers}
+                  testId={testId}
+                  onToggleClassReview={handleToggleClassReview}
+                  onSaveNote={handleSaveNote}
+                />
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <SubmissionDetailPanel
+          answers={answers}
+          testId={testId}
+          onToggleClassReview={handleToggleClassReview}
+          onSaveNote={handleSaveNote}
+        />
+      )}
     </div>
   );
 }

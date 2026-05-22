@@ -71,6 +71,15 @@ type SubmissionRow = {
   modules: { module_name: string; section: string; module_number: number | null } | null;
 };
 
+type SessionGroupModule = {
+  label: string;
+  submissionId: string;
+  correct: number;
+  total: number;
+  percentage: number | null;
+  scaledScore: number | null;
+};
+
 type SessionGroup = {
   key: string;
   testId: string;
@@ -86,6 +95,14 @@ type SessionGroup = {
   attemptNumber: number | null;
   detailSubmissionId: string;
   isMultiModule: boolean;
+  modules: SessionGroupModule[];
+};
+
+const MODULE_LABEL: Record<string, string> = {
+  module_1: "Module 1",
+  module_2: "Module 2",
+  module_2_easy: "Module 2 · Easy",
+  module_2_hard: "Module 2 · Hard",
 };
 
 function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
@@ -105,6 +122,17 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
     }
   }
 
+  const toModuleView = (r: SubmissionRow): SessionGroupModule => ({
+    label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
+    submissionId: r.id,
+    correct: r.correct_count ?? 0,
+    total: r.total_questions ?? 0,
+    percentage: r.percentage != null ? Number(r.percentage) : null,
+    scaledScore:
+      r.scaled_score ??
+      (r.percentage != null ? scaleSectionScore(Number(r.percentage)) : null),
+  });
+
   const toGroup = (r: SubmissionRow): SessionGroup => ({
     key: r.id,
     testId: r.test_id,
@@ -122,6 +150,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
     attemptNumber: r.attempt_number,
     detailSubmissionId: r.id,
     isMultiModule: false,
+    modules: [],
   });
 
   const groups: SessionGroup[] = singletons.map(toGroup);
@@ -179,6 +208,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
       // the result view can stitch both modules via session_id.
       detailSubmissionId: sorted[sorted.length - 1].id,
       isMultiModule: true,
+      modules: sorted.map(toModuleView),
     });
   }
 
@@ -380,13 +410,40 @@ export default async function AdminStudentDetailPage({
                       </span>
                     </td>
                     <td className="px-5 py-3 text-mid-gray">
-                      {g.total > 0 ? `${g.correct}/${g.total}` : "—"}
+                      <div>{g.total > 0 ? `${g.correct}/${g.total}` : "—"}</div>
+                      {g.isMultiModule && g.modules.length > 0 && (
+                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
+                          {g.modules.map((m) => (
+                            <div key={m.submissionId}>
+                              {m.label}: {m.correct}/{m.total}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-mid-gray">
-                      {g.percentage != null ? `${g.percentage.toFixed(1)}%` : "—"}
+                      <div>{g.percentage != null ? `${g.percentage.toFixed(1)}%` : "—"}</div>
+                      {g.isMultiModule && g.modules.length > 0 && (
+                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
+                          {g.modules.map((m) => (
+                            <div key={m.submissionId}>
+                              {m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-warm-coral text-sm font-medium">
-                      {g.scaledScore != null ? `${g.scaledScore}/800` : "—"}
+                      <div>{g.scaledScore != null ? `${g.scaledScore}/800` : "—"}</div>
+                      {g.isMultiModule && g.modules.length > 0 && (
+                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
+                          {g.modules.map((m) => (
+                            <div key={m.submissionId}>
+                              {m.scaledScore != null ? `${m.scaledScore}/800` : "—"}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-soft-mute text-xs">
                       {formatDuration(g.timeSeconds)}
