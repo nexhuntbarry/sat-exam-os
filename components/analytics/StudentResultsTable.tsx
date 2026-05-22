@@ -25,6 +25,16 @@ export interface StudentResultRow {
   timeSpentSeconds: number | null;
   submittedAt: string | null;
   retakePending: boolean;
+  // Present only for two-module attempts; renders a per-module split
+  // under the combined Score / Correct cells.
+  modules?: {
+    submissionId: string;
+    label: string;
+    correctCount: number;
+    totalQuestions: number;
+    percentage: number | null;
+    scaledScore: number | null;
+  }[];
 }
 
 interface StudentResultsTableProps {
@@ -223,9 +233,37 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                           </span>
                         ) : null;
                       })()}
+                      {/* Two-module attempts show the per-module split
+                          under the combined headline so teachers can
+                          see Module 1 / Module 2 raw counts at a
+                          glance without opening the detail page. */}
+                      {row.modules && row.modules.length > 1 && (
+                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
+                          {row.modules.map((m) => (
+                            <div key={m.submissionId}>
+                              {m.label}:{" "}
+                              {m.percentage != null
+                                ? `${m.percentage.toFixed(1)}%`
+                                : "—"}
+                              {m.scaledScore != null && ` · ${m.scaledScore}/800`}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">
-                      {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
+                      <div>
+                        {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
+                      </div>
+                      {row.modules && row.modules.length > 1 && (
+                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
+                          {row.modules.map((m) => (
+                            <div key={m.submissionId}>
+                              {m.label}: {m.correctCount}/{m.totalQuestions}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{fmtTime(row.timeSpentSeconds)}</td>
                     <td className="px-5 py-3 text-soft-mute text-xs hidden lg:table-cell">

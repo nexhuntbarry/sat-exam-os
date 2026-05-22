@@ -31,7 +31,9 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean) {
       .in("id", testIds)
       .order("due_date", { ascending: true }),
     db.from("submissions")
-      .select("test_id, status, score")
+      .select(
+        "test_id, student_id, status, correct_count, total_questions, percentage, session_id",
+      )
       .in("test_id", testIds),
   ]);
 
@@ -40,25 +42,63 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean) {
     assignMap[a.test_id] = { student_ids: a.student_ids ?? [] };
   }
 
-  const subMap: Record<string, { done: number; scores: number[] }> = {};
-  for (const s of subData ?? []) {
-    if (!subMap[s.test_id]) subMap[s.test_id] = { done: 0, scores: [] };
-    if (s.status === "Submitted" || s.status === "Late") {
-      subMap[s.test_id].done++;
-      if (s.score != null) subMap[s.test_id].scores.push(Number(s.score));
+  type SubRow = {
+    test_id: string;
+    student_id: string;
+    status: string;
+    correct_count: number | null;
+    total_questions: number | null;
+    percentage: number | string | null;
+    session_id: string | null;
+  };
+  // Two-module attempts produce two submission rows sharing one
+  // session_id; avg over raw submission rows would double-count each
+  // attempt. Group session siblings, compute combined % per attempt,
+  // then average those.
+  const subsByTest = new Map<string, SubRow[]>();
+  for (const s of (subData ?? []) as SubRow[]) {
+    const list = subsByTest.get(s.test_id) ?? [];
+    list.push(s);
+    subsByTest.set(s.test_id, list);
+  }
+
+  const aggregates: Record<string, { done: number; pcts: number[] }> = {};
+  for (const [testId, rows] of subsByTest) {
+    const completed = rows.filter(
+      (r) => r.status === "Submitted" || r.status === "Late",
+    );
+    // Group by session_id (multi-module) + per-student fallback for
+    // legacy single-module rows (session_id NULL).
+    const sessions = new Map<string, SubRow[]>();
+    for (const r of completed) {
+      const key = r.session_id ?? `solo:${r.student_id}:${r.test_id}`;
+      const list = sessions.get(key) ?? [];
+      list.push(r);
+      sessions.set(key, list);
     }
+    const pcts: number[] = [];
+    for (const group of sessions.values()) {
+      const correct = group.reduce((s, r) => s + (r.correct_count ?? 0), 0);
+      const total = group.reduce((s, r) => s + (r.total_questions ?? 0), 0);
+      if (total > 0) {
+        pcts.push((correct / total) * 100);
+      } else if (group[0]?.percentage != null) {
+        pcts.push(Number(group[0].percentage));
+      }
+    }
+    aggregates[testId] = { done: sessions.size, pcts };
   }
 
   return (tests ?? []).map((t) => {
     const assign = assignMap[t.id] ?? { student_ids: [] };
-    const subs = subMap[t.id] ?? { done: 0, scores: [] };
-    const avgScore = subs.scores.length > 0
-      ? subs.scores.reduce((a, b) => a + b, 0) / subs.scores.length
+    const agg = aggregates[t.id] ?? { done: 0, pcts: [] };
+    const avgScore = agg.pcts.length > 0
+      ? agg.pcts.reduce((a, b) => a + b, 0) / agg.pcts.length
       : null;
     return {
       ...t,
       totalStudents: assign.student_ids.length,
-      submittedCount: subs.done,
+      submittedCount: agg.done,
       avgScore,
     };
   });

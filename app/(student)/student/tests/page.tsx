@@ -6,6 +6,135 @@ import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { scaleSectionScore } from "@/lib/scoring";
+
+const MODULE_LABEL: Record<string, string> = {
+  module_1: "Module 1",
+  module_2: "Module 2",
+  module_2_easy: "Module 2 · Easy",
+  module_2_hard: "Module 2 · Hard",
+};
+
+type TestSubmissionRow = {
+  id: string;
+  test_id: string;
+  status: string;
+  score: number | null;
+  correct_count: number | null;
+  total_questions: number | null;
+  percentage: number | string | null;
+  submitted_at: string | null;
+  attempt_number: number | null;
+  session_id: string | null;
+  adaptive_track: string | null;
+};
+
+type TestAttemptModule = {
+  label: string;
+  submissionId: string;
+  correctCount: number;
+  totalQuestions: number;
+  percentage: number | null;
+  scaledScore: number | null;
+};
+
+type TestAttempt = {
+  id: string;
+  status: string;
+  percentage: number | null;
+  scaledScore: number | null;
+  correctCount: number;
+  totalQuestions: number;
+  detailSubmissionId: string;
+  isMultiModule: boolean;
+  modules: TestAttemptModule[];
+};
+
+// Two-module attempts span two submissions sharing session_id. Pick the
+// latest attempt (by highest attempt_number) and roll its module siblings
+// up so the row shows one combined headline plus a per-module split.
+// Legacy single-module submissions (session_id NULL) stay as-is.
+function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
+  if (rows.length === 0) return null;
+  // Rows already arrive ordered by attempt_number desc; pick the most
+  // recent attempt number, then collect every row sharing it.
+  const latestAttempt = rows[0].attempt_number ?? 1;
+  const sameAttempt = rows.filter(
+    (r) => (r.attempt_number ?? 1) === latestAttempt,
+  );
+
+  const bySession = new Map<string, TestSubmissionRow[]>();
+  const singletons: TestSubmissionRow[] = [];
+  for (const r of sameAttempt) {
+    if (r.session_id) {
+      const list = bySession.get(r.session_id) ?? [];
+      list.push(r);
+      bySession.set(r.session_id, list);
+    } else {
+      singletons.push(r);
+    }
+  }
+
+  // Prefer the multi-module session group when present; fall back to the
+  // legacy single-row case otherwise.
+  for (const list of bySession.values()) {
+    if (list.length >= 2) {
+      const sorted = [...list].sort((a, b) => {
+        const rank = (t: string | null) => (t === "module_1" ? 0 : 1);
+        return rank(a.adaptive_track) - rank(b.adaptive_track);
+      });
+      const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
+      const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
+      const pct =
+        total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
+      const statuses = sorted.map((r) => r.status);
+      const status = statuses.includes("In Progress")
+        ? "In Progress"
+        : statuses.includes("Late")
+        ? "Late"
+        : statuses[statuses.length - 1] ?? "Submitted";
+      const modules: TestAttemptModule[] = sorted.map((r) => {
+        const p = r.percentage != null ? Number(r.percentage) : null;
+        return {
+          label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
+          submissionId: r.id,
+          correctCount: r.correct_count ?? 0,
+          totalQuestions: r.total_questions ?? 0,
+          percentage: p,
+          scaledScore: p != null ? scaleSectionScore(p) : null,
+        };
+      });
+      return {
+        id: sorted[0].session_id ?? sorted[0].id,
+        status,
+        percentage: pct,
+        scaledScore: pct != null ? scaleSectionScore(pct) : null,
+        correctCount: correct,
+        totalQuestions: total,
+        // Link to the Module 2 (last) submission so the result page can
+        // stitch both modules via session_id.
+        detailSubmissionId: sorted[sorted.length - 1].id,
+        isMultiModule: true,
+        modules,
+      };
+    }
+  }
+
+  const first = singletons[0] ?? sameAttempt[0];
+  if (!first) return null;
+  const p = first.percentage != null ? Number(first.percentage) : null;
+  return {
+    id: first.id,
+    status: first.status,
+    percentage: p,
+    scaledScore: p != null ? scaleSectionScore(p) : null,
+    correctCount: first.correct_count ?? 0,
+    totalQuestions: first.total_questions ?? 0,
+    detailSubmissionId: first.id,
+    isMultiModule: false,
+    modules: [],
+  };
+}
 
 async function getStudentTests(studentId: string) {
   const db = getServiceClient();
@@ -45,32 +174,33 @@ async function getStudentTests(studentId: string) {
       .in("status", ["Published", "Closed"])
       .order("due_date", { ascending: true }),
     db.from("submissions")
-      .select("test_id, id, status, score, percentage, submitted_at, attempt_number")
+      .select(
+        "test_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track",
+      )
       .eq("student_id", studentId)
       .in("test_id", testIds)
       .order("attempt_number", { ascending: false }),
   ]);
 
-  const subMap: Record<string, { id: string; status: string; score: number | null; percentage: number | null }> = {};
-  for (const s of submissions ?? []) {
-    if (!subMap[s.test_id]) {
-      subMap[s.test_id] = {
-        id: s.id,
-        status: s.status,
-        score: s.score,
-        percentage: s.percentage,
-      };
-    }
+  // Group submissions per test, then collapse two-module session
+  // siblings into one attempt with module breakdown.
+  const byTest = new Map<string, TestSubmissionRow[]>();
+  for (const s of (submissions ?? []) as TestSubmissionRow[]) {
+    const list = byTest.get(s.test_id) ?? [];
+    list.push(s);
+    byTest.set(s.test_id, list);
   }
 
   return (tests ?? []).map((t) => {
-    const sub = subMap[t.id];
+    const rows = byTest.get(t.id) ?? [];
+    const attempt = buildLatestAttempt(rows);
     let testStatus = "Not Started";
-    if (sub) {
-      if (sub.status === "In Progress") testStatus = "In Progress";
-      else if (sub.status === "Submitted" || sub.status === "Late") testStatus = "Submitted";
+    if (attempt) {
+      if (attempt.status === "In Progress") testStatus = "In Progress";
+      else if (attempt.status === "Submitted" || attempt.status === "Late")
+        testStatus = "Submitted";
     }
-    return { ...t, submission: sub ?? null, testStatus };
+    return { ...t, attempt, testStatus };
   });
 }
 
@@ -137,9 +267,33 @@ export default async function StudentTestsPage() {
                         {test.due_date ? formatDate(test.due_date) : "—"}
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
-                        {test.submission?.percentage != null
-                          ? `${Number(test.submission.percentage).toFixed(1)}%`
-                          : "—"}
+                        {test.attempt?.percentage != null ? (
+                          <>
+                            <div>{test.attempt.percentage.toFixed(1)}%</div>
+                            {test.attempt.scaledScore != null && (
+                              <div className="text-warm-coral text-xs font-medium">
+                                {test.attempt.scaledScore}/800
+                              </div>
+                            )}
+                            {test.attempt.isMultiModule &&
+                              test.attempt.modules.length > 0 && (
+                                <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
+                                  {test.attempt.modules.map((m) => (
+                                    <div key={m.submissionId}>
+                                      {m.label}:{" "}
+                                      {m.percentage != null
+                                        ? `${m.percentage.toFixed(1)}%`
+                                        : "—"}
+                                      {" · "}
+                                      {m.correctCount}/{m.totalQuestions}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                          </>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="px-5 py-3">
                         {test.testStatus === "Submitted" ? (

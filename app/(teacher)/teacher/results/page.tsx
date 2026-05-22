@@ -10,6 +10,14 @@ import {
   type CrossTestResultRow,
 } from "@/components/analytics/CrossTestResultsTable";
 import PageIntro from "@/components/shared/PageIntro";
+import { scaleSectionScore } from "@/lib/scoring";
+
+const MODULE_LABEL: Record<string, string> = {
+  module_1: "Module 1",
+  module_2: "Module 2",
+  module_2_easy: "Module 2 · Easy",
+  module_2_hard: "Module 2 · Hard",
+};
 
 async function getCrossTestResults(teacherId: string, role: string) {
   const db = getServiceClient();
@@ -89,6 +97,7 @@ async function getCrossTestResults(teacherId: string, role: string) {
       `
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, scaled_score, scaled_section, submitted_at, time_spent_seconds,
+      session_id, adaptive_track,
       users!inner(display_name, email)
     `
     )
@@ -120,27 +129,108 @@ async function getCrossTestResults(teacherId: string, role: string) {
     }
   }
 
-  const rows: CrossTestResultRow[] = subs.map((s) => {
-    const u = s.users as unknown as { display_name: string; email: string };
-    const meta = testMap.get(s.test_id) ?? { name: "(unknown test)", section: null };
-    return {
-      submissionId: s.id,
-      testId: s.test_id,
+  // Two-module attempts produce two submission rows sharing a
+  // session_id. Group siblings so each cross-test row represents one
+  // attempt with a combined headline plus per-module split — otherwise
+  // the same student would show up twice for the same test.
+  type SubRow = (typeof subs)[number] & {
+    session_id: string | null;
+    adaptive_track: string | null;
+  };
+  const sessionGroups = new Map<string, SubRow[]>();
+  for (const s of subs as SubRow[]) {
+    const key = s.session_id ?? `solo:${s.id}`;
+    const list = sessionGroups.get(key) ?? [];
+    list.push(s);
+    sessionGroups.set(key, list);
+  }
+
+  const rows: CrossTestResultRow[] = [];
+  for (const list of sessionGroups.values()) {
+    const sorted = [...list].sort((a, b) => {
+      const rank = (t: string | null) => (t === "module_1" ? 0 : 1);
+      return rank(a.adaptive_track) - rank(b.adaptive_track);
+    });
+    const head = sorted[0];
+    const u = head.users as unknown as { display_name: string; email: string };
+    const meta = testMap.get(head.test_id) ?? { name: "(unknown test)", section: null };
+
+    if (sorted.length === 1) {
+      rows.push({
+        submissionId: head.id,
+        testId: head.test_id,
+        testName: meta.name,
+        section: meta.section,
+        studentId: head.student_id,
+        studentName: u.display_name,
+        email: u.email,
+        classGroup: classMap.get(head.student_id) ?? null,
+        status: head.status,
+        score: head.score != null ? Number(head.score) : null,
+        percentage: head.percentage != null ? Number(head.percentage) : null,
+        scaledScore: head.scaled_score ?? null,
+        correctCount: head.correct_count ?? 0,
+        totalQuestions: head.total_questions ?? 0,
+        timeSpentSeconds: head.time_spent_seconds ?? null,
+        submittedAt: head.submitted_at ?? null,
+      });
+      continue;
+    }
+    const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
+    const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
+    const time = sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
+    const pct = total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
+    const statuses = sorted.map((r) => r.status);
+    const status = statuses.includes("In Progress")
+      ? "In Progress"
+      : statuses.includes("Late")
+      ? "Late"
+      : statuses[statuses.length - 1] ?? "Submitted";
+    const lastSubmittedAt =
+      sorted
+        .map((r) => r.submitted_at)
+        .filter((d): d is string => !!d)
+        .sort()
+        .pop() ?? null;
+    rows.push({
+      // Link to the Module 2 (last) submission so the result detail
+      // page can stitch both modules via session_id.
+      submissionId: sorted[sorted.length - 1].id,
+      testId: head.test_id,
       testName: meta.name,
       section: meta.section,
-      studentId: s.student_id,
+      studentId: head.student_id,
       studentName: u.display_name,
       email: u.email,
-      classGroup: classMap.get(s.student_id) ?? null,
-      status: s.status,
-      score: s.score != null ? Number(s.score) : null,
-      percentage: s.percentage != null ? Number(s.percentage) : null,
-      scaledScore: s.scaled_score ?? null,
-      correctCount: s.correct_count ?? 0,
-      totalQuestions: s.total_questions ?? 0,
-      timeSpentSeconds: s.time_spent_seconds ?? null,
-      submittedAt: s.submitted_at ?? null,
-    };
+      classGroup: classMap.get(head.student_id) ?? null,
+      status,
+      score: null,
+      percentage: pct,
+      scaledScore: pct != null ? scaleSectionScore(pct) : null,
+      correctCount: correct,
+      totalQuestions: total,
+      timeSpentSeconds: time,
+      submittedAt: lastSubmittedAt,
+      modules: sorted.map((r) => {
+        const p = r.percentage != null ? Number(r.percentage) : null;
+        return {
+          submissionId: r.id,
+          label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
+          correctCount: r.correct_count ?? 0,
+          totalQuestions: r.total_questions ?? 0,
+          percentage: p,
+          scaledScore: r.scaled_score ?? (p != null ? scaleSectionScore(p) : null),
+        };
+      }),
+    });
+  }
+
+  // Sort newest-first to preserve the original submitted_at desc order.
+  rows.sort((a, b) => {
+    if (a.submittedAt && b.submittedAt) return b.submittedAt.localeCompare(a.submittedAt);
+    if (a.submittedAt) return -1;
+    if (b.submittedAt) return 1;
+    return 0;
   });
 
   const testOptions = Array.from(testMap.entries())
