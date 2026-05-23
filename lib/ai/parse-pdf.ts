@@ -220,6 +220,16 @@ Decision rule:
   3. Connectors like " for ", " and ", " is " stay as plain English between the math chunks.
   4. NEVER emit raw LaTeX macros (the thin-space comma macro, \\frac, \\sqrt, etc.) outside a math wrap. If you see a number with the LaTeX thin-space for thousand grouping, that ONLY belongs inside math; otherwise write the comma directly (1,150, not the LaTeX thin-space form).
 
+UNDERLINED PORTIONS (CRITICAL — SAT R&W question type):
+SAT Reading & Writing has a question family that asks "Which choice best describes the function of the underlined portion in the text…". For those questions, the PDF passage has an actual underline under one word, phrase, clause, or sentence. The student CANNOT answer the question without seeing which portion is underlined, and the AI solver downstream CANNOT score the question without that signal either.
+- When you see an underlined run in a passage, wrap that exact run in HTML <u>…</u> tags inside question_text.
+- The tag goes around the underlined text only — not surrounding prose. Keep punctuation that's clearly underlined inside the tag and punctuation that isn't outside.
+- Do NOT use markdown emphasis (_, *) for this — that has different semantics and the renderer will misinterpret it.
+- Do NOT skip the tag just because the question stem already says "the underlined portion" — the tag is what makes the underline visible.
+- Example: "They also saw signs of what might be a synganglion, a brain-like mass of nerve tissue, in the animal's head. <u>This evidence is exciting because it could help us better understand how M. symmetrica is related to other arthropods, such as cave crickets and krill.</u>"
+- If the underlined portion contains math, the math wrap goes INSIDE the <u> tag: "<u>$y = 3x + 2$ is the line of best fit</u>".
+- Same rule applies to choice text when an SAT question quotes an underlined fragment in one of the choices.
+
 OUTPUT: Return valid JSON only. No markdown, no explanation text, no code fences. Just the raw JSON object.`;
 
 // ────────────────────────────────────────────

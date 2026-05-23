@@ -67,6 +67,11 @@ End the explanation with a final line of EXACTLY this form:
   Final answer: X
 where X is exactly the same value as the value you put in correct_answer (same letter for MCQ, same numeric/text value for SPR). Do not add extra punctuation, $...$ wrapping, or commentary on this final line. (Skip this trailer entirely when needs_drawing=true.)
 
+UNDERLINED PORTION (CRITICAL for SAT R&W):
+- SAT Reading & Writing has "function of the underlined portion" questions. The underlined run is wrapped in HTML <u>…</u> tags inside the question_text or choice text passed to you.
+- Treat the contents of <u>…</u> as the specific span the question is asking about. The question is unsolvable without anchoring to that span — do not skip or ignore the tag.
+- The <u> tags are markup, not part of the prose. Don't repeat them in your explanation; quote the underlined text in plain English instead (e.g. The underlined sentence "X" functions to …).
+
 NEEDS_DRAWING (MANDATORY):
 If the problem genuinely requires you to construct or sketch a figure from scratch — e.g. ruler-and-compass geometry construction, sketching a graph from an equation when no graph is provided, freehand drawing a triangle to scale — DO NOT guess an answer. Set needs_drawing=true, leave correct_answer as "", and put a one-sentence reason in explanation (e.g. "Requires constructing the angle bisector — please verify by hand."). The reviewer will solve and enter the answer manually.
 
