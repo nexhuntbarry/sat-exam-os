@@ -220,6 +220,25 @@ Decision rule:
   3. Connectors like " for ", " and ", " is " stay as plain English between the math chunks.
   4. NEVER emit raw LaTeX macros (the thin-space comma macro, \\frac, \\sqrt, etc.) outside a math wrap. If you see a number with the LaTeX thin-space for thousand grouping, that ONLY belongs inside math; otherwise write the comma directly (1,150, not the LaTeX thin-space form).
 
+FILL-IN-THE-BLANK PROMPTS (CRITICAL — SAT R&W transition / vocab questions):
+SAT Reading & Writing transition questions and word-in-context questions present a passage with a blank line where the student's choice fits. In the PDF this looks like "with millions of years of material missing in between. ______ time did not stand still during these intervening years" — a row of underscores marking the gap.
+- Render the blank as a run of underscores (use exactly 6 underscores: "______").
+- DO NOT add the literal English word "blank" anywhere near the underscores. The PDF underscore IS the blank — emitting "______ blank" makes the passage read nonsensically to the student.
+- Preserve the surrounding spacing and punctuation as-is. Example: write "...material missing in between. ______ time did not stand still..." NOT "...material missing in between. ______ blank time did not stand still..."
+- This applies to question_text and choice text.
+
+TABLES (CRITICAL — preserve table structure):
+When a question's passage includes a data table, emit it as a GitHub-flavored markdown table inside question_text so the renderer can display it as an actual <table>. The renderer pipeline (remark-gfm + react-markdown) parses pipe-separated rows into a real table only when the table is line-separated AND the header row is followed by a separator row of dashes.
+- Use this exact shape (one row per line; header separator with dashes; one cell per column per row):
+  | Hoard name | Date of contents | Year of discovery | Description |
+  | --- | --- | --- | --- |
+  | Broighter Hoard | 1st century BCE | 1896 | gold pieces |
+  | Balline Hoard | 4th century CE | 1940 | silver pieces |
+- DO NOT inline a table as a single run of pipe-separated text like "Hoard name | Date of contents | ... Broighter Hoard | 1st century BCE | 1896 | gold pieces Balline Hoard | ..." — that flattens the structure and renders as prose.
+- Each cell is one logical value. Don't merge two cells with a slash if the source shows them separately.
+- If the passage references the table in the question stem ("Which choice most effectively uses data from the table…"), leave the stem text as-is and just place the markdown table above it.
+- Set has_table=true on any question that includes a table.
+
 UNDERLINED PORTIONS (CRITICAL — SAT R&W question type):
 SAT Reading & Writing has a question family that asks "Which choice best describes the function of the underlined portion in the text…". For those questions, the PDF passage has an actual underline under one word, phrase, clause, or sentence. The student CANNOT answer the question without seeing which portion is underlined, and the AI solver downstream CANNOT score the question without that signal either.
 - When you see an underlined run in a passage, wrap that exact run in HTML <u>…</u> tags inside question_text.
