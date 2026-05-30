@@ -308,6 +308,18 @@ export async function POST(
       parsingNotes = `Low AI confidence (${q.ai_confidence_score.toFixed(2)})`;
     }
 
+    // MCQ-without-choices defense. The parser occasionally drops the
+    // choices array on a Multiple Choice row (5 cases were caught
+    // 2026-05-30 in October 2024 SAT English Module 1). Once such a
+    // row reaches Draft the auto-promote sweep flips it to Approved
+    // and students see the stem with no options. Catch it at insert.
+    const choiceCount = Array.isArray(q.choices) ? q.choices.length : 0;
+    if (q.question_type === "Multiple Choice" && choiceCount < 4) {
+      parsingStatus = "Needs Review";
+      parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
+        `Multiple Choice with ${choiceCount} choices (expected 4) — re-run scripts/recover-missing-choices.ts or extract manually`;
+    }
+
     // Duplicate check against existing questions
     for (const ex of existing) {
       const exEmbed = ex.question_text_embedding as { hash: string; excerpt: string } | null;

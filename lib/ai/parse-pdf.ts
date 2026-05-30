@@ -220,6 +220,13 @@ Decision rule:
   3. Connectors like " for ", " and ", " is " stay as plain English between the math chunks.
   4. NEVER emit raw LaTeX macros (the thin-space comma macro, \\frac, \\sqrt, etc.) outside a math wrap. If you see a number with the LaTeX thin-space for thousand grouping, that ONLY belongs inside math; otherwise write the comma directly (1,150, not the LaTeX thin-space form).
 
+MULTIPLE CHOICE QUESTIONS (CRITICAL — never drop the choices):
+Every SAT question marked Multiple Choice in this PDF has exactly four labelled options A, B, C, D. The downstream system stores them in a JSON array and uses that array to render the choice buttons; if the array is empty or missing the student sees the stem with no options to pick from.
+- For every question you classify as question_type="Multiple Choice", the choices array MUST contain exactly 4 entries.
+- Each entry's label is "A", "B", "C", or "D" (uppercase, single character) and text is the choice prose copied verbatim from the PDF.
+- If you can see the question stem clearly but cannot read one or more of the A/B/C/D options (cut off, blurry, glued to the next page), DO NOT silently classify it as "Student Produced Response". Keep question_type="Multiple Choice", include the choices you can read, lower ai_confidence_score below 0.7, and put a short note in question_text or skip the row — but never emit MCQ with an empty choices array.
+- "Student Produced Response" is reserved for SAT Math grid-in questions where there are genuinely no A/B/C/D options on the page. R&W never has SPR — every R&W question is Multiple Choice.
+
 FILL-IN-THE-BLANK PROMPTS (CRITICAL — SAT R&W transition / vocab questions):
 SAT Reading & Writing transition questions and word-in-context questions present a passage with a blank line where the student's choice fits. In the PDF this looks like "with millions of years of material missing in between. ______ time did not stand still during these intervening years" — a row of underscores marking the gap.
 - Render the blank as a run of underscores (use exactly 6 underscores: "______").
