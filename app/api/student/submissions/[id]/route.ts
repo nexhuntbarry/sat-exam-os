@@ -56,9 +56,9 @@ export async function GET(
     // server-rendered path.
     .select("id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, section, domain, skill, difficulty")
     .eq("module_id", gradingModuleId)
-    // Mirrors the take page gate — students never resume on Rejected
-    // or Needs Review rows. See /student/tests/[id]/take/page.tsx.
-    .not("parsing_status", "in", "(Rejected,Needs Review)")
+    // Mirrors the take page gate — Approved-only. See the comment
+    // in /student/tests/[id]/take/page.tsx.
+    .eq("parsing_status", "Approved")
     .order("original_question_number", { ascending: true });
 
   // Filter to specific question_ids if the (legacy single-module) test has them

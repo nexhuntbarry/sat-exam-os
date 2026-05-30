@@ -65,12 +65,11 @@ async function getActiveSubmission(testId: string, studentId: string) {
     .from("questions")
     .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, image_alts")
     .eq("module_id", activeModuleId)
-    // Filter out parser-rejected questions AND admin-flagged "Needs
-    // Review" rows. Needs Review is set when the solver flagged
-    // self-inconsistency or an admin caught a wrong answer key —
-    // letting those through ships untrusted scoring to live tests.
-    // Draft stays in until everything is hand-promoted to Approved.
-    .not("parsing_status", "in", "(Rejected,Needs Review)")
+    // Students only see Approved. The auto-promote-high-confidence
+    // pass moved the bulk of the question bank into Approved on
+    // 2026-05-30; remaining Draft and Needs Review rows are awaiting
+    // human review and must not reach a graded attempt.
+    .eq("parsing_status", "Approved")
     .order("original_question_number", { ascending: true });
 
   // tests.question_ids only filters the legacy single-module path.

@@ -58,6 +58,13 @@ export async function GET(req: Request) {
   if (hasTable === "true") query = query.eq("has_table", true);
   if (hasFormula === "true") query = query.eq("has_formula", true);
 
+  // Audit pivot for auto-promote-high-confidence: rows where the
+  // script flipped parsing_status to Approved without a human
+  // reviewer (reviewed_by left null). Caller passes ?autoApproved=true
+  // and is expected to also pass status=Approved.
+  const autoApproved = searchParams.get("autoApproved");
+  if (autoApproved === "true") query = query.is("reviewed_by", null);
+
   query = query
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
