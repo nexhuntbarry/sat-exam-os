@@ -85,12 +85,15 @@ async function main() {
   );
 
   // Select Draft rows above the threshold with a non-empty answer.
-  // We also pull image-related fields so we can defend-in-depth against
-  // the "solver answered blind because the image wasn't uploaded" case.
+  // We also pull image-related fields and choices/question_type so we
+  // can defend-in-depth against:
+  //   - solver answered blind because the image wasn't uploaded
+  //   - MCQ rows where the parser dropped the choices array (the
+  //     "shows no answer choices" bug found 2026-05-30)
   let q = sb
     .from("questions")
     .select(
-      "id, original_question_number, module_id, ai_confidence_score, correct_answer, has_image, image_urls",
+      "id, original_question_number, module_id, ai_confidence_score, correct_answer, has_image, image_urls, question_type, choices",
     )
     .eq("parsing_status", "Draft")
     .gte("ai_confidence_score", threshold);
@@ -109,6 +112,13 @@ async function main() {
       row.has_image === true &&
       (!Array.isArray(row.image_urls) || row.image_urls.length === 0);
     if (blindImage) return false;
+    // MCQ with no choices array is a parser drop — promoting it would
+    // ship a question to students that renders the stem with no options
+    // to pick from. Guard explicitly.
+    if (row.question_type === "Multiple Choice") {
+      const choices = Array.isArray(row.choices) ? row.choices : [];
+      if (choices.length === 0) return false;
+    }
     return true;
   });
   const skipped = (candidates ?? []).length - promotable.length;
