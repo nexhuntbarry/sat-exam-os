@@ -31,6 +31,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { createClient } from "@supabase/supabase-js";
+import katex from "katex";
 
 function loadEnv(file: string, overwrite: boolean) {
   try {
@@ -95,6 +96,32 @@ function hasTableSyntax(text: string): boolean {
   }
   return false;
 }
+function mathRenderFails(text: string): boolean {
+  if (!text) return false;
+  const displayBlocks = text.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
+  for (const b of displayBlocks) {
+    const expr = b.slice(2, -2);
+    if (!expr.trim()) continue;
+    try {
+      katex.renderToString(expr, { throwOnError: true, displayMode: true });
+    } catch {
+      return true;
+    }
+  }
+  const withoutDisplay = text.replace(/\$\$[\s\S]*?\$\$/g, " ");
+  const inlineBlocks = withoutDisplay.match(/\$([^$\n]+)\$/g) ?? [];
+  for (const b of inlineBlocks) {
+    const expr = b.slice(1, -1);
+    if (!expr.trim()) continue;
+    try {
+      katex.renderToString(expr, { throwOnError: true, displayMode: false });
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 function looksLikeValidUrl(u: string): boolean {
   if (!u || typeof u !== "string") return false;
   try {
@@ -239,6 +266,20 @@ const CHECKS: Array<{
     },
   },
   {
+    id: "math-render-failed",
+    description: "A $…$ region throws when rendered through KaTeX (student sees red error span / raw LaTeX)",
+    failed: (r) => {
+      if (r.question_text && mathRenderFails(r.question_text)) return true;
+      if (r.explanation && mathRenderFails(r.explanation)) return true;
+      if (Array.isArray(r.choices)) {
+        for (const c of r.choices) {
+          if (c.text && mathRenderFails(c.text)) return true;
+        }
+      }
+      return false;
+    },
+  },
+  {
     id: "explanation-final-mismatch",
     description: "Explanation 'Final answer:' disagrees with stored correct_answer",
     failed: (r) => {
@@ -274,7 +315,8 @@ async function main() {
       "id, original_question_number, module_id, section, question_type, question_text, choices, correct_answer, explanation, has_image, image_urls, has_table, ai_confidence_score",
     )
     .eq("parsing_status", "Approved")
-    .is("reviewed_by", null);
+    .is("reviewed_by", null)
+    .limit(10000);
   if (error) {
     console.error("[audit] select failed:", error);
     process.exit(1);

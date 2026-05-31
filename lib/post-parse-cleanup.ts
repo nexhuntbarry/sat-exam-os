@@ -25,6 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
+import katex from "katex";
 
 export interface PostParseCleanupSummary {
   blanksStripped: number;
@@ -421,6 +422,38 @@ function hasTableSyntax(text: string): boolean {
   return false;
 }
 
+// Returns true if any $…$ or $$…$$ region in the text fails to render
+// through KaTeX. Mirrors the runtime rehype-katex pipeline so a hit
+// here means the student would see a red error span or a raw LaTeX
+// snippet instead of a typeset expression.
+function mathRenderFails(text: string): boolean {
+  if (!text) return false;
+  const displayBlocks = text.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
+  for (const block of displayBlocks) {
+    const expr = block.slice(2, -2);
+    if (!expr.trim()) continue;
+    try {
+      katex.renderToString(expr, { throwOnError: true, displayMode: true });
+    } catch {
+      return true;
+    }
+  }
+  // Strip display math first so the inline regex doesn't match $$ as
+  // two adjacent inline $'s.
+  const withoutDisplay = text.replace(/\$\$[\s\S]*?\$\$/g, " ");
+  const inlineBlocks = withoutDisplay.match(/\$([^$\n]+)\$/g) ?? [];
+  for (const block of inlineBlocks) {
+    const expr = block.slice(1, -1);
+    if (!expr.trim()) continue;
+    try {
+      katex.renderToString(expr, { throwOnError: true, displayMode: false });
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 function looksLikeValidUrl(u: string): boolean {
   if (!u || typeof u !== "string") return false;
   try {
@@ -521,6 +554,24 @@ const CHECKS: Array<{
       if (Array.isArray(r.choices)) {
         for (const c of r.choices) {
           if (c.text && hasUnwrappedMath(c.text)) return true;
+        }
+      }
+      return false;
+    },
+  },
+  {
+    // Every $…$ / $$…$$ region must round-trip through KaTeX. A
+    // throw means the student would see a red KaTeX error span or
+    // a raw LaTeX dump instead of a typeset expression. Covers the
+    // "math doesn't render" failure mode (mismatched braces, unknown
+    // macros, raw \begin{tabular} dropped into $…$, etc).
+    id: "math-render-failed",
+    failed: (r) => {
+      if (r.question_text && mathRenderFails(r.question_text)) return true;
+      if (r.explanation && mathRenderFails(r.explanation)) return true;
+      if (Array.isArray(r.choices)) {
+        for (const c of r.choices) {
+          if (c.text && mathRenderFails(c.text)) return true;
         }
       }
       return false;
