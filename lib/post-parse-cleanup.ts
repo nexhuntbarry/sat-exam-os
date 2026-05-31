@@ -30,6 +30,7 @@ export interface PostParseCleanupSummary {
   blanksStripped: number;
   underlinesRepaired: number;
   choicesRecovered: number;
+  hasTableFlagFixed: number;
   anomaliesDemoted: number;
   errors: string[];
 }
@@ -306,6 +307,37 @@ async function recoverMissingChoices(
   return patched;
 }
 
+// ── 3b. Auto-fix has_table flag ────────────────────────────────────
+//
+// Parser sometimes leaves has_table=false even when question_text
+// contains a proper markdown table. The renderer doesn't care (the
+// table renders regardless), but downstream admin filters and the
+// audit step do — fix the flag in-place instead of demoting the row.
+async function fixHasTableFlag(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, has_table, question_text")
+    .eq("module_id", moduleId)
+    .neq("has_table", true);
+  if (error) throw new Error(`fixHasTableFlag select: ${error.message}`);
+  let patched = 0;
+  for (const q of data ?? []) {
+    const text: string = q.question_text ?? "";
+    if (!text) continue;
+    // Real markdown table = header row + dash separator row.
+    if (!/\|\s*-{3,}\s*\|/.test(text)) continue;
+    const { error: upErr } = await db
+      .from("questions")
+      .update({ has_table: true })
+      .eq("id", q.id);
+    if (!upErr) patched++;
+  }
+  return patched;
+}
+
 // ── 4. Structural audit + demote ───────────────────────────────────
 function pipeFlattenedTable(text: string): boolean {
   if (/\|\s*-{3,}\s*\|/.test(text)) return false;
@@ -339,6 +371,64 @@ interface AuditRow {
   explanation: string | null;
   has_image: boolean | null;
   image_urls: string[] | null;
+  has_table: boolean | null;
+}
+
+// ── Math / table / image heuristics ────────────────────────────────
+//
+// Each heuristic strips $…$ and $$…$$ regions before applying its
+// regexes so legitimate math like $\frac{1}{7}$ doesn't false-positive
+// the "unwrapped math" check.
+function stripMath(text: string): string {
+  return text
+    .replace(/\$\$[\s\S]*?\$\$/g, " ")
+    .replace(/\$[^$\n]*\$/g, " ");
+}
+
+function hasUnwrappedMath(text: string): boolean {
+  const noMath = stripMath(text);
+  // Raw LaTeX macros outside math wrap — \frac / \sqrt / \pi / \cdot /
+  // \times / \div / \log / \sin / \cos / \tan / \int / \sum / a^{n} /
+  // _{n}. These shouldn't appear in prose; if the parser left them
+  // exposed, the renderer prints the literal backslash command.
+  if (/\\(?:frac|sqrt|pi|cdot|times|div|log|sin|cos|tan|int|sum)\b/.test(noMath)) {
+    return true;
+  }
+  if (/[A-Za-z]\^\{[^}]+\}/.test(noMath)) return true;
+  if (/[A-Za-z]_\{[^}]+\}/.test(noMath)) return true;
+  // ASCII pseudo-math the project explicitly forbids in question_text
+  // / choice text: bare "x^2" and "sqrt(...)" outside $…$. Skip pure
+  // exponent like "2^4" that's in prose paragraphs (cheap heuristic:
+  // require a letter on the LHS so "g(x) = x^2" trips but "240,000 /
+  // 16 = 2^4" doesn't).
+  if (/[A-Za-z]\^\d+(?!\$)/.test(noMath)) return true;
+  if (/\bsqrt\s*\(/.test(noMath)) return true;
+  return false;
+}
+
+function hasTableSyntax(text: string): boolean {
+  // A markdown table requires both a header row of pipes AND the dash
+  // separator row immediately after. Cheap version: the dash-separator
+  // pattern is rare enough in prose that detecting it is reliable.
+  if (/\|\s*-{3,}\s*\|/.test(text)) return true;
+  // Multiple lines with 3+ pipes each is also table-ish (the flattened
+  // shape, still counts as "tries to be a table").
+  let lines = 0;
+  for (const line of stripMath(text).split("\n")) {
+    if ((line.match(/\|/g) ?? []).length >= 3) lines++;
+    if (lines >= 2) return true;
+  }
+  return false;
+}
+
+function looksLikeValidUrl(u: string): boolean {
+  if (!u || typeof u !== "string") return false;
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 const CHECKS: Array<{
@@ -402,6 +492,41 @@ const CHECKS: Array<{
       r.question_text != null && pipeFlattenedTable(r.question_text),
   },
   {
+    // has_table=true but the rendered text has no table syntax at all
+    // → parser dropped the whole table when serializing.
+    id: "has-table-flag-but-no-table-in-text",
+    failed: (r) =>
+      r.has_table === true &&
+      r.question_text != null &&
+      !hasTableSyntax(r.question_text),
+  },
+  {
+    // has_image=true and image_urls has entries, but at least one
+    // URL isn't a well-formed http(s) URL — the renderer will 404 it.
+    id: "image-url-malformed",
+    failed: (r) => {
+      if (r.has_image !== true) return false;
+      const urls = Array.isArray(r.image_urls) ? r.image_urls : [];
+      if (urls.length === 0) return false; // blind-image catches this
+      return urls.some((u) => !looksLikeValidUrl(u));
+    },
+  },
+  {
+    // question_text or any choice text contains math that the parser
+    // forgot to wrap in $…$ delimiters. The renderer prints raw LaTeX
+    // macros / ASCII pseudo-math which reads as garbage to students.
+    id: "math-unwrapped",
+    failed: (r) => {
+      if (r.question_text && hasUnwrappedMath(r.question_text)) return true;
+      if (Array.isArray(r.choices)) {
+        for (const c of r.choices) {
+          if (c.text && hasUnwrappedMath(c.text)) return true;
+        }
+      }
+      return false;
+    },
+  },
+  {
     id: "explanation-final-mismatch",
     failed: (r) => {
       const trailer = letterFromExplanationTrailer(r.explanation);
@@ -429,7 +554,7 @@ async function auditAndDemote(
   const { data, error } = await db
     .from("questions")
     .select(
-      "id, section, question_type, question_text, choices, correct_answer, explanation, has_image, image_urls, parsing_status",
+      "id, section, question_type, question_text, choices, correct_answer, explanation, has_image, image_urls, has_table, parsing_status",
     )
     .eq("module_id", moduleId)
     .in("parsing_status", ["Approved", "Draft"]);
@@ -462,6 +587,7 @@ export async function runPostParseCleanup(
     blanksStripped: 0,
     underlinesRepaired: 0,
     choicesRecovered: 0,
+    hasTableFlagFixed: 0,
     anomaliesDemoted: 0,
     errors: [],
   };
@@ -494,6 +620,11 @@ export async function runPostParseCleanup(
     "recoverMissingChoices",
     () => recoverMissingChoices(moduleId, db),
     (v) => (summary.choicesRecovered = v),
+  );
+  await safe(
+    "fixHasTableFlag",
+    () => fixHasTableFlag(moduleId, db),
+    (v) => (summary.hasTableFlagFixed = v),
   );
   await safe(
     "auditAndDemote",

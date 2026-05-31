@@ -68,8 +68,42 @@ type Row = {
   explanation: string | null;
   has_image: boolean | null;
   image_urls: string[] | null;
+  has_table: boolean | null;
   ai_confidence_score: number | null;
 };
+
+function stripMath(text: string): string {
+  return text
+    .replace(/\$\$[\s\S]*?\$\$/g, " ")
+    .replace(/\$[^$\n]*\$/g, " ");
+}
+function hasUnwrappedMath(text: string): boolean {
+  const noMath = stripMath(text);
+  if (/\\(?:frac|sqrt|pi|cdot|times|div|log|sin|cos|tan|int|sum)\b/.test(noMath)) return true;
+  if (/[A-Za-z]\^\{[^}]+\}/.test(noMath)) return true;
+  if (/[A-Za-z]_\{[^}]+\}/.test(noMath)) return true;
+  if (/[A-Za-z]\^\d+(?!\$)/.test(noMath)) return true;
+  if (/\bsqrt\s*\(/.test(noMath)) return true;
+  return false;
+}
+function hasTableSyntax(text: string): boolean {
+  if (/\|\s*-{3,}\s*\|/.test(text)) return true;
+  let lines = 0;
+  for (const line of stripMath(text).split("\n")) {
+    if ((line.match(/\|/g) ?? []).length >= 3) lines++;
+    if (lines >= 2) return true;
+  }
+  return false;
+}
+function looksLikeValidUrl(u: string): boolean {
+  if (!u || typeof u !== "string") return false;
+  try {
+    const p = new URL(u);
+    return p.protocol === "http:" || p.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 type Anomaly = { row: Row; failedChecks: string[] };
 
@@ -174,6 +208,37 @@ const CHECKS: Array<{
       r.question_text != null && pipeFlattenedTable(r.question_text),
   },
   {
+    id: "has-table-flag-but-no-table-in-text",
+    description: "has_table=true but question_text has no table syntax (parser dropped the table)",
+    failed: (r) =>
+      r.has_table === true &&
+      r.question_text != null &&
+      !hasTableSyntax(r.question_text),
+  },
+  {
+    id: "image-url-malformed",
+    description: "has_image=true and image_urls non-empty, but at least one URL is malformed",
+    failed: (r) => {
+      if (r.has_image !== true) return false;
+      const urls = Array.isArray(r.image_urls) ? r.image_urls : [];
+      if (urls.length === 0) return false;
+      return urls.some((u) => !looksLikeValidUrl(u));
+    },
+  },
+  {
+    id: "math-unwrapped",
+    description: "Math expression present without $…$ delimiter (renderer prints raw LaTeX)",
+    failed: (r) => {
+      if (r.question_text && hasUnwrappedMath(r.question_text)) return true;
+      if (Array.isArray(r.choices)) {
+        for (const c of r.choices) {
+          if (c.text && hasUnwrappedMath(c.text)) return true;
+        }
+      }
+      return false;
+    },
+  },
+  {
     id: "explanation-final-mismatch",
     description: "Explanation 'Final answer:' disagrees with stored correct_answer",
     failed: (r) => {
@@ -206,7 +271,7 @@ async function main() {
   const { data, error } = await sb
     .from("questions")
     .select(
-      "id, original_question_number, module_id, section, question_type, question_text, choices, correct_answer, explanation, has_image, image_urls, ai_confidence_score",
+      "id, original_question_number, module_id, section, question_type, question_text, choices, correct_answer, explanation, has_image, image_urls, has_table, ai_confidence_score",
     )
     .eq("parsing_status", "Approved")
     .is("reviewed_by", null);

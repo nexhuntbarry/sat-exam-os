@@ -493,13 +493,14 @@ export async function POST(
     blanksStripped: 0,
     underlinesRepaired: 0,
     choicesRecovered: 0,
+    hasTableFlagFixed: 0,
     anomaliesDemoted: 0,
     errors: [] as string[],
   };
   try {
     cleanup = await runPostParseCleanup(id, db);
     console.log(
-      `[modules/parse] post-cleanup module=${id} blanks=${cleanup.blanksStripped} underlines=${cleanup.underlinesRepaired} choices=${cleanup.choicesRecovered} demoted=${cleanup.anomaliesDemoted} errors=${cleanup.errors.length}`,
+      `[modules/parse] post-cleanup module=${id} blanks=${cleanup.blanksStripped} underlines=${cleanup.underlinesRepaired} choices=${cleanup.choicesRecovered} hasTable=${cleanup.hasTableFlagFixed} demoted=${cleanup.anomaliesDemoted} errors=${cleanup.errors.length}`,
     );
   } catch (err) {
     console.error("[modules/parse] post-cleanup crashed:", err);
