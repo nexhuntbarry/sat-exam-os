@@ -11,6 +11,7 @@ import {
 } from "@/lib/ai/parse-pdf";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist } from "@/lib/ai/solve-question";
+import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -481,15 +482,39 @@ export async function POST(
     }
   }
 
+  // Phase 4 — self-check pass. Catches the recurring parser shapes
+  // (blank-word artifact, missing <u> on "underlined portion" rows,
+  // MCQ with empty choices) plus a 10-check structural audit, and
+  // demotes anomalies to Needs Review with a parsing_note that names
+  // the failed check. Failures here don't block the response — the
+  // parse already succeeded by this point and the cleanup is best
+  // effort.
+  let cleanup = {
+    blanksStripped: 0,
+    underlinesRepaired: 0,
+    choicesRecovered: 0,
+    anomaliesDemoted: 0,
+    errors: [] as string[],
+  };
+  try {
+    cleanup = await runPostParseCleanup(id, db);
+    console.log(
+      `[modules/parse] post-cleanup module=${id} blanks=${cleanup.blanksStripped} underlines=${cleanup.underlinesRepaired} choices=${cleanup.choicesRecovered} demoted=${cleanup.anomaliesDemoted} errors=${cleanup.errors.length}`,
+    );
+  } catch (err) {
+    console.error("[modules/parse] post-cleanup crashed:", err);
+  }
+
   return NextResponse.json({
     success: true,
     questionCount: totalInserted,
-    needsReview: needsReviewCount + mismatchCount,
+    needsReview: needsReviewCount + mismatchCount + cleanup.anomaliesDemoted,
     avgConfidence: Math.round(avgConfidence * 100) / 100,
     solved: solverStats.solved,
     solverFailed: solverStats.failed,
     answerKeyUsed: answerKey ? Object.keys(answerKey).length : 0,
     mismatches: mismatchCount,
+    cleanup,
   });
 }
 
