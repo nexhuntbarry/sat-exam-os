@@ -32,6 +32,8 @@ export interface PostParseCleanupSummary {
   underlinesRepaired: number;
   choicesRecovered: number;
   hasTableFlagFixed: number;
+  currencyDollarsEscaped: number;
+  blindImagesResolved: number;
   anomaliesDemoted: number;
   errors: string[];
 }
@@ -339,6 +341,175 @@ async function fixHasTableFlag(
   return patched;
 }
 
+// ── 3b'. Escape currency dollar signs ──────────────────────────────
+//
+// SAT prose constantly mixes "$950" (currency) and "$t > 3$" (inline
+// math) in the same sentence. The parser doesn't disambiguate, so
+// once two unescaped `$` glyphs land in a single string the KaTeX
+// renderer pairs them and renders everything in between as math —
+// you get "950forthefirst3hoursandanadditional 50" instead of
+// "$950 for the first 3 hours and an additional $50".
+//
+// Rule used here: any `$` that is NOT already escaped (`\$`) and
+// is immediately followed by a digit / comma / period / digit-cluster
+// is currency. Escape those, leave anything else alone. This
+// preserves real inline math like `$x$`, `$t > 3$`, `$\frac{1}{2}$`
+// because they start with a letter or backslash, not a digit.
+
+const CURRENCY_DOLLAR_RE = /(^|[^\\])\$(?=\d)/g;
+
+function escapeCurrencyDollars(text: string): string {
+  if (!text) return text;
+  return text.replace(CURRENCY_DOLLAR_RE, "$1\\$");
+}
+
+async function patchCurrencyDollars(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, question_text, choices, explanation")
+    .eq("module_id", moduleId);
+  if (error) throw new Error(`patchCurrencyDollars select: ${error.message}`);
+  let patched = 0;
+  for (const q of data ?? []) {
+    const nextText = escapeCurrencyDollars((q.question_text as string) ?? "");
+    const nextExpl = escapeCurrencyDollars((q.explanation as string) ?? "");
+    let nextChoices: Array<{ label: string; text: string }> | null = null;
+    if (Array.isArray(q.choices)) {
+      const arr = q.choices as Array<{ label: string; text: string }>;
+      const escaped = arr.map((c) => ({
+        ...c,
+        text: escapeCurrencyDollars(c.text ?? ""),
+      }));
+      const dirty = escaped.some((c, i) => c.text !== arr[i].text);
+      if (dirty) nextChoices = escaped;
+    }
+    const textDirty = nextText !== (q.question_text ?? "");
+    const explDirty = nextExpl !== (q.explanation ?? "");
+    if (!textDirty && !explDirty && !nextChoices) continue;
+    const update: Record<string, unknown> = {};
+    if (textDirty) update.question_text = nextText;
+    if (explDirty) update.explanation = nextExpl;
+    if (nextChoices) update.choices = nextChoices;
+    update.updated_at = new Date().toISOString();
+    const { error: upErr } = await db
+      .from("questions")
+      .update(update)
+      .eq("id", q.id);
+    if (!upErr) patched++;
+  }
+  return patched;
+}
+
+// ── 3c. Resolve "blind image" questions ───────────────────────────
+//
+// Parser sometimes flags has_image=true on questions that, on
+// second look, contain no figure at all — the parser was tricked by
+// a header glyph or a stray rendered formula. Other times the
+// question genuinely needs a figure that the image extractor missed.
+//
+// We send the PDF page to Claude with the stored question_text and
+// ask one yes/no question: does this question actually need a
+// figure to be answerable? If No, clear has_image so the row stops
+// failing the blind-image audit check. If Yes, leave has_image=true
+// and add a parsing note so the admin can re-extract the image
+// manually (the heavy "render PDF page → crop → upload to storage"
+// pipeline lives in the parser, not here).
+const BlindImageSchema = z.object({
+  needs_figure: z
+    .boolean()
+    .describe(
+      "True if the SAT question on this page genuinely requires a figure/diagram/chart/graph/picture to be answerable. False if the question is pure text and can be solved without looking at any image.",
+    ),
+  reason: z
+    .string()
+    .max(220)
+    .describe("One short sentence explaining the decision."),
+});
+
+const BLIND_IMAGE_SYSTEM = `You are auditing a single SAT question that the parser flagged as containing an image but for which the image extractor produced no URLs. Look at the PDF page and the stored question text.
+
+Decide: does answering this question REQUIRE looking at a figure/diagram/chart/graph/picture? Examples that need a figure: bar charts, scatterplots, geometric diagrams, number lines with marked points, tables drawn as images, photographs in R&W context. Examples that DON'T need a figure: pure word problems with all numbers in the prose, algebra word problems, math questions where every value appears in the question text or LaTeX.
+
+Be conservative — if the figure shows real data the student needs (axis labels, plotted points, geometric measurements), say true. If the figure is decorative or absent, say false.
+
+Return JSON only.`;
+
+async function resolveBlindImages(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select(
+      "id, original_question_number, question_text, source_pdf_url, has_image, image_urls",
+    )
+    .eq("module_id", moduleId)
+    .eq("has_image", true)
+    .or("image_urls.is.null,image_urls.eq.{}");
+  if (error) throw new Error(`resolveBlindImages select: ${error.message}`);
+  const candidates = (data ?? []).filter((q) => {
+    const urls = q.image_urls as string[] | null;
+    return q.source_pdf_url && (!Array.isArray(urls) || urls.length === 0);
+  });
+  let resolved = 0;
+  for (const q of candidates) {
+    try {
+      const pdfBase64 = await fetchPdfBase64(q.source_pdf_url as string);
+      const result = await generateObject({
+        model: anthropic("claude-haiku-4-5"),
+        schema: BlindImageSchema,
+        system: BLIND_IMAGE_SYSTEM,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "file", data: pdfBase64, mediaType: "application/pdf" },
+              {
+                type: "text",
+                text: `Question ${q.original_question_number ?? "?"}.\n\nStored question text:\n\n${q.question_text ?? "(empty)"}\n\nDoes this question need a figure to be answerable?`,
+              },
+            ],
+          },
+        ],
+      });
+      const { needs_figure, reason } = result.object;
+      if (needs_figure === false) {
+        // No image actually needed — clear has_image so blind-image
+        // audit check stops firing on the next pass.
+        const { error: upErr } = await db
+          .from("questions")
+          .update({
+            has_image: false,
+            parsing_notes: `post-parse-cleanup cleared has_image flag (no figure required): ${reason}`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", q.id);
+        if (!upErr) resolved++;
+      } else {
+        // Figure genuinely required but URLs missing — leave the
+        // flag on, but record why so the admin knows manual image
+        // re-extraction is needed instead of just toggling a flag.
+        await db
+          .from("questions")
+          .update({
+            parsing_notes: `Needs manual image re-extraction (Claude audit: ${reason})`,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", q.id);
+      }
+    } catch (e) {
+      console.error(
+        `[post-parse-cleanup] blindImage ${q.id}:`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+  return resolved;
+}
+
 // ── 4. Structural audit + demote ───────────────────────────────────
 function pipeFlattenedTable(text: string): boolean {
   if (/\|\s*-{3,}\s*\|/.test(text)) return false;
@@ -639,6 +810,8 @@ export async function runPostParseCleanup(
     underlinesRepaired: 0,
     choicesRecovered: 0,
     hasTableFlagFixed: 0,
+    currencyDollarsEscaped: 0,
+    blindImagesResolved: 0,
     anomaliesDemoted: 0,
     errors: [],
   };
@@ -676,6 +849,16 @@ export async function runPostParseCleanup(
     "fixHasTableFlag",
     () => fixHasTableFlag(moduleId, db),
     (v) => (summary.hasTableFlagFixed = v),
+  );
+  await safe(
+    "patchCurrencyDollars",
+    () => patchCurrencyDollars(moduleId, db),
+    (v) => (summary.currencyDollarsEscaped = v),
+  );
+  await safe(
+    "resolveBlindImages",
+    () => resolveBlindImages(moduleId, db),
+    (v) => (summary.blindImagesResolved = v),
   );
   await safe(
     "auditAndDemote",
