@@ -66,14 +66,17 @@ const BBOX_SYSTEM = `You are returning a bounding box around the figure (graph, 
 Rules:
 - Coordinates are FRACTIONS of the page dimensions: (0,0) = top-left, (1,1) = bottom-right.
 - The box MUST contain the ENTIRE visual. Missing content is far worse than including a little extra whitespace — students cannot answer a question whose chart is cropped halfway through.
-- For TABLES: include the table caption / title above the grid, the full header row, every body row, any totals or footnote row, AND the source citation line if present. A common failure is returning a box that only covers half the rows — count the rows in the source PDF and make sure your y1 sits below the LAST row, not the middle one.
+- For TABLES: include the table caption / title above the grid, the full header row, every body row, any totals or footnote row, AND the source citation line if present. A common failure is returning a box that only covers half the rows — count the rows in the source PDF and make sure your y1 sits BELOW the LAST row, not the middle one.
 - For GRAPHS / CHARTS: include the title, both axis labels, every plotted series, the legend, and any annotations. Err on the side of a slightly larger box around the plot area.
 - For GEOMETRIC FIGURES: include any labels, angle markings, side-length annotations, and the figure border itself.
-- Do NOT include the question stem, other questions, answer choices, or page header / footer.
-- Add a small breathing-room margin (~2% of the page on each side) inside your box so antialiasing artifacts don't cut text near the edge.
+
+EXCLUSIONS — equally important:
+- Do NOT extend the box DOWNWARD into prose that describes the figure. Sentences like "The following 3 lines are shown:" / "The graph shows…" / "The table reports…" / bullet lists labelling each data series are QUESTION STEM, not figure content, even when they sit immediately under the chart with no whitespace. The figure ends at the bottom edge of the plot area + its legend / x-axis labels, NOT at the next block of running text.
+- Do NOT include the answer choices, the "Which choice most effectively…" / "What is the value of…" stem, page header (test/section/page number), page footer, watermarks, or any adjacent question.
 - If there are multiple visuals on the page, return only the one tied to the question number in the user prompt.
 - If you genuinely cannot find a figure for this question (the parser was wrong, the page is text-only), return an empty regions array.
-- Return JSON only.`;
+
+Return JSON only.`;
 
 const BBoxSchema = z.object({
   regions: z
@@ -171,21 +174,33 @@ async function repairOne(row: Row): Promise<boolean> {
   // extractor accepts; we only need original_question_number + page_number
   // + image_regions for it to do the right thing.
   // Convert (x0,y0,x1,y1) corners into the (x_pct,y_pct,w_pct,h_pct)
-  // shape the existing ParsedImageRegion / cropper expects. We also
-  // inflate the box by a small safety margin (2.5% of the page on
-  // each side) before clamping. This avoids the "half a table got
-  // cropped" failure mode where Claude's box was visually tight but
-  // shaved a row of pixels off the last data row of a study table.
-  const PAD = 0.025;
+  // shape the existing ParsedImageRegion / cropper expects.
+  //
+  // Asymmetric padding policy after observing two real-world failures:
+  //  - Q9 Sep 2025 ENG M2 table — bbox shaved off the bottom rows
+  //    because Claude returned a flush-tight box and antialias /
+  //    rounding cut a row of pixels.
+  //  - Q8 Sep 2025 ENG M2 chart — adding 2.5% to every side bled the
+  //    bbox DOWN into question-stem prose right under the chart.
+  //
+  // Compromise: 1.5% margin on TOP / LEFT / RIGHT (where over-crop
+  // is rare and slight under-crop is the typical failure) and 0% on
+  // BOTTOM so we never extend into the stem text immediately below
+  // the figure. The new prompt is also stricter about excluding any
+  // running prose that describes the figure.
+  const PAD_TOP = 0.015;
+  const PAD_LEFT = 0.015;
+  const PAD_RIGHT = 0.015;
+  const PAD_BOTTOM = 0;
   const synthetic = [
     {
       original_question_number: row.original_question_number ?? 0,
       page_number: row.page_number ?? regions[0].page,
       image_regions: regions.map((r) => {
-        const x0 = Math.max(0, Math.min(1, r.x0 - PAD));
-        const y0 = Math.max(0, Math.min(1, r.y0 - PAD));
-        const x1 = Math.max(0, Math.min(1, r.x1 + PAD));
-        const y1 = Math.max(0, Math.min(1, r.y1 + PAD));
+        const x0 = Math.max(0, Math.min(1, r.x0 - PAD_LEFT));
+        const y0 = Math.max(0, Math.min(1, r.y0 - PAD_TOP));
+        const x1 = Math.max(0, Math.min(1, r.x1 + PAD_RIGHT));
+        const y1 = Math.max(0, Math.min(1, r.y1 + PAD_BOTTOM));
         return {
           page: r.page,
           x_pct: x0,
