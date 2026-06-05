@@ -61,20 +61,36 @@ const apply = process.argv.includes("--apply");
 const moduleArg = process.argv.find((a) => a.startsWith("--module="));
 const questionArg = process.argv.find((a) => a.startsWith("--question="));
 
-const BBOX_SYSTEM = `You are returning a bounding box around the figure (graph, chart, diagram, table-as-image, geometric drawing, scatterplot, or other visual) that belongs to one specific SAT question on the given PDF page.
+const BBOX_SYSTEM = `You are returning a bounding box around the figure (graph, chart, diagram, table-as-image, geometric drawing, scatterplot, or other visual) that belongs to ONE specific SAT question on the given PDF page.
 
-Rules:
-- Coordinates are FRACTIONS of the page dimensions: (0,0) = top-left, (1,1) = bottom-right.
-- The box MUST contain the ENTIRE visual. Missing content is far worse than including a little extra whitespace — students cannot answer a question whose chart is cropped halfway through.
-- For TABLES: include the table caption / title above the grid, the full header row, every body row, any totals or footnote row, AND the source citation line if present. A common failure is returning a box that only covers half the rows — count the rows in the source PDF and make sure your y1 sits BELOW the LAST row, not the middle one.
-- For GRAPHS / CHARTS: include the title, both axis labels, every plotted series, the legend, and any annotations. Err on the side of a slightly larger box around the plot area.
-- For GEOMETRIC FIGURES: include any labels, angle markings, side-length annotations, and the figure border itself.
+Coordinates are FRACTIONS of the page dimensions: (0,0) = top-left, (1,1) = bottom-right.
 
-EXCLUSIONS — equally important:
-- Do NOT extend the box DOWNWARD into prose that describes the figure. Sentences like "The following 3 lines are shown:" / "The graph shows…" / "The table reports…" / bullet lists labelling each data series are QUESTION STEM, not figure content, even when they sit immediately under the chart with no whitespace. The figure ends at the bottom edge of the plot area + its legend / x-axis labels, NOT at the next block of running text.
-- Do NOT include the answer choices, the "Which choice most effectively…" / "What is the value of…" stem, page header (test/section/page number), page footer, watermarks, or any adjacent question.
-- If there are multiple visuals on the page, return only the one tied to the question number in the user prompt.
-- If you genuinely cannot find a figure for this question (the parser was wrong, the page is text-only), return an empty regions array.
+VERTICAL BOUNDARIES — the most common failure mode:
+
+  TOP boundary (y0): Place y0 directly at the visual's own top edge — the chart's title bar, the table's short caption (e.g. "Studies of Cougar Population Density"), or the geometric figure's drawing area. DO NOT include:
+    • Any other question's answer choices sitting above the figure ("60 for Class VII", "50 for Class VI", labelled A/B/C/D rows).
+    • The "Question N" banner / number label that precedes the target question.
+    • The previous question's stem text.
+    • Page header (test / section / page number).
+    If the figure sits in the middle of the page and an earlier question's choices are 1cm above it, y0 must NOT include those.
+
+  BOTTOM boundary (y1): Place y1 at the visual's own bottom edge — the table's last data row (or the source citation immediately under it), the chart's x-axis labels and legend, or the figure's bottom border. DO NOT include:
+    • Running prose describing the figure ("The following 3 lines are shown:", "The graph shows…", "The table reports the population densities reported by various researchers…").
+    • Bullet lists labelling each plotted series ("• Class VII (very severe limitations on use for crops) line: begins at 1960, 65 meters per hectare…").
+    • The "Which choice most effectively…" stem.
+    • The target question's own answer choices.
+    The figure ends at its own visual frame, NOT at the next block of body text — even when there is zero whitespace gap.
+
+PER-SHAPE GUIDANCE:
+  TABLES: include the short caption / title row + header row + every body row + any totals + footnote citation. Count the rows in the PDF — y1 must sit BELOW the last row, never in the middle.
+  GRAPHS / CHARTS: include title, both axis labels, every plotted series, legend block, and inline annotations. Err on the side of a slightly larger box around the plot area itself.
+  GEOMETRIC FIGURES: include labels, angle markings, side-length annotations, and the figure border.
+
+HORIZONTAL BOUNDARIES: x0 and x1 should hug the left and right edges of the visual itself — not the full page width (the column gutter beside a 2-column layout often contains other content).
+
+If there are multiple visuals on the page, return only the one tied to the question number in the user prompt.
+
+If you genuinely cannot find a figure for this question (the parser was wrong, the page is text-only), return an empty regions array.
 
 Return JSON only.`;
 
