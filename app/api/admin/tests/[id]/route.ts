@@ -96,6 +96,30 @@ export async function PATCH(
   if (body.adaptiveThreshold !== undefined)
     updates.adaptive_threshold = body.adaptiveThreshold;
 
+  // Defense against the "exam only shows one module" regression. A
+  // non-adaptive test that ends up with module_2_id = null leaves the
+  // /submissions/[id]/submit handoff with nothing to dispatch to and
+  // the student sees Module 1 alone. The DB CHECK constraint added
+  // in migration 0024 makes the same write fail loud, but we also
+  // intercept here so the error surfaces as a 400 with a clear
+  // message instead of a generic 500.
+  if (body.module2Id !== undefined && body.module2Id === null) {
+    const { data: current } = await db
+      .from("tests")
+      .select("is_adaptive")
+      .eq("id", id)
+      .maybeSingle();
+    if (current && current.is_adaptive !== true) {
+      return NextResponse.json(
+        {
+          error:
+            "Non-adaptive tests must keep Module 2 set. Pick a Module 2 from the dropdown or switch the test to adaptive first.",
+        },
+        { status: 400 },
+      );
+    }
+  }
+
   const { error } = await db.from("tests").update(updates).eq("id", id);
   if (error) {
     console.error("[admin/tests/patch]", error);
