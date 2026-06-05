@@ -61,11 +61,16 @@ const apply = process.argv.includes("--apply");
 const moduleArg = process.argv.find((a) => a.startsWith("--module="));
 const questionArg = process.argv.find((a) => a.startsWith("--question="));
 
-const BBOX_SYSTEM = `You are returning a tight bounding box around the figure (graph, chart, diagram, table-as-image, geometric drawing, scatterplot, or other visual) that belongs to one specific SAT question on the given PDF page.
+const BBOX_SYSTEM = `You are returning a bounding box around the figure (graph, chart, diagram, table-as-image, geometric drawing, scatterplot, or other visual) that belongs to one specific SAT question on the given PDF page.
 
 Rules:
 - Coordinates are FRACTIONS of the page dimensions: (0,0) = top-left, (1,1) = bottom-right.
-- Give a TIGHT box around the visual only — no surrounding question stem, no other questions, no answer choices, no page header / footer.
+- The box MUST contain the ENTIRE visual. Missing content is far worse than including a little extra whitespace — students cannot answer a question whose chart is cropped halfway through.
+- For TABLES: include the table caption / title above the grid, the full header row, every body row, any totals or footnote row, AND the source citation line if present. A common failure is returning a box that only covers half the rows — count the rows in the source PDF and make sure your y1 sits below the LAST row, not the middle one.
+- For GRAPHS / CHARTS: include the title, both axis labels, every plotted series, the legend, and any annotations. Err on the side of a slightly larger box around the plot area.
+- For GEOMETRIC FIGURES: include any labels, angle markings, side-length annotations, and the figure border itself.
+- Do NOT include the question stem, other questions, answer choices, or page header / footer.
+- Add a small breathing-room margin (~2% of the page on each side) inside your box so antialiasing artifacts don't cut text near the edge.
 - If there are multiple visuals on the page, return only the one tied to the question number in the user prompt.
 - If you genuinely cannot find a figure for this question (the parser was wrong, the page is text-only), return an empty regions array.
 - Return JSON only.`;
@@ -166,19 +171,30 @@ async function repairOne(row: Row): Promise<boolean> {
   // extractor accepts; we only need original_question_number + page_number
   // + image_regions for it to do the right thing.
   // Convert (x0,y0,x1,y1) corners into the (x_pct,y_pct,w_pct,h_pct)
-  // shape the existing ParsedImageRegion / cropper expects.
+  // shape the existing ParsedImageRegion / cropper expects. We also
+  // inflate the box by a small safety margin (2.5% of the page on
+  // each side) before clamping. This avoids the "half a table got
+  // cropped" failure mode where Claude's box was visually tight but
+  // shaved a row of pixels off the last data row of a study table.
+  const PAD = 0.025;
   const synthetic = [
     {
       original_question_number: row.original_question_number ?? 0,
       page_number: row.page_number ?? regions[0].page,
-      image_regions: regions.map((r) => ({
-        page: r.page,
-        x_pct: Math.max(0, Math.min(1, r.x0)),
-        y_pct: Math.max(0, Math.min(1, r.y0)),
-        w_pct: Math.max(0, Math.min(1, r.x1 - r.x0)),
-        h_pct: Math.max(0, Math.min(1, r.y1 - r.y0)),
-        alt: r.alt ?? "",
-      })),
+      image_regions: regions.map((r) => {
+        const x0 = Math.max(0, Math.min(1, r.x0 - PAD));
+        const y0 = Math.max(0, Math.min(1, r.y0 - PAD));
+        const x1 = Math.max(0, Math.min(1, r.x1 + PAD));
+        const y1 = Math.max(0, Math.min(1, r.y1 + PAD));
+        return {
+          page: r.page,
+          x_pct: x0,
+          y_pct: y0,
+          w_pct: Math.max(0, x1 - x0),
+          h_pct: Math.max(0, y1 - y0),
+          alt: r.alt ?? "",
+        };
+      }),
     },
   ] as unknown as Parameters<typeof extractAndUploadQuestionImages>[1];
   const res = await extractAndUploadQuestionImages(
