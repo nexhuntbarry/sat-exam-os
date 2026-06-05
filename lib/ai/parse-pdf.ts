@@ -191,6 +191,23 @@ MATH FORMATTING (CRITICAL):
 - Plain English prose stays unwrapped — only the math itself uses $...$.
 - Do not output ASCII pseudo-math like 1/7, x^2, sqrt(x) — always use LaTeX.
 
+BARE NUMBERS ARE NEVER MATH (CRITICAL — production bug 2026-06-05):
+A pure number — answer choices like "180", "45", "1,150", "0.40" — is NOT a mathematical expression. It is a value. Do NOT wrap it in $...$. The math wrap exists for *expressions* (operators, variables, fractions, exponents, roots, LaTeX commands), not for the number 180 by itself.
+- Right (answer choice for "How many objects?"): "180"
+- Wrong: "$180$"
+- Right (currency): "\\$1,150"
+- Wrong: "$1{,}150$" or "$1,150$"
+- Right (fraction): "$\\frac{1}{2}$"
+- Wrong: "$1/2$" or "$0.5$"
+- The same rule applies inside question_text. A sentence like "300 objects remained" must emit "300" bare — never "$300$".
+
+DOLLAR-SIGN ACCOUNTING (CRITICAL):
+After you finish writing each field (question_text, every choice's text, explanation), audit your own output as if you were the KaTeX renderer:
+1. Count the unescaped `$` glyphs (ignore every occurrence of \\$).
+2. The count MUST be EVEN. Every opening `$` must have a matching closing `$` later in the SAME field.
+3. If your count is odd, you have an unclosed math region — fix it before returning. The most common cause is a currency `$` that should have been written as `\\$`.
+4. If your count is even but the content between an opening / closing pair is NOT an expression (e.g. an English sentence got swallowed), re-emit so the math wrap only contains the actual expression.
+
 CURRENCY (CRITICAL — this has caused production bugs):
 - Dollar amounts in word problems (e.g. \\$950, \\$1,150, \\$0.40) are PROSE, not math.
 - ALWAYS write currency with an escaped backslash-dollar: "\\$950 for the first 2 hours" — never bare "$950" and never math-wrapped "$\\$950$" or "$950$".

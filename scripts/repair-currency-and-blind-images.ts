@@ -86,6 +86,7 @@ async function main() {
     return;
   }
   let totalCurrency = 0;
+  let totalNumWrap = 0;
   let totalBlindResolved = 0;
   let totalDemoted = 0;
   const errors: string[] = [];
@@ -94,10 +95,11 @@ async function main() {
     try {
       const summary = await runPostParseCleanup(m.id, sb);
       totalCurrency += summary.currencyDollarsEscaped;
+      totalNumWrap += summary.pureNumericMathUnwrapped;
       totalBlindResolved += summary.blindImagesResolved;
       totalDemoted += summary.anomaliesDemoted;
       console.log(
-        `currency=${summary.currencyDollarsEscaped} blindImg=${summary.blindImagesResolved} demoted=${summary.anomaliesDemoted}`,
+        `currency=${summary.currencyDollarsEscaped} numWrap=${summary.pureNumericMathUnwrapped} blindImg=${summary.blindImagesResolved} demoted=${summary.anomaliesDemoted}`,
       );
       if (summary.errors.length > 0) {
         errors.push(...summary.errors.map((e) => `${m.id}: ${e}`));
@@ -108,7 +110,7 @@ async function main() {
     }
   }
   console.log(
-    `\nDone. currency-escaped=${totalCurrency} blind-image-resolved=${totalBlindResolved} demoted=${totalDemoted} errors=${errors.length}`,
+    `\nDone. currency-escaped=${totalCurrency} numeric-math-unwrapped=${totalNumWrap} blind-image-resolved=${totalBlindResolved} demoted=${totalDemoted} errors=${errors.length}`,
   );
   if (errors.length > 0) {
     console.log("\nErrors:");

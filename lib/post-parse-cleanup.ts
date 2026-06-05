@@ -33,6 +33,7 @@ export interface PostParseCleanupSummary {
   choicesRecovered: number;
   hasTableFlagFixed: number;
   currencyDollarsEscaped: number;
+  pureNumericMathUnwrapped: number;
   blindImagesResolved: number;
   anomaliesDemoted: number;
   errors: string[];
@@ -394,6 +395,84 @@ async function patchCurrencyDollars(
     if (explDirty) update.explanation = nextExpl;
     if (nextChoices) update.choices = nextChoices;
     update.updated_at = new Date().toISOString();
+    const { error: upErr } = await db
+      .from("questions")
+      .update(update)
+      .eq("id", q.id);
+    if (!upErr) patched++;
+  }
+  return patched;
+}
+
+// ── 3b''. Unwrap pure-numeric math regions ────────────────────────
+//
+// The parser keeps wrapping bare numbers in answer choices as
+// inline math: "$180$", "$45$", "$1{,}150$". When the value is a
+// pure number with no operators, variables, or LaTeX commands, the
+// math wrap adds nothing and the renderer puts the number in italic
+// serif (so "180" looks completely different from the other prose).
+// Worse, half the time the parser pairs `$180$` with another stray
+// `$` elsewhere in the same string and the whole thing becomes one
+// runaway math region.
+//
+// Strip the wrap whenever the content between two unescaped `$`
+// glyphs is a single token of digits / commas / a decimal / a
+// leading minus, with optional LaTeX thin-space (`{,}`). Real math
+// (`$x$`, `$x^2$`, `$\frac{1}{2}$`, `$1 + 2$`) starts with a
+// letter / backslash / has an operator and is left alone.
+
+const PURE_NUMERIC_MATH_RE =
+  /(^|[^\\])\$\s*(-?\d[\d,]*(?:\{,\}\d+)?(?:\.\d+)?)\s*\$/g;
+
+function unwrapPureNumericMath(text: string): string {
+  if (!text) return text;
+  let prev = "";
+  let out = text;
+  // Repeat until stable so adjacent wrap-pairs all get unwrapped.
+  while (prev !== out) {
+    prev = out;
+    out = out.replace(PURE_NUMERIC_MATH_RE, (_m, lead: string, num: string) => {
+      // Normalize LaTeX thin-space `{,}` back to plain comma — prose
+      // doesn't need the math-mode thousand grouping macro.
+      const normalized = num.replace(/\{,\}/g, ",");
+      return `${lead}${normalized}`;
+    });
+  }
+  return out;
+}
+
+async function unwrapPureNumericMathInModule(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, question_text, choices, explanation")
+    .eq("module_id", moduleId);
+  if (error) throw new Error(`unwrapPureNumericMath select: ${error.message}`);
+  let patched = 0;
+  for (const q of data ?? []) {
+    const nextText = unwrapPureNumericMath((q.question_text as string) ?? "");
+    const nextExpl = unwrapPureNumericMath((q.explanation as string) ?? "");
+    let nextChoices: Array<{ label: string; text: string }> | null = null;
+    if (Array.isArray(q.choices)) {
+      const arr = q.choices as Array<{ label: string; text: string }>;
+      const stripped = arr.map((c) => ({
+        ...c,
+        text: unwrapPureNumericMath(c.text ?? ""),
+      }));
+      const dirty = stripped.some((c, i) => c.text !== arr[i].text);
+      if (dirty) nextChoices = stripped;
+    }
+    const textDirty = nextText !== (q.question_text ?? "");
+    const explDirty = nextExpl !== (q.explanation ?? "");
+    if (!textDirty && !explDirty && !nextChoices) continue;
+    const update: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (textDirty) update.question_text = nextText;
+    if (explDirty) update.explanation = nextExpl;
+    if (nextChoices) update.choices = nextChoices;
     const { error: upErr } = await db
       .from("questions")
       .update(update)
@@ -811,6 +890,7 @@ export async function runPostParseCleanup(
     choicesRecovered: 0,
     hasTableFlagFixed: 0,
     currencyDollarsEscaped: 0,
+    pureNumericMathUnwrapped: 0,
     blindImagesResolved: 0,
     anomaliesDemoted: 0,
     errors: [],
@@ -854,6 +934,11 @@ export async function runPostParseCleanup(
     "patchCurrencyDollars",
     () => patchCurrencyDollars(moduleId, db),
     (v) => (summary.currencyDollarsEscaped = v),
+  );
+  await safe(
+    "unwrapPureNumericMath",
+    () => unwrapPureNumericMathInModule(moduleId, db),
+    (v) => (summary.pureNumericMathUnwrapped = v),
   );
   await safe(
     "resolveBlindImages",
