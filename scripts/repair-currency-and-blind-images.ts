@@ -99,7 +99,7 @@ async function main() {
       totalBlindResolved += summary.blindImagesResolved;
       totalDemoted += summary.anomaliesDemoted;
       console.log(
-        `currency=${summary.currencyDollarsEscaped} numWrap=${summary.pureNumericMathUnwrapped} blindImg=${summary.blindImagesResolved} demoted=${summary.anomaliesDemoted}`,
+        `currency=${summary.currencyDollarsEscaped} numWrap=${summary.pureNumericMathUnwrapped} ansNorm=${summary.answerLetterNormalizations} blindImg=${summary.blindImagesResolved} demoted=${summary.anomaliesDemoted}`,
       );
       if (summary.errors.length > 0) {
         errors.push(...summary.errors.map((e) => `${m.id}: ${e}`));

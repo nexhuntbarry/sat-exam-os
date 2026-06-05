@@ -34,6 +34,7 @@ export interface PostParseCleanupSummary {
   hasTableFlagFixed: number;
   currencyDollarsEscaped: number;
   pureNumericMathUnwrapped: number;
+  answerLetterNormalizations: number;
   blindImagesResolved: number;
   anomaliesDemoted: number;
   errors: string[];
@@ -482,6 +483,76 @@ async function unwrapPureNumericMathInModule(
   return patched;
 }
 
+// ── 3b'''. Normalize MCQ correct_answer to uppercase + flag
+// explanation/answer contradictions ────────────────────────────────
+//
+// Two real-world rows have shown the parser writing the answer
+// letter in lowercase ("c") while the audit + UI both expect "C".
+// We also see explanations that ramble between two letters and
+// pick the wrong one ("...I'll trust the answer key: B" while the
+// stored answer is "c"). Normalize + flag so the admin sees the
+// real conflict instead of UI weirdness.
+
+const ANSWER_KEY_TRAILER_RE =
+  /(?:answer key (?:says|is)|I(?:'|’)ll trust the answer key:|final answer:)\s*([A-D])\b/gi;
+
+async function normalizeAnswerLettersAndFlagContradictions(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select(
+      "id, original_question_number, question_type, correct_answer, explanation, parsing_status, parsing_notes",
+    )
+    .eq("module_id", moduleId);
+  if (error)
+    throw new Error(
+      `normalizeAnswerLettersAndFlagContradictions select: ${error.message}`,
+    );
+  let touched = 0;
+  for (const q of data ?? []) {
+    if (q.question_type !== "Multiple Choice") continue;
+    const current = ((q.correct_answer as string) ?? "").trim();
+    if (!current) continue;
+    const upper = current.toUpperCase();
+    const update: Record<string, unknown> = {};
+    if (upper !== current && /^[A-D]$/.test(upper)) {
+      update.correct_answer = upper;
+    }
+    // Look for "answer key says X" / "I'll trust the answer key: X"
+    // / "Final answer: X" trailers and flag a contradiction with the
+    // stored letter. We just attach a parsing_note + demote — the
+    // admin still has to look at the PDF and decide.
+    const expl = (q.explanation as string | null) ?? "";
+    const letters = new Set<string>();
+    let m: RegExpExecArray | null;
+    ANSWER_KEY_TRAILER_RE.lastIndex = 0;
+    while ((m = ANSWER_KEY_TRAILER_RE.exec(expl))) {
+      letters.add(m[1].toUpperCase());
+    }
+    const storedLetter = upper && /^[A-D]$/.test(upper) ? upper : null;
+    let contradicts = false;
+    if (storedLetter && letters.size > 0 && !letters.has(storedLetter)) {
+      contradicts = true;
+    }
+    if (contradicts) {
+      const note = `Explanation references ${[...letters].join("/")} but correct_answer is ${storedLetter}. Verify against PDF answer key.`;
+      update.parsing_status = "Needs Review";
+      update.parsing_notes = note;
+      update.reviewed_at = null;
+    }
+    if (Object.keys(update).length === 0) continue;
+    update.updated_at = new Date().toISOString();
+    const { error: upErr } = await db
+      .from("questions")
+      .update(update)
+      .eq("id", q.id);
+    if (!upErr) touched++;
+  }
+  return touched;
+}
+
 // ── 3c. Resolve "blind image" questions ───────────────────────────
 //
 // Parser sometimes flags has_image=true on questions that, on
@@ -891,6 +962,7 @@ export async function runPostParseCleanup(
     hasTableFlagFixed: 0,
     currencyDollarsEscaped: 0,
     pureNumericMathUnwrapped: 0,
+    answerLetterNormalizations: 0,
     blindImagesResolved: 0,
     anomaliesDemoted: 0,
     errors: [],
@@ -939,6 +1011,11 @@ export async function runPostParseCleanup(
     "unwrapPureNumericMath",
     () => unwrapPureNumericMathInModule(moduleId, db),
     (v) => (summary.pureNumericMathUnwrapped = v),
+  );
+  await safe(
+    "normalizeAnswerLettersAndFlagContradictions",
+    () => normalizeAnswerLettersAndFlagContradictions(moduleId, db),
+    (v) => (summary.answerLetterNormalizations = v),
   );
   await safe(
     "resolveBlindImages",
