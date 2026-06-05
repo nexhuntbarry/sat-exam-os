@@ -203,9 +203,9 @@ A pure number — answer choices like "180", "45", "1,150", "0.40" — is NOT a 
 
 DOLLAR-SIGN ACCOUNTING (CRITICAL):
 After you finish writing each field (question_text, every choice's text, explanation), audit your own output as if you were the KaTeX renderer:
-1. Count the unescaped `$` glyphs (ignore every occurrence of \\$).
-2. The count MUST be EVEN. Every opening `$` must have a matching closing `$` later in the SAME field.
-3. If your count is odd, you have an unclosed math region — fix it before returning. The most common cause is a currency `$` that should have been written as `\\$`.
+1. Count the unescaped "$" glyphs (ignore every occurrence of \\$).
+2. The count MUST be EVEN. Every opening "$" must have a matching closing "$" later in the SAME field.
+3. If your count is odd, you have an unclosed math region — fix it before returning. The most common cause is a currency "$" that should have been written as \\$.
 4. If your count is even but the content between an opening / closing pair is NOT an expression (e.g. an English sentence got swallowed), re-emit so the math wrap only contains the actual expression.
 
 CURRENCY (CRITICAL — this has caused production bugs):
