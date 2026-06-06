@@ -33,11 +33,14 @@ export interface PostParseCleanupSummary {
   choicesRecovered: number;
   hasTableFlagFixed: number;
   currencyDollarsEscaped: number;
+  backslashDigitsStripped: number;
+  doublyEscapedMathFixed: number;
   pureNumericMathUnwrapped: number;
   answerLetterNormalizations: number;
   duplicateQuestionsRemoved: number;
   blindImagesResolved: number;
   anomaliesDemoted: number;
+  rowsRepromoted: number;
   errors: string[];
 }
 
@@ -397,6 +400,156 @@ async function patchCurrencyDollars(
     if (explDirty) update.explanation = nextExpl;
     if (nextChoices) update.choices = nextChoices;
     update.updated_at = new Date().toISOString();
+    const { error: upErr } = await db
+      .from("questions")
+      .update(update)
+      .eq("id", q.id);
+    if (!upErr) patched++;
+  }
+  return patched;
+}
+
+// ── 3b'. Strip invalid backslash-digit escapes ────────────────────
+//
+// The parser keeps treating bare numbers as something that needs
+// escaping and emits `\10`, `\3`, `\13`, `\6` etc. inside choice
+// text and explanations. KaTeX has no `\10` / `\13` macros, so the
+// renderer either prints the literal backslash + digits or
+// substitutes a control character. Either way the student sees
+// garbage where there should be a number.
+//
+// Rule: any backslash followed by one-or-more digits (optionally
+// with a decimal point) that ISN'T preceded by another backslash
+// (which would make it a `\\` line break we want to leave alone)
+// is parser slop. Strip the leading backslash. Valid LaTeX
+// commands like \frac, \sqrt, \text, \pi, \theta start with
+// letters, not digits, so this pattern is unambiguous.
+
+const BACKSLASH_DIGIT_RE = /(^|[^\\])\\(\d+(?:[.,]\d+)?)/g;
+
+function stripBackslashDigits(text: string): string {
+  if (!text) return text;
+  let prev = "";
+  let out = text;
+  while (prev !== out) {
+    prev = out;
+    out = out.replace(BACKSLASH_DIGIT_RE, "$1$2");
+  }
+  return out;
+}
+
+async function patchBackslashDigits(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, question_text, choices, explanation")
+    .eq("module_id", moduleId);
+  if (error) throw new Error(`patchBackslashDigits select: ${error.message}`);
+  let patched = 0;
+  for (const q of data ?? []) {
+    const nextText = stripBackslashDigits((q.question_text as string) ?? "");
+    const nextExpl = stripBackslashDigits((q.explanation as string) ?? "");
+    let nextChoices: Array<{ label: string; text: string }> | null = null;
+    if (Array.isArray(q.choices)) {
+      const arr = q.choices as Array<{ label: string; text: string }>;
+      const stripped = arr.map((c) => ({
+        ...c,
+        text: stripBackslashDigits(c.text ?? ""),
+      }));
+      const dirty = stripped.some((c, i) => c.text !== arr[i].text);
+      if (dirty) nextChoices = stripped;
+    }
+    const textDirty = nextText !== (q.question_text ?? "");
+    const explDirty = nextExpl !== (q.explanation ?? "");
+    if (!textDirty && !explDirty && !nextChoices) continue;
+    const update: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (textDirty) update.question_text = nextText;
+    if (explDirty) update.explanation = nextExpl;
+    if (nextChoices) update.choices = nextChoices;
+    const { error: upErr } = await db
+      .from("questions")
+      .update(update)
+      .eq("id", q.id);
+    if (!upErr) patched++;
+  }
+  return patched;
+}
+
+// ── 3b''-. Fix doubly-escaped math regions ────────────────────────
+//
+// Newer parser slop: the model wrapped numbers like `7`, `39`,
+// `13u` in BOTH the currency-escape form AND the math delimiter
+// form simultaneously — `\$7$`, `\$39$`, `\$13u = 3u$`. KaTeX
+// reads `\$` as a literal dollar sign and only the second `$`
+// opens math, so the renderer either swallows the surrounding
+// text into a runaway math region or prints garbage like
+// "$7 and $13".
+//
+// Correct interpretation depends on the content between the
+// `\$` and the next `$`:
+//   - Pure number ("7", "39", "1,150") — the math wrap is
+//     redundant, strip BOTH and emit the bare number. This is
+//     downstream of the existing pureNumericMath unwrap; we
+//     just need to first drop the leading backslash so that
+//     step can find the pair.
+//   - Math expression ("13u = 3u", "x + 5") — the math wrap
+//     is real, the leading backslash was a parser mistake.
+//     Drop the backslash so the `$...$` pair is valid KaTeX.
+//
+// We do both transforms in one regex: replace `\\$<run>$` with
+// `$<run>$` whenever the closing `$` exists in the SAME field.
+// The subsequent pureNumericMath pass collapses pure-number
+// pairs; everything else renders as math.
+
+const ESCAPED_MATH_WRAP_RE = /(^|[^\\])\\\$([^$\n]+?)\$/g;
+
+function fixDoublyEscapedMath(text: string): string {
+  if (!text) return text;
+  let prev = "";
+  let out = text;
+  while (prev !== out) {
+    prev = out;
+    out = out.replace(ESCAPED_MATH_WRAP_RE, "$1$$$2$$");
+  }
+  return out;
+}
+
+async function patchDoublyEscapedMath(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, question_text, choices, explanation")
+    .eq("module_id", moduleId);
+  if (error) throw new Error(`patchDoublyEscapedMath select: ${error.message}`);
+  let patched = 0;
+  for (const q of data ?? []) {
+    const nextText = fixDoublyEscapedMath((q.question_text as string) ?? "");
+    const nextExpl = fixDoublyEscapedMath((q.explanation as string) ?? "");
+    let nextChoices: Array<{ label: string; text: string }> | null = null;
+    if (Array.isArray(q.choices)) {
+      const arr = q.choices as Array<{ label: string; text: string }>;
+      const stripped = arr.map((c) => ({
+        ...c,
+        text: fixDoublyEscapedMath(c.text ?? ""),
+      }));
+      const dirty = stripped.some((c, i) => c.text !== arr[i].text);
+      if (dirty) nextChoices = stripped;
+    }
+    const textDirty = nextText !== (q.question_text ?? "");
+    const explDirty = nextExpl !== (q.explanation ?? "");
+    if (!textDirty && !explDirty && !nextChoices) continue;
+    const update: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (textDirty) update.question_text = nextText;
+    if (explDirty) update.explanation = nextExpl;
+    if (nextChoices) update.choices = nextChoices;
     const { error: upErr } = await db
       .from("questions")
       .update(update)
@@ -1026,6 +1179,55 @@ const CHECKS: Array<{
   },
 ];
 
+// ── 4'. Re-promote rows whose old failure no longer applies ────────
+//
+// The cleanup steps above can rescue a row that was demoted in an
+// earlier parse — a stripped backslash, a fixed doubly-escaped
+// math wrap, a normalized answer letter — but the original
+// auditAndDemote step only looks at Approved / Draft. Without a
+// re-promote, a now-clean row stays parked in Needs Review with
+// stale "failed checks → …" notes.
+//
+// For every Needs Review row whose parsing_notes mentions
+// "post-parse-cleanup" demotion, run the audit checks again with
+// the current text. If every check now passes, drop the row back
+// to Draft (the human reviewer still has the final say) and clear
+// the stale note.
+
+async function repromoteResolvedRows(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select(
+      "id, section, question_type, question_text, choices, correct_answer, explanation, has_image, image_urls, has_table, parsing_status, parsing_notes",
+    )
+    .eq("module_id", moduleId)
+    .eq("parsing_status", "Needs Review")
+    .like("parsing_notes", "%Demoted by post-parse-cleanup%");
+  if (error)
+    throw new Error(`repromoteResolvedRows select: ${error.message}`);
+  let promoted = 0;
+  for (const row of (data ?? []) as Array<AuditRow & {
+    parsing_status: string;
+  }>) {
+    const stillFailing = CHECKS.filter((c) => c.failed(row)).map((c) => c.id);
+    if (stillFailing.length > 0) continue;
+    const { error: upErr } = await db
+      .from("questions")
+      .update({
+        parsing_status: "Draft",
+        parsing_notes:
+          "Re-promoted by post-parse-cleanup after earlier failures cleared. Re-review before approve.",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", row.id);
+    if (!upErr) promoted++;
+  }
+  return promoted;
+}
+
 async function auditAndDemote(
   moduleId: string,
   db: SupabaseClient,
@@ -1068,11 +1270,14 @@ export async function runPostParseCleanup(
     choicesRecovered: 0,
     hasTableFlagFixed: 0,
     currencyDollarsEscaped: 0,
+    backslashDigitsStripped: 0,
+    doublyEscapedMathFixed: 0,
     pureNumericMathUnwrapped: 0,
     answerLetterNormalizations: 0,
     duplicateQuestionsRemoved: 0,
     blindImagesResolved: 0,
     anomaliesDemoted: 0,
+    rowsRepromoted: 0,
     errors: [],
   };
   const safe = async <T>(
@@ -1116,6 +1321,16 @@ export async function runPostParseCleanup(
     (v) => (summary.currencyDollarsEscaped = v),
   );
   await safe(
+    "patchBackslashDigits",
+    () => patchBackslashDigits(moduleId, db),
+    (v) => (summary.backslashDigitsStripped = v),
+  );
+  await safe(
+    "patchDoublyEscapedMath",
+    () => patchDoublyEscapedMath(moduleId, db),
+    (v) => (summary.doublyEscapedMathFixed = v),
+  );
+  await safe(
     "unwrapPureNumericMath",
     () => unwrapPureNumericMathInModule(moduleId, db),
     (v) => (summary.pureNumericMathUnwrapped = v),
@@ -1139,6 +1354,11 @@ export async function runPostParseCleanup(
     "auditAndDemote",
     () => auditAndDemote(moduleId, db),
     (v) => (summary.anomaliesDemoted = v),
+  );
+  await safe(
+    "repromoteResolvedRows",
+    () => repromoteResolvedRows(moduleId, db),
+    (v) => (summary.rowsRepromoted = v),
   );
   return summary;
 }

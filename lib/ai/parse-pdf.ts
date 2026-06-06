@@ -201,6 +201,14 @@ A pure number — answer choices like "180", "45", "1,150", "0.40" — is NOT a 
 - Wrong: "$1/2$" or "$0.5$"
 - The same rule applies inside question_text. A sentence like "300 objects remained" must emit "300" bare — never "$300$".
 
+NEVER ESCAPE A BARE NUMBER WITH A BACKSLASH (CRITICAL — production bug 2026-06-06):
+A digit is just a digit. Do NOT write "\\3", "\\10", "\\13", "\\47", etc. as a way of "escaping" a number. There is no LaTeX command \\3 or \\13 — the KaTeX renderer either prints the raw "\\3" or substitutes a control character, and the student sees garbage. The only valid backslash-prefix on a number is the currency form "\\$5", "\\$1,150" where the backslash escapes the dollar sign, not the digit.
+- Right: "Multiply both sides by 39." / "the LCM of 3 and 13"
+- Wrong: "Multiply both sides by \\39." / "the LCM of \\3 and \\13"
+- Right: "\\$5 admission" (currency)
+- Wrong: "\\5 admission" (backslash before digit with no dollar sign)
+This rule applies to question_text, every choice's text, correct_answer, AND explanation.
+
 DOLLAR-SIGN ACCOUNTING (CRITICAL):
 After you finish writing each field (question_text, every choice's text, explanation), audit your own output as if you were the KaTeX renderer:
 1. Count the unescaped "$" glyphs (ignore every occurrence of \\$).
