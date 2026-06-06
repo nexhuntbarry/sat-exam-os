@@ -179,71 +179,44 @@ DIFFICULTY: Use Easy / Medium / Hard based on typical SAT difficulty conventions
 SKILL: A more specific skill within the domain (e.g., "Linear equations in one variable", "Inferences", "Transitions", etc.)
 CONCEPT: Even finer-grained concept (e.g., "Solving for x", "Author's purpose", "Comma usage").
 
-MATH FORMATTING (CRITICAL):
-- Every mathematical expression — even simple ones — MUST be wrapped in $...$ for inline math or $$...$$ for display math.
-- Use proper LaTeX commands: \\frac{a}{b} for fractions, \\sqrt{x} for square roots, x^{2} for exponents, _{i} for subscripts.
-- Examples:
-  - "the slope is 1/7" → "the slope is $\\frac{1}{7}$"
-  - "y = 7x - 53" → "$y = 7x - 53$"
-  - "x squared plus 4" → "$x^{2} + 4$"
-  - "RS = sqrt(133)" → "$RS = \\sqrt{133}$"
-- This applies to question_text, every choice's text, correct_answer, AND explanation.
-- Plain English prose stays unwrapped — only the math itself uses $...$.
-- Do not output ASCII pseudo-math like 1/7, x^2, sqrt(x) — always use LaTeX.
+FORMATTING NUMBERS, MATH, AND DOLLAR SIGNS (CRITICAL — single source of truth):
 
-BARE NUMBERS ARE NEVER MATH (CRITICAL — production bug 2026-06-05):
-A pure number — answer choices like "180", "45", "1,150", "0.40" — is NOT a mathematical expression. It is a value. Do NOT wrap it in $...$. The math wrap exists for *expressions* (operators, variables, fractions, exponents, roots, LaTeX commands), not for the number 180 by itself.
-- Right (answer choice for "How many objects?"): "180"
-- Wrong: "$180$"
-- Right (currency): "\\$1,150"
-- Wrong: "$1{,}150$" or "$1,150$"
-- Right (fraction): "$\\frac{1}{2}$"
-- Wrong: "$1/2$" or "$0.5$"
-- The same rule applies inside question_text. A sentence like "300 objects remained" must emit "300" bare — never "$300$".
+This block REPLACES every earlier rule about "$", "\\$", math wrapping, and number escaping. Apply it to question_text, every choice's text, correct_answer, AND explanation.
 
-NEVER ESCAPE A BARE NUMBER WITH A BACKSLASH (CRITICAL — production bug 2026-06-06):
-A digit is just a digit. Do NOT write "\\3", "\\10", "\\13", "\\47", etc. as a way of "escaping" a number. There is no LaTeX command \\3 or \\13 — the KaTeX renderer either prints the raw "\\3" or substitutes a control character, and the student sees garbage. The only valid backslash-prefix on a number is the currency form "\\$5", "\\$1,150" where the backslash escapes the dollar sign, not the digit.
-- Right: "Multiply both sides by 39." / "the LCM of 3 and 13"
-- Wrong: "Multiply both sides by \\39." / "the LCM of \\3 and \\13"
-- Right: "\\$5 admission" (currency)
-- Wrong: "\\5 admission" (backslash before digit with no dollar sign)
-This rule applies to question_text, every choice's text, correct_answer, AND explanation.
+For each token you write, pick ONE of these forms — never combine them:
 
-DOLLAR-SIGN ACCOUNTING (CRITICAL):
-After you finish writing each field (question_text, every choice's text, explanation), audit your own output as if you were the KaTeX renderer:
-1. Count the unescaped "$" glyphs (ignore every occurrence of \\$).
-2. The count MUST be EVEN. Every opening "$" must have a matching closing "$" later in the SAME field.
-3. If your count is odd, you have an unclosed math region — fix it before returning. The most common cause is a currency "$" that should have been written as \\$.
-4. If your count is even but the content between an opening / closing pair is NOT an expression (e.g. an English sentence got swallowed), re-emit so the math wrap only contains the actual expression.
+(a) Pure value (a number with no operator, variable, fraction, root, exponent, or LaTeX command):
+    Examples: 180, 45, 1,150, 0.40, -4, -12, 0.33
+    Write it BARE. No \$, no $...$, no backslash.
+    A leading minus sign is part of the value, NOT an operator — "-12" is still a pure value and goes bare.
+    RIGHT: "180", "-12", "-0.33" | WRONG: "$180$", "$-12$", "\\$180", "\\$180$", "\\180"
 
-CURRENCY (CRITICAL — this has caused production bugs):
-- Dollar amounts in word problems (e.g. \\$950, \\$1,150, \\$0.40) are PROSE, not math.
-- ALWAYS write currency with an escaped backslash-dollar: "\\$950 for the first 2 hours" — never bare "$950" and never math-wrapped "$\\$950$" or "$950$".
-- A bare "$" followed by a number will be interpreted by the markdown renderer as opening inline math, swallowing the rest of the sentence into italicised KaTeX.
-- Right: "Bennett opened an account with \\$600 and earned \\$2.40 in interest."
-- Wrong: "Bennett opened an account with $600 and earned $2.40 in interest."
-- Wrong: "Bennett opened an account with $\\$600$ and earned $\\$2.40$ in interest."
-- This rule applies to question_text, choice text, correct_answer, AND explanation.
+(b) Currency in prose (a dollar amount being described, not computed):
+    Examples: \\$5 admission, the \\$1,150 fee, earned \\$2.40 in interest
+    Write \\$ then the digits. No surrounding $...$ wrap.
+    RIGHT: "\\$5 admission" | WRONG: "$5 admission", "$\\$5$", "\\5"
 
-MIXED CURRENCY + EQUATION (CRITICAL — production bug 2026-05-11):
-When a choice or sentence has BOTH currency AND a non-trivial equation (operators, variables, parentheses), DO NOT lump the whole thing inside a single escaped-dollar wrap or a math wrap. Currency stays escaped, equation pieces stay in math wrap, English connectors stay as prose.
+(c) Math expression (contains an operator, variable, fraction, root, exponent, OR a LaTeX command like \\frac \\sqrt \\text):
+    Examples: $y = 3x + 2$, $\\frac{1}{2}$, $x^{2}$, $13u = 3u$, $\\sqrt{133}$, $RS = \\sqrt{133}$
+    Wrap in single "$" for inline, "$$" for display. Use LaTeX commands inside.
+    RIGHT: "$y = 3x + 2$" | WRONG: "y = 3x + 2", "$1/2$", "$0.5$"
 
-- WRONG: "\\$950 + 50(t - 2) = 1{,}150\\$"
-  (whole string treated as literal currency; the LaTeX thin-space macro for thousand grouping is meaningless outside a math context and renders as garbage)
-- WRONG: "$950 + 50(t - 2) = 1{,}150$"
-  (the outer dollars are taken as math delimiters, so the leading \\$950 opens math instead of being currency)
-- WRONG: "$\\$950 + 50(t - 2) = \\$1{,}150$"
-  (escaped currency inside a math wrap — escapes don't work that way)
-- RIGHT: "\\$950 + $50(t - 2)$ = \\$1{,}150"
-  (currency escaped with backslash-dollar; only the algebraic middle is in math wrap)
-- RIGHT (equation form, no currency on LHS/RHS): "$950(t - 2) + 50t = 1{,}150$"
-  (no currency anywhere → the whole equation is math; the LaTeX thin-space macro is fine inside math)
+(d) Mixed currency + math in one sentence:
+    Treat each piece by its own rule. Currency stays \\$<digits>, math goes in $...$, English words stay plain. NEVER lump them inside one wrap.
+    RIGHT: "the bus rents for \\$950 plus $50t$ per hour"
+    WRONG: "\\$950 + 50t = \\$1,150\\$" (everything inside one currency wrap)
+    WRONG: "$\\$950 + 50(t - 2) = \\$1,150$" (escaped currency inside math wrap)
 
-Decision rule:
-  1. Identify each dollar-amount token. If it's a real monetary amount in prose ("rent the bus for \\$950"), write it with the backslash-dollar — never inside math.
-  2. Identify each algebraic chunk (variables, operators, =, parentheses around variables). Wrap each chunk in single-dollar math delimiters.
-  3. Connectors like " for ", " and ", " is " stay as plain English between the math chunks.
-  4. NEVER emit raw LaTeX macros (the thin-space comma macro, \\frac, \\sqrt, etc.) outside a math wrap. If you see a number with the LaTeX thin-space for thousand grouping, that ONLY belongs inside math; otherwise write the comma directly (1,150, not the LaTeX thin-space form).
+DO NOT write a backslash directly before a digit (\\3, \\10, \\13, \\47, etc.) — there are no \\3 or \\13 LaTeX commands, only \\$<digits> for currency. A digit is just a digit; if it isn't currency, write it bare.
+
+DO NOT use ASCII pseudo-math like "1/7", "x^2", or "sqrt(x)" inside or outside a math wrap — always render as LaTeX inside $...$.
+
+SELF-CHECK BEFORE RETURNING — walk every field once and verify:
+
+1. Count unescaped "$" glyphs in the field (treat every "\\$" as zero). The remaining count MUST be EVEN. Odd = unclosed math; most often a currency "$" you forgot to escape.
+2. Each "$...$" pair must contain a real math expression (operator, variable, fraction, LaTeX command). If you find a pair whose content is just a number ("$180$", "$45$") or English prose ("$themeasureofangleB$"), redo: numbers go bare (rule a), prose goes outside.
+3. No "\\<digit>" anywhere — if you see "\\3", "\\10", "\\13", remove the backslash.
+4. No "\\$<digit>$" anywhere — that's a doubly-escaped wrap. Pick form (a) for plain numbers or form (c) for math.
 
 MULTIPLE CHOICE QUESTIONS (CRITICAL — never drop the choices):
 Every SAT question marked Multiple Choice in this PDF has exactly four labelled options A, B, C, D. The downstream system stores them in a JSON array and uses that array to render the choice buttons; if the array is empty or missing the student sees the stem with no options to pick from.

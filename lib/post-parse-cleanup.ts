@@ -505,7 +505,13 @@ async function patchBackslashDigits(
 // The subsequent pureNumericMath pass collapses pure-number
 // pairs; everything else renders as math.
 
-const ESCAPED_MATH_WRAP_RE = /(^|[^\\])\\\$([^$\n]+?)\$/g;
+// Cap the captured content at 25 chars so a legitimate currency
+// reference followed elsewhere in the same field by a real math
+// region (`paid \\$600 and earned $B(x)$ in interest`) doesn't get
+// folded into a single bogus wrap. Doubly-escaped slop never spans
+// long prose in practice — it's always a short token like
+// `\\$7$`, `\\$39$`, `\\$13u = 3u$`.
+const ESCAPED_MATH_WRAP_RE = /(^|[^\\])\\\$([^$\n]{1,25}?)\$/g;
 
 function fixDoublyEscapedMath(text: string): string {
   if (!text) return text;
