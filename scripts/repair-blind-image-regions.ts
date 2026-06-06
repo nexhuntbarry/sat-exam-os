@@ -65,6 +65,11 @@ const BBOX_SYSTEM = `You are returning a bounding box around the figure (graph, 
 
 Coordinates are FRACTIONS of the page dimensions: (0,0) = top-left, (1,1) = bottom-right.
 
+PROCESS — follow this every time:
+  Step 1: scan the page and identify the visual that belongs to the target question. Mentally trace its OWN frame (the chart's axes + plot area + legend block; the table's caption + header + body rows + source line; the geometric figure's drawing region).
+  Step 2: BEFORE writing coordinates, answer the self-check fields what_is_above_y0 and what_is_below_y1. If your y0 sits in the middle of the visual, or your y1 sits in the middle of a paragraph BELOW the visual, your numbers are wrong — fix them, then re-answer.
+  Step 3: write the coordinates.
+
 VERTICAL BOUNDARIES — the most common failure mode:
 
   TOP boundary (y0): Place y0 directly at the visual's own top edge — the chart's title bar, the table's short caption (e.g. "Studies of Cougar Population Density"), or the geometric figure's drawing area. DO NOT include:
@@ -95,6 +100,21 @@ If you genuinely cannot find a figure for this question (the parser was wrong, t
 Return JSON only.`;
 
 const BBoxSchema = z.object({
+  // Self-check fields force the model to verbalize what's actually
+  // inside the bbox before it commits, which catches the failure
+  // mode where Claude returns a box that visually "feels right" but
+  // includes prose below the legend. We ignore these fields server-
+  // side, but the act of writing them out tightens the bbox itself.
+  what_is_above_y0: z
+    .string()
+    .describe(
+      "One short sentence: what page content sits just ABOVE your y0 line? If it's the previous question's answer choices or a 'Question N' banner, your y0 is correct (figure starts below). If it's something part of the figure itself (chart title, table caption), move y0 up.",
+    ),
+  what_is_below_y1: z
+    .string()
+    .describe(
+      "One short sentence: what page content sits just BELOW your y1 line? If it's prose describing the figure or this question's answer choices, your y1 is correct (figure ends above). If it's something part of the figure (last table row, x-axis label, legend), move y1 down.",
+    ),
   regions: z
     .array(
       z.object({
