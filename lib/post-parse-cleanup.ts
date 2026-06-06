@@ -35,6 +35,7 @@ export interface PostParseCleanupSummary {
   currencyDollarsEscaped: number;
   pureNumericMathUnwrapped: number;
   answerLetterNormalizations: number;
+  duplicateQuestionsRemoved: number;
   blindImagesResolved: number;
   anomaliesDemoted: number;
   errors: string[];
@@ -553,6 +554,112 @@ async function normalizeAnswerLettersAndFlagContradictions(
   return touched;
 }
 
+// ── 3b''''. Dedupe questions with the same original_question_number
+// inside one module ───────────────────────────────────────────────
+//
+// The parser occasionally emits two rows for the same SAT question
+// number (e.g. a Multiple Choice row from one pass + a Student
+// Produced Response row from a follow-up pass). The duplicate
+// shows up in the admin UI as two separate Q22 entries — one
+// usually correct, one usually wrong — and downstream test
+// rendering picks whichever it finds first. Barry hit this with
+// Q22 in September 2025 SAT Math Module 2 tonight, where the SPR
+// twin had stem text from a different question entirely and a
+// letter answer.
+//
+// Auto-resolve: rank duplicates by quality and delete the worse
+// row. Ranking (higher score wins):
+//
+//   +30 parsing_status = Approved
+//   +20 parsing_status = Draft
+//   +10 parsing_status = Needs Review
+//    0  parsing_status = Rejected
+//   +5  Multiple Choice with exactly 4 choices populated
+//   +5  has a non-empty correct_answer
+//   +3  has a non-empty explanation
+//   +1  per task / answer slot populated
+//
+// Idempotent — re-running on a deduped module is a no-op. We
+// migrate to a DB UNIQUE (module_id, original_question_number)
+// after this step has run across the existing corpus.
+
+interface DedupCandidate {
+  id: string;
+  question_type: string | null;
+  correct_answer: string | null;
+  explanation: string | null;
+  parsing_status: string | null;
+  choices: Array<{ label: string; text: string }> | null;
+}
+
+function dedupScore(q: DedupCandidate): number {
+  let s = 0;
+  switch (q.parsing_status) {
+    case "Approved":
+      s += 30;
+      break;
+    case "Draft":
+      s += 20;
+      break;
+    case "Needs Review":
+      s += 10;
+      break;
+    case "Rejected":
+      s += 0;
+      break;
+  }
+  if (q.question_type === "Multiple Choice") {
+    const n = Array.isArray(q.choices) ? q.choices.length : 0;
+    if (n === 4) s += 5;
+  }
+  if ((q.correct_answer ?? "").trim() !== "") s += 5;
+  if ((q.explanation ?? "").trim() !== "") s += 3;
+  return s;
+}
+
+async function dedupeDuplicateQuestionNumbers(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select(
+      "id, original_question_number, question_type, correct_answer, explanation, parsing_status, choices",
+    )
+    .eq("module_id", moduleId);
+  if (error)
+    throw new Error(`dedupeDuplicateQuestionNumbers select: ${error.message}`);
+  const byNum = new Map<number, DedupCandidate[]>();
+  for (const row of (data ?? []) as Array<DedupCandidate & {
+    original_question_number: number | null;
+  }>) {
+    const n = row.original_question_number;
+    if (n === null || n === undefined) continue;
+    if (!byNum.has(n)) byNum.set(n, []);
+    byNum.get(n)!.push(row);
+  }
+  let removed = 0;
+  for (const [, rows] of byNum) {
+    if (rows.length < 2) continue;
+    rows.sort((a, b) => dedupScore(b) - dedupScore(a));
+    const keep = rows[0];
+    const drop = rows.slice(1);
+    for (const r of drop) {
+      const { error: delErr } = await db
+        .from("questions")
+        .delete()
+        .eq("id", r.id);
+      if (!delErr) {
+        removed++;
+        console.log(
+          `[post-parse-cleanup] dedupe: keep ${keep.id.slice(0, 8)} (score=${dedupScore(keep)}) drop ${r.id.slice(0, 8)} (score=${dedupScore(r)})`,
+        );
+      }
+    }
+  }
+  return removed;
+}
+
 // ── 3c. Resolve "blind image" questions ───────────────────────────
 //
 // Parser sometimes flags has_image=true on questions that, on
@@ -963,6 +1070,7 @@ export async function runPostParseCleanup(
     currencyDollarsEscaped: 0,
     pureNumericMathUnwrapped: 0,
     answerLetterNormalizations: 0,
+    duplicateQuestionsRemoved: 0,
     blindImagesResolved: 0,
     anomaliesDemoted: 0,
     errors: [],
@@ -1016,6 +1124,11 @@ export async function runPostParseCleanup(
     "normalizeAnswerLettersAndFlagContradictions",
     () => normalizeAnswerLettersAndFlagContradictions(moduleId, db),
     (v) => (summary.answerLetterNormalizations = v),
+  );
+  await safe(
+    "dedupeDuplicateQuestionNumbers",
+    () => dedupeDuplicateQuestionNumbers(moduleId, db),
+    (v) => (summary.duplicateQuestionsRemoved = v),
   );
   await safe(
     "resolveBlindImages",
