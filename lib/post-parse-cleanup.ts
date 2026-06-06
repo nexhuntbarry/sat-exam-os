@@ -1015,7 +1015,15 @@ function hasTableSyntax(text: string): boolean {
 // snippet instead of a typeset expression.
 function mathRenderFails(text: string): boolean {
   if (!text) return false;
-  const displayBlocks = text.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
+  // Strip ESCAPED dollars (`\$`) before regex-pairing the rest. The
+  // markdown renderer treats `\$` as a literal dollar glyph — it
+  // does NOT open or close a math region. Leaving `\$950` in the
+  // string makes the naive `\$[^$]+\$` regex pair the escaped `\$`
+  // with a later real `$`, producing a phantom "math fail" on
+  // currency-and-math fields like:
+  //   "rent the bus for \\$950 for $t$ hours, where $t > 2$, is \\$1,150"
+  const sanitized = text.replace(/\\\$/g, "\x00");
+  const displayBlocks = sanitized.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
   for (const block of displayBlocks) {
     const expr = block.slice(2, -2);
     if (!expr.trim()) continue;
@@ -1027,7 +1035,7 @@ function mathRenderFails(text: string): boolean {
   }
   // Strip display math first so the inline regex doesn't match $$ as
   // two adjacent inline $'s.
-  const withoutDisplay = text.replace(/\$\$[\s\S]*?\$\$/g, " ");
+  const withoutDisplay = sanitized.replace(/\$\$[\s\S]*?\$\$/g, " ");
   const inlineBlocks = withoutDisplay.match(/\$([^$\n]+)\$/g) ?? [];
   for (const block of inlineBlocks) {
     const expr = block.slice(1, -1);

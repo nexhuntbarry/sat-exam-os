@@ -77,13 +77,16 @@ function violations(text: string): string[] {
   if (/(^|[^\\$])\\\d/.test(text)) {
     out.push("R3 invalid `\\<digit>` escape");
   }
+  // Strip escaped dollars before pairing so `\$950 ... $t$ ... \$1,150`
+  // (legit currency + math) doesn't false-flag.
+  const sanitized = text.replace(/\\\$/g, "\x00");
   // R4: unescaped $ count must be even per field.
-  const unescapedDollars = (text.match(/(^|[^\\])\$/g) ?? []).length;
+  const unescapedDollars = (sanitized.match(/\$/g) ?? []).length;
   if (unescapedDollars % 2 !== 0) {
     out.push(`R4 odd unescaped $ count (${unescapedDollars})`);
   }
   // R5: KaTeX renders every $...$ region.
-  const displayBlocks = text.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
+  const displayBlocks = sanitized.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
   for (const block of displayBlocks) {
     const expr = block.slice(2, -2);
     if (!expr.trim()) continue;
@@ -93,7 +96,7 @@ function violations(text: string): string[] {
       out.push(`R5 KaTeX display fail: ${expr.slice(0, 40)}…`);
     }
   }
-  const inlineSrc = text.replace(/\$\$[\s\S]*?\$\$/g, " ");
+  const inlineSrc = sanitized.replace(/\$\$[\s\S]*?\$\$/g, " ");
   const inlineBlocks = inlineSrc.match(/\$([^$\n]+)\$/g) ?? [];
   for (const block of inlineBlocks) {
     const expr = block.slice(1, -1);
