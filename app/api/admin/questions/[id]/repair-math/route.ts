@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { repairMathForQuestion } from "@/lib/repair-ops";
 
+// Up to three sequential Claude calls (Haiku → Sonnet → Opus) on a
+// PDF page can take 60+ seconds combined. The default 10s ceiling
+// would silently abort. 60 is the Vercel Pro cap; 90+ needs the
+// Enterprise plan.
+export const maxDuration = 60;
+
 // POST /api/admin/questions/[id]/repair-math
 //
 // Re-extract this single question's text / choices / explanation

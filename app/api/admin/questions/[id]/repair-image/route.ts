@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { repairImageForQuestion } from "@/lib/repair-ops";
 
+// PDF fetch + Claude vision bbox + sharp crop + Vercel Blob upload
+// can take 20-50 seconds on a large module's source PDF. Vercel's
+// default 10s function ceiling cuts the request mid-flight and the
+// button silently does nothing. Bump it to a minute.
+export const maxDuration = 60;
+
 // POST /api/admin/questions/[id]/repair-image
 //
 // Re-ask Claude vision for a bounding box for the figure on this
