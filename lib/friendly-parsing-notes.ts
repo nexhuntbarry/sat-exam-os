@@ -17,43 +17,86 @@
 //              regex IDs, or backtrace-style fragments
 //   action   — optional "what to do next" hint
 
+export interface NoteAction {
+  /** Button label shown to the admin. */
+  label: string;
+  /** Path relative to the question id, e.g. "/repair-math". The
+   *  client makes a POST to /api/admin/questions/{id}{path}. */
+  path: string;
+  /** Optional confirm prompt before firing. */
+  confirm?: string;
+  /** Optional "running" text shown while the request is in flight
+   *  (defaults to label + "…"). */
+  pending?: string;
+}
+
 export interface FriendlyNote {
   tone: "info" | "warning" | "error";
   headline: string;
   detail?: string;
   action?: string;
+  actions?: NoteAction[];
 }
 
 interface CheckMeta {
   headline: string;
   action: string;
+  actions?: NoteAction[];
 }
+
+const MATH_REPAIR_ACTION: NoteAction = {
+  label: "Auto-fix with AI",
+  path: "/repair-math",
+  confirm:
+    "Send this question back to Claude with stricter formatting rules? This costs ~$0.01 per attempt and moves the row to Draft so you can re-review.",
+  pending: "Repairing…",
+};
+
+const IMAGE_REPAIR_ACTION: NoteAction = {
+  label: "Re-extract figure from PDF",
+  path: "/repair-image",
+  confirm:
+    "Re-run the image cropper for this question? Claude will pick a fresh bounding box and upload the new crop.",
+  pending: "Re-cropping…",
+};
+
+const CLEAR_TABLE_ACTION: NoteAction = {
+  label: "Mark as 'no table needed'",
+  path: "/clear-table-flag",
+  confirm: "Confirm this question doesn't actually need a data table?",
+  pending: "Clearing flag…",
+};
 
 const CHECK_LABELS: Record<string, CheckMeta> = {
   "math-render-failed": {
     headline: "Math formatting won't render",
     action:
-      "Open Edit raw on the field shown above and check for a stray $, an unescaped currency dollar, or a missing LaTeX command.",
+      "Tap Auto-fix below to have Claude re-extract this question, or open Edit raw and fix the field by hand.",
+    actions: [MATH_REPAIR_ACTION],
   },
   "math-render-fail": {
     headline: "Math formatting won't render",
     action:
-      "Open Edit raw on the field shown above and check for a stray $, an unescaped currency dollar, or a missing LaTeX command.",
+      "Tap Auto-fix below to have Claude re-extract this question, or open Edit raw and fix the field by hand.",
+    actions: [MATH_REPAIR_ACTION],
   },
   "math-unwrapped": {
     headline: "Raw math leaked outside $...$",
     action:
-      "Wrap the bare expression in $...$ or remove the stray LaTeX command if it's actually prose.",
+      "Tap Auto-fix to re-extract, or wrap the bare expression in $...$ manually.",
+    actions: [MATH_REPAIR_ACTION],
   },
   "blind-image": {
     headline: "This question needs a figure that wasn't extracted",
     action:
-      "Run the image re-extraction script for this row, or paste a screenshot of the figure into the question.",
+      "Tap Re-extract figure to let Claude pick a fresh bounding box and crop it.",
+    actions: [IMAGE_REPAIR_ACTION],
   },
   "has-table-flag-but-no-table-in-text": {
     headline: "Data table is missing from the question text",
     action:
-      "Rebuild the table by hand in markdown (header row + dash separator + body rows) or re-extract just this row from the PDF.",
+      "Tap Auto-fix to re-extract the table. If you've verified the question doesn't need one, use 'Mark as no table needed' instead.",
+    actions: [MATH_REPAIR_ACTION, CLEAR_TABLE_ACTION],
   },
   "pipe-flattened-table": {
     headline: "Table got flattened into one line",
@@ -93,8 +136,8 @@ const CHECK_LABELS: Record<string, CheckMeta> = {
   },
   "image-url-malformed": {
     headline: "An image URL on this question won't load",
-    action:
-      "Re-extract the image (run the image re-extraction script for this row).",
+    action: "Tap Re-extract figure to upload a fresh crop.",
+    actions: [IMAGE_REPAIR_ACTION],
   },
   "explanation-final-mismatch": {
     headline: "Explanation's stated answer doesn't match the correct_answer",
@@ -134,14 +177,27 @@ export function friendlyParsingNote(raw: string | null): FriendlyNote | null {
         tone: "warning",
         headline: meta.headline,
         action: meta.action,
+        actions: meta.actions,
       };
     }
+    // Multiple checks failed — deduplicate actions across all ids.
     const headlines = ids.map((id) => labelForCheck(id).headline);
+    const seen = new Set<string>();
+    const actions: NoteAction[] = [];
+    for (const id of ids) {
+      for (const a of labelForCheck(id).actions ?? []) {
+        if (!seen.has(a.path)) {
+          seen.add(a.path);
+          actions.push(a);
+        }
+      }
+    }
     return {
       tone: "warning",
       headline: `${ids.length} issues found on this question`,
       detail: headlines.join(" · "),
       action: ids.map((id) => labelForCheck(id).action).join(" "),
+      actions: actions.length > 0 ? actions : undefined,
     };
   }
 
@@ -172,8 +228,8 @@ export function friendlyParsingNote(raw: string | null): FriendlyNote | null {
     return {
       tone: "warning",
       headline: "This question needs a figure that wasn't extracted",
-      action:
-        "Run the image re-extraction script for this row, or paste a screenshot of the figure into the question.",
+      action: "Tap Re-extract figure to let Claude pick a fresh bounding box and crop it.",
+      actions: [IMAGE_REPAIR_ACTION],
     };
   }
 

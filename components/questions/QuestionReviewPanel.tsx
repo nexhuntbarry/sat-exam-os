@@ -247,44 +247,17 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
         </div>
       </div>
 
-      {/* Flags — show a translated, action-oriented banner instead
-          of the raw "Demoted by post-parse-cleanup: failed checks → …"
-          / UUID-dropping technical strings. The original text is
-          kept available behind a <details> in case the reviewer
-          really wants the engineering log line. */}
-      {q.parsing_notes &&
-        (() => {
-          const note = friendlyParsingNote(q.parsing_notes);
-          if (!note) return null;
-          const tone =
-            note.tone === "error"
-              ? "bg-status-danger/8 border-status-danger/25 text-status-danger"
-              : note.tone === "info"
-                ? "bg-blue-50 border-blue-200 text-blue-900"
-                : "bg-status-warning/8 border-status-warning/20 text-status-warning";
-          return (
-            <div
-              className={`${tone} border rounded-xl px-4 py-3 text-sm space-y-1`}
-            >
-              <p className="font-semibold leading-snug">{note.headline}</p>
-              {note.detail && (
-                <p className="text-xs opacity-80 leading-snug">{note.detail}</p>
-              )}
-              {note.action && (
-                <p className="text-xs opacity-90 leading-snug">
-                  <span className="font-medium">What to do: </span>
-                  {note.action}
-                </p>
-              )}
-              <details className="text-[11px] opacity-60 mt-1">
-                <summary className="cursor-pointer">
-                  Show technical detail
-                </summary>
-                <p className="font-mono break-all mt-1">{q.parsing_notes}</p>
-              </details>
-            </div>
-          );
-        })()}
+      {/* Flags — translated, action-oriented banner with one-click
+          repair buttons. Raw engineering string lives behind a
+          collapsible disclosure for the rare case the reviewer
+          wants the original log line. */}
+      {q.parsing_notes && (
+        <ParsingNoteBanner
+          questionId={q.id}
+          raw={q.parsing_notes}
+          onReloaded={() => router.refresh()}
+        />
+      )}
 
       {/* Mismatch resolver — visible only when AI disagreed with the answer
           key at parse time. One-click to pick which answer wins. */}
@@ -629,6 +602,103 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ────────────────────────── parsing-note banner ────────────────────────── */
+
+function ParsingNoteBanner({
+  questionId,
+  raw,
+  onReloaded,
+}: {
+  questionId: string;
+  raw: string;
+  onReloaded: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+
+  const note = friendlyParsingNote(raw);
+  if (!note) return null;
+
+  const tone =
+    note.tone === "error"
+      ? "bg-status-danger/8 border-status-danger/25 text-status-danger"
+      : note.tone === "info"
+        ? "bg-blue-50 border-blue-200 text-blue-900"
+        : "bg-status-warning/8 border-status-warning/20 text-status-warning";
+
+  async function run(path: string, confirmMsg: string | undefined) {
+    if (confirmMsg && !window.confirm(confirmMsg)) return;
+    setBusy(path);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/admin/questions/${questionId}${path}`, {
+        method: "POST",
+      });
+      const json = (await res.json()) as { ok: boolean; message: string };
+      setResult(json);
+      if (json.ok) onReloaded();
+    } catch (e) {
+      setResult({
+        ok: false,
+        message: e instanceof Error ? e.message : "Request failed",
+      });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div
+      className={`${tone} border rounded-xl px-4 py-3 text-sm space-y-2`}
+    >
+      <p className="font-semibold leading-snug">{note.headline}</p>
+      {note.detail && (
+        <p className="text-xs opacity-80 leading-snug">{note.detail}</p>
+      )}
+      {note.action && (
+        <p className="text-xs opacity-90 leading-snug">
+          <span className="font-medium">What to do: </span>
+          {note.action}
+        </p>
+      )}
+      {note.actions && note.actions.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-1">
+          {note.actions.map((a) => {
+            const isBusy = busy === a.path;
+            return (
+              <button
+                key={a.path}
+                type="button"
+                disabled={busy !== null}
+                onClick={() => run(a.path, a.confirm)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-charcoal text-white text-xs font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                {isBusy ? (a.pending ?? `${a.label}…`) : a.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {result && (
+        <p
+          className={`text-xs leading-snug pt-1 ${
+            result.ok ? "text-emerald-700" : "text-status-danger"
+          }`}
+        >
+          {result.message}
+        </p>
+      )}
+      <details className="text-[11px] opacity-60 mt-1">
+        <summary className="cursor-pointer">Show technical detail</summary>
+        <p className="font-mono break-all mt-1">{raw}</p>
+      </details>
     </div>
   );
 }
