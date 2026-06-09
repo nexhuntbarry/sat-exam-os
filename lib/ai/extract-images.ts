@@ -42,6 +42,23 @@ async function renderPdfPages(
   pdfBase64: string,
   pageNumbers: Set<number>,
 ): Promise<Map<number, { png: Buffer; widthPx: number; heightPx: number }>> {
+  // pdfjs-dist v5 references DOMMatrix at module-evaluation time but
+  // some Vercel function runtimes (the smaller image used for short
+  // routes) don't ship the global. Pre-load the DOMMatrix from
+  // @napi-rs/canvas (which we already depend on for rendering) so
+  // the pdfjs import doesn't throw "ReferenceError: DOMMatrix is
+  // not defined" before we get a chance to use it.
+  if (typeof (globalThis as { DOMMatrix?: unknown }).DOMMatrix === "undefined") {
+    try {
+      const canvasModule = await import("@napi-rs/canvas");
+      (globalThis as { DOMMatrix?: unknown }).DOMMatrix =
+        (canvasModule as { DOMMatrix?: unknown }).DOMMatrix;
+    } catch {
+      // No napi canvas — proceed and let pdfjs throw a clearer
+      // error than the original "DOMMatrix is not defined".
+    }
+  }
+
   // pdfjs-dist v5 ships its node-friendly entry as `pdf.mjs`. Importing the
   // top-level package picks the correct build automatically.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");

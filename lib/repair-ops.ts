@@ -199,13 +199,16 @@ const BBoxSchema = z.object({
 
 const BBOX_SYSTEM = `Return a bounding box around the figure that belongs to ONE specific SAT question on the given PDF page. Coordinates are FRACTIONS of the page dimensions: (0,0) = top-left, (1,1) = bottom-right.
 
+ADMIN INVOKED THIS BUTTON because they SAW a figure they want extracted. Bias hard toward FINDING the figure. Return an empty regions array ONLY when no figure exists on the page anywhere — never just because the question "can be solved" from the text alone. A "Note: Figure not drawn to scale" caption MEANS THERE IS A FIGURE — find it and return its bbox.
+
 Before writing coordinates, answer what_is_above_y0 (should be a Question-N banner or earlier-question answer choice — never the chart title itself) and what_is_below_y1 (should be prose / answer choices — never the legend, x-axis labels, or last table row).
 
-For TABLES include caption + header + every body row + source line. For GRAPHS include title, both axis labels, every plotted series, legend. For GEOMETRIC FIGURES include angle markings and side-length annotations.
+For TABLES include caption + header + every body row + source line.
+For GRAPHS include title, both axis labels, every plotted series, legend.
+For GEOMETRIC FIGURES include angle markings, side-length annotations, point labels (S, R, Q, P, etc.), and any "Note: Figure not drawn to scale" caption.
+For MULTIPLE-CHOICE questions whose A/B/C/D choices are themselves figures (small graphs / diagrams as the options), return ONE region that wraps all four choice diagrams together so the student sees the labeled set.
 
-Do NOT extend the box into prose describing the figure ("The following 3 lines are shown:") or into other questions' answer choices or banners.
-
-Return empty regions if no figure exists for this question.`;
+Do NOT extend the box into prose describing the figure ("The following 3 lines are shown:") or into other questions' answer choices or banners.`;
 
 /**
  * Re-crop and re-upload the figure for one question whose
@@ -248,20 +251,16 @@ export async function repairImageForQuestion(
   });
   const regions = result.object.regions;
   if (regions.length === 0) {
-    // Claude says no figure — clear the flag so the row stops
-    // failing the blind-image audit.
-    await db
-      .from("questions")
-      .update({
-        has_image: false,
-        parsing_notes:
-          "Admin self-repair cleared has_image: no figure required.",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", row.id);
+    // Admin explicitly clicked "Re-extract figure" — they think a
+    // figure exists. Don't silently flip has_image=false the way
+    // the batch resolveBlindImages step does; instead surface the
+    // problem so the admin can decide. They keep has_image=true
+    // and the row stays in its current status; the message tells
+    // them what happened.
     return {
-      ok: true,
-      message: "No figure needed — cleared the image flag. Re-review the row.",
+      ok: false,
+      message:
+        "Claude looked at the page but couldn't pinpoint a figure for this question. If you can clearly see one on the PDF, try Re-extract again or crop a screenshot by hand. Use 'Mark as no figure needed' on the audit banner if there really isn't one.",
     };
   }
 
@@ -316,6 +315,31 @@ export async function repairImageForQuestion(
     ok: true,
     message: `Figure re-cropped (${urls.length} region${urls.length === 1 ? "" : "s"}).`,
   };
+}
+
+/**
+ * Mark the row as "no figure" so the blind-image audit stops
+ * firing AND any previously-extracted image_urls are cleared.
+ * Use when the reviewer has verified the question really doesn't
+ * need a figure.
+ */
+export async function clearImageFlag(
+  questionId: string,
+): Promise<RepairResult> {
+  const db = getServiceClient();
+  const { error } = await db
+    .from("questions")
+    .update({
+      has_image: false,
+      image_urls: [],
+      image_alts: [],
+      parsing_notes:
+        "Admin self-repair cleared has_image flag (no figure needed).",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", questionId);
+  if (error) return { ok: false, message: error.message };
+  return { ok: true, message: "Image flag cleared." };
 }
 
 /**

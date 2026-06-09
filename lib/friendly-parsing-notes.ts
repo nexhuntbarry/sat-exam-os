@@ -67,6 +67,14 @@ const CLEAR_TABLE_ACTION: NoteAction = {
   pending: "Clearing flag…",
 };
 
+const CLEAR_IMAGE_ACTION: NoteAction = {
+  label: "Mark as 'no figure needed'",
+  path: "/clear-image-flag",
+  confirm:
+    "Confirm this question doesn't actually need a figure / diagram?",
+  pending: "Clearing flag…",
+};
+
 const CHECK_LABELS: Record<string, CheckMeta> = {
   "math-render-failed": {
     headline: "Math formatting won't render",
@@ -89,8 +97,8 @@ const CHECK_LABELS: Record<string, CheckMeta> = {
   "blind-image": {
     headline: "This question needs a figure that wasn't extracted",
     action:
-      "Tap Re-extract figure to let Claude pick a fresh bounding box and crop it.",
-    actions: [IMAGE_REPAIR_ACTION],
+      "Tap Re-extract figure to let Claude pick a fresh bounding box and crop it. If you've checked the PDF and there genuinely is no figure, use 'Mark as no figure needed' instead.",
+    actions: [IMAGE_REPAIR_ACTION, CLEAR_IMAGE_ACTION],
   },
   "has-table-flag-but-no-table-in-text": {
     headline: "Data table is missing from the question text",
@@ -137,7 +145,7 @@ const CHECK_LABELS: Record<string, CheckMeta> = {
   "image-url-malformed": {
     headline: "An image URL on this question won't load",
     action: "Tap Re-extract figure to upload a fresh crop.",
-    actions: [IMAGE_REPAIR_ACTION],
+    actions: [IMAGE_REPAIR_ACTION, CLEAR_IMAGE_ACTION],
   },
   "explanation-final-mismatch": {
     headline: "Explanation's stated answer doesn't match the correct_answer",
