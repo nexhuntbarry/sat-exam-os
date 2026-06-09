@@ -12,6 +12,7 @@ import {
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
+import { autoPromoteModule } from "@/lib/auto-promote";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -507,6 +508,20 @@ export async function POST(
     );
   } catch (err) {
     console.error("[modules/parse] post-cleanup crashed:", err);
+  }
+
+  // Phase 5 — bulk-promote high-confidence Drafts to Approved so the
+  // admin doesn't have to discover days later that a new module
+  // landed in a test with 2 questions because nothing got
+  // explicitly approved. Threshold 0.9; rows with empty answers,
+  // blind images, or MCQ-with-no-choices are skipped.
+  try {
+    const promote = await autoPromoteModule(id, db, 0.9);
+    console.log(
+      `[modules/parse] auto-promote module=${id} candidates=${promote.candidates} promoted=${promote.promoted} skipped=${promote.skipped}`,
+    );
+  } catch (err) {
+    console.error("[modules/parse] auto-promote crashed:", err);
   }
 
   return NextResponse.json({
