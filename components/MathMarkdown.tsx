@@ -28,7 +28,20 @@ export default function MathMarkdown({
     <div className={className}>
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
-        rehypePlugins={[rehypeRaw, rehypeKatex]}
+        rehypePlugins={[
+          rehypeRaw,
+          // KaTeX defaults render broken math in bright red with a
+          // pop-up tooltip pointing at the LaTeX parser error —
+          // terrifying for admins reviewing imperfect parser output.
+          // We soften it: ignore strict-mode warnings (no console
+          // noise), render any unrenderable region in a neutral
+          // gray so the row still reads like a placeholder instead
+          // of an emergency, and never throw (default already).
+          [
+            rehypeKatex,
+            { strict: "ignore", errorColor: "#9ca3af", throwOnError: false },
+          ],
+        ]}
         components={{
           u: ({ children }) => (
             <u className="underline decoration-2 underline-offset-4">

@@ -8,6 +8,7 @@ import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
 
 const SAT_DOMAINS = [
   "Information and Ideas",
@@ -246,12 +247,44 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
         </div>
       </div>
 
-      {/* Flags */}
-      {q.parsing_notes && (
-        <div className="bg-status-warning/8 border border-status-warning/20 rounded-xl px-4 py-2.5 text-status-warning text-xs">
-          {q.parsing_notes}
-        </div>
-      )}
+      {/* Flags — show a translated, action-oriented banner instead
+          of the raw "Demoted by post-parse-cleanup: failed checks → …"
+          / UUID-dropping technical strings. The original text is
+          kept available behind a <details> in case the reviewer
+          really wants the engineering log line. */}
+      {q.parsing_notes &&
+        (() => {
+          const note = friendlyParsingNote(q.parsing_notes);
+          if (!note) return null;
+          const tone =
+            note.tone === "error"
+              ? "bg-status-danger/8 border-status-danger/25 text-status-danger"
+              : note.tone === "info"
+                ? "bg-blue-50 border-blue-200 text-blue-900"
+                : "bg-status-warning/8 border-status-warning/20 text-status-warning";
+          return (
+            <div
+              className={`${tone} border rounded-xl px-4 py-3 text-sm space-y-1`}
+            >
+              <p className="font-semibold leading-snug">{note.headline}</p>
+              {note.detail && (
+                <p className="text-xs opacity-80 leading-snug">{note.detail}</p>
+              )}
+              {note.action && (
+                <p className="text-xs opacity-90 leading-snug">
+                  <span className="font-medium">What to do: </span>
+                  {note.action}
+                </p>
+              )}
+              <details className="text-[11px] opacity-60 mt-1">
+                <summary className="cursor-pointer">
+                  Show technical detail
+                </summary>
+                <p className="font-mono break-all mt-1">{q.parsing_notes}</p>
+              </details>
+            </div>
+          );
+        })()}
 
       {/* Mismatch resolver — visible only when AI disagreed with the answer
           key at parse time. One-click to pick which answer wins. */}

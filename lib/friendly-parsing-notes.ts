@@ -1,0 +1,248 @@
+// lib/friendly-parsing-notes.ts
+//
+// The questions.parsing_notes column holds raw technical strings
+// (`Demoted by post-parse-cleanup: failed checks → math-render-failed`,
+// `Possible duplicate of question 69571cb2-9788-… (similarity 1.00); Pending AI answer`)
+// that scare admin reviewers when surfaced verbatim. This module
+// translates those raw notes into plain-language status banners
+// the reviewer can actually act on.
+//
+// Public API:
+//   friendlyParsingNote(raw) →
+//     { tone, headline, detail?, action? }
+//
+//   tone     — "info" | "warning" | "error"
+//   headline — short plain-English sentence shown big
+//   detail   — optional secondary line; never includes raw UUIDs,
+//              regex IDs, or backtrace-style fragments
+//   action   — optional "what to do next" hint
+
+export interface FriendlyNote {
+  tone: "info" | "warning" | "error";
+  headline: string;
+  detail?: string;
+  action?: string;
+}
+
+interface CheckMeta {
+  headline: string;
+  action: string;
+}
+
+const CHECK_LABELS: Record<string, CheckMeta> = {
+  "math-render-failed": {
+    headline: "Math formatting won't render",
+    action:
+      "Open Edit raw on the field shown above and check for a stray $, an unescaped currency dollar, or a missing LaTeX command.",
+  },
+  "math-render-fail": {
+    headline: "Math formatting won't render",
+    action:
+      "Open Edit raw on the field shown above and check for a stray $, an unescaped currency dollar, or a missing LaTeX command.",
+  },
+  "math-unwrapped": {
+    headline: "Raw math leaked outside $...$",
+    action:
+      "Wrap the bare expression in $...$ or remove the stray LaTeX command if it's actually prose.",
+  },
+  "blind-image": {
+    headline: "This question needs a figure that wasn't extracted",
+    action:
+      "Run the image re-extraction script for this row, or paste a screenshot of the figure into the question.",
+  },
+  "has-table-flag-but-no-table-in-text": {
+    headline: "Data table is missing from the question text",
+    action:
+      "Rebuild the table by hand in markdown (header row + dash separator + body rows) or re-extract just this row from the PDF.",
+  },
+  "pipe-flattened-table": {
+    headline: "Table got flattened into one line",
+    action:
+      "Split the pipe-separated content back into separate rows with a header / dash separator.",
+  },
+  "mcq-answer-not-in-choices": {
+    headline: "Correct answer doesn't match any choice letter",
+    action:
+      "Pick the right answer from the four choices or fix the correct_answer field.",
+  },
+  "mcq-bad-choice-count": {
+    headline: "Multiple Choice question doesn't have exactly 4 options",
+    action:
+      "Add the missing A/B/C/D entry or remove the extra one.",
+  },
+  "spr-with-letter-answer": {
+    headline: "Grid-in question has a letter answer",
+    action:
+      "Switch the type to Multiple Choice or replace the letter with the numeric value.",
+  },
+  "empty-text": {
+    headline: "Question stem is empty",
+    action: "Re-extract this question from the source PDF.",
+  },
+  "empty-answer": {
+    headline: "Answer key is empty",
+    action: "Add the correct answer letter or value.",
+  },
+  "rw-misclassified-as-spr": {
+    headline: "Reading & Writing question marked as a grid-in by mistake",
+    action: "Switch type to Multiple Choice and add the four options.",
+  },
+  "blank-artifact": {
+    headline: "Parser left the word 'blank' next to underscores",
+    action: "Delete the literal word 'blank' — the underscores ARE the blank.",
+  },
+  "image-url-malformed": {
+    headline: "An image URL on this question won't load",
+    action:
+      "Re-extract the image (run the image re-extraction script for this row).",
+  },
+  "explanation-final-mismatch": {
+    headline: "Explanation's stated answer doesn't match the correct_answer",
+    action:
+      "Check the PDF answer key and either fix the correct_answer field or rewrite the last line of the explanation.",
+  },
+};
+
+function labelForCheck(check: string): CheckMeta {
+  return (
+    CHECK_LABELS[check] ?? {
+      headline: `Audit check failed (${check})`,
+      action:
+        "Open the source PDF and re-verify this row, then save to clear the flag.",
+    }
+  );
+}
+
+const RAW = (s: string) => s.replace(/\s+/g, " ").trim();
+
+export function friendlyParsingNote(raw: string | null): FriendlyNote | null {
+  if (!raw) return null;
+  const text = RAW(raw);
+
+  // ── Demoted by post-parse-cleanup / audit-auto-approved ───────────
+  const demote = text.match(
+    /Demoted by [\w./-]+(?: \d{4}-\d{2}-\d{2})?:\s*failed checks?\s*[→\->]+\s*(.+)$/i,
+  );
+  if (demote) {
+    const ids = demote[1]
+      .split(/[,;]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (ids.length === 1) {
+      const meta = labelForCheck(ids[0]);
+      return {
+        tone: "warning",
+        headline: meta.headline,
+        action: meta.action,
+      };
+    }
+    const headlines = ids.map((id) => labelForCheck(id).headline);
+    return {
+      tone: "warning",
+      headline: `${ids.length} issues found on this question`,
+      detail: headlines.join(" · "),
+      action: ids.map((id) => labelForCheck(id).action).join(" "),
+    };
+  }
+
+  // ── Possible duplicate ────────────────────────────────────────────
+  if (/possible duplicate of question/i.test(text)) {
+    const pending = /pending ai answer/i.test(text);
+    return {
+      tone: "warning",
+      headline: "Looks like a duplicate of another question",
+      detail: pending
+        ? "The AI is still picking an answer for this row."
+        : undefined,
+      action: "Compare to the other row and either merge or delete this one.",
+    };
+  }
+
+  // ── Pending AI answer (standalone) ────────────────────────────────
+  if (/^pending ai answer/i.test(text)) {
+    return {
+      tone: "info",
+      headline: "Waiting for the AI to fill in the answer",
+      detail: "This usually finishes within a minute or two of the parse.",
+    };
+  }
+
+  // ── Needs manual image re-extraction (from resolveBlindImages) ────
+  if (/needs manual image re-extraction/i.test(text)) {
+    return {
+      tone: "warning",
+      headline: "This question needs a figure that wasn't extracted",
+      action:
+        "Run the image re-extraction script for this row, or paste a screenshot of the figure into the question.",
+    };
+  }
+
+  // ── Re-extracted / re-promoted notes (positive) ───────────────────
+  if (/re-extracted by repair-blind-image-regions/i.test(text)) {
+    return {
+      tone: "info",
+      headline: "Figure was re-cropped — please verify it looks right",
+    };
+  }
+  if (/re-promoted by post-parse-cleanup/i.test(text)) {
+    return {
+      tone: "info",
+      headline: "Earlier issue cleared automatically — re-review before approving",
+    };
+  }
+  if (/re-extracted by repair-math-render-failed/i.test(text)) {
+    return {
+      tone: "info",
+      headline: "Math was re-extracted — please verify it renders right",
+    };
+  }
+  if (/cleared has_image flag/i.test(text)) {
+    return {
+      tone: "info",
+      headline: "Image flag was cleared automatically (no figure needed)",
+    };
+  }
+
+  // ── Choices recovered ─────────────────────────────────────────────
+  if (/choices re-extracted by post-parse-cleanup/i.test(text)) {
+    return {
+      tone: "warning",
+      headline: "Answer choices were re-extracted",
+      action: "Verify the correct_answer letter still maps to the right choice.",
+    };
+  }
+
+  // ── Mismatch: AI vs official answer key ───────────────────────────
+  const mismatch = text.match(
+    /Mismatch:\s*AI answered\s+([^,;]+?)\s*,\s*official answer is\s+([^,;]+)/i,
+  );
+  if (mismatch) {
+    return {
+      tone: "warning",
+      headline: "AI disagrees with the official answer key",
+      detail: `AI picked ${mismatch[1]}; official key says ${mismatch[2]}.`,
+      action: "Use the mismatch resolver below to pick which one to trust.",
+    };
+  }
+
+  // ── Explanation references X but correct_answer is Y ──────────────
+  const explConflict = text.match(
+    /Explanation references\s+([A-D/]+)\s+but correct_answer is\s+([A-D])/i,
+  );
+  if (explConflict) {
+    return {
+      tone: "warning",
+      headline: "Explanation contradicts the stored answer",
+      detail: `Explanation mentions ${explConflict[1]}; correct_answer is ${explConflict[2]}.`,
+      action:
+        "Check the PDF answer key and either fix the answer field or rewrite the explanation's last line.",
+    };
+  }
+
+  // ── Fallback: keep the original message but mark it as a flag ────
+  return {
+    tone: "warning",
+    headline: "Reviewer flag",
+    detail: text,
+  };
+}
