@@ -35,6 +35,7 @@ export interface PostParseCleanupSummary {
   currencyDollarsEscaped: number;
   backslashDigitsStripped: number;
   doublyEscapedMathFixed: number;
+  strayBackslashSpaceStripped: number;
   pureNumericMathUnwrapped: number;
   answerLetterNormalizations: number;
   duplicateQuestionsRemoved: number;
@@ -543,6 +544,68 @@ async function patchDoublyEscapedMath(
       const stripped = arr.map((c) => ({
         ...c,
         text: fixDoublyEscapedMath(c.text ?? ""),
+      }));
+      const dirty = stripped.some((c, i) => c.text !== arr[i].text);
+      if (dirty) nextChoices = stripped;
+    }
+    const textDirty = nextText !== (q.question_text ?? "");
+    const explDirty = nextExpl !== (q.explanation ?? "");
+    if (!textDirty && !explDirty && !nextChoices) continue;
+    const update: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (textDirty) update.question_text = nextText;
+    if (explDirty) update.explanation = nextExpl;
+    if (nextChoices) update.choices = nextChoices;
+    const { error: upErr } = await db
+      .from("questions")
+      .update(update)
+      .eq("id", q.id);
+    if (!upErr) patched++;
+  }
+  return patched;
+}
+
+// ── 3b'''''. Strip stray backslash-whitespace before currency ─────
+//
+// The parser occasionally emits "\ \$234" (backslash, space,
+// escaped-dollar, digits) when it MEANT just "\$234". The first
+// backslash isn't escaping anything we care about — markdown
+// renders it literally followed by the space — and students see
+// "\ $234 for the first 3 hours of work" with a stray backslash on
+// the page.
+//
+// Rule: any backslash followed by whitespace AND immediately
+// followed by a real `\$<digit>` currency escape is parser slop.
+// Strip the leading backslash and the whitespace so the currency
+// escape sits cleanly against the surrounding prose word.
+
+const STRAY_BACKSLASH_BEFORE_CURRENCY_RE = /\\(\s+)(?=\\\$\d)/g;
+
+function stripStrayBackslashSpace(text: string): string {
+  if (!text) return text;
+  return text.replace(STRAY_BACKSLASH_BEFORE_CURRENCY_RE, "$1");
+}
+
+async function patchStrayBackslashSpace(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, question_text, choices, explanation")
+    .eq("module_id", moduleId);
+  if (error) throw new Error(`patchStrayBackslashSpace select: ${error.message}`);
+  let patched = 0;
+  for (const q of data ?? []) {
+    const nextText = stripStrayBackslashSpace((q.question_text as string) ?? "");
+    const nextExpl = stripStrayBackslashSpace((q.explanation as string) ?? "");
+    let nextChoices: Array<{ label: string; text: string }> | null = null;
+    if (Array.isArray(q.choices)) {
+      const arr = q.choices as Array<{ label: string; text: string }>;
+      const stripped = arr.map((c) => ({
+        ...c,
+        text: stripStrayBackslashSpace(c.text ?? ""),
       }));
       const dirty = stripped.some((c, i) => c.text !== arr[i].text);
       if (dirty) nextChoices = stripped;
@@ -1286,6 +1349,7 @@ export async function runPostParseCleanup(
     currencyDollarsEscaped: 0,
     backslashDigitsStripped: 0,
     doublyEscapedMathFixed: 0,
+    strayBackslashSpaceStripped: 0,
     pureNumericMathUnwrapped: 0,
     answerLetterNormalizations: 0,
     duplicateQuestionsRemoved: 0,
@@ -1343,6 +1407,11 @@ export async function runPostParseCleanup(
     "patchDoublyEscapedMath",
     () => patchDoublyEscapedMath(moduleId, db),
     (v) => (summary.doublyEscapedMathFixed = v),
+  );
+  await safe(
+    "patchStrayBackslashSpace",
+    () => patchStrayBackslashSpace(moduleId, db),
+    (v) => (summary.strayBackslashSpaceStripped = v),
   );
   await safe(
     "unwrapPureNumericMath",

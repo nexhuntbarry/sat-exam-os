@@ -99,7 +99,7 @@ async function main() {
       totalBlindResolved += summary.blindImagesResolved;
       totalDemoted += summary.anomaliesDemoted;
       console.log(
-        `currency=${summary.currencyDollarsEscaped} bsDigit=${summary.backslashDigitsStripped} dblEsc=${summary.doublyEscapedMathFixed} numWrap=${summary.pureNumericMathUnwrapped} ansNorm=${summary.answerLetterNormalizations} blindImg=${summary.blindImagesResolved} demoted=${summary.anomaliesDemoted} repro=${summary.rowsRepromoted}`,
+        `currency=${summary.currencyDollarsEscaped} bsDigit=${summary.backslashDigitsStripped} dblEsc=${summary.doublyEscapedMathFixed} bsSp=${summary.strayBackslashSpaceStripped} numWrap=${summary.pureNumericMathUnwrapped} ansNorm=${summary.answerLetterNormalizations} blindImg=${summary.blindImagesResolved} demoted=${summary.anomaliesDemoted} repro=${summary.rowsRepromoted}`,
       );
       if (summary.errors.length > 0) {
         errors.push(...summary.errors.map((e) => `${m.id}: ${e}`));
