@@ -129,11 +129,11 @@ export async function repairMathForQuestion(
     return { ok: false, message: "No source PDF on this question" };
 
   const pdfBase64 = await fetchPdfBase64(row.source_pdf_url as string);
-  const ladder = [
-    "claude-haiku-4-5",
-    "claude-sonnet-4-6",
-    "claude-opus-4-7",
-  ] as const;
+  // Barry asked to retire Haiku from the parser/repair path —
+  // it's been the source of most prompt-following slips. Start
+  // at Sonnet, escalate to Opus when the first pass doesn't
+  // clear the local math-render check.
+  const ladder = ["claude-sonnet-4-6", "claude-opus-4-7"] as const;
   let lastReason = "";
   for (let attempt = 0; attempt < ladder.length; attempt++) {
     const result = await generateObject({
@@ -253,7 +253,7 @@ export async function repairImageForQuestion(
 
   const pdfBase64 = await fetchPdfBase64(row.source_pdf_url as string);
   const result = await generateObject({
-    model: anthropic("claude-haiku-4-5"),
+    model: anthropic("claude-sonnet-4-6"),
     schema: BBoxSchema,
     system: BBOX_SYSTEM,
     messages: [

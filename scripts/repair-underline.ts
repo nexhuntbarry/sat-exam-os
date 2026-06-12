@@ -76,7 +76,7 @@ Return JSON only matching the schema.`;
 
 async function findUnderlinedRuns(pdfBase64: string, questionNumber: number) {
   const result = await generateObject({
-    model: anthropic("claude-haiku-4-5"),
+    model: anthropic("claude-sonnet-4-6"),
     schema: RepairSchema,
     system: SYSTEM,
     messages: [

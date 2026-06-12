@@ -74,7 +74,7 @@ async function fetchPdfBase64(url: string): Promise<string> {
 
 async function extractChoices(pdfBase64: string, stem: string, qNum: number) {
   const result = await generateObject({
-    model: anthropic("claude-haiku-4-5"),
+    model: anthropic("claude-sonnet-4-6"),
     schema: ChoicesSchema,
     system: SYSTEM,
     messages: [

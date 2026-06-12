@@ -285,7 +285,7 @@ export async function classifyPdfIsSat(
   let result;
   try {
     result = await generateObject({
-      model: anthropic("claude-haiku-4-5"),
+      model: anthropic("claude-sonnet-4-6"),
       schema: SAT_CLASSIFIER_SCHEMA,
       system: CLASSIFIER_SYSTEM_PROMPT,
       messages: [
@@ -313,7 +313,7 @@ export async function classifyPdfIsSat(
       route: "classify-pdf",
       tokensInput: 0,
       tokensOutput: 0,
-      model: "claude-haiku-4-5",
+      model: "claude-sonnet-4-6",
       costCents: 0,
       metadata: { error: String(err) },
     });
@@ -339,7 +339,7 @@ export async function classifyPdfIsSat(
       route: "classify-pdf",
       tokensInput: inputTokens,
       tokensOutput: outputTokens,
-      model: "claude-haiku-4-5",
+      model: "claude-sonnet-4-6",
       costCents,
       metadata: result.object,
     });
@@ -429,7 +429,7 @@ export async function extractAnswerKey(
       route: "extract-answer-key",
       tokensInput: 0,
       tokensOutput: 0,
-      model: "claude-haiku-4-5",
+      model: "claude-sonnet-4-6",
       costCents: 0,
       metadata: { error: String(err) },
     });
@@ -450,7 +450,7 @@ export async function extractAnswerKey(
       route: "extract-answer-key",
       tokensInput: inputTokens,
       tokensOutput: outputTokens,
-      model: "claude-haiku-4-5",
+      model: "claude-sonnet-4-6",
       costCents,
       metadata: { found: result.object.found, count: result.object.answers.length },
     });

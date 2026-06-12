@@ -179,7 +179,7 @@ async function repairOne(row: Row): Promise<boolean> {
   if (!row.source_pdf_url) return false;
   const pdfBase64 = await fetchPdfBase64(row.source_pdf_url);
   const result = await generateObject({
-    model: anthropic("claude-haiku-4-5"),
+    model: anthropic("claude-sonnet-4-6"),
     schema: BBoxSchema,
     system: BBOX_SYSTEM,
     messages: [
