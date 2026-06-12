@@ -146,26 +146,18 @@ async function autoResolveBugReport(questionId: string): Promise<{
     return { summary: "Question not found.", newStatus: null, touched: false };
   }
 
-  const notes = (q.parsing_notes as string | null) ?? "";
+  // The admin reported a bug — that signal alone is enough to spend
+  // the AI call. Always try a math re-extract via the Haiku → Sonnet
+  // → Opus ladder; in parallel, run image re-extract if the row is
+  // a blind-image. The previous "heuristic match" pre-filter sent
+  // too many reports back to the human with "no automatic repair
+  // path matched"; Barry made the call to attempt repair on every
+  // reported question and only bail if Claude can't produce a
+  // clean output.
   const wantsImageFix =
     q.has_image === true &&
     (!Array.isArray(q.image_urls) || q.image_urls.length === 0);
-  const wantsMathFix =
-    /math-render-failed|math-unwrapped|math-contains-prose|has-table-flag-but-no-table-in-text|pipe-flattened-table|blank-artifact/i.test(
-      notes,
-    ) ||
-    /Mismatch:|Possible duplicate/i.test(notes);
-
-  if (!wantsImageFix && !wantsMathFix) {
-    // No automatic repair path is obviously safe. Tell the dev to
-    // look manually.
-    return {
-      summary:
-        "No automatic repair path matched the audit notes. A dev needs to look at this question manually.",
-      newStatus: q.parsing_status as string,
-      touched: false,
-    };
-  }
+  const wantsMathFix = true;
 
   const parts: string[] = [];
   let lastStatus = q.parsing_status as string;
