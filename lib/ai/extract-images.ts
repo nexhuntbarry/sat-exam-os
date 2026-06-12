@@ -85,10 +85,19 @@ async function renderPdfPages(
   }
 
   const data = Uint8Array.from(Buffer.from(pdfBase64, "base64"));
+  // Vercel serverless doesn't bundle pdf.worker.mjs into the function
+  // tarball — the dynamic import("pdfjs-dist/legacy/build/pdf.worker.mjs")
+  // inside pdfjs fails with "Cannot find module …/pdf.worker.mjs"
+  // and the cropper reports "PDF render failed: Setting up fake
+  // worker failed". `disableWorker: true` tells pdfjs to do all
+  // parsing on the main thread inline — slower per-page but the
+  // tradeoff is the only path that works without bundling the
+  // worker as a static asset.
   const loadingTask = pdfjs.getDocument({
     data,
     isEvalSupported: false,
     useSystemFonts: true,
+    disableWorker: true,
   });
   const doc = await loadingTask.promise;
 
