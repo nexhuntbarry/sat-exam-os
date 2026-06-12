@@ -93,12 +93,16 @@ async function renderPdfPages(
   // parsing on the main thread inline — slower per-page but the
   // tradeoff is the only path that works without bundling the
   // worker as a static asset.
+  // The pdfjs `DocumentInitParameters` type ships without
+  // `disableWorker` but the runtime accepts it; cast through unknown
+  // to silence the type checker without losing the rest of the param
+  // shape.
   const loadingTask = pdfjs.getDocument({
     data,
     isEvalSupported: false,
     useSystemFonts: true,
     disableWorker: true,
-  });
+  } as unknown as Parameters<typeof pdfjs.getDocument>[0]);
   const doc = await loadingTask.promise;
 
   // pdfjs-dist v5 auto-selects its built-in NodeCanvasFactory (powered by
