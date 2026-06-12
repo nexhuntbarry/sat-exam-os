@@ -14,6 +14,7 @@ import {
   Settings,
   Zap,
   ShieldCheck,
+  Bug,
 } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -21,6 +22,7 @@ const navItems = [
   { href: "/admin", icon: LayoutDashboard, label: "Dashboard", exact: true },
   { href: "/admin/modules", icon: BookOpen, label: "Modules" },
   { href: "/admin/questions", icon: HelpCircle, label: "Question Bank" },
+  { href: "/admin/bug-reports", icon: Bug, label: "Bug Reports" },
   { href: "/admin/tests", icon: ClipboardList, label: "Tests" },
   { href: "/admin/students", icon: Users, label: "Students" },
   { href: "/admin/teachers", icon: GraduationCap, label: "Teachers" },
