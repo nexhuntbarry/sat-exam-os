@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug } from "lucide-react";
 import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
@@ -243,6 +243,40 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
           >
             <AlertCircle size={14} />
             {actionLoading === "needs-review" ? "..." : "Flag"}
+          </button>
+          <button
+            onClick={async () => {
+              const note = window.prompt(
+                "Optional: tell the dev team what's broken on this question. Leave blank to just send a report.",
+              );
+              if (note === null) return;
+              setActionLoading("report-bug");
+              try {
+                const res = await fetch(
+                  `/api/admin/questions/${q.id}/report-bug`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ note: note.trim() || undefined }),
+                  },
+                );
+                const json = (await res.json()) as { ok: boolean; message: string };
+                showToast(json.message, json.ok);
+              } catch (e) {
+                showToast(
+                  e instanceof Error ? e.message : "Report failed",
+                  false,
+                );
+              } finally {
+                setActionLoading(null);
+              }
+            }}
+            disabled={actionLoading !== null}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-100 hover:bg-purple-200 text-purple-800 text-sm font-medium transition-colors disabled:opacity-50"
+            title="Send a bug report to the dev team with a link to this question"
+          >
+            <Bug size={14} />
+            {actionLoading === "report-bug" ? "..." : "Report to dev"}
           </button>
         </div>
       </div>

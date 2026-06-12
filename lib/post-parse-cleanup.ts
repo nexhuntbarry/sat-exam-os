@@ -1122,6 +1122,35 @@ function looksLikeValidUrl(u: string): boolean {
   }
 }
 
+// Detects $...$ regions whose content includes English prose that
+// couldn't possibly be a math expression. KaTeX happily renders
+// "what is the value of" as italic Latin letters with no spaces,
+// so the math-render-failed check stays silent — but the student
+// sees "whatisthevalueof" jammed against the variables. Pattern
+// matches when a $...$ or $$...$$ region contains a common English
+// question / connector word (what, the, value, find, equation,
+// where, if, so, gives, etc.) outside any LaTeX command.
+const PROSE_IN_MATH_RE =
+  /\b(?:what|where|when|why|how|the|and|but|then|if|is|are|was|were|will|would|should|value|find|equation|graph|table|figure|show|gives|represents|following|using|since|because|let|so|that|which|each|any|some|both|either|neither|where|same|different)\b/i;
+
+function containsProseInMath(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const sanitized = text.replace(/\\\$/g, "\x00");
+  const display = sanitized.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
+  for (const block of display) {
+    const expr = block.slice(2, -2);
+    if (PROSE_IN_MATH_RE.test(expr)) return true;
+  }
+  const inline = sanitized
+    .replace(/\$\$[\s\S]*?\$\$/g, " ")
+    .match(/\$([^$\n]+)\$/g) ?? [];
+  for (const block of inline) {
+    const expr = block.slice(1, -1);
+    if (PROSE_IN_MATH_RE.test(expr)) return true;
+  }
+  return false;
+}
+
 const CHECKS: Array<{
   id: string;
   failed: (r: AuditRow) => boolean;
@@ -1230,6 +1259,24 @@ const CHECKS: Array<{
       if (Array.isArray(r.choices)) {
         for (const c of r.choices) {
           if (c.text && mathRenderFails(c.text)) return true;
+        }
+      }
+      return false;
+    },
+  },
+  {
+    // Math wrap swallowed English prose. Doesn't fire KaTeX's
+    // mathRenderFails because KaTeX will happily italicise random
+    // letters, but the student sees a jammed-together word run
+    // ("whatisthevalueof") inside the math italic instead of the
+    // intended sentence. Demote to Needs Review.
+    id: "math-contains-prose",
+    failed: (r) => {
+      if (containsProseInMath(r.question_text)) return true;
+      if (containsProseInMath(r.explanation)) return true;
+      if (Array.isArray(r.choices)) {
+        for (const c of r.choices) {
+          if (containsProseInMath(c.text)) return true;
         }
       }
       return false;

@@ -94,6 +94,12 @@ const CHECK_LABELS: Record<string, CheckMeta> = {
       "Tap Auto-fix to re-extract, or wrap the bare expression in $...$ manually.",
     actions: [MATH_REPAIR_ACTION],
   },
+  "math-contains-prose": {
+    headline: "English text got swallowed inside a $...$ math wrap",
+    action:
+      "Tap Auto-fix to have Claude re-extract this question — the math wrap is too long and pulled in regular words like 'what is the value of'.",
+    actions: [MATH_REPAIR_ACTION],
+  },
   "blind-image": {
     headline: "This question needs a figure that wasn't extracted",
     action:

@@ -38,6 +38,9 @@ const RepairMathSchema = z.object({
   explanation: z.string().optional(),
 });
 
+const PROSE_IN_MATH_RE_REPAIR =
+  /\b(?:what|where|when|why|how|the|and|but|then|if|is|are|was|were|will|would|should|value|find|equation|graph|table|figure|show|gives|represents|following|using|since|because|let|so|that|which|each|any|some|both|either|neither|same|different)\b/i;
+
 function isMathClean(text: string): { ok: boolean; reason?: string } {
   if (!text) return { ok: true };
   if (/(^|[^\\$])\\\d/.test(text)) return { ok: false, reason: "\\<digit>" };
@@ -46,6 +49,23 @@ function isMathClean(text: string): { ok: boolean; reason?: string } {
   const sanitized = text.replace(/\\\$/g, "\x00");
   const dollars = (sanitized.match(/\$/g) ?? []).length;
   if (dollars % 2 !== 0) return { ok: false, reason: "odd $ count" };
+  // Math wrap swallowed an English word — the renderer will jam
+  // letters together. KaTeX won't throw, so the earlier checks
+  // miss it.
+  const displayForProse = sanitized.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
+  for (const b of displayForProse) {
+    const e = b.slice(2, -2);
+    if (PROSE_IN_MATH_RE_REPAIR.test(e))
+      return { ok: false, reason: "prose inside math wrap" };
+  }
+  const inlineForProse = sanitized
+    .replace(/\$\$[\s\S]*?\$\$/g, " ")
+    .match(/\$([^$\n]+)\$/g) ?? [];
+  for (const b of inlineForProse) {
+    const e = b.slice(1, -1);
+    if (PROSE_IN_MATH_RE_REPAIR.test(e))
+      return { ok: false, reason: "prose inside math wrap" };
+  }
   const display = sanitized.match(/\$\$([\s\S]*?)\$\$/g) ?? [];
   for (const b of display) {
     const e = b.slice(2, -2);
