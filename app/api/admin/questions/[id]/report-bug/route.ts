@@ -91,12 +91,17 @@ export async function POST(
         parsingStatus: result.newStatus ?? (q.parsing_status as string),
         reporterUserId: authResult.userId,
         note: null,
-        autoResolveSummary: result.summary,
+        // Flag the headline as an escalation when the bot could not
+        // produce a clean fix, so the dev chat reads it as "needs you".
+        autoResolveSummary: result.fixed
+          ? result.summary
+          : `⚠️ Needs human — auto-fix could not resolve it. ${result.summary}`,
       });
-      // Mark the bug report as resolved when at least one repair op
-      // actually changed something, so the dev queue doesn't keep
-      // listing rows the bot already fixed.
-      if (result.touched && inserted?.id) {
+      // Auto-resolve ONLY when a repair op actually produced a clean
+      // result. If the AI ladder (Haiku→Sonnet→Opus) couldn't fix it,
+      // leave the report OPEN so it stays in the dev queue + the
+      // escalation ping above tells a human to take over.
+      if (result.fixed && inserted?.id) {
         await db
           .from("bug_reports")
           .update({
@@ -133,6 +138,9 @@ async function autoResolveBugReport(questionId: string): Promise<{
   summary: string;
   newStatus: string | null;
   touched: boolean;
+  // True only when a repair op actually produced a clean result (r.ok),
+  // i.e. the bot really fixed it. Used to decide auto-resolve vs escalate.
+  fixed: boolean;
 }> {
   const db = getServiceClient();
   const { data: q } = await db
@@ -143,7 +151,12 @@ async function autoResolveBugReport(questionId: string): Promise<{
     .eq("id", questionId)
     .maybeSingle();
   if (!q) {
-    return { summary: "Question not found.", newStatus: null, touched: false };
+    return {
+      summary: "Question not found.",
+      newStatus: null,
+      touched: false,
+      fixed: false,
+    };
   }
 
   // The admin reported a bug — that signal alone is enough to spend
@@ -161,12 +174,16 @@ async function autoResolveBugReport(questionId: string): Promise<{
 
   const parts: string[] = [];
   let lastStatus = q.parsing_status as string;
+  let fixed = false;
 
   if (wantsImageFix) {
     try {
       const r = await repairImageForQuestion(questionId);
       parts.push(`Image: ${r.message}`);
-      if (r.ok) lastStatus = "Draft";
+      if (r.ok) {
+        lastStatus = "Draft";
+        fixed = true;
+      }
     } catch (e) {
       parts.push(
         `Image fix crashed: ${e instanceof Error ? e.message : String(e)}`,
@@ -178,7 +195,10 @@ async function autoResolveBugReport(questionId: string): Promise<{
     try {
       const r = await repairMathForQuestion(questionId);
       parts.push(`Math: ${r.message}`);
-      if (r.ok) lastStatus = "Draft";
+      if (r.ok) {
+        lastStatus = "Draft";
+        fixed = true;
+      }
     } catch (e) {
       parts.push(
         `Math fix crashed: ${e instanceof Error ? e.message : String(e)}`,
@@ -190,6 +210,7 @@ async function autoResolveBugReport(questionId: string): Promise<{
     summary: parts.join(" · "),
     newStatus: lastStatus,
     touched: parts.some((p) => p.includes("Math:") || p.includes("Image:")),
+    fixed,
   };
 }
 
