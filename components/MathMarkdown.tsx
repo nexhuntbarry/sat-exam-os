@@ -25,7 +25,7 @@ export default function MathMarkdown({
 }) {
   const normalized = normalizeMath(children);
   return (
-    <div className={className}>
+    <div className={`mathmd${className ? ` ${className}` : ""}`}>
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[

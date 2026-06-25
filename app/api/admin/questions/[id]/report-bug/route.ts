@@ -4,6 +4,8 @@ import { getServiceClient } from "@/lib/supabase";
 import {
   repairMathForQuestion,
   repairImageForQuestion,
+  repairTableForQuestion,
+  hasMarkdownTable,
 } from "@/lib/repair-ops";
 
 // Auto-resolver work can run two AI ladders + a sharp crop +
@@ -81,7 +83,7 @@ export async function POST(
   // again with the result.
   after(async () => {
     try {
-      const result = await autoResolveBugReport(id);
+      const result = await autoResolveBugReport(id, body.note?.trim() || null);
       await notifyDevViaTelegram({
         questionId: id,
         questionNumber: q.original_question_number as number | null,
@@ -119,17 +121,29 @@ export async function POST(
 }
 
 /**
- * Inspect the question's current state and run the right repair op
- * automatically. Heuristic:
- *   - If has_image=true AND image_urls is empty → repairImageForQuestion
- *   - If parsing_notes references math / table / render / contains-prose
- *     → repairMathForQuestion
- *   - Otherwise nothing to do; flagged for human follow-up
+ * Inspect the question + the admin's note and run the repair op(s) that
+ * actually match the complaint, then report whether anything was truly
+ * fixed.
  *
- * Returns a short prose summary suitable for Telegram + a boolean
- * saying whether any DB write happened.
+ * Routing (a report can trigger more than one op):
+ *   - table   → note mentions a table, OR has_table=true but the stored
+ *     text has no Markdown table → repairTableForQuestion
+ *   - image   → note mentions a figure, OR blind image (has_image but no
+ *     image_urls) → repairImageForQuestion
+ *   - math    → note mentions math/render, OR nothing more specific
+ *     matched (the catch-all for vague "this is broken" reports)
+ *   - answer  → note is about answer-key / choice correctness → NO safe
+ *     auto-fix; left open for a human (never auto-resolved)
+ *
+ * `touched` is true ONLY when at least one op returned ok===true, so a
+ * report is auto-resolved only when something was genuinely fixed. An op
+ * that reports "couldn't fix — edit by hand" (ok:false) leaves the report
+ * open in the dev queue.
  */
-async function autoResolveBugReport(questionId: string): Promise<{
+async function autoResolveBugReport(
+  questionId: string,
+  note: string | null,
+): Promise<{
   summary: string;
   newStatus: string | null;
   touched: boolean;
@@ -138,7 +152,7 @@ async function autoResolveBugReport(questionId: string): Promise<{
   const { data: q } = await db
     .from("questions")
     .select(
-      "id, parsing_status, parsing_notes, has_image, image_urls, question_text, choices, explanation",
+      "id, parsing_status, parsing_notes, has_image, has_table, image_urls, question_text, choices, explanation",
     )
     .eq("id", questionId)
     .maybeSingle();
@@ -146,50 +160,72 @@ async function autoResolveBugReport(questionId: string): Promise<{
     return { summary: "Question not found.", newStatus: null, touched: false };
   }
 
-  // The admin reported a bug — that signal alone is enough to spend
-  // the AI call. Always try a math re-extract via the Sonnet → Opus
-  // ladder; in parallel, run image re-extract if the row is
-  // a blind-image. The previous "heuristic match" pre-filter sent
-  // too many reports back to the human with "no automatic repair
-  // path matched"; Barry made the call to attempt repair on every
-  // reported question and only bail if Claude can't produce a
-  // clean output.
-  const wantsImageFix =
+  const n = (note ?? "").toLowerCase();
+  const tableComplaint = /\btable\b|\bcolumn\b|\brow\b|\bgrid\b|表格|表|欄位|列/.test(n);
+  const imageComplaint =
+    /\bimage\b|\bfigure\b|\bgraph\b|\bpicture\b|\bdiagram\b|\bchart\b|圖|看不到/.test(n);
+  const mathComplaint =
+    /\bmath\b|\brender\b|\bfrac\b|\bequation\b|\blatex\b|\bformula\b|\bdisplay\b|公式|數學|顯示|亂碼/.test(
+      n,
+    );
+  const answerComplaint =
+    /\banswer\b|\bcorrect\b|\bkey\b|\bchoice\b|\boption\b|\bwrong\b|答案|選項|錯/.test(n);
+
+  const tableFlagButFlat =
+    q.has_table === true && !hasMarkdownTable((q.question_text as string) ?? "");
+  const blindImage =
     q.has_image === true &&
     (!Array.isArray(q.image_urls) || q.image_urls.length === 0);
-  const wantsMathFix = true;
+
+  const ops: Array<{ label: string; run: () => Promise<{ ok: boolean; message: string }> }> = [];
+  if (tableComplaint || tableFlagButFlat)
+    ops.push({ label: "Table", run: () => repairTableForQuestion(questionId) });
+  if (imageComplaint || blindImage)
+    ops.push({ label: "Image", run: () => repairImageForQuestion(questionId) });
+  // Math runs when explicitly asked for, or as the catch-all for a vague
+  // report — but NOT when the only signal is an answer-key complaint
+  // (a math re-extract can't fix a wrong answer and would falsely "touch").
+  const onlyAnswer = answerComplaint && !tableComplaint && !imageComplaint && !mathComplaint;
+  if (mathComplaint || (ops.length === 0 && !onlyAnswer))
+    ops.push({ label: "Math", run: () => repairMathForQuestion(questionId) });
 
   const parts: string[] = [];
+  let touched = false;
   let lastStatus = q.parsing_status as string;
-
-  if (wantsImageFix) {
+  for (const op of ops) {
     try {
-      const r = await repairImageForQuestion(questionId);
-      parts.push(`Image: ${r.message}`);
-      if (r.ok) lastStatus = "Draft";
+      const r = await op.run();
+      parts.push(`${op.label}: ${r.message}`);
+      if (r.ok) {
+        touched = true;
+        lastStatus = "Draft";
+      }
     } catch (e) {
       parts.push(
-        `Image fix crashed: ${e instanceof Error ? e.message : String(e)}`,
+        `${op.label} fix crashed: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
 
-  if (wantsMathFix) {
-    try {
-      const r = await repairMathForQuestion(questionId);
-      parts.push(`Math: ${r.message}`);
-      if (r.ok) lastStatus = "Draft";
-    } catch (e) {
-      parts.push(
-        `Math fix crashed: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
+  // Answer-key correctness has no safe automatic fix — always leave the
+  // report open for a human even if another op ran.
+  if (answerComplaint) {
+    parts.push(
+      "Answer-key concern noted — no automatic fix for answer correctness; left for human review.",
+    );
   }
+  if (ops.length === 0) {
+    parts.push("No automatic repair path matched — left open for human review.");
+  }
+
+  // An answer complaint must never auto-close the report, regardless of
+  // whatever else ran.
+  const resolvable = touched && !answerComplaint;
 
   return {
     summary: parts.join(" · "),
     newStatus: lastStatus,
-    touched: parts.some((p) => p.includes("Math:") || p.includes("Image:")),
+    touched: resolvable,
   };
 }
 

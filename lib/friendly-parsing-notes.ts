@@ -60,6 +60,14 @@ const IMAGE_REPAIR_ACTION: NoteAction = {
   pending: "Re-cropping…",
 };
 
+const TABLE_REPAIR_ACTION: NoteAction = {
+  label: "Rebuild table with AI",
+  path: "/repair-table",
+  confirm:
+    "Re-read the PDF and rebuild this question's data table as a real table? Claude reproduces the rows/columns as a Markdown table and moves the row to Draft so you can re-review.",
+  pending: "Rebuilding table…",
+};
+
 const CLEAR_TABLE_ACTION: NoteAction = {
   label: "Mark as 'no table needed'",
   path: "/clear-table-flag",
@@ -109,13 +117,14 @@ const CHECK_LABELS: Record<string, CheckMeta> = {
   "has-table-flag-but-no-table-in-text": {
     headline: "Data table is missing from the question text",
     action:
-      "Tap Auto-fix to re-extract the table. If you've verified the question doesn't need one, use 'Mark as no table needed' instead.",
-    actions: [MATH_REPAIR_ACTION, CLEAR_TABLE_ACTION],
+      "Tap Rebuild table to have Claude re-read the PDF and rebuild it as a real table. If you've verified the question doesn't need one, use 'Mark as no table needed' instead.",
+    actions: [TABLE_REPAIR_ACTION, CLEAR_TABLE_ACTION],
   },
   "pipe-flattened-table": {
     headline: "Table got flattened into one line",
     action:
-      "Split the pipe-separated content back into separate rows with a header / dash separator.",
+      "Tap Rebuild table to have Claude rebuild it as a proper table, or split the pipe-separated content back into rows with a header / dash separator by hand.",
+    actions: [TABLE_REPAIR_ACTION],
   },
   "mcq-answer-not-in-choices": {
     headline: "Correct answer doesn't match any choice letter",

@@ -145,7 +145,12 @@ EXTRACTION RULES:
 5. If an explanation is present, extract it verbatim.
 6. Flag uncertain items (partially visible, cut off, or ambiguous) with ai_confidence_score < 0.7.
 7. If a question contains an image, diagram, or graph, set has_image=true.
-8. If a question contains a table or data chart, set has_table=true.
+8. DATA TABLES → MARKDOWN, NOT IMAGE. If a question contains a data table whose cells are text or numbers (e.g. an x/y value table, a frequency table, a two-column data table), reproduce it INLINE in question_text as a GitHub-Flavored Markdown table, placed where it appears relative to the prose. Example:
+   | x | y |
+   | --- | --- |
+   | 2 | $\\frac{183}{10}$ |
+   | 4 | $\\frac{171}{10}$ |
+   Numeric/math cells follow the SAME $...$ rules as the rest of the question (bare integers stay bare; fractions/expressions wrapped in $...$). In this case set has_table=FALSE and do NOT add an image_region for the table — it now lives in the text. ONLY set has_table=true (and add an image_region) when the table/chart CANNOT be faithfully reproduced as text — a chart drawn as a graphic, a table baked into an image, or cells you cannot read.
 9. If a question contains mathematical formulas, equations, or expressions, set has_formula=true.
 10. page_number should reflect which page of the PDF the question appears on (1-indexed).
 11. Do NOT skip any questions — extract every numbered question you can find.

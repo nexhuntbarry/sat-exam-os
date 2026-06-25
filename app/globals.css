@@ -28,6 +28,29 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Markdown data tables (SAT questions with x/y value tables, frequency
+   tables, etc.). This project doesn't use @tailwindcss/typography, so a
+   GFM table rendered by MathMarkdown would otherwise be a bare, border-
+   less <table> that reads as loose stacked numbers. Style it into a real
+   table. Scoped to .mathmd so it never touches layout tables. */
+.mathmd table {
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.95em;
+  line-height: 1.3;
+}
+.mathmd th,
+.mathmd td {
+  border: 1px solid var(--color-divider, #E4E4E4);
+  padding: 0.4rem 0.75rem;
+  text-align: center;
+  vertical-align: middle;
+}
+.mathmd thead th {
+  background-color: var(--color-light-bg, #F6F6F6);
+  font-weight: 600;
+}
+
 body {
   background-color: #FAFAF7;
   color: #1F1F1F;

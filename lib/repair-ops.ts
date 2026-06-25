@@ -202,6 +202,143 @@ export async function repairMathForQuestion(
   };
 }
 
+// ────────────────────────────────────────────
+// Table repair
+// ────────────────────────────────────────────
+
+const REPAIR_TABLE_SYSTEM = `You are re-extracting one SAT question from a PDF. The question contains a DATA TABLE that the previous parser flattened into plain text, so the table structure (rows and columns) was lost. Re-output question_text with that table rebuilt as a GitHub-Flavored Markdown table.
+
+Rules:
+- Reproduce the table EXACTLY as printed: same column headers, same rows, same cell values, same order. Do NOT invent, drop, reorder, or "fix" any values.
+- Emit the table as GFM Markdown: a header row, a separator row of dashes, then one row per data row, e.g.
+  | x | y |
+  | --- | --- |
+  | 2 | $\\frac{183}{10}$ |
+  | 4 | $\\frac{171}{10}$ |
+- Place the Markdown table inline in question_text exactly where it appears relative to the surrounding prose (usually before "The table shows…").
+- Cell values follow the SAME math rules as the rest of the question: a bare number stays bare (2, 45, 1,150); a fraction / variable / expression is wrapped in $...$ (e.g. $\\frac{183}{10}$). Never wrap a plain number in $...$, never write \\$ inside math.
+- Keep ALL question prose verbatim — only the table portion changes shape.
+- If the visual is NOT a text-representable data table (it is a graph, scatter plot, geometry figure, or an image-only chart with no readable cell values), set has_table_extractable=false and return question_text unchanged.
+
+Return JSON only.`;
+
+const RepairTableSchema = z.object({
+  has_table_extractable: z
+    .boolean()
+    .describe("true only if the visual is a data table whose cells can be reproduced as text"),
+  question_text: z.string(),
+  choices: z
+    .array(z.object({ label: z.enum(["A", "B", "C", "D"]), text: z.string() }))
+    .optional(),
+  explanation: z.string().optional(),
+});
+
+// A GFM table needs a header row of pipes AND a dash separator row
+// (| --- | --- |). A single line with pipes is not enough.
+export function hasMarkdownTable(text: string): boolean {
+  if (!text) return false;
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (!lines[i].includes("|")) continue;
+    const sep = lines[i + 1].trim();
+    if (/^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?$/.test(sep)) return true;
+  }
+  return false;
+}
+
+/**
+ * Re-extract one question whose data table was flattened to plain text,
+ * rebuilding it as a GFM Markdown table inside question_text (the
+ * renderer already supports remark-gfm). On success the row's has_table
+ * flag is cleared — the table now lives in the text, so the blind-image
+ * fallback is no longer needed. Sonnet → Opus ladder, same as math.
+ */
+export async function repairTableForQuestion(
+  questionId: string,
+): Promise<RepairResult> {
+  const db = getServiceClient();
+  const { data: row, error: rowErr } = await db
+    .from("questions")
+    .select(
+      "id, original_question_number, source_pdf_url, question_text, choices, explanation, page_number",
+    )
+    .eq("id", questionId)
+    .maybeSingle();
+  if (rowErr) return { ok: false, message: rowErr.message };
+  if (!row) return { ok: false, message: "Question not found" };
+  if (!row.source_pdf_url)
+    return { ok: false, message: "No source PDF on this question" };
+
+  const pdfBase64 = await fetchPdfBase64(row.source_pdf_url as string);
+  const ladder = ["claude-sonnet-4-6", "claude-opus-4-8"] as const;
+  let lastReason = "";
+  for (let attempt = 0; attempt < ladder.length; attempt++) {
+    const result = await generateObject({
+      model: anthropic(ladder[attempt]),
+      schema: RepairTableSchema,
+      system: REPAIR_TABLE_SYSTEM,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "file", data: pdfBase64, mediaType: "application/pdf" },
+            {
+              type: "text",
+              text: `Re-extract question ${row.original_question_number ?? "?"} (page ${row.page_number ?? "?"}) and rebuild its data table as a Markdown table.\n\nCurrent stored text (table flattened — use only as context):\n\n${row.question_text}\n\nReturn the cleaned question_text.${
+                attempt > 0
+                  ? `\n\nPrior attempt failed (${lastReason}). Be stricter.`
+                  : ""
+              }`,
+            },
+          ],
+        },
+      ],
+    });
+    const q = result.object;
+    if (!q.has_table_extractable) {
+      return {
+        ok: false,
+        message:
+          "No text-representable data table here (likely a graph/figure) — use image repair or leave the PDF-image fallback in place.",
+      };
+    }
+    if (!hasMarkdownTable(q.question_text)) {
+      lastReason = "no markdown table in output";
+      continue;
+    }
+    const mathCheck = isMathClean(q.question_text);
+    if (!mathCheck.ok) {
+      lastReason = `math: ${mathCheck.reason}`;
+      continue;
+    }
+    const update: Record<string, unknown> = {
+      question_text: q.question_text,
+      // The table now lives in the text as Markdown, so the row no longer
+      // needs the blind-image fallback. Clear the flag.
+      has_table: false,
+      parsing_status: "Draft",
+      parsing_notes:
+        "Table rebuilt as Markdown by admin self-repair. Re-review before approve.",
+      updated_at: new Date().toISOString(),
+    };
+    if (q.explanation) update.explanation = q.explanation;
+    if (q.choices && q.choices.length > 0) update.choices = q.choices;
+    const { error: upErr } = await db
+      .from("questions")
+      .update(update)
+      .eq("id", row.id);
+    if (upErr) return { ok: false, message: upErr.message };
+    return {
+      ok: true,
+      message: `Table rebuilt as Markdown (${ladder[attempt]}). Status moved to Draft — re-review before approve.`,
+    };
+  }
+  return {
+    ok: false,
+    message: `Tried Sonnet and Opus — couldn't rebuild a clean Markdown table (${lastReason}). Edit by hand.`,
+  };
+}
+
 const BBoxSchema = z.object({
   what_is_above_y0: z.string(),
   what_is_below_y1: z.string(),
