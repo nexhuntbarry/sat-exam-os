@@ -1012,7 +1012,7 @@ function letterFromExplanationTrailer(
   return value || null;
 }
 
-interface AuditRow {
+export interface AuditRow {
   id: string;
   section: string | null;
   question_type: string | null;
@@ -1151,7 +1151,7 @@ function containsProseInMath(text: string | null | undefined): boolean {
   return false;
 }
 
-const CHECKS: Array<{
+export const CHECKS: Array<{
   id: string;
   failed: (r: AuditRow) => boolean;
 }> = [

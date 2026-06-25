@@ -7,6 +7,10 @@ import {
   repairTableForQuestion,
   hasMarkdownTable,
 } from "@/lib/repair-ops";
+import { CHECKS, type AuditRow } from "@/lib/post-parse-cleanup";
+
+const AUDIT_COLS =
+  "id, parsing_status, parsing_notes, section, question_type, correct_answer, has_image, has_table, image_urls, question_text, choices, explanation";
 
 // Auto-resolver work can run two AI ladders + a sharp crop +
 // blob uploads — give it the same 60s ceiling the repair endpoints
@@ -151,14 +155,17 @@ async function autoResolveBugReport(
   const db = getServiceClient();
   const { data: q } = await db
     .from("questions")
-    .select(
-      "id, parsing_status, parsing_notes, has_image, has_table, image_urls, question_text, choices, explanation",
-    )
+    .select(AUDIT_COLS)
     .eq("id", questionId)
     .maybeSingle();
   if (!q) {
     return { summary: "Question not found.", newStatus: null, touched: false };
   }
+  // Structural checks the question fails BEFORE we touch it — used to
+  // verify, after repair, that the issue is genuinely gone (B3).
+  const originalFails = CHECKS.filter((c) => c.failed(q as unknown as AuditRow)).map(
+    (c) => c.id,
+  );
 
   const n = (note ?? "").toLowerCase();
   const tableComplaint = /\btable\b|\bcolumn\b|\brow\b|\bgrid\b|表格|表|欄位|列/.test(n);
@@ -218,9 +225,30 @@ async function autoResolveBugReport(
     parts.push("No automatic repair path matched — left open for human review.");
   }
 
-  // An answer complaint must never auto-close the report, regardless of
-  // whatever else ran.
-  const resolvable = touched && !answerComplaint;
+  // B3 — verify the repair actually worked: re-audit the row and confirm
+  // the checks it originally failed are now clear. "Claude returned ok" +
+  // "KaTeX renders" isn't proof the reported defect is gone, so we re-run
+  // the same structural CHECKS against the freshly-written row.
+  let verifiedClear = true;
+  if (touched && originalFails.length) {
+    const { data: fresh } = await db
+      .from("questions")
+      .select(AUDIT_COLS)
+      .eq("id", questionId)
+      .maybeSingle();
+    const stillFails = fresh
+      ? CHECKS.filter((c) => c.failed(fresh as unknown as AuditRow)).map((c) => c.id)
+      : originalFails;
+    const unresolved = originalFails.filter((f) => stillFails.includes(f));
+    if (unresolved.length) {
+      verifiedClear = false;
+      parts.push(`Still failing after repair: ${unresolved.join(", ")} — left for human review.`);
+    }
+  }
+
+  // Auto-close only when something was repaired, the post-repair audit is
+  // clean, and the complaint isn't an answer-key concern (no safe auto-fix).
+  const resolvable = touched && verifiedClear && !answerComplaint;
 
   return {
     summary: parts.join(" · "),
