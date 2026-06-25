@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { repairMathForQuestion } from "@/lib/repair-ops";
 
-// Up to three sequential Claude calls (Haiku → Sonnet → Opus) on a
+// Up to two sequential Claude calls (Sonnet → Opus) on a
 // PDF page can take 60+ seconds combined. The default 10s ceiling
 // would silently abort. 60 is the Vercel Pro cap; 90+ needs the
 // Enterprise plan.

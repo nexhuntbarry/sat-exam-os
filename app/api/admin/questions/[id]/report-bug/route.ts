@@ -147,8 +147,8 @@ async function autoResolveBugReport(questionId: string): Promise<{
   }
 
   // The admin reported a bug — that signal alone is enough to spend
-  // the AI call. Always try a math re-extract via the Haiku → Sonnet
-  // → Opus ladder; in parallel, run image re-extract if the row is
+  // the AI call. Always try a math re-extract via the Sonnet → Opus
+  // ladder; in parallel, run image re-extract if the row is
   // a blind-image. The previous "heuristic match" pre-filter sent
   // too many reports back to the human with "no automatic repair
   // path matched"; Barry made the call to attempt repair on every

@@ -87,6 +87,7 @@ export default async function TestSubmissionsPage({
     totalQuestions: number;
     percentage: number | null;
     scaledScore: number | null;
+    status: string;
   };
 
   type Attempt = {
@@ -106,6 +107,10 @@ export default async function TestSubmissionsPage({
     detailSubmissionId: string;
     isMultiModule: boolean;
     modules: ModuleView[];
+    // When this is a multi-module attempt with at least one module
+    // submitted but another still In Progress, point the admin at
+    // the submitted module so they can still inspect what's done.
+    partialDetailSubmissionId: string | null;
   };
 
   // Two-module attempts produce two submission rows sharing one
@@ -153,6 +158,7 @@ export default async function TestSubmissionsPage({
       detailSubmissionId: s.id,
       isMultiModule: false,
       modules: [],
+      partialDetailSubmissionId: null,
     });
   }
   for (const [sessionId, list] of bySession) {
@@ -185,6 +191,7 @@ export default async function TestSubmissionsPage({
         detailSubmissionId: s.id,
         isMultiModule: false,
         modules: [],
+        partialDetailSubmissionId: null,
       });
       continue;
     }
@@ -237,8 +244,17 @@ export default async function TestSubmissionsPage({
           totalQuestions: r.total_questions ?? 0,
           percentage: p,
           scaledScore: p != null ? scaleSectionScore(p) : null,
+          status: r.status,
         };
       }),
+      // Surface the most-recent submitted module as a partial-detail
+      // target when the attempt is mid-flight.
+      partialDetailSubmissionId:
+        status === "In Progress"
+          ? sorted.find(
+              (r) => r.status === "Submitted" || r.status === "Late",
+            )?.id ?? null
+          : null,
     });
   }
 
@@ -352,6 +368,15 @@ export default async function TestSubmissionsPage({
                             title="Open per-question detail (highlights, tutor notes, answer review)"
                           >
                             View detail
+                          </Link>
+                        )}
+                        {a.status === "In Progress" && a.partialDetailSubmissionId && (
+                          <Link
+                            href={`/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-amber/10 hover:bg-warm-amber/20 text-warm-amber text-xs font-medium transition-colors"
+                            title="One module is still In Progress — this opens the module that's already submitted"
+                          >
+                            View partial
                           </Link>
                         )}
                         {(a.status === "Submitted" || a.status === "Late") && (

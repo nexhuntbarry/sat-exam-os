@@ -33,7 +33,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     .select(`
       id, status, score, correct_count, total_questions, percentage,
       started_at, submitted_at, time_spent_seconds, attempt_number,
-      scaled_score, scaled_section,
+      scaled_score, scaled_section, session_id, adaptive_track,
       tests!inner(
         test_name, show_answers_after_submission,
         modules!module_id(module_name, section)
@@ -164,6 +164,21 @@ export default async function StudentResultPage({
   const { submission, test, answerDetails, sessionRows } = data;
   const pct = Number(submission.percentage ?? 0);
 
+  // Partial state: a sibling submission in the same attempt is still
+  // "In Progress" so the combined view can't render. We still want to
+  // tell the student which module is missing instead of silently
+  // showing only Module 1 with no explanation.
+  const incompleteSiblings = (sessionRows ?? []).filter(
+    (r) => r.status !== "Submitted" && r.status !== "Late",
+  );
+  const isPartialView =
+    Array.isArray(sessionRows) &&
+    sessionRows.length > 1 &&
+    incompleteSiblings.length > 0;
+  const incompleteLabels = incompleteSiblings
+    .map((r) => TRACK_LABEL[r.adaptive_track ?? ""] ?? "another module")
+    .join(", ");
+
   // Build the combined Module 1 + Module 2 view when this is a fully
   // graded adaptive session. We weight by raw counts (not by averaging
   // percentages) so an unequal-sized Module 2 doesn't distort the
@@ -243,6 +258,29 @@ export default async function StudentResultPage({
         <span>/</span>
         <span className="text-charcoal">Result</span>
       </div>
+
+      {isPartialView && (
+        <div className="bg-warm-amber/10 border border-warm-amber/30 rounded-2xl p-5 flex items-start gap-3">
+          <Clock size={20} className="text-warm-amber shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="text-charcoal font-semibold text-sm">
+              Partial result — {incompleteLabels} not submitted yet
+            </div>
+            <div className="text-mid-gray text-xs leading-relaxed">
+              You finished one module but the other is still open. The
+              score below covers only the submitted module. Resume the
+              test to complete it, or your teacher can release the
+              full score once the remaining module is finalized.
+            </div>
+            <Link
+              href={`/student/tests/${id}/take`}
+              className="inline-block mt-2 px-3 py-1.5 rounded-lg bg-warm-amber/20 hover:bg-warm-amber/30 text-warm-amber text-xs font-medium transition-colors"
+            >
+              Resume remaining module
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* Score card — adaptive flow shows the combined Module 1 +
           Module 2 view; legacy single-module flow keeps the original

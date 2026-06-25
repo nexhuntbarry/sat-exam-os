@@ -202,7 +202,7 @@ async function repairUnderlines(
     try {
       const pdfBase64 = await fetchPdfBase64(q.source_pdf_url);
       const result = await generateObject({
-        model: anthropic("claude-haiku-4-5"),
+        model: anthropic("claude-sonnet-4-6"),
         schema: UnderlineSchema,
         system: UNDERLINE_SYSTEM,
         messages: [
@@ -278,7 +278,7 @@ async function recoverMissingChoices(
     try {
       const pdfBase64 = await fetchPdfBase64(q.source_pdf_url as string);
       const result = await generateObject({
-        model: anthropic("claude-haiku-4-5"),
+        model: anthropic("claude-sonnet-4-6"),
         schema: ChoicesSchema,
         system: CHOICES_SYSTEM,
         messages: [
@@ -938,7 +938,7 @@ async function resolveBlindImages(
     try {
       const pdfBase64 = await fetchPdfBase64(q.source_pdf_url as string);
       const result = await generateObject({
-        model: anthropic("claude-haiku-4-5"),
+        model: anthropic("claude-sonnet-4-6"),
         schema: BlindImageSchema,
         system: BLIND_IMAGE_SYSTEM,
         messages: [

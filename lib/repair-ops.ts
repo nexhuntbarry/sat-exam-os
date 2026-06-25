@@ -108,9 +108,9 @@ export interface RepairResult {
 
 /**
  * Re-extract one question's text / choices / explanation via Claude
- * because the stored content fails KaTeX. Escalates Haiku → Sonnet
- * → Opus until either the output passes the local math-render
- * check or we exhaust the ladder.
+ * because the stored content fails KaTeX. Escalates Sonnet → Opus
+ * until either the output passes the local math-render check or we
+ * exhaust the ladder.
  */
 export async function repairMathForQuestion(
   questionId: string,
@@ -133,7 +133,7 @@ export async function repairMathForQuestion(
   // it's been the source of most prompt-following slips. Start
   // at Sonnet, escalate to Opus when the first pass doesn't
   // clear the local math-render check.
-  const ladder = ["claude-sonnet-4-6", "claude-opus-4-7"] as const;
+  const ladder = ["claude-sonnet-4-6", "claude-opus-4-8"] as const;
   let lastReason = "";
   for (let attempt = 0; attempt < ladder.length; attempt++) {
     const result = await generateObject({
@@ -198,7 +198,7 @@ export async function repairMathForQuestion(
   }
   return {
     ok: false,
-    message: `Tried Haiku, Sonnet, and Opus — none produced clean math (${lastReason}). Edit the question by hand.`,
+    message: `Tried Sonnet and Opus — none produced clean math (${lastReason}). Edit the question by hand.`,
   };
 }
 

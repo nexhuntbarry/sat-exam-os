@@ -36,6 +36,7 @@ type TestAttemptModule = {
   totalQuestions: number;
   percentage: number | null;
   scaledScore: number | null;
+  status: string;
 };
 
 type TestAttempt = {
@@ -48,6 +49,10 @@ type TestAttempt = {
   detailSubmissionId: string;
   isMultiModule: boolean;
   modules: TestAttemptModule[];
+  // Set when at least one module is Submitted/Late but at least one
+  // other module is still In Progress — surfaces the partial-result
+  // CTA on the dashboard without losing the Resume affordance.
+  partialResultSubmissionId: string | null;
 };
 
 // Two-module attempts span two submissions sharing session_id. Pick the
@@ -102,8 +107,23 @@ function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
           totalQuestions: r.total_questions ?? 0,
           percentage: p,
           scaledScore: p != null ? scaleSectionScore(p) : null,
+          status: r.status,
         };
       });
+      // When the attempt is mid-flight (one module Submitted, the
+      // other still In Progress) we still want a "view what's done so
+      // far" button so the student isn't locked out of their Module 1
+      // result. Pick the latest already-Submitted module as the
+      // partial target.
+      const hasMixed =
+        modules.some(
+          (m) => m.status === "Submitted" || m.status === "Late",
+        ) && modules.some((m) => m.status === "In Progress");
+      const partialResultSubmissionId = hasMixed
+        ? modules.find(
+            (m) => m.status === "Submitted" || m.status === "Late",
+          )?.submissionId ?? null
+        : null;
       return {
         id: sorted[0].session_id ?? sorted[0].id,
         status,
@@ -116,6 +136,7 @@ function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
         detailSubmissionId: sorted[sorted.length - 1].id,
         isMultiModule: true,
         modules,
+        partialResultSubmissionId,
       };
     }
   }
@@ -133,6 +154,7 @@ function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
     detailSubmissionId: first.id,
     isMultiModule: false,
     modules: [],
+    partialResultSubmissionId: null,
   };
 }
 
@@ -304,12 +326,22 @@ export default async function StudentTestsPage() {
                             View Result
                           </Link>
                         ) : test.testStatus === "In Progress" ? (
-                          <Link
-                            href={`/student/tests/${test.id}/take`}
-                            className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 text-xs font-medium transition-colors"
-                          >
-                            Resume
-                          </Link>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Link
+                              href={`/student/tests/${test.id}/take`}
+                              className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 text-xs font-medium transition-colors"
+                            >
+                              Resume
+                            </Link>
+                            {test.attempt?.partialResultSubmissionId && (
+                              <Link
+                                href={`/student/tests/${test.id}/result?submission=${test.attempt.partialResultSubmissionId}`}
+                                className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium transition-colors"
+                              >
+                                View Module 1 Result
+                              </Link>
+                            )}
+                          </div>
                         ) : (
                           <Link
                             href={`/student/tests/${test.id}`}
