@@ -7,6 +7,16 @@ const nextConfig: NextConfig = {
   // pdfjs-dist + @napi-rs/canvas + sharp ship native bindings that must be
   // resolved at runtime, not bundled by Turbopack/Webpack.
   serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas", "sharp"],
+  // pdfjs renders via a runtime dynamic import of `pdf.worker.mjs`. Because
+  // pdfjs-dist is server-external AND the worker is only referenced
+  // dynamically, Next's file tracer omits it from the serverless function,
+  // so on Vercel the figure cropper dies with "Cannot find module
+  // …/pdf.worker.mjs" (works locally where node_modules is intact). Force-
+  // include the legacy build .mjs in every admin API function that renders
+  // PDFs (extract-images / repair-image / parse / run-solver / report-bug).
+  outputFileTracingIncludes: {
+    "/api/admin/**": ["./node_modules/pdfjs-dist/legacy/build/*.mjs"],
+  },
   async headers() {
     // CSP allowlist:
     // - 'self'                  → same-origin scripts/styles/img/connect.
