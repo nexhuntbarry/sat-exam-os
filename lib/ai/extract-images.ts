@@ -63,26 +63,19 @@ async function renderPdfPages(
   // top-level package picks the correct build automatically.
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
 
-  // Point workerSrc at the real worker module so the fake-worker loader can
-  // dynamically import() it. Setting it to "" makes pdfjs try `import("")`
-  // which throws "Setting up fake worker failed" in Node ESM.
+  // pdfjs' fake worker loads its code with a dynamic `import(workerSrc)` off
+  // a COMPUTED path, which Next's file tracer can't follow — so on Vercel the
+  // package's own pdf.worker.mjs gets dropped from the function bundle and the
+  // cropper dies with "Cannot find module …/pdf.worker.mjs". We vendor the
+  // worker into the repo (lib/ai/pdf-worker.mjs) and point workerSrc at it via
+  // `new URL(rel, import.meta.url)` — a pattern Next/webpack recognise and emit
+  // as a real asset next to the compiled function, so the file always ships.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pdfjsAny = pdfjs as any;
-  if (!pdfjsAny.GlobalWorkerOptions.workerSrc) {
-    try {
-      // Resolve the worker through Node's import.meta.resolve so we get a
-      // file:// URL that works under tsx, Next dev, and Vercel functions.
-      const workerUrl = await import.meta.resolve(
-        "pdfjs-dist/legacy/build/pdf.worker.mjs",
-      );
-      pdfjsAny.GlobalWorkerOptions.workerSrc = workerUrl;
-    } catch {
-      // Last-resort relative path; tolerated by Node when the package is in
-      // node_modules adjacent to the caller.
-      pdfjsAny.GlobalWorkerOptions.workerSrc =
-        "pdfjs-dist/legacy/build/pdf.worker.mjs";
-    }
-  }
+  pdfjsAny.GlobalWorkerOptions.workerSrc = new URL(
+    "./pdf-worker.mjs",
+    import.meta.url,
+  ).href;
 
   const data = Uint8Array.from(Buffer.from(pdfBase64, "base64"));
   // Vercel serverless doesn't bundle pdf.worker.mjs into the function
