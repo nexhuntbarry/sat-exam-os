@@ -151,10 +151,24 @@ async function cropRegion(
   heightPx: number,
   region: { x_pct: number; y_pct: number; w_pct: number; h_pct: number },
 ): Promise<Buffer | null> {
-  const left = Math.max(0, Math.floor(region.x_pct * widthPx));
-  const top = Math.max(0, Math.floor(region.y_pct * heightPx));
-  const width = Math.min(widthPx - left, Math.ceil(region.w_pct * widthPx));
-  const height = Math.min(heightPx - top, Math.ceil(region.h_pct * heightPx));
+  // Pad the AI's bbox by ~2.5% of the page on every side, clamped to the
+  // page, so a slightly-tight box doesn't clip the figure (e.g. the bottom
+  // of a graph). The model tends to draw boxes a hair too small.
+  const PAD_PCT = 0.025;
+  const padX = PAD_PCT * widthPx;
+  const padY = PAD_PCT * heightPx;
+  const left = Math.max(0, Math.floor(region.x_pct * widthPx - padX));
+  const top = Math.max(0, Math.floor(region.y_pct * heightPx - padY));
+  const right = Math.min(
+    widthPx,
+    Math.ceil((region.x_pct + region.w_pct) * widthPx + padX),
+  );
+  const bottom = Math.min(
+    heightPx,
+    Math.ceil((region.y_pct + region.h_pct) * heightPx + padY),
+  );
+  const width = right - left;
+  const height = bottom - top;
   if (width <= 4 || height <= 4) return null;
   try {
     return await sharp(pagePng)
