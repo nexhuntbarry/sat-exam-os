@@ -15,7 +15,18 @@ const nextConfig: NextConfig = {
   // include the legacy build .mjs in every admin API function that renders
   // PDFs (extract-images / repair-image / parse / run-solver / report-bug).
   outputFileTracingIncludes: {
-    "/api/admin/**": ["./node_modules/pdfjs-dist/legacy/build/*.mjs"],
+    "/api/admin/questions/[id]/repair-image": [
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    ],
+    "/api/admin/questions/[id]/report-bug": [
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    ],
+    "/api/admin/modules/[id]/parse": [
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    ],
+    "/api/admin/modules/[id]/run-solver": [
+      "./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    ],
   },
   async headers() {
     // CSP allowlist:
