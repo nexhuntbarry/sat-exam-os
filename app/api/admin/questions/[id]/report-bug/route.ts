@@ -8,6 +8,7 @@ import {
   hasMarkdownTable,
 } from "@/lib/repair-ops";
 import { CHECKS, type AuditRow } from "@/lib/post-parse-cleanup";
+import { notifyBugReportResolved } from "@/lib/notifications";
 
 const AUDIT_COLS =
   "id, parsing_status, parsing_notes, section, question_type, correct_answer, has_image, has_table, image_urls, question_text, choices, explanation";
@@ -110,6 +111,15 @@ export async function POST(
             resolved_at: new Date().toISOString(),
           })
           .eq("id", inserted.id);
+        // In-app notification so the reporter sees the outcome without
+        // depending on the dev Telegram bot.
+        await notifyBugReportResolved(db, {
+          reporterUserId: authResult.userId,
+          bugReportId: inserted.id,
+          questionId: id,
+          message: result.summary || "Auto-repair fixed the reported issue.",
+          auto: true,
+        });
       }
     } catch (e) {
       console.error("[report-bug] auto-resolve crashed:", e);

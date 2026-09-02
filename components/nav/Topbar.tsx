@@ -1,9 +1,9 @@
 "use client";
 
 import { UserButton } from "@clerk/nextjs";
-import { Bell } from "lucide-react";
 import Logo from "@/components/Logo";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import NotificationBell from "@/components/nav/NotificationBell";
 
 interface TopbarProps {
   title?: string;
@@ -26,13 +26,7 @@ export default function Topbar({ title }: TopbarProps) {
       <div className="flex items-center gap-3">
         <LanguageSwitcher />
 
-        <button
-          className="relative p-2 rounded-lg text-mid-gray hover:text-charcoal hover:bg-light-bg transition-colors"
-          aria-label="Notifications"
-        >
-          <Bell size={18} />
-          {/* Badge placeholder */}
-        </button>
+        <NotificationBell />
 
         <UserButton
           appearance={{
