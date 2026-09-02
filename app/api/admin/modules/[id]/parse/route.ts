@@ -14,6 +14,7 @@ import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist, explainOfficialAndPersist } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
+import { recoverMissingFigures } from "@/lib/repair-ops";
 import { autoPromoteModule } from "@/lib/auto-promote";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
@@ -293,12 +294,17 @@ export async function POST(
   // rather than re-fetching from Blob. Failures are non-fatal: questions
   // are still saved, they just won't have inline images.
   //
-  // Skipped entirely for Reading & Writing modules — R&W questions almost
-  // never include figures, the cropper pipeline is the slowest stage in the
-  // 5-minute Vercel function budget, and the inline-iframe renderer covers
-  // any rare R&W figure without needing per-question crops.
+  // For Reading & Writing we normally SKIP the cropper — R&W questions almost
+  // never include figures and the cropper is the slowest stage in the function
+  // budget. But some R&W "which choice uses data from the graph/table"
+  // questions DO carry a figure; blanket-skipping left those blind. So: run the
+  // cropper for Math always, and for R&W only when at least one question was
+  // actually flagged as having a figure (cheap when there are none).
+  const anyFigure = parsedQuestions.some(
+    (q) => q.has_image || (q.image_regions?.length ?? 0) > 0,
+  );
   let imageMap: Map<number, { urls: string[]; alts: string[] }> = new Map();
-  if (mod.section !== "Reading & Writing") {
+  if (mod.section !== "Reading & Writing" || anyFigure) {
     try {
       const result = await extractAndUploadQuestionImages(
         pdfBase64,
@@ -587,6 +593,24 @@ export async function POST(
     console.error("[modules/parse] semantic-audit crashed:", err);
   }
 
+  // Phase 5b — recover missing figures. For every question the audit flagged
+  // as "needs a figure but has none", re-read its PDF page and ask Claude
+  // vision to locate + crop the figure. Recovered figures clear the flag (and
+  // Approve when nothing else is wrong); genuinely absent ones stay in review.
+  // Catches both the R&W data-graph questions and any Math figure the parser
+  // under-flagged as has_image=false.
+  let figures = { attempted: 0, recovered: 0, approved: 0, stillMissing: 0 };
+  if (audit.figureIssues > 0) {
+    try {
+      figures = await recoverMissingFigures(id, db);
+      console.log(
+        `[modules/parse] recover-figures module=${id} attempted=${figures.attempted} recovered=${figures.recovered} approved=${figures.approved} stillMissing=${figures.stillMissing}`,
+      );
+    } catch (err) {
+      console.error("[modules/parse] recover-figures crashed:", err);
+    }
+  }
+
   // Phase 6 — bulk-promote high-confidence Drafts to Approved so the
   // admin doesn't have to discover days later that a new module
   // landed in a test with 2 questions because nothing got
@@ -613,6 +637,7 @@ export async function POST(
     cleanup,
     explainedOfficial: explained,
     semanticAudit: audit,
+    figureRecovery: figures,
   });
 }
 

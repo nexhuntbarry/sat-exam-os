@@ -523,3 +523,67 @@ export async function clearTableFlag(
     message: "Table flag cleared.",
   };
 }
+
+// ── Batch missing-figure recovery ────────────────────────────────────
+//
+// After the semantic audit flags questions as "needs a figure but has none",
+// try to actually recover the figure for each: repairImageForQuestion re-reads
+// the question's PDF page, asks Claude vision for the figure's bounding box,
+// crops and uploads it. If a figure is found the row gets its image and the
+// figure flag is cleared (Approved when no other defect remains); if Claude
+// finds nothing the row is left in Needs Review for a human.
+//
+// Targets ONLY questions whose parsing_notes mention a figure/graph problem and
+// that currently have no image_urls — so we never re-crop questions that are
+// already fine, and we lean on the audit's judgement (smarter than a keyword
+// match) about which questions actually need a figure.
+export async function recoverMissingFigures(
+  moduleId: string,
+  db: ReturnType<typeof getServiceClient>,
+): Promise<{ attempted: number; recovered: number; approved: number; stillMissing: number }> {
+  const { data } = await db
+    .from("questions")
+    .select("id, original_question_number, parsing_notes, image_urls")
+    .eq("module_id", moduleId)
+    .eq("parsing_status", "Needs Review");
+  const FIGURE_NOTE = /figure|graph|diagram|chart|scatter|\bplot\b|based on the (graph|table|figure)/i;
+  // A note that names a NON-figure defect we must not auto-clear.
+  const OTHER_NOTE = /LaTeX|math\/|choices|Multiple Choice with|garbled|answer\/explanation|self-contradict|official key=/i;
+  const targets = (data ?? []).filter((q) => {
+    const hasImg = Array.isArray(q.image_urls) && q.image_urls.length > 0;
+    return !hasImg && FIGURE_NOTE.test(q.parsing_notes || "");
+  });
+
+  let recovered = 0, approved = 0, stillMissing = 0;
+  for (const q of targets) {
+    try {
+      const res = await repairImageForQuestion(q.id as string);
+      if (res.ok) {
+        recovered++;
+        // Figure recovered. If the note ONLY complained about the figure,
+        // the row is now clean → Approve; otherwise keep it in review.
+        const otherDefect = OTHER_NOTE.test(q.parsing_notes || "");
+        if (!otherDefect) {
+          approved++;
+          await db
+            .from("questions")
+            .update({
+              parsing_status: "Approved",
+              parsing_notes: "Figure recovered by auto-repair; verified",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", q.id);
+        }
+      } else {
+        stillMissing++;
+      }
+    } catch (e) {
+      stillMissing++;
+      console.error(`[recover-figures] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  console.log(
+    `[recover-figures] module=${moduleId} attempted=${targets.length} recovered=${recovered} approved=${approved} stillMissing=${stillMissing}`,
+  );
+  return { attempted: targets.length, recovered, approved, stillMissing };
+}

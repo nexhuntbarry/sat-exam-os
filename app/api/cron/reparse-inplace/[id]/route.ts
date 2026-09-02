@@ -9,6 +9,7 @@ import {
 import { solveQuestionsAndPersist, explainOfficialAndPersist } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
+import { recoverMissingFigures } from "@/lib/repair-ops";
 import { autoPromoteModule } from "@/lib/auto-promote";
 
 export const maxDuration = 800;
@@ -173,12 +174,13 @@ export async function POST(
     }
   }
 
-  let cleanup, explained, audit, promote;
+  let cleanup, explained, audit, figures, promote;
   try { cleanup = await runPostParseCleanup(id, db); } catch (e) { cleanup = { error: String(e) }; }
   // Explain toward the official answer BEFORE the audit — same as the parse
   // pipeline's Phase 4b — so the audit sees consistent answer↔explanation pairs.
   try { explained = await explainOfficialAndPersist(id, db); } catch (e) { explained = { error: String(e) }; }
   try { audit = await runSemanticAudit(id, db); } catch (e) { audit = { error: String(e) }; }
+  try { figures = await recoverMissingFigures(id, db); } catch (e) { figures = { error: String(e) }; }
   try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
 
   return NextResponse.json({
@@ -195,6 +197,7 @@ export async function POST(
     cleanup,
     explained,
     audit,
+    figures,
     promote,
   });
 }
