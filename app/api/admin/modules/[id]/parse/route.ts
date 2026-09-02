@@ -14,7 +14,7 @@ import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist, explainOfficialAndPersist } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
-import { recoverMissingFigures } from "@/lib/repair-ops";
+import { recoverMissingFigures, recoverBrokenChoices } from "@/lib/repair-ops";
 import { autoPromoteModule } from "@/lib/auto-promote";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
@@ -611,6 +611,23 @@ export async function POST(
     }
   }
 
+  // Phase 5c — recover broken choices. For questions the audit flagged with a
+  // choice problem (or whose choices are empty/garbled/placeholder), re-extract
+  // the four A/B/C/D options verbatim from the PDF page. Fixed rows with no
+  // other defect are Approved. Complements the structural recoverMissingChoices
+  // (which only handles fully-empty choices).
+  let choicesRecovery = { attempted: 0, fixed: 0, approved: 0, stillBroken: 0 };
+  if (audit.choiceIssues > 0) {
+    try {
+      choicesRecovery = await recoverBrokenChoices(id, db);
+      console.log(
+        `[modules/parse] recover-choices module=${id} attempted=${choicesRecovery.attempted} fixed=${choicesRecovery.fixed} approved=${choicesRecovery.approved} stillBroken=${choicesRecovery.stillBroken}`,
+      );
+    } catch (err) {
+      console.error("[modules/parse] recover-choices crashed:", err);
+    }
+  }
+
   // Phase 6 — bulk-promote high-confidence Drafts to Approved so the
   // admin doesn't have to discover days later that a new module
   // landed in a test with 2 questions because nothing got
@@ -638,6 +655,7 @@ export async function POST(
     explainedOfficial: explained,
     semanticAudit: audit,
     figureRecovery: figures,
+    choicesRecovery,
   });
 }
 

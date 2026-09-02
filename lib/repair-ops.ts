@@ -587,3 +587,115 @@ export async function recoverMissingFigures(
   );
   return { attempted: targets.length, recovered, approved, stillMissing };
 }
+
+// ── Broken-choices recovery ──────────────────────────────────────────
+//
+// The structural cleanup's recoverMissingChoices only fires when choices are
+// null/empty. It misses the other failure mode: choices are PRESENT but
+// garbled or placeholder ("table partially visible", "(no text)", blank). This
+// re-extracts the four A/B/C/D options verbatim from the question's PDF page.
+const RepairChoicesSchema = z.object({
+  choices: z
+    .array(z.object({ label: z.enum(["A", "B", "C", "D"]), text: z.string() }))
+    .describe("The four answer choices A,B,C,D copied verbatim from the page."),
+});
+const REPAIR_CHOICES_SYSTEM = `You are extracting the four answer choices for one SAT multiple-choice question from a PDF page. Copy each choice A/B/C/D character-for-character from the page — no paraphrase. Wrap math in $…$. Return exactly four entries in order.`;
+
+function choicesLookBroken(choices: unknown): boolean {
+  if (!Array.isArray(choices) || choices.length < 4) return true;
+  return (choices as unknown[]).some((c) => {
+    const t = (typeof c === "string" ? c : (c as { text?: string })?.text) || "";
+    return !t.trim() || /partially visible|no text|placeholder|not visible|garbled|table partially/i.test(t);
+  });
+}
+
+export async function repairChoicesForQuestion(questionId: string): Promise<RepairResult & { choices?: unknown }> {
+  const db = getServiceClient();
+  const { data: row } = await db
+    .from("questions")
+    .select("id, module_id, original_question_number, source_pdf_url, question_text, page_number, question_type")
+    .eq("id", questionId)
+    .maybeSingle();
+  if (!row) return { ok: false, message: "Question not found" };
+  if (row.question_type !== "Multiple Choice") return { ok: false, message: "Not a multiple-choice question" };
+  if (!row.source_pdf_url) return { ok: false, message: "No source PDF" };
+
+  const pdfBase64 = await fetchPdfBase64(row.source_pdf_url as string);
+  const result = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: RepairChoicesSchema,
+    system: REPAIR_CHOICES_SYSTEM,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "file", data: pdfBase64, mediaType: "application/pdf" },
+          {
+            type: "text",
+            text: `Question ${row.original_question_number ?? "?"} is on page ${row.page_number ?? "?"}.\n\nStem:\n${row.question_text ?? ""}\n\nReturn the four A/B/C/D answer choices verbatim.`,
+          },
+        ],
+      },
+    ],
+  });
+  const choices = result.object.choices;
+  if (choicesLookBroken(choices)) {
+    return { ok: false, message: "Re-extraction still produced incomplete/garbled choices", choices };
+  }
+  await db
+    .from("questions")
+    .update({ choices, updated_at: new Date().toISOString() })
+    .eq("id", row.id);
+  return { ok: true, message: `Choices re-extracted (${choices.length}).`, choices };
+}
+
+/**
+ * Batch: for every Needs-Review question in the module whose choices are broken
+ * (empty/garbled/placeholder) or that the audit flagged for a choice problem,
+ * re-extract the choices from the PDF. Fixed rows with no other defect are
+ * Approved; ones that still look broken stay in review.
+ */
+export async function recoverBrokenChoices(
+  moduleId: string,
+  db: ReturnType<typeof getServiceClient>,
+): Promise<{ attempted: number; fixed: number; approved: number; stillBroken: number }> {
+  const { data } = await db
+    .from("questions")
+    .select("id, original_question_number, parsing_notes, choices, question_type")
+    .eq("module_id", moduleId)
+    .eq("parsing_status", "Needs Review")
+    .eq("question_type", "Multiple Choice");
+  const OTHER_NOTE = /figure|graph|LaTeX|math\/|self-contradict|official key=|answer\/explanation/i;
+  const targets = (data ?? []).filter(
+    (q) => choicesLookBroken(q.choices) || /choice/i.test(q.parsing_notes || ""),
+  );
+
+  let fixed = 0, approved = 0, stillBroken = 0;
+  for (const q of targets) {
+    try {
+      const res = await repairChoicesForQuestion(q.id as string);
+      if (res.ok) {
+        fixed++;
+        if (!OTHER_NOTE.test(q.parsing_notes || "")) {
+          approved++;
+          await db
+            .from("questions")
+            .update({ parsing_status: "Approved", parsing_notes: "Choices re-extracted from PDF; verified", updated_at: new Date().toISOString() })
+            .eq("id", q.id);
+        } else {
+          await db
+            .from("questions")
+            .update({ parsing_notes: `${q.parsing_notes}; choices re-extracted from PDF`, updated_at: new Date().toISOString() })
+            .eq("id", q.id);
+        }
+      } else {
+        stillBroken++;
+      }
+    } catch (e) {
+      stillBroken++;
+      console.error(`[recover-choices] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  console.log(`[recover-choices] module=${moduleId} attempted=${targets.length} fixed=${fixed} approved=${approved} stillBroken=${stillBroken}`);
+  return { attempted: targets.length, fixed, approved, stillBroken };
+}
