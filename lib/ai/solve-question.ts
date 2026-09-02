@@ -473,6 +473,17 @@ export async function solveQuestionsAndPersist(
         if (sprLetterAnswer && solved.explainedAnswer && !/^[A-D]$/i.test(solved.explainedAnswer.trim())) {
           savedAnswer = solved.explainedAnswer;
         }
+        // Solver self-contradiction (declared answer field ≠ the answer its
+        // own explanation works out to): the structured `correct_answer` slot
+        // is filled somewhat independently of the reasoning and is the less
+        // reliable of the two — the worked explanation is the actual solve.
+        // Trust the explained answer so we never PERSIST a known-wrong declared
+        // value (e.g. explanation computes 29 but the field said 19). Still
+        // flagged Needs Review below for a human glance. SPR substitution and
+        // needs-drawing (handled just above/below) take precedence.
+        else if (solved.consistencyMismatch && solved.explainedAnswer) {
+          savedAnswer = solved.explainedAnswer;
+        }
         // needs_drawing → solver explicitly refused to guess; null the
         // answer out so the admin sees an empty field and the verbatim
         // "requires drawing" explanation. The Needs Review status below
@@ -502,7 +513,7 @@ export async function solveQuestionsAndPersist(
         }
         if (solved.consistencyMismatch) {
           noteParts.push(
-            `Solver self-contradicts: declared ${declared}, explained ${solved.explainedAnswer ?? "<unparsed>"}. Please verify.`,
+            `Solver self-contradicted (declared ${declared}, explained ${solved.explainedAnswer ?? "<unparsed>"}); stored the explained answer${savedAnswer !== declared ? ` "${savedAnswer}"` : ""}. Please verify.`,
           );
         }
         const notes =
@@ -531,4 +542,135 @@ export async function solveQuestionsAndPersist(
   }
 
   return { solved: solvedCount, failed: failedCount };
+}
+
+// ── Explain toward the official answer ───────────────────────────────
+//
+// When a question already has an authoritative answer (from the official
+// answer key), we should NOT let the solver guess independently and then flag
+// disagreements — that floods the review queue with false alarms whose only
+// problem is that the (weaker) independent solve differed from the correct key.
+// Instead we generate an explanation CONDITIONED on the official answer: the
+// stored answer stays correct and the explanation justifies it, so the two
+// always agree. Rows with a real non-answer defect (blind figure, or a note
+// naming a figure/choices/latex problem) stay Needs Review; the rest are safe
+// to Approve. Shared by the parse pipeline and the /api/cron/explain-official
+// backfill endpoint.
+
+const ExplainOfficialSchema = z.object({
+  explanation: z
+    .string()
+    .describe(
+      "A clear, complete, self-contained explanation of WHY the given correct answer is correct, and briefly why the others are wrong. Never contradict it or name a different answer.",
+    ),
+});
+
+const EXPLAIN_OFFICIAL_SYSTEM = `You are an expert SAT tutor writing an answer explanation. You are GIVEN the correct answer — it comes from the official College Board answer key and is authoritative and final. Write a clear, complete explanation of why that answer is correct and briefly why the other choices are wrong. Do NOT question, second-guess, or contradict the given answer, and never state a different letter as the answer.`;
+
+const EXPLAIN_HARD_ISSUE =
+  /missing figure|needs? a figure|no figure|figure shown|based on the graph|image not uploaded|requires drawing|LaTeX|garbled|choices/i;
+
+interface ExplainRow {
+  id: string;
+  original_question_number: number;
+  question_text: string | null;
+  choices: unknown;
+  correct_answer: string | null;
+  official_answer: string | null;
+  parsing_notes: string | null;
+  has_image: boolean | null;
+  image_urls: unknown;
+}
+
+/**
+ * For every question in the module that has an official answer, (re)write its
+ * explanation to justify that answer and set correct_answer to it. Approves
+ * rows with no other defect; leaves figure/choices ones Needs Review.
+ */
+export async function explainOfficialAndPersist(
+  moduleId: string,
+  db: DbClient,
+  callerUserId?: string,
+): Promise<{ rewrote: number; approved: number; keptReview: number; skipped: number }> {
+  const { data } = await db
+    .from("questions")
+    .select(
+      "id, original_question_number, question_text, choices, correct_answer, official_answer, parsing_notes, has_image, image_urls",
+    )
+    .eq("module_id", moduleId)
+    .not("official_answer", "is", null);
+  const rows = (data ?? []) as ExplainRow[];
+
+  let rewrote = 0, approved = 0, keptReview = 0, skipped = 0;
+  const CHUNK = 5;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    const chunk = rows.slice(i, i + CHUNK);
+    await Promise.all(
+      chunk.map(async (q) => {
+        const ans = q.official_answer || q.correct_answer;
+        if (!ans) { skipped++; return; }
+        const ch = Array.isArray(q.choices)
+          ? (q.choices as unknown[])
+              .map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`))
+              .join("\n")
+          : "";
+        try {
+          const res = await generateObject({
+            model: anthropic("claude-sonnet-4-6"),
+            schema: ExplainOfficialSchema,
+            system: EXPLAIN_OFFICIAL_SYSTEM,
+            maxRetries: 3,
+            messages: [
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nExplain why ${ans} is correct.`,
+                  },
+                ],
+              },
+            ],
+          });
+          rewrote++;
+          const blindFigure = !!q.has_image && !(Array.isArray(q.image_urls) && q.image_urls.length > 0);
+          const keep = EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") || blindFigure;
+          if (keep) keptReview++; else approved++;
+          const usage = res.usage;
+          if (usage) {
+            const inTok = usage.inputTokens ?? 0;
+            const outTok = usage.outputTokens ?? 0;
+            await logUsage({
+              userId: callerUserId,
+              route: "explain-official",
+              tokensInput: inTok,
+              tokensOutput: outTok,
+              model: "claude-sonnet-4-6",
+              costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500),
+              metadata: { question_number: q.original_question_number },
+            });
+          }
+          await db
+            .from("questions")
+            .update({
+              correct_answer: ans,
+              explanation: res.object.explanation,
+              parsing_status: keep ? "Needs Review" : "Approved",
+              parsing_notes: keep
+                ? "Explanation matches official answer; still needs review (figure/choices)"
+                : "Answer = official key; explanation matches (verified)",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", q.id);
+        } catch (e) {
+          skipped++;
+          console.error(`[explain-official] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
+        }
+      }),
+    );
+  }
+  console.log(
+    `[explain-official] module=${moduleId} rewrote=${rewrote} approved=${approved} keptReview=${keptReview} skipped=${skipped}`,
+  );
+  return { rewrote, approved, keptReview, skipped };
 }

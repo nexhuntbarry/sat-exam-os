@@ -8,10 +8,12 @@ import {
   cosineSimilarity,
   classifyPdfIsSat,
   fetchPdfAsBase64,
+  extractAnswerKey,
 } from "@/lib/ai/parse-pdf";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
-import { solveQuestionsAndPersist } from "@/lib/ai/solve-question";
+import { solveQuestionsAndPersist, explainOfficialAndPersist } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
+import { runSemanticAudit } from "@/lib/ai/semantic-audit";
 import { autoPromoteModule } from "@/lib/auto-promote";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
@@ -49,8 +51,14 @@ function consumeParseQuota(adminId: string): { ok: boolean; retryInSec: number }
 // module as recoverable so admins can re-trigger after a crash/timeout.
 const PARSE_LOCK_FRESHNESS_MS = 600_000; // 10 minutes
 
-// Vercel Hobby plan caps Serverless Functions at 300s. Revert from 800.
-export const maxDuration = 300;
+// This team is on Vercel Pro, which allows Serverless/Fluid functions up to
+// 800s. English (Reading & Writing) modules run a heavier pipeline than Math
+// — a full-PDF extraction (with a possible second full-PDF retry when the
+// first pass returns < 22 questions) followed by the chunked solver, cleanup,
+// and auto-promote, all inline. At 300s a big R&W PDF (~15MB) gets hard-killed
+// mid-run, leaving the module stuck in a "parsing" zombie state. 800s gives
+// the pipeline the headroom it needs.
+export const maxDuration = 800;
 
 // POST /api/admin/modules/[id]/parse
 //
@@ -210,6 +218,29 @@ export async function POST(
       },
       { status: 200 },
     );
+  }
+
+  // Step A2 — Auto-extract the official answer key from the PDF when the
+  // caller didn't supply one. SAT modules print the key on the last page(s),
+  // and it is authoritative ground truth — far more reliable than the AI
+  // solver's derived answer. Pulling it here means EVERY parse reconciles its
+  // answers against the official key (Phase 3 below), not just uploads that
+  // came through the probe-answer-key step. Non-fatal: if no key is found the
+  // parse proceeds on solver-derived answers as before.
+  if (!answerKey) {
+    try {
+      const probed = await extractAnswerKey(pdfBase64, authResult.userId);
+      if (probed.found && Object.keys(probed.answers).length > 0) {
+        answerKey = probed.answers;
+        console.log(
+          `[modules/parse] auto-extracted official answer key: ${Object.keys(probed.answers).length} answers`,
+        );
+      } else {
+        console.log("[modules/parse] no official answer key found in PDF");
+      }
+    } catch (err) {
+      console.error("[modules/parse] auto answer-key extract failed (non-fatal):", err);
+    }
   }
 
   // Step B — Extract questions (existing logic)
@@ -510,7 +541,53 @@ export async function POST(
     console.error("[modules/parse] post-cleanup crashed:", err);
   }
 
-  // Phase 5 — bulk-promote high-confidence Drafts to Approved so the
+  // Phase 4b — explain toward the official answer. For every question that has
+  // an official answer (from the auto-extracted key), the independent solver's
+  // guess is irrelevant: we overwrite the explanation with one that JUSTIFIES
+  // the official answer and set correct_answer to it. This is the single
+  // biggest reducer of false Needs-Review flags — without it the solver's
+  // weaker independent solve disagrees with the correct key on many R&W
+  // questions and every disagreement (plus its now-wrong explanation) gets
+  // flagged. Running it BEFORE the audit means the audit sees answer↔
+  // explanation pairs that already agree, so it only flags REAL defects.
+  let explained = { rewrote: 0, approved: 0, keptReview: 0, skipped: 0 };
+  if (answerKey) {
+    try {
+      explained = await explainOfficialAndPersist(id, db, authResult.userId);
+      console.log(
+        `[modules/parse] explain-official module=${id} rewrote=${explained.rewrote} approved=${explained.approved} keptReview=${explained.keptReview} skipped=${explained.skipped}`,
+      );
+    } catch (err) {
+      console.error("[modules/parse] explain-official crashed:", err);
+    }
+  }
+
+  // Phase 5 — semantic content audit. The structural cleanup above catches
+  // parser artifacts; this pass has Claude read each question as a student
+  // sees it and flag genuine content defects (corrupted LaTeX/math symbols,
+  // a stem that needs a figure but has none, an explanation that doesn't
+  // support the stored answer, or broken MCQ choices), demoting anything it
+  // flags to Needs Review. Runs BEFORE auto-promote so defective rows are
+  // never auto-approved. Best effort — failures don't block the response.
+  let audit = {
+    audited: 0,
+    flagged: 0,
+    latexIssues: 0,
+    figureIssues: 0,
+    explanationIssues: 0,
+    choiceIssues: 0,
+    errors: [] as string[],
+  };
+  try {
+    audit = await runSemanticAudit(id, db, authResult.userId);
+    console.log(
+      `[modules/parse] semantic-audit module=${id} audited=${audit.audited} flagged=${audit.flagged} latex=${audit.latexIssues} figure=${audit.figureIssues} explanation=${audit.explanationIssues} choices=${audit.choiceIssues} errors=${audit.errors.length}`,
+    );
+  } catch (err) {
+    console.error("[modules/parse] semantic-audit crashed:", err);
+  }
+
+  // Phase 6 — bulk-promote high-confidence Drafts to Approved so the
   // admin doesn't have to discover days later that a new module
   // landed in a test with 2 questions because nothing got
   // explicitly approved. Threshold 0.9; rows with empty answers,
@@ -534,6 +611,8 @@ export async function POST(
     answerKeyUsed: answerKey ? Object.keys(answerKey).length : 0,
     mismatches: mismatchCount,
     cleanup,
+    explainedOfficial: explained,
+    semanticAudit: audit,
   });
 }
 
