@@ -168,7 +168,7 @@ interface ImageInput {
  * to access:"private" when the public-access mode is rejected, so we mirror
  * that here.
  */
-async function fetchImageAsBase64(
+export async function fetchImageAsBase64(
   url: string,
 ): Promise<{ base64: string; mediaType: string } | null> {
   try {
