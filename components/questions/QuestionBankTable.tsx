@@ -24,10 +24,59 @@ interface Question {
   skill: string | null;
   question_type: string | null;
   parsing_status: string;
+  parsing_notes: string | null;
   ai_confidence_score: number | null;
   created_at: string;
   modules: { module_name: string; source_name: string | null } | null;
 }
+
+// Condense the (often long, multi-clause) parsing_notes into a short reason a
+// reviewer can scan without opening the question. Order matters — the most
+// actionable / blocking issue wins.
+function issueSummary(
+  note: string | null,
+  choices?: unknown,
+  questionType?: string | null,
+  imageUrls?: unknown,
+): { label: string; tone: "warn" | "info" | "muted" } | null {
+  const n = note ?? "";
+  const urls = Array.isArray(imageUrls) ? imageUrls.length : 0;
+  const ch = Array.isArray(choices) ? choices : [];
+  const brokenChoice = ch.some((c) => {
+    const t = (typeof c === "string" ? c : (c as { text?: string })?.text) || "";
+    return !t.trim() || /partially|no text|placeholder|not visible|garbled|table partially/i.test(t);
+  });
+
+  if (questionType === "Multiple Choice" && ch.length > 0 && ch.length < 4) return { label: "Missing answer choices", tone: "warn" };
+  if (brokenChoice) return { label: "Broken / unreadable choice", tone: "warn" };
+  if (/self-contradictory|not a choice|cos R|mis-parsed|bad question/i.test(n)) return { label: "Question looks mis-parsed", tone: "warn" };
+  if (/Needs figure but none|figure but none|cannot auto-solve/i.test(n)) return { label: "Needs a figure — none attached", tone: "warn" };
+  if (urls === 0 && /figure|graph|diagram|based on the (graph|table|figure)/i.test(n)) return { label: "Figure missing", tone: "info" };
+  if (/NOT unanimous/i.test(n)) return { label: "Math — AI solves disagreed", tone: "info" };
+  if (/verifier disagreed/i.test(n)) return { label: "Math — verify failed", tone: "info" };
+  if (/self-contradict/i.test(n)) return { label: "Answer vs explanation mismatch", tone: "warn" };
+  if (/official key=/i.test(n)) return { label: "Answer differs from official key", tone: "warn" };
+  const audit = n.match(/Semantic audit:\s*([^;]+)/i);
+  if (audit) {
+    const t = audit[1].toLowerCase();
+    if (/choice/.test(t)) return { label: "Choice looks off", tone: "warn" };
+    if (/latex|math|symbol|garbled/.test(t)) return { label: "Math / symbol rendering", tone: "warn" };
+    if (/figure|graph/.test(t)) return { label: "Figure missing", tone: "info" };
+    if (/explanation|answer/.test(t)) return { label: "Answer / explanation issue", tone: "warn" };
+    return { label: audit[1].trim().slice(0, 48), tone: "info" };
+  }
+  if (/truncat|cut off|mid-sentence|empty|blank/i.test(n)) return { label: "Text truncated / empty", tone: "warn" };
+  if (/answer changed|Tier1/i.test(n)) return { label: "Answer changed — verify", tone: "info" };
+  if (/Low AI confidence/i.test(n)) return { label: "Low AI confidence", tone: "muted" };
+  if (/Pending AI answer/i.test(n)) return { label: "Awaiting AI answer", tone: "muted" };
+  return null;
+}
+
+const issueToneStyles: Record<string, string> = {
+  warn: "bg-status-warning/12 text-status-warning",
+  info: "bg-status-info/12 text-status-info",
+  muted: "bg-light-bg text-soft-mute",
+};
 
 interface ApiResponse {
   data: Question[];
@@ -395,6 +444,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                     <th className="text-left px-4 py-3 font-medium">Difficulty</th>
                     <th className="text-left px-4 py-3 font-medium">Domain</th>
                     <th className="text-left px-4 py-3 font-medium">Status</th>
+                    <th className="text-left px-4 py-3 font-medium">Why</th>
                     <th className="text-left px-4 py-3 font-medium">Conf.</th>
                     <th className="text-left px-4 py-3 font-medium">Actions</th>
                   </tr>
@@ -447,6 +497,24 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                         >
                           {q.parsing_status}
                         </span>
+                      </td>
+                      <td className="px-4 py-3 max-w-[200px]">
+                        {(() => {
+                          const issue = issueSummary(q.parsing_notes, undefined, q.question_type, undefined);
+                          return issue ? (
+                            <span
+                              title={q.parsing_notes ?? ""}
+                              className={clsx(
+                                "inline-block px-2 py-0.5 rounded-md text-xs font-medium leading-snug",
+                                issueToneStyles[issue.tone]
+                              )}
+                            >
+                              {issue.label}
+                            </span>
+                          ) : (
+                            <span className="text-soft-mute text-xs">—</span>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
                         <ConfidenceBadge score={q.ai_confidence_score} />
