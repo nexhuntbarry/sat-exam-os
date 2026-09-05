@@ -25,6 +25,7 @@ interface Question {
   question_type: string | null;
   parsing_status: string;
   parsing_notes: string | null;
+  official_answer: string | null;
   ai_confidence_score: number | null;
   created_at: string;
   modules: { module_name: string; source_name: string | null } | null;
@@ -38,10 +39,12 @@ function issueSummary(
   choices?: unknown,
   questionType?: string | null,
   imageUrls?: unknown,
-): { label: string; tone: "warn" | "info" | "muted" } | null {
+  officialAnswer?: string | null,
+): { label: string; tone: "warn" | "info" | "muted"; noKey?: boolean } | null {
   const n = note ?? "";
   const urls = Array.isArray(imageUrls) ? imageUrls.length : 0;
   const ch = Array.isArray(choices) ? choices : [];
+  const noKey = !officialAnswer;
   const brokenChoice = ch.some((c) => {
     const t = (typeof c === "string" ? c : (c as { text?: string })?.text) || "";
     return !t.trim() || /partially|no text|placeholder|not visible|garbled|table partially/i.test(t);
@@ -52,8 +55,11 @@ function issueSummary(
   if (/self-contradictory|not a choice|cos R|mis-parsed|bad question/i.test(n)) return { label: "Question looks mis-parsed", tone: "warn" };
   if (/Needs figure but none|figure but none|cannot auto-solve/i.test(n)) return { label: "Needs a figure — none attached", tone: "warn" };
   if (urls === 0 && /figure|graph|diagram|based on the (graph|table|figure)/i.test(n)) return { label: "Figure missing", tone: "info" };
-  if (/NOT unanimous/i.test(n)) return { label: "Math — AI solves disagreed", tone: "info" };
-  if (/verifier disagreed/i.test(n)) return { label: "Math — verify failed", tone: "info" };
+  // No answer key in the source module → AI had no ground truth. Surface that as
+  // the primary reason for the solve-disagreement / verify-fail cases so the
+  // reviewer knows to trust their own judgement, not the AI.
+  if (/NOT unanimous/i.test(n)) return { label: noKey ? "No answer key — AI solves disagreed" : "Math — AI solves disagreed", tone: noKey ? "warn" : "info", noKey };
+  if (/verifier disagreed/i.test(n)) return { label: noKey ? "No answer key — AI can't confirm" : "Math — verify failed", tone: noKey ? "warn" : "info", noKey };
   if (/self-contradict/i.test(n)) return { label: "Answer vs explanation mismatch", tone: "warn" };
   if (/official key=/i.test(n)) return { label: "Answer differs from official key", tone: "warn" };
   const audit = n.match(/Semantic audit:\s*([^;]+)/i);
@@ -498,21 +504,34 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                           {q.parsing_status}
                         </span>
                       </td>
-                      <td className="px-4 py-3 max-w-[200px]">
+                      <td className="px-4 py-3 max-w-[220px]">
                         {(() => {
-                          const issue = issueSummary(q.parsing_notes, undefined, q.question_type, undefined);
-                          return issue ? (
-                            <span
-                              title={q.parsing_notes ?? ""}
-                              className={clsx(
-                                "inline-block px-2 py-0.5 rounded-md text-xs font-medium leading-snug",
-                                issueToneStyles[issue.tone]
+                          const issue = issueSummary(q.parsing_notes, undefined, q.question_type, undefined, q.official_answer);
+                          const showNoKey =
+                            q.parsing_status === "Needs Review" && !q.official_answer && !issue?.noKey;
+                          if (!issue && !showNoKey) return <span className="text-soft-mute text-xs">—</span>;
+                          return (
+                            <div className="flex flex-wrap items-center gap-1">
+                              {issue && (
+                                <span
+                                  title={q.parsing_notes ?? ""}
+                                  className={clsx(
+                                    "inline-block px-2 py-0.5 rounded-md text-xs font-medium leading-snug",
+                                    issueToneStyles[issue.tone]
+                                  )}
+                                >
+                                  {issue.label}
+                                </span>
                               )}
-                            >
-                              {issue.label}
-                            </span>
-                          ) : (
-                            <span className="text-soft-mute text-xs">—</span>
+                              {showNoKey && (
+                                <span
+                                  title="The source module has no answer key — the AI answer is unverified."
+                                  className="inline-block px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-light-bg text-soft-mute whitespace-nowrap"
+                                >
+                                  no answer key
+                                </span>
+                              )}
+                            </div>
                           );
                         })()}
                       </td>

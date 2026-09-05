@@ -33,7 +33,7 @@ export async function GET(req: Request) {
       `id, module_id, section, original_question_number, question_text,
        difficulty, domain, skill, concept, question_type,
        has_image, has_table, has_formula, parsing_status, parsing_notes,
-       ai_confidence_score, page_number, correct_answer,
+       ai_confidence_score, page_number, correct_answer, official_answer,
        reviewed_by, reviewed_at, created_at,
        modules!inner(module_name, source_name)`,
       { count: "exact" }
