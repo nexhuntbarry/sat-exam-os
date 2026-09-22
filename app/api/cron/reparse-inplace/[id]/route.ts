@@ -92,6 +92,14 @@ export async function POST(
     return NextResponse.json({ error: "Parse returned 0 questions — module left untouched" }, { status: 422 });
   }
 
+  // Normalize to 1..N so a booklet-slice numbered e.g. 137–163 maps onto the
+  // existing 1..27 rows (mapping below is by original_question_number).
+  {
+    const minNum = Math.min(...parsed.map((q) => q.original_question_number));
+    const offset = minNum - 1;
+    if (offset > 0) for (const q of parsed) q.original_question_number -= offset;
+  }
+
   // Overwrite rows in place by question number.
   let updated = 0, inserted = 0;
   const seen = new Set<number>();

@@ -289,6 +289,34 @@ export async function POST(
     );
   }
 
+  // Normalize question numbers to 1..N. Some source PDFs are a slice of a
+  // larger booklet where questions carry their continuous printed number
+  // (e.g. a Reading & Writing Module 2 numbered 137–163); every SAT module
+  // should read 1..N on its own. If the lowest number isn't 1, shift every
+  // question — AND the answer key, so the two stay aligned — down by the same
+  // offset. The parser preserves order, so a simple offset keeps them 1..N.
+  {
+    const minNum = Math.min(
+      ...parsedQuestions.map((q) => q.original_question_number),
+    );
+    const offset = minNum - 1;
+    if (offset > 0) {
+      for (const q of parsedQuestions) {
+        q.original_question_number -= offset;
+      }
+      if (answerKey) {
+        const shifted: Record<number, string> = {};
+        for (const [k, v] of Object.entries(answerKey)) {
+          shifted[Number(k) - offset] = v;
+        }
+        answerKey = shifted;
+      }
+      console.log(
+        `[modules/parse] normalized question numbers: shifted by -${offset} → 1..${parsedQuestions.length}`,
+      );
+    }
+  }
+
   // Step C — Extract & upload question images (graphs, tables, diagrams)
   // We already have pdfBase64 in memory from the classifier step; reuse it
   // rather than re-fetching from Blob. Failures are non-fatal: questions
