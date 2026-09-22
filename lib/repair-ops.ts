@@ -533,25 +533,34 @@ export async function clearTableFlag(
 // figure flag is cleared (Approved when no other defect remains); if Claude
 // finds nothing the row is left in Needs Review for a human.
 //
-// Targets ONLY questions whose parsing_notes mention a figure/graph problem and
-// that currently have no image_urls — so we never re-crop questions that are
-// already fine, and we lean on the audit's judgement (smarter than a keyword
-// match) about which questions actually need a figure.
+// Targets two kinds of "blind" rows (no image_urls yet):
+//   1. BLIND IMAGE — flagged has_image=true but the bulk cropper produced no
+//      crop. The whole-module extraction is unreliable at figures (especially
+//      the rare R&W data question); a focused single-page re-crop usually
+//      succeeds. Recovering these at parse time means figures aren't silently
+//      dropped until a human clicks "re-extract".
+//   2. AUDIT-FLAGGED — the semantic audit's note mentions a figure/graph
+//      problem even though has_image wasn't set.
+// repairImageForQuestion returns ok:false (a no-op) when Claude finds no figure
+// on the page, so a spurious has_image never invents an image.
 export async function recoverMissingFigures(
   moduleId: string,
   db: ReturnType<typeof getServiceClient>,
 ): Promise<{ attempted: number; recovered: number; approved: number; stillMissing: number }> {
   const { data } = await db
     .from("questions")
-    .select("id, original_question_number, parsing_notes, image_urls")
-    .eq("module_id", moduleId)
-    .eq("parsing_status", "Needs Review");
+    .select("id, original_question_number, parsing_notes, image_urls, has_image, parsing_status")
+    .eq("module_id", moduleId);
   const FIGURE_NOTE = /figure|graph|diagram|chart|scatter|\bplot\b|based on the (graph|table|figure)/i;
   // A note that names a NON-figure defect we must not auto-clear.
   const OTHER_NOTE = /LaTeX|math\/|choices|Multiple Choice with|garbled|answer\/explanation|self-contradict|official key=/i;
   const targets = (data ?? []).filter((q) => {
     const hasImg = Array.isArray(q.image_urls) && q.image_urls.length > 0;
-    return !hasImg && FIGURE_NOTE.test(q.parsing_notes || "");
+    if (hasImg) return false;
+    // Blind image (flagged has_image but nothing cropped) → always try.
+    if (q.has_image === true) return true;
+    // Otherwise only if the audit/notes point at a figure problem.
+    return FIGURE_NOTE.test(q.parsing_notes || "");
   });
 
   let recovered = 0, approved = 0, stillMissing = 0;
@@ -560,10 +569,13 @@ export async function recoverMissingFigures(
       const res = await repairImageForQuestion(q.id as string);
       if (res.ok) {
         recovered++;
-        // Figure recovered. If the note ONLY complained about the figure,
-        // the row is now clean → Approve; otherwise keep it in review.
+        // Figure recovered. Only re-status rows that were in the review queue
+        // FOR the figure: if a Needs-Review row's note ONLY complained about the
+        // figure, it's now clean → Approve. Draft/Approved blind rows just gain
+        // their image (already written by repairImageForQuestion); don't touch
+        // their status. Rows with another defect stay in review.
         const otherDefect = OTHER_NOTE.test(q.parsing_notes || "");
-        if (!otherDefect) {
+        if (q.parsing_status === "Needs Review" && !otherDefect) {
           approved++;
           await db
             .from("questions")

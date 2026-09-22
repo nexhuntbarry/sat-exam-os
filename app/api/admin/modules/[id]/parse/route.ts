@@ -599,8 +599,12 @@ export async function POST(
   // Approve when nothing else is wrong); genuinely absent ones stay in review.
   // Catches both the R&W data-graph questions and any Math figure the parser
   // under-flagged as has_image=false.
+  // Always run — it self-selects both audit-flagged figures AND "blind" rows
+  // (has_image=true but the bulk cropper produced no crop), so figures the
+  // audit didn't explicitly flag still get a focused single-page re-crop at
+  // parse time instead of waiting for a human to click "re-extract".
   let figures = { attempted: 0, recovered: 0, approved: 0, stillMissing: 0 };
-  if (audit.figureIssues > 0) {
+  {
     try {
       figures = await recoverMissingFigures(id, db);
       console.log(
