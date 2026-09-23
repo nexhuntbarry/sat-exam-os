@@ -61,6 +61,7 @@ MATH FORMATTING (CRITICAL):
 - This applies to correct_answer (when numeric/symbolic) AND explanation.
 - Plain English prose stays unwrapped — only the math itself uses $...$.
 - Do not output ASCII pseudo-math like 1/7, x^2, sqrt(x) — always use LaTeX.
+- MONEY / CURRENCY: never write a bare dollar amount like $170 — a bare $ opens math mode and corrupts the line. Write "170 dollars" or escape the sign as "\\$170". Reserve $…$ for actual algebra only.
 
 SELF-CONSISTENCY (MANDATORY):
 End the explanation with a final line of EXACTLY this form:
@@ -565,7 +566,12 @@ const ExplainOfficialSchema = z.object({
     ),
 });
 
-const EXPLAIN_OFFICIAL_SYSTEM = `You are an expert SAT tutor writing an answer explanation. You are GIVEN the correct answer — it comes from the official College Board answer key and is authoritative and final. Write a clear, complete explanation of why that answer is correct and briefly why the other choices are wrong. Do NOT question, second-guess, or contradict the given answer, and never state a different letter as the answer.`;
+const EXPLAIN_OFFICIAL_SYSTEM = `You are an expert SAT tutor writing an answer explanation. You are GIVEN the correct answer — it comes from the official College Board answer key and is authoritative and final. Write a clear, complete explanation of why that answer is correct and briefly why the other choices are wrong. Do NOT question, second-guess, or contradict the given answer, and never state a different letter as the answer.
+
+FORMATTING — this renders through a Markdown + KaTeX pipeline where $…$ means math mode:
+- MONEY / CURRENCY: never write a bare dollar amount like $170 — a bare $ opens math mode and corrupts the rest of the line. Write money as "170 dollars" or with an escaped sign "\\$170". This applies to every dollar amount.
+- Use $…$ ONLY for actual algebra/equations (e.g. $x \\leq 300$), and make sure every $ you open you also close.
+- Do not narrate your own reasoning process ("wait, let me reconsider", "let me verify") — write only the final, clean explanation.`;
 
 const EXPLAIN_HARD_ISSUE =
   /missing figure|needs? a figure|no figure|figure shown|based on the graph|image not uploaded|requires drawing|LaTeX|garbled|choices/i;
