@@ -179,10 +179,11 @@ export default function QuestionRenderer({
         </MathMarkdown>
       </HighlightableBlock>
 
-      {/* Inline PDF page — primary path for any question flagged with a
-          visual element. The serverless image cropper is too fragile, so we
-          render the original PDF page directly via iframe + #page=N. */}
-      {(question.has_image || question.has_table) && (
+      {/* Inline PDF page — FALLBACK, shown only when we don't have a clean
+          extracted crop. When figure recovery produced a cropped image we show
+          that instead (below); rendering both duplicated the chart. */}
+      {(question.has_image || question.has_table) &&
+        !(question.image_urls && question.image_urls.length > 0) && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-soft-mute text-xs uppercase tracking-wide font-medium">

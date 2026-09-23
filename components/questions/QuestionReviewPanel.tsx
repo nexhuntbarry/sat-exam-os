@@ -403,9 +403,11 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
             </details>
           </div>
 
-          {/* Inline PDF page for visual questions — primary path that always
-              works, since cropping is unreliable on serverless. */}
-          {(q.has_image || q.has_table) && (
+          {/* Inline PDF page — FALLBACK only. When a clean extracted crop
+              exists we show that (below) instead; rendering both duplicated the
+              chart. */}
+          {(q.has_image || q.has_table) &&
+            !(q.image_urls && q.image_urls.length > 0) && (
             <div>
               <label className="block text-xs text-soft-mute mb-2">
                 Source figure · Page {q.page_number ?? 1}
