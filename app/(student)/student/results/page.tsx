@@ -7,6 +7,31 @@ import { BarChart2 } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
+import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
+
+// Aggregate strengths/weaknesses across ALL of a student's graded answers.
+async function getOverallBreakdownRows(studentId: string) {
+  const db = getServiceClient();
+  const { data: subs } = await db
+    .from("submissions")
+    .select("id")
+    .eq("student_id", studentId)
+    .in("status", ["Submitted", "Late"]);
+  const ids = (subs ?? []).map((s) => s.id);
+  if (ids.length === 0) return [];
+  const { data } = await db
+    .from("answer_records")
+    .select("is_correct, questions!inner(section, domain)")
+    .in("submission_id", ids);
+  return ((data ?? []) as unknown as {
+    is_correct: boolean;
+    questions: { section: string | null; domain: string | null };
+  }[]).map((r) => ({
+    is_correct: r.is_correct,
+    section: r.questions?.section ?? null,
+    domain: r.questions?.domain ?? null,
+  }));
+}
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -200,11 +225,17 @@ export default async function StudentResultsPage() {
 
   const rows = await getStudentResults(user.userId);
   const results = buildResultGroups(rows);
+  const breakdownRows = await getOverallBreakdownRows(user.userId);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <PageIntro tKey="student.results" />
       <h1 className="text-2xl font-bold text-charcoal">My Results</h1>
+
+      {/* Overall strengths/weaknesses across every test taken. */}
+      {breakdownRows.length > 0 && (
+        <ScoreBreakdown rows={breakdownRows} title="Your Strengths & Focus Areas — Overall" />
+      )}
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {results.length === 0 ? (

@@ -6,6 +6,7 @@ import { CheckCircle, XCircle, Clock, BarChart2 } from "lucide-react";
 import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
 import { scaleSectionScore } from "@/lib/scoring";
+import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 
 const TRACK_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -134,7 +135,28 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     });
   }
 
-  return { submission, test, answerDetails, sessionRows };
+  // Score-breakdown rows — is_correct + each question's section/domain, for
+  // EVERY graded submission in this attempt. Independent of the answer-reveal
+  // gate: the aggregate strengths/weaknesses view is always safe to show, even
+  // when per-question answers are hidden.
+  const breakdownSubmissionIds =
+    sessionRows && sessionRows.length > 0
+      ? sessionRows.filter((r) => r.status === "Submitted" || r.status === "Late").map((r) => r.id)
+      : [submission.id];
+  const { data: breakdownRecords } = await db
+    .from("answer_records")
+    .select("is_correct, questions!inner(section, domain)")
+    .in("submission_id", breakdownSubmissionIds);
+  const breakdownRows = ((breakdownRecords ?? []) as unknown as {
+    is_correct: boolean;
+    questions: { section: string | null; domain: string | null };
+  }[]).map((r) => ({
+    is_correct: r.is_correct,
+    section: r.questions?.section ?? null,
+    domain: r.questions?.domain ?? null,
+  }));
+
+  return { submission, test, answerDetails, sessionRows, breakdownRows };
 }
 
 function formatDuration(seconds: number | null) {
@@ -161,7 +183,7 @@ export default async function StudentResultPage({
   const data = await getResult(id, user.userId, submissionId);
   if (!data) notFound();
 
-  const { submission, test, answerDetails, sessionRows } = data;
+  const { submission, test, answerDetails, sessionRows, breakdownRows } = data;
   const pct = Number(submission.percentage ?? 0);
 
   // Partial state: a sibling submission in the same attempt is still
@@ -402,6 +424,12 @@ export default async function StudentResultPage({
           <div className="text-soft-mute text-xs">Attempt</div>
         </div>
       </div>
+
+      {/* Strengths & weaknesses by SAT domain — always shown (aggregate,
+          no per-question reveal). Template-generated report, no AI. */}
+      {breakdownRows && breakdownRows.length > 0 && (
+        <ScoreBreakdown rows={breakdownRows} title="Your Strengths & Focus Areas" />
+      )}
 
       {/* Answer review — grouped by module when this is a multi-module
           session so both Module 1 and Module 2 answers show up under
