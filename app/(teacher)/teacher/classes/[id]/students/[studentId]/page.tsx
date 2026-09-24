@@ -5,6 +5,9 @@ import { clsx } from "clsx";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { formatDateTime, formatDate } from "@/lib/datetime";
+import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
+import ProgressReport from "@/components/analytics/ProgressReport";
+import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
 export const dynamic = "force-dynamic";
 
@@ -140,6 +143,8 @@ export default async function TeacherStudentResultsPage({
   const data = await loadStudent(id, studentId, me.userId, me.role === "admin");
   if (!data) notFound();
   const { group, student, submissions } = data;
+  const breakdownRows = await getStudentBreakdownRows(studentId);
+  const occasions = await getStudentProgressOccasions(studentId);
 
   const completed = submissions.filter(
     (s) => s.status === "Submitted" || s.status === "Late",
@@ -184,6 +189,14 @@ export default async function TeacherStudentResultsPage({
           value={avg == null ? "—" : `${avg.toFixed(1)}%`}
         />
       </div>
+
+      {/* Strengths/weaknesses + progress for this student. */}
+      {breakdownRows.length > 0 && (
+        <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
+      )}
+      {occasions.length > 0 && (
+        <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
+      )}
 
       <section className="bg-surface border border-divider rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-divider">

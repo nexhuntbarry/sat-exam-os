@@ -8,31 +8,8 @@ import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
-
-// Aggregate strengths/weaknesses across ALL of a student's graded answers.
-async function getOverallBreakdownRows(studentId: string) {
-  const db = getServiceClient();
-  const { data: subs } = await db
-    .from("submissions")
-    .select("id")
-    .eq("student_id", studentId)
-    .in("status", ["Submitted", "Late"]);
-  const ids = (subs ?? []).map((s) => s.id);
-  if (ids.length === 0) return [];
-  const { data } = await db
-    .from("answer_records")
-    .select("is_correct, questions!inner(section, domain, skill)")
-    .in("submission_id", ids);
-  return ((data ?? []) as unknown as {
-    is_correct: boolean;
-    questions: { section: string | null; domain: string | null; skill: string | null };
-  }[]).map((r) => ({
-    is_correct: r.is_correct,
-    section: r.questions?.section ?? null,
-    domain: r.questions?.domain ?? null,
-    skill: r.questions?.skill ?? null,
-  }));
-}
+import ProgressReport from "@/components/analytics/ProgressReport";
+import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -226,7 +203,8 @@ export default async function StudentResultsPage() {
 
   const rows = await getStudentResults(user.userId);
   const results = buildResultGroups(rows);
-  const breakdownRows = await getOverallBreakdownRows(user.userId);
+  const breakdownRows = await getStudentBreakdownRows(user.userId);
+  const occasions = await getStudentProgressOccasions(user.userId);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -237,6 +215,11 @@ export default async function StudentResultsPage() {
       {breakdownRows.length > 0 && (
         <ScoreBreakdown rows={breakdownRows} title="Your Strengths & Focus Areas — Overall" />
       )}
+
+      {/* Progress over time — are the weak areas improving? */}
+      {occasions.length > 0 && <ProgressReport occasions={occasions} title="Your Progress Over Time" />}
+
+      <h2 className="text-lg font-semibold text-charcoal pt-2">Test History</h2>
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {results.length === 0 ? (

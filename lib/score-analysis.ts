@@ -286,3 +286,81 @@ export function narrative(b: Breakdown): string[] {
   paras.push(pick(CLOSERS, seed + 7));
   return paras;
 }
+
+// ── Progress over time (trend across a student's test history) ───────
+export interface Occasion {
+  /** ISO date the attempt was submitted. */
+  date: string;
+  label?: string;
+  rows: AnswerRow[];
+}
+
+export interface DomainTrendPoint { date: string; pct: number; correct: number; total: number }
+export interface DomainTrend {
+  section: string;
+  domain: string;
+  series: DomainTrendPoint[];
+  earlyPct: number;
+  recentPct: number;
+  delta: number; // recentPct - earlyPct
+  trend: "up" | "down" | "flat";
+}
+export interface Progress {
+  occasions: number;
+  overall: { date: string; pct: number }[];
+  overallDelta: number;
+  domains: DomainTrend[]; // most-improved → least (by delta)
+}
+
+function avg(nums: number[]): number {
+  if (!nums.length) return 0;
+  return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
+}
+
+/**
+ * Turn a chronological list of test occasions into per-domain accuracy trends.
+ * Returns null when there's fewer than 2 occasions (no trend to show yet).
+ */
+export function computeProgress(occasions: Occasion[]): Progress | null {
+  const ordered = [...occasions].filter((o) => o.rows.length > 0).sort((a, b) => a.date.localeCompare(b.date));
+  if (ordered.length < 2) return null;
+
+  const overall: { date: string; pct: number }[] = [];
+  const domainSeries = new Map<string, { section: string; domain: string; series: DomainTrendPoint[] }>();
+
+  for (const occ of ordered) {
+    const b = computeBreakdown(occ.rows);
+    overall.push({ date: occ.date, pct: b.pct });
+    for (const d of b.domains) {
+      const k = `${d.section}|||${d.domain}`;
+      let e = domainSeries.get(k);
+      if (!e) {
+        e = { section: d.section, domain: d.domain, series: [] };
+        domainSeries.set(k, e);
+      }
+      e.series.push({ date: occ.date, pct: d.pct, correct: d.correct, total: d.total });
+    }
+  }
+
+  const domains: DomainTrend[] = [];
+  for (const e of domainSeries.values()) {
+    if (e.series.length < 2) continue; // need at least two data points to trend
+    const half = Math.max(1, Math.floor(e.series.length / 2));
+    const earlyPct = avg(e.series.slice(0, half).map((p) => p.pct));
+    const recentPct = avg(e.series.slice(-half).map((p) => p.pct));
+    const delta = recentPct - earlyPct;
+    domains.push({
+      section: e.section,
+      domain: e.domain,
+      series: e.series,
+      earlyPct,
+      recentPct,
+      delta,
+      trend: delta >= 5 ? "up" : delta <= -5 ? "down" : "flat",
+    });
+  }
+  domains.sort((a, b) => b.delta - a.delta);
+
+  const overallDelta = overall.length >= 2 ? overall[overall.length - 1].pct - overall[0].pct : 0;
+  return { occasions: ordered.length, overall, overallDelta, domains };
+}
