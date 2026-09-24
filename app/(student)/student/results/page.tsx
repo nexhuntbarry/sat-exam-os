@@ -9,6 +9,7 @@ import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
+import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
 const MODULE_LABEL: Record<string, string> = {
@@ -218,6 +219,9 @@ export default async function StudentResultsPage() {
 
       {/* Progress over time — are the weak areas improving? */}
       {occasions.length > 0 && <ProgressReport occasions={occasions} title="Your Progress Over Time" />}
+
+      {/* Per-test score report — each test's own breakdown, expandable. */}
+      {occasions.length > 0 && <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />}
 
       <h2 className="text-lg font-semibold text-charcoal pt-2">Test History</h2>
 

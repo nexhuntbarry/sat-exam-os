@@ -7,6 +7,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { formatDateTime, formatDate } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
+import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
 export const dynamic = "force-dynamic";
@@ -196,6 +197,9 @@ export default async function TeacherStudentResultsPage({
       )}
       {occasions.length > 0 && (
         <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
+      )}
+      {occasions.length > 0 && (
+        <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
       )}
 
       <section className="bg-surface border border-divider rounded-2xl overflow-hidden">

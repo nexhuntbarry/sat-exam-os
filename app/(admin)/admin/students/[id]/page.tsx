@@ -9,6 +9,7 @@ import DeleteStudentButton from "./DeleteStudentButton";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
+import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
 interface StudentRow {
@@ -371,6 +372,9 @@ export default async function AdminStudentDetailPage({
       )}
       {occasions.length > 0 && (
         <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
+      )}
+      {occasions.length > 0 && (
+        <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
       )}
 
       {/* Submissions table */}
