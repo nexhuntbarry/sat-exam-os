@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
+
+export const maxDuration = 60;
 
 // POST /api/admin/questions/[id]/resolve-mismatch
 //
@@ -45,7 +48,7 @@ export async function POST(
   const { data: q, error: fetchErr } = await db
     .from("questions")
     .select(
-      "id, correct_answer, official_answer, parsing_notes, mismatch_with_official",
+      "id, correct_answer, official_answer, parsing_notes, mismatch_with_official, explanation, question_type",
     )
     .eq("id", id)
     .single();
@@ -81,21 +84,34 @@ export async function POST(
     update.parsing_notes = cleaned || null;
   }
 
+  // Determine the answer we're settling on.
+  let finalAnswer: string | null;
   if (body.trust === "ai") {
-    const aiAns = parseAiAnswerFromNotes(q.parsing_notes as string | null);
-    if (!aiAns) {
+    // Recover the AI's answer robustly: prefer the "Mismatch: AI answered X"
+    // note, but fall back to the answer the explanation actually argues for /
+    // the stored correct_answer — so re-processed rows (whose note was
+    // overwritten) can still be resolved.
+    const isMcq = q.question_type === "Multiple Choice";
+    const expl = (q.explanation as string | null) ?? "";
+    finalAnswer =
+      parseAiAnswerFromNotes(q.parsing_notes as string | null) ??
+      extractFinalAnswer(expl) ??
+      inferImpliedAnswer(expl, isMcq) ??
+      (q.correct_answer as string | null);
+    if (!finalAnswer) {
       return NextResponse.json(
-        { error: "Could not recover AI's answer from parsing_notes" },
+        { error: "Could not determine the AI's answer for this question" },
         { status: 422 },
       );
     }
-    update.correct_answer = aiAns;
-    // We're overruling the answer key: drop official_answer so the
-    // student-facing UI never shows the rejected official as a hint.
+    // Overruling the key: drop official_answer so the student UI never shows it.
     update.official_answer = null;
+  } else {
+    // trust === "official"
+    finalAnswer = (q.official_answer as string | null) ?? (q.correct_answer as string | null);
   }
-  // trust === "official": correct_answer is already the official value
-  // from parse-time reconciliation. Nothing to change there.
+
+  update.correct_answer = finalAnswer;
 
   const { data: updated, error: updateErr } = await db
     .from("questions")
@@ -109,7 +125,17 @@ export async function POST(
     return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }
 
-  return NextResponse.json({ data: updated });
+  // Regenerate the explanation to justify the chosen answer, so the stored
+  // answer and its explanation can never contradict each other (the reported
+  // bug: pick the key = A but the old explanation still argued D). Best effort:
+  // if it fails, the answer is still correct, just with the prior explanation.
+  let newExplanation = updated.explanation as string | null;
+  if (finalAnswer) {
+    const regenerated = await explainOneAnswer(id, finalAnswer, db, reviewer.userId);
+    if (regenerated) newExplanation = regenerated;
+  }
+
+  return NextResponse.json({ data: { ...updated, correct_answer: finalAnswer, explanation: newExplanation } });
 }
 
 /**

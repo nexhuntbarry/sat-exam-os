@@ -166,12 +166,29 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
     }
   }
 
-  // Pull AI's original answer out of the "Mismatch: AI answered X, official Y"
-  // hint stored in parsing_notes. Displayed alongside the official answer
-  // so the admin can compare without parsing the note string by eye.
-  const aiAnswer = q.parsing_notes
-    ? q.parsing_notes.match(/Mismatch:\s*AI answered\s+([^,;]+?)\s*,\s*official/i)?.[1]?.trim() ?? null
-    : null;
+  // The AI's answer for the mismatch panel. Prefer the "Mismatch: AI answered
+  // X, official Y" note, but fall back to the answer the explanation actually
+  // argues for (or the stored correct_answer) so re-processed rows — whose note
+  // was overwritten by a later repair — still show a real value and keep the
+  // "Trust AI" button usable.
+  const answerFromExplanation = (() => {
+    const e = q.explanation ?? "";
+    const fin = e.match(/final\s*answer\s*:\s*([^\n\r.]+)/i)?.[1]?.trim();
+    if (fin) return fin.replace(/[.$]+$/, "").trim();
+    const isMcq = q.question_type === "Multiple Choice";
+    if (isMcq) {
+      const m = [...e.matchAll(/(?:correct answer is|answer is|answer:|option|choice|\()\s*([ABCD])\b/gi)];
+      if (m.length) return m[m.length - 1][1].toUpperCase();
+    }
+    return null;
+  })();
+  const aiAnswer =
+    (q.parsing_notes
+      ? q.parsing_notes.match(/Mismatch:\s*AI answered\s+([^,;]+?)\s*,\s*official/i)?.[1]?.trim() ?? null
+      : null) ??
+    answerFromExplanation ??
+    q.correct_answer ??
+    null;
 
   function updateChoice(label: string, text: string) {
     setQ((prev) => ({

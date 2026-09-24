@@ -754,3 +754,46 @@ export async function regenerateTruncatedExplanations(
   console.log(`[truncation-guard] module=${moduleId} checked=${targets.length} regenerated=${regenerated}`);
   return { checked: targets.length, regenerated };
 }
+
+/**
+ * Regenerate ONE question's explanation so it justifies `answer` (and set
+ * correct_answer to it). Used when a reviewer picks/changes the answer so the
+ * explanation can never contradict the stored answer. Returns the new
+ * explanation, or null on failure (leaves the row untouched).
+ */
+export async function explainOneAnswer(
+  questionId: string,
+  answer: string,
+  db: DbClient,
+  callerUserId?: string,
+): Promise<string | null> {
+  const { data: q } = await db
+    .from("questions")
+    .select("id, original_question_number, question_text, choices")
+    .eq("id", questionId)
+    .maybeSingle();
+  if (!q) return null;
+  const ch = Array.isArray(q.choices)
+    ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`)).join("\n")
+    : "";
+  try {
+    const res = await generateObject({
+      model: anthropic("claude-sonnet-4-6"),
+      schema: ExplainOfficialSchema,
+      system: EXPLAIN_OFFICIAL_SYSTEM,
+      maxOutputTokens: 3000,
+      maxRetries: 2,
+      messages: [{ role: "user", content: [{ type: "text", text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${answer}\n\nWrite a COMPLETE explanation of why ${answer} is correct.` }] }],
+    });
+    const usage = res.usage;
+    if (usage) {
+      const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
+      await logUsage({ userId: callerUserId, route: "explain-one", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: questionId } });
+    }
+    await db.from("questions").update({ correct_answer: answer, explanation: res.object.explanation, updated_at: new Date().toISOString() }).eq("id", questionId);
+    return res.object.explanation;
+  } catch (e) {
+    console.error(`[explain-one] ${questionId}:`, e instanceof Error ? e.message : e);
+    return null;
+  }
+}
