@@ -282,6 +282,8 @@ async function solveOneQuestion(
           ],
         },
       ],
+      // Headroom so a long worked solution never gets clipped mid-sentence.
+      maxOutputTokens: 3000,
       maxRetries: 2,
     });
 
@@ -625,6 +627,7 @@ export async function explainOfficialAndPersist(
             model: anthropic("claude-sonnet-4-6"),
             schema: ExplainOfficialSchema,
             system: EXPLAIN_OFFICIAL_SYSTEM,
+            maxOutputTokens: 3000,
             maxRetries: 3,
             messages: [
               {
@@ -679,4 +682,75 @@ export async function explainOfficialAndPersist(
     `[explain-official] module=${moduleId} rewrote=${rewrote} approved=${approved} keptReview=${keptReview} skipped=${skipped}`,
   );
   return { rewrote, approved, keptReview, skipped };
+}
+
+// ── Truncated-explanation guard ──────────────────────────────────────
+// A generated explanation occasionally gets clipped (token cap, model stop)
+// and ends mid-sentence. Detect that and regenerate it complete.
+export function looksTruncated(ex: string | null): boolean {
+  if (!ex) return false;
+  const t = ex.trim();
+  if (t.length < 25) return false; // too-short is a different (empty) problem
+  if (/Final answer\s*:\s*\S+$/i.test(t)) return false; // ends with the answer trailer
+  // Clean endings: sentence punctuation, a closing bracket/quote, $ or %, or a
+  // number (math answers often end on a value). Anything else = mid-sentence.
+  return !/[.!?)\]$%”"'’]$/.test(t) && !/\d$/.test(t);
+}
+
+/**
+ * Find questions in a module whose explanation looks truncated and regenerate
+ * a complete one — toward the official answer when there is one, otherwise
+ * toward the stored answer. No-op for rows without a usable answer.
+ */
+export async function regenerateTruncatedExplanations(
+  moduleId: string,
+  db: DbClient,
+  callerUserId?: string,
+): Promise<{ checked: number; regenerated: number }> {
+  const { data } = await db
+    .from("questions")
+    .select("id, original_question_number, question_text, choices, correct_answer, official_answer, explanation")
+    .eq("module_id", moduleId);
+  const rows = (data ?? []) as {
+    id: string;
+    original_question_number: number;
+    question_text: string | null;
+    choices: unknown;
+    correct_answer: string | null;
+    official_answer: string | null;
+    explanation: string | null;
+  }[];
+  const targets = rows.filter((r) => looksTruncated(r.explanation));
+  let regenerated = 0;
+  const CHUNK = 5;
+  for (let i = 0; i < targets.length; i += CHUNK) {
+    const chunk = targets.slice(i, i + CHUNK);
+    await Promise.all(
+      chunk.map(async (q) => {
+        const ans = q.official_answer || q.correct_answer;
+        if (!ans) return;
+        const ch = Array.isArray(q.choices)
+          ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`)).join("\n")
+          : "";
+        try {
+          const res = await generateObject({
+            model: anthropic("claude-sonnet-4-6"),
+            schema: ExplainOfficialSchema,
+            system: EXPLAIN_OFFICIAL_SYSTEM,
+            maxOutputTokens: 3000,
+            maxRetries: 2,
+            messages: [{ role: "user", content: [{ type: "text", text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nWrite a COMPLETE explanation of why ${ans} is correct — do not cut off.` }] }],
+          });
+          if (!looksTruncated(res.object.explanation)) {
+            regenerated++;
+            await db.from("questions").update({ correct_answer: ans, explanation: res.object.explanation, updated_at: new Date().toISOString() }).eq("id", q.id);
+          }
+        } catch (e) {
+          console.error(`[truncation-guard] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
+        }
+      }),
+    );
+  }
+  console.log(`[truncation-guard] module=${moduleId} checked=${targets.length} regenerated=${regenerated}`);
+  return { checked: targets.length, regenerated };
 }

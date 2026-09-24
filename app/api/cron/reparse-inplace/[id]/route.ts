@@ -6,10 +6,11 @@ import {
   extractAnswerKey,
   fetchPdfAsBase64,
 } from "@/lib/ai/parse-pdf";
-import { solveQuestionsAndPersist, explainOfficialAndPersist } from "@/lib/ai/solve-question";
+import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
 import { recoverMissingFigures, recoverBrokenChoices } from "@/lib/repair-ops";
+import { enforceCompleteness, checkNumberContiguity } from "@/lib/parse-guards";
 import { autoPromoteModule } from "@/lib/auto-promote";
 
 export const maxDuration = 800;
@@ -187,9 +188,12 @@ export async function POST(
   // Explain toward the official answer BEFORE the audit — same as the parse
   // pipeline's Phase 4b — so the audit sees consistent answer↔explanation pairs.
   try { explained = await explainOfficialAndPersist(id, db); } catch (e) { explained = { error: String(e) }; }
+  try { await regenerateTruncatedExplanations(id, db); } catch (e) { console.error("[reparse-inplace] truncation-guard:", e); }
   try { audit = await runSemanticAudit(id, db); } catch (e) { audit = { error: String(e) }; }
   try { figures = await recoverMissingFigures(id, db); } catch (e) { figures = { error: String(e) }; }
   try { choicesRecovery = await recoverBrokenChoices(id, db); } catch (e) { choicesRecovery = { error: String(e) }; }
+  try { await enforceCompleteness(id, db); } catch (e) { console.error("[reparse-inplace] completeness-gate:", e); }
+  try { await checkNumberContiguity(id, db); } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
   try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
 
   return NextResponse.json({

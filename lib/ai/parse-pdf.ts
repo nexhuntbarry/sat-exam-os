@@ -568,9 +568,10 @@ Return all questions in order via the schema. Confirm you have not missed any be
   // Run extraction; if Sonnet returns way too few questions (sometimes it
   // treats a single passage cluster as "done" and stops at 2-5), retry
   // once with an explicit short-count callout so it scans the whole PDF.
-  // SAT modules are reliably 22-27 questions, so anything <15 is a parse
-  // miss, not a tiny custom module.
-  const MIN_EXPECTED_QUESTIONS = 15;
+  // SAT modules are reliably a fixed size: Math = 22, Reading & Writing = 27.
+  // Retry the extraction whenever the first pass comes back short (missed a
+  // page / stopped early), not just when it's catastrophically low.
+  const MIN_EXPECTED_QUESTIONS = isReadingWriting ? 27 : 22;
   async function runExtraction(extraInstruction: string) {
     return await generateObject({
       model: anthropic("claude-sonnet-4-6"),

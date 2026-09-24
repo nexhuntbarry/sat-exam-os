@@ -549,9 +549,12 @@ export async function recoverMissingFigures(
 ): Promise<{ attempted: number; recovered: number; approved: number; stillMissing: number }> {
   const { data } = await db
     .from("questions")
-    .select("id, original_question_number, parsing_notes, image_urls, has_image, parsing_status")
+    .select("id, original_question_number, parsing_notes, image_urls, has_image, parsing_status, question_text")
     .eq("module_id", moduleId);
   const FIGURE_NOTE = /figure|graph|diagram|chart|scatter|\bplot\b|based on the (graph|table|figure)/i;
+  // The stem itself asking the reader to look at a visual — the strongest
+  // signal that a figure is required, even if has_image wasn't set.
+  const STEM_FIGURE = /\b(the (graph|figure|diagram|chart|scatterplot|table) (shown|above|below)|as shown|shown (in the|above|below)|uses data from the (graph|table|figure)|based on the (graph|figure|diagram|chart))\b/i;
   // A note that names a NON-figure defect we must not auto-clear.
   const OTHER_NOTE = /LaTeX|math\/|choices|Multiple Choice with|garbled|answer\/explanation|self-contradict|official key=/i;
   const targets = (data ?? []).filter((q) => {
@@ -559,6 +562,9 @@ export async function recoverMissingFigures(
     if (hasImg) return false;
     // Blind image (flagged has_image but nothing cropped) → always try.
     if (q.has_image === true) return true;
+    // The stem explicitly references a visual → force a figure-find attempt
+    // even when the parser never set has_image.
+    if (STEM_FIGURE.test(q.question_text || "")) return true;
     // Otherwise only if the audit/notes point at a figure problem.
     return FIGURE_NOTE.test(q.parsing_notes || "");
   });

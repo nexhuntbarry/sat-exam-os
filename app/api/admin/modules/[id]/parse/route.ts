@@ -11,10 +11,11 @@ import {
   extractAnswerKey,
 } from "@/lib/ai/parse-pdf";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
-import { solveQuestionsAndPersist, explainOfficialAndPersist } from "@/lib/ai/solve-question";
+import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
 import { recoverMissingFigures, recoverBrokenChoices } from "@/lib/repair-ops";
+import { enforceCompleteness, checkNumberContiguity } from "@/lib/parse-guards";
 import { autoPromoteModule } from "@/lib/auto-promote";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
@@ -596,6 +597,18 @@ export async function POST(
     }
   }
 
+  // Phase 4c — truncated-explanation guard. Regenerate any explanation that got
+  // clipped mid-sentence (token cap / early stop) so students never see a
+  // cut-off solution.
+  try {
+    const trunc = await regenerateTruncatedExplanations(id, db, authResult.userId);
+    if (trunc.checked > 0) {
+      console.log(`[modules/parse] truncation-guard module=${id} checked=${trunc.checked} regenerated=${trunc.regenerated}`);
+    }
+  } catch (err) {
+    console.error("[modules/parse] truncation-guard crashed:", err);
+  }
+
   // Phase 5 — semantic content audit. The structural cleanup above catches
   // parser artifacts; this pass has Claude read each question as a student
   // sees it and flag genuine content defects (corrupted LaTeX/math symbols,
@@ -658,6 +671,32 @@ export async function POST(
     } catch (err) {
       console.error("[modules/parse] recover-choices crashed:", err);
     }
+  }
+
+  // Phase 5d — completeness gate. Any question missing a real stem, four
+  // non-empty MCQ choices, or an answer is demoted to Needs Review here so it
+  // can never be auto-promoted to students in an incomplete state.
+  try {
+    const complete = await enforceCompleteness(id, db);
+    if (complete.demoted > 0) {
+      console.log(`[modules/parse] completeness-gate module=${id} demoted=${complete.demoted} reasons=${JSON.stringify(complete.reasons)}`);
+    }
+  } catch (err) {
+    console.error("[modules/parse] completeness-gate crashed:", err);
+  }
+
+  // Phase 5e — question-number contiguity: log a warning if the parser dropped
+  // a numbered question (a gap), so a short/holed module is visible.
+  try {
+    const contig = await checkNumberContiguity(id, db);
+    if (contig.missing.length > 0) {
+      await db.from("modules").update({
+        parsing_error: `Missing question numbers after parse: ${contig.missing.join(", ")} — re-parse recommended.`,
+        updated_at: new Date().toISOString(),
+      }).eq("id", id);
+    }
+  } catch (err) {
+    console.error("[modules/parse] contiguity-check crashed:", err);
   }
 
   // Phase 6 — bulk-promote high-confidence Drafts to Approved so the
