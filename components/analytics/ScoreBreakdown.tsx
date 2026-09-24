@@ -1,5 +1,5 @@
-import { computeBreakdown, narrative, tierOf, TIER_LABEL, type AnswerRow, type Tier, type DomainStat } from "@/lib/score-analysis";
-import { Sparkles } from "lucide-react";
+import { computeBreakdown, narrative, tierOf, TIER_LABEL, type AnswerRow, type Tier, type DomainStat, type SkillStat } from "@/lib/score-analysis";
+import { Sparkles, ChevronRight } from "lucide-react";
 
 const TIER_BAR: Record<Tier, string> = {
   excellent: "bg-status-success",
@@ -20,15 +20,30 @@ const TIER_SOFT: Record<Tier, string> = {
   "needs-work": "bg-warm-coral/12 text-warm-coral",
 };
 
-function DomainRow({ d, tag }: { d: DomainStat; tag?: "strength" | "focus" }) {
+function SkillRow({ s }: { s: SkillStat }) {
+  const tier = tierOf(s.pct);
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      <div className="w-40 shrink-0 pl-4">
+        <div className="text-[13px] text-mid-gray leading-tight">{s.skill}</div>
+        <div className="text-[11px] text-soft-mute">{s.correct}/{s.total}</div>
+      </div>
+      <div className="flex-1 h-1.5 rounded-full bg-light-bg overflow-hidden">
+        <div className={`h-full rounded-full ${TIER_BAR[tier]}`} style={{ width: `${Math.max(s.pct, 3)}%` }} />
+      </div>
+      <div className={`w-10 text-right text-[13px] font-medium tabular-nums ${TIER_TEXT[tier]}`}>{s.pct}%</div>
+      <div className="w-16 shrink-0" />
+    </div>
+  );
+}
+
+function DomainInner({ d, tag }: { d: DomainStat; tag?: "strength" | "focus" }) {
   const tier = tierOf(d.pct);
   return (
-    <div className="flex items-center gap-3 py-2">
+    <>
       <div className="w-40 shrink-0">
         <div className="text-sm font-medium text-charcoal leading-tight">{d.domain}</div>
-        <div className="text-xs text-soft-mute">
-          {d.correct}/{d.total} correct
-        </div>
+        <div className="text-xs text-soft-mute">{d.correct}/{d.total} correct</div>
       </div>
       <div className="flex-1 h-2.5 rounded-full bg-light-bg overflow-hidden">
         <div className={`h-full rounded-full ${TIER_BAR[tier]}`} style={{ width: `${Math.max(d.pct, 3)}%` }} />
@@ -42,6 +57,31 @@ function DomainRow({ d, tag }: { d: DomainStat; tag?: "strength" | "focus" }) {
           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-warm-coral/12 text-warm-coral">Focus</span>
         )}
       </div>
+    </>
+  );
+}
+
+function DomainRow({ d, tag }: { d: DomainStat; tag?: "strength" | "focus" }) {
+  // Expandable to per-skill detail when the domain has tagged skills.
+  if (d.skills.length > 0) {
+    return (
+      <details className="group py-2">
+        <summary className="flex items-center gap-3 cursor-pointer list-none select-none">
+          <ChevronRight size={14} className="text-soft-mute transition-transform group-open:rotate-90 shrink-0 -ml-1" />
+          <DomainInner d={d} tag={tag} />
+        </summary>
+        <div className="mt-2 ml-4 pl-3 border-l border-divider divide-y divide-divider/50">
+          {d.skills.map((s) => (
+            <SkillRow key={s.skill} s={s} />
+          ))}
+        </div>
+      </details>
+    );
+  }
+  return (
+    <div className="flex items-center gap-3 py-2">
+      <span className="w-[14px] shrink-0 -ml-1" />
+      <DomainInner d={d} tag={tag} />
     </div>
   );
 }

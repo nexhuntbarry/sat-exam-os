@@ -10,6 +10,14 @@ export interface AnswerRow {
   is_correct: boolean;
   section: string | null;
   domain: string | null;
+  skill?: string | null;
+}
+
+export interface SkillStat {
+  skill: string;
+  correct: number;
+  total: number;
+  pct: number;
 }
 
 export interface DomainStat {
@@ -18,6 +26,7 @@ export interface DomainStat {
   correct: number;
   total: number;
   pct: number; // 0..100, rounded
+  skills: SkillStat[]; // within-domain breakdown, strongest → weakest
 }
 
 export interface Breakdown {
@@ -59,13 +68,14 @@ const DOMAIN_ORDER: Record<string, number> = {
 export function computeBreakdown(rows: AnswerRow[]): Breakdown {
   const key = (r: AnswerRow) => `${r.section ?? "Other"}|||${r.domain ?? "Other"}`;
   const map = new Map<string, DomainStat>();
+  const skillMap = new Map<string, Map<string, SkillStat>>(); // domainKey → skill → stat
   let correct = 0;
   for (const r of rows) {
     if (!r.domain) continue;
     const k = key(r);
     let s = map.get(k);
     if (!s) {
-      s = { section: r.section ?? "Other", domain: r.domain, correct: 0, total: 0, pct: 0 };
+      s = { section: r.section ?? "Other", domain: r.domain, correct: 0, total: 0, pct: 0, skills: [] };
       map.set(k, s);
     }
     s.total += 1;
@@ -73,9 +83,32 @@ export function computeBreakdown(rows: AnswerRow[]): Breakdown {
       s.correct += 1;
       correct += 1;
     }
+    // Skill within domain (skip when untagged).
+    if (r.skill) {
+      let sk = skillMap.get(k);
+      if (!sk) {
+        sk = new Map();
+        skillMap.set(k, sk);
+      }
+      let st = sk.get(r.skill);
+      if (!st) {
+        st = { skill: r.skill, correct: 0, total: 0, pct: 0 };
+        sk.set(r.skill, st);
+      }
+      st.total += 1;
+      if (r.is_correct) st.correct += 1;
+    }
   }
   const domains = [...map.values()];
-  for (const d of domains) d.pct = d.total ? Math.round((d.correct / d.total) * 100) : 0;
+  for (const d of domains) {
+    d.pct = d.total ? Math.round((d.correct / d.total) * 100) : 0;
+    const sk = skillMap.get(`${d.section}|||${d.domain}`);
+    if (sk) {
+      d.skills = [...sk.values()];
+      for (const s of d.skills) s.pct = s.total ? Math.round((s.correct / s.total) * 100) : 0;
+      d.skills.sort((a, b) => b.pct - a.pct || b.total - a.total);
+    }
+  }
   domains.sort((a, b) => b.pct - a.pct || b.total - a.total);
 
   const secMap = new Map<string, { section: string; domains: DomainStat[]; correct: number; total: number; pct: number }>();

@@ -145,15 +145,16 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
       : [submission.id];
   const { data: breakdownRecords } = await db
     .from("answer_records")
-    .select("is_correct, questions!inner(section, domain)")
+    .select("is_correct, questions!inner(section, domain, skill)")
     .in("submission_id", breakdownSubmissionIds);
   const breakdownRows = ((breakdownRecords ?? []) as unknown as {
     is_correct: boolean;
-    questions: { section: string | null; domain: string | null };
+    questions: { section: string | null; domain: string | null; skill: string | null };
   }[]).map((r) => ({
     is_correct: r.is_correct,
     section: r.questions?.section ?? null,
     domain: r.questions?.domain ?? null,
+    skill: r.questions?.skill ?? null,
   }));
 
   return { submission, test, answerDetails, sessionRows, breakdownRows };

@@ -21,15 +21,16 @@ async function getOverallBreakdownRows(studentId: string) {
   if (ids.length === 0) return [];
   const { data } = await db
     .from("answer_records")
-    .select("is_correct, questions!inner(section, domain)")
+    .select("is_correct, questions!inner(section, domain, skill)")
     .in("submission_id", ids);
   return ((data ?? []) as unknown as {
     is_correct: boolean;
-    questions: { section: string | null; domain: string | null };
+    questions: { section: string | null; domain: string | null; skill: string | null };
   }[]).map((r) => ({
     is_correct: r.is_correct,
     section: r.questions?.section ?? null,
     domain: r.questions?.domain ?? null,
+    skill: r.questions?.skill ?? null,
   }));
 }
 
