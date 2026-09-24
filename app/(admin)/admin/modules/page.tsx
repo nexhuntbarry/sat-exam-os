@@ -1,18 +1,30 @@
 import { getServiceClient } from "@/lib/supabase";
 import Link from "next/link";
-import { Plus, FileText } from "lucide-react";
+import { Plus, FileText, ArrowUp, ArrowDown } from "lucide-react";
 import { clsx } from "clsx";
 import DeleteModuleButton from "./DeleteModuleButton";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDate } from "@/lib/datetime";
 
-async function getModules() {
+interface ModuleRow {
+  id: string;
+  module_name: string;
+  section: string | null;
+  module_number: number | null;
+  difficulty: string | null;
+  source_name: string | null;
+  total_questions: number | null;
+  parsing_status: string;
+  created_at: string;
+}
+
+async function getModules(): Promise<ModuleRow[]> {
   const db = getServiceClient();
   const { data } = await db
     .from("modules")
     .select("id, module_name, section, module_number, difficulty, source_name, total_questions, parsing_status, created_at")
     .order("created_at", { ascending: false });
-  return data ?? [];
+  return (data ?? []) as ModuleRow[];
 }
 
 const statusStyles: Record<string, string> = {
@@ -23,8 +35,70 @@ const statusStyles: Record<string, string> = {
   failed: "bg-status-error/15 text-status-error",
 };
 
-export default async function ModulesPage() {
-  const modules = await getModules();
+// Section-based title colour: Math = blue, Reading & Writing (English) = red.
+function sectionTitleClass(section: string | null): string {
+  if (section === "Math") return "text-blue-600";
+  if (section === "Reading & Writing") return "text-red-600";
+  return "text-charcoal";
+}
+
+type SortKey = "name" | "section" | "difficulty" | "questions" | "status" | "uploaded";
+const SORT_LABEL: Record<SortKey, string> = {
+  name: "Module",
+  section: "Section",
+  difficulty: "Difficulty",
+  questions: "Questions",
+  status: "Status",
+  uploaded: "Uploaded",
+};
+
+function sortModules(mods: ModuleRow[], key: SortKey, dir: "asc" | "desc"): ModuleRow[] {
+  const val = (m: ModuleRow): string | number => {
+    switch (key) {
+      case "name": return m.module_name.toLowerCase();
+      case "section": return `${m.section ?? ""} ${m.module_number ?? 0}`.toLowerCase();
+      case "difficulty": return (m.difficulty ?? "").toLowerCase();
+      case "questions": return m.total_questions ?? 0;
+      case "status": return m.parsing_status;
+      case "uploaded": return m.created_at;
+    }
+  };
+  const sorted = [...mods].sort((a, b) => {
+    const va = val(a), vb = val(b);
+    const cmp = typeof va === "number" && typeof vb === "number" ? va - vb : String(va).localeCompare(String(vb));
+    return dir === "asc" ? cmp : -cmp;
+  });
+  return sorted;
+}
+
+export default async function ModulesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string; dir?: string }>;
+}) {
+  const sp = await searchParams;
+  const sortKey = (["name", "section", "difficulty", "questions", "status", "uploaded"].includes(sp.sort ?? "")
+    ? sp.sort
+    : "name") as SortKey;
+  const dir = sp.dir === "desc" ? "desc" : "asc";
+  const modules = sortModules(await getModules(), sortKey, dir);
+
+  // A sortable column header: clicking toggles asc/desc on that column.
+  const Header = ({ col, align = "left" }: { col: SortKey; align?: "left" | "right" }) => {
+    const active = col === sortKey;
+    const nextDir = active && dir === "asc" ? "desc" : "asc";
+    return (
+      <th className={clsx("px-5 py-3 font-medium", align === "right" ? "text-right" : "text-left")}>
+        <Link
+          href={`/admin/modules?sort=${col}&dir=${nextDir}`}
+          className={clsx("inline-flex items-center gap-1 hover:text-charcoal transition-colors", active ? "text-charcoal" : "text-soft-mute")}
+        >
+          {SORT_LABEL[col]}
+          {active && (dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+        </Link>
+      </th>
+    );
+  };
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -55,14 +129,14 @@ export default async function ModulesPage() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Module</th>
-                  <th className="text-left px-5 py-3 font-medium">Section</th>
-                  <th className="text-left px-5 py-3 font-medium">Difficulty</th>
-                  <th className="text-left px-5 py-3 font-medium">Questions</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Uploaded</th>
-                  <th className="text-right px-5 py-3 font-medium"></th>
+                <tr className="border-b border-divider">
+                  <Header col="name" />
+                  <Header col="section" />
+                  <Header col="difficulty" />
+                  <Header col="questions" />
+                  <Header col="status" />
+                  <Header col="uploaded" />
+                  <th className="text-right px-5 py-3" />
                 </tr>
               </thead>
               <tbody>
@@ -72,8 +146,10 @@ export default async function ModulesPage() {
                     className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                   >
                     <td className="px-5 py-3">
-                      <Link href={`/admin/modules/${mod.id}`} className="hover:text-warm-coral transition-colors">
-                        <div className="font-medium text-charcoal">{mod.module_name}</div>
+                      <Link href={`/admin/modules/${mod.id}`} className="group">
+                        <div className={clsx("font-medium group-hover:underline", sectionTitleClass(mod.section))}>
+                          {mod.module_name}
+                        </div>
                         {mod.source_name && (
                           <div className="text-soft-mute text-xs">{mod.source_name}</div>
                         )}
