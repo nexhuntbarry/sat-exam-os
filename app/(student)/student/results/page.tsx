@@ -9,6 +9,7 @@ import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
+import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
@@ -210,7 +211,14 @@ export default async function StudentResultsPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <PageIntro tKey="student.results" />
-      <h1 className="text-2xl font-bold text-charcoal">My Results</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold text-charcoal">My Results</h1>
+        {occasions.length > 0 && (
+          <Link href="/report" className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-divider text-sm font-semibold text-charcoal hover:bg-light-bg transition-colors">
+            Download PDF report
+          </Link>
+        )}
+      </div>
 
       {/* Overall strengths/weaknesses across every test taken. */}
       {breakdownRows.length > 0 && (
@@ -218,6 +226,7 @@ export default async function StudentResultsPage() {
       )}
 
       {/* Progress over time — are the weak areas improving? */}
+      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
       {occasions.length > 0 && <ProgressReport occasions={occasions} title="Your Progress Over Time" />}
 
       {/* Per-test score report — each test's own breakdown, expandable. */}

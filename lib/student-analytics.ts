@@ -1,5 +1,7 @@
 import { getServiceClient } from "@/lib/supabase";
 import type { AnswerRow, Occasion } from "@/lib/score-analysis";
+import { computeBreakdown } from "@/lib/score-analysis";
+import { scaleSectionScore } from "@/lib/scoring";
 
 // Every graded answer for a student, flattened for the strengths/weaknesses
 // breakdown (is_correct + the question's section/domain/skill).
@@ -70,5 +72,16 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
     if (r.submitted_at && r.submitted_at > occ.date) occ.date = r.submitted_at;
     occ.rows.push(...(bySub.get(r.id) ?? []));
   }
-  return [...occMap.values()].filter((o) => o.rows.length > 0);
+  const list = [...occMap.values()].filter((o) => o.rows.length > 0);
+  // Derive the SAT scaled score (200–800) + section for each attempt from its
+  // own answers, so the report can trend the score (e.g. 500 → 700), not just %.
+  for (const o of list) {
+    const b = computeBreakdown(o.rows);
+    o.scaledScore = scaleSectionScore(b.pct);
+    // Section = the section that owns most of this attempt's questions.
+    const secCount = new Map<string, number>();
+    for (const row of o.rows) if (row.section) secCount.set(row.section, (secCount.get(row.section) ?? 0) + 1);
+    o.section = [...secCount.entries()].sort((a, c) => c[1] - a[1])[0]?.[0] ?? null;
+  }
+  return list;
 }

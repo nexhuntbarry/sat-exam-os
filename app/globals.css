@@ -185,7 +185,8 @@ mark.satos-highlight {
   nav,
   header,
   [data-sidebar],
-  .print\:hidden {
+  .print\:hidden,
+  .no-print {
     display: none !important;
   }
   body {

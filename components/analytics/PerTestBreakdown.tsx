@@ -51,8 +51,13 @@ export default function PerTestBreakdown({
                 <ChevronRight size={15} className="text-soft-mute transition-transform group-open:rotate-90 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-charcoal truncate">{o.label ?? "Test"}</div>
-                  <div className="text-xs text-soft-mute">{fmtDate(o.date)} · {b.correct}/{b.total} correct</div>
+                  <div className="text-xs text-soft-mute">{fmtDate(o.date)} · {b.correct}/{b.total} correct{o.section ? ` · ${o.section}` : ""}</div>
                 </div>
+                {o.scaledScore != null && (
+                  <span className="text-sm font-bold text-charcoal tabular-nums whitespace-nowrap">
+                    {o.scaledScore}<span className="text-soft-mute font-medium text-xs">/800</span>
+                  </span>
+                )}
                 <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${TIER_SOFT[tier]}`}>
                   {b.pct}% · {TIER_LABEL[tier]}
                 </span>

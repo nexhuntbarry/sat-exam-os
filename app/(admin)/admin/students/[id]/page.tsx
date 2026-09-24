@@ -9,6 +9,7 @@ import DeleteStudentButton from "./DeleteStudentButton";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
+import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
@@ -318,6 +319,11 @@ export default async function AdminStudentDetailPage({
           studentName={student.display_name ?? student.email}
           email={student.email}
         />
+        {occasions.length > 0 && (
+          <Link href={`/report?student=${student.id}`} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-sm font-medium text-charcoal hover:bg-light-bg transition-colors">
+            Download PDF report
+          </Link>
+        )}
       </div>
 
       {/* Profile card */}
@@ -370,6 +376,7 @@ export default async function AdminStudentDetailPage({
       {breakdownRows.length > 0 && (
         <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
       )}
+      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
       {occasions.length > 0 && (
         <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
       )}

@@ -7,6 +7,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { formatDateTime, formatDate } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
+import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
@@ -180,6 +181,11 @@ export default async function TeacherStudentResultsPage({
           </h1>
           <p className="text-soft-mute text-xs">{student.email}</p>
         </div>
+        {occasions.length > 0 && (
+          <Link href={`/report?student=${studentId}`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-divider text-sm font-semibold text-charcoal hover:bg-light-bg transition-colors whitespace-nowrap">
+            Download PDF report
+          </Link>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-4">
@@ -195,6 +201,7 @@ export default async function TeacherStudentResultsPage({
       {breakdownRows.length > 0 && (
         <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
       )}
+      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
       {occasions.length > 0 && (
         <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
       )}

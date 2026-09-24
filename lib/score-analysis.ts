@@ -293,6 +293,10 @@ export interface Occasion {
   date: string;
   label?: string;
   rows: AnswerRow[];
+  /** SAT scaled score for this attempt (200–800), when known. */
+  scaledScore?: number | null;
+  /** "Math" | "Reading & Writing" — the section this attempt scores. */
+  section?: string | null;
 }
 
 export interface DomainTrendPoint { date: string; pct: number; correct: number; total: number }
