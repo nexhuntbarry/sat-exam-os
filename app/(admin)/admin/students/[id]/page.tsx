@@ -7,6 +7,9 @@ import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
 import DeleteStudentButton from "./DeleteStudentButton";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
+import ProgressReport from "@/components/analytics/ProgressReport";
+import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 
 interface StudentRow {
   id: string;
@@ -253,6 +256,8 @@ export default async function AdminStudentDetailPage({
     : student.student_profiles ?? null;
 
   const groups = buildSessionGroups(submissions);
+  const breakdownRows = await getStudentBreakdownRows(id);
+  const occasions = await getStudentProgressOccasions(id);
   const submittedCount = groups.filter(
     (g) => g.status === "Submitted" || g.status === "Late",
   ).length;
@@ -359,6 +364,14 @@ export default async function AdminStudentDetailPage({
           </p>
         </div>
       </div>
+
+      {/* Strengths/weaknesses + progress for this student. */}
+      {breakdownRows.length > 0 && (
+        <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
+      )}
+      {occasions.length > 0 && (
+        <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
+      )}
 
       {/* Submissions table */}
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
