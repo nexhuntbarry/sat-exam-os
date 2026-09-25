@@ -301,12 +301,15 @@ export default function TestTakingClient({
   const questionIds = questions.map((q) => q.id);
 
   return (
-    // h-[100dvh] (dynamic viewport) + overflow-hidden pins the top bar and
-    // the Back/Next footer to the screen edges so only the question area
-    // scrolls. Plain h-screen (100vh) runs taller than the visible area on
-    // mobile/tablet browsers with a collapsing address bar, which pushed the
-    // Next button below the fold and forced students to scroll to reach it.
-    <div className="flex flex-col h-[100dvh] overflow-hidden bg-cream">
+    // fixed inset-0 makes the test UI a full-viewport overlay that covers
+    // the student dashboard chrome (nav + sidebar + padding). Rendered in
+    // normal flow it sat inside <main overflow-y-auto p-6>, so its full-
+    // height column overflowed the main area and pushed the Back/Next
+    // footer below the fold — students had to scroll to reach it. As a
+    // fixed overlay it owns the whole screen: top bar and footer pin to the
+    // real viewport edges and only the question body scrolls. Bonus: a
+    // distraction-free, Bluebook-style test mode.
+    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-cream">
       {autoSubmitting && (
         <div
           role="alert"
