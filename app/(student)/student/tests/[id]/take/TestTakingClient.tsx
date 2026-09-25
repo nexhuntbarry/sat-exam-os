@@ -309,7 +309,7 @@ export default function TestTakingClient({
     // fixed overlay it owns the whole screen: top bar and footer pin to the
     // real viewport edges and only the question body scrolls. Bonus: a
     // distraction-free, Bluebook-style test mode.
-    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-cream">
+    <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-cream">
       {autoSubmitting && (
         <div
           role="alert"
