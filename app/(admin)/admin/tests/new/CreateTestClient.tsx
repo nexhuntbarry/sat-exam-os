@@ -64,6 +64,9 @@ export default function CreateTestClient({ modules, teachers, students, classGro
   const [testName, setTestName] = useState("");
   const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(35);
   const [timeLimitMinutesModule2, setTimeLimitMinutesModule2] = useState<number | "">("");
+  // Untimed tests: no countdown, no auto-submit. Off by default so the
+  // real-SAT timing stays the norm.
+  const [isUntimed, setIsUntimed] = useState(false);
   const [openDate, setOpenDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [showAnswers, setShowAnswers] = useState(false);
@@ -125,6 +128,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
           module2HardId: isAdaptive ? module2HardId || undefined : undefined,
           adaptiveThreshold: isAdaptive ? adaptiveThreshold : undefined,
           desmosEnabled: isMathTest ? desmosEnabled : false,
+          isUntimed,
           timeLimitMinutesModule2:
             (isAdaptive || (!isAdaptive && module2Id)) && typeof timeLimitMinutesModule2 === "number"
               ? timeLimitMinutesModule2
@@ -240,14 +244,14 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-charcoal mb-1">
-                      Module 2 <span className="text-status-error">*</span>
+                      Module 2 <span className="text-soft-mute font-normal">(optional)</span>
                     </label>
                     <select
                       value={module2Id}
                       onChange={(e) => setModule2Id(e.target.value)}
                       className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
                     >
-                      <option value="">Select Module 2…</option>
+                      <option value="">— None (single module / quiz) —</option>
                       {eligibleModules
                         .filter((m) => m.id !== selectedModuleId)
                         .map((m) => (
@@ -258,8 +262,9 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                     </select>
                   </div>
                   <p className="text-soft-mute text-xs">
-                    Students take Module 1 then Module 2 in sequence (no adaptive routing).
-                    Each module has its own timer.
+                    Leave Module 2 as <em>None</em> to assign a single module or a short quiz.
+                    Pick a Module 2 and students take both in sequence (no adaptive routing),
+                    each with its own timer.
                   </p>
                 </div>
               )
@@ -361,7 +366,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                 disabled={
                   isAdaptive
                     ? !module1Id || (!module2EasyId && !module2HardId)
-                    : !selectedModuleId || !module2Id || selectedModuleId === module2Id
+                    : !selectedModuleId || (!!module2Id && selectedModuleId === module2Id)
                 }
                 onClick={() => setStep(2)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -388,6 +393,26 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               />
             </div>
 
+            <label className="flex items-center justify-between p-3 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
+              <div>
+                <div className="text-charcoal text-sm font-medium">No time limit (untimed)</div>
+                <div className="text-soft-mute text-xs">Students get unlimited time — no countdown, no auto-submit</div>
+              </div>
+              <div
+                onClick={() => setIsUntimed(!isUntimed)}
+                className={clsx(
+                  "w-10 h-6 rounded-full transition-colors relative shrink-0",
+                  isUntimed ? "bg-warm-coral" : "bg-light-bg"
+                )}
+              >
+                <span className={clsx(
+                  "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                  isUntimed ? "translate-x-5" : "translate-x-1"
+                )} />
+              </div>
+            </label>
+
+            {!isUntimed && (
             <div className="space-y-1">
               <label className="text-mid-gray text-sm font-medium">
                 {isAdaptive || module2Id ? "Module 1 time limit (minutes)" : "Time Limit (minutes)"}
@@ -404,8 +429,9 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                 Per module. SAT standard: 35 min (Math), 32 min (Reading &amp; Writing). Each module times independently.
               </p>
             </div>
+            )}
 
-            {(isAdaptive || module2Id) && (
+            {!isUntimed && (isAdaptive || module2Id) && (
               <div className="space-y-1">
                 <label className="text-mid-gray text-sm font-medium">
                   Module 2 time limit (minutes)

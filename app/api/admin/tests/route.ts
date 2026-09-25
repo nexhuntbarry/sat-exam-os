@@ -101,6 +101,8 @@ export async function POST(req: Request) {
     module2Id?: string;
     /** Optional separate time limit for Module 2; falls back to module 1's. */
     timeLimitMinutesModule2?: number | null;
+    /** When true, the test has no countdown and never auto-submits. */
+    isUntimed?: boolean;
   };
 
   try {
@@ -128,15 +130,11 @@ export async function POST(req: Request) {
     }
   } else {
     if (!body.moduleId) {
-      return NextResponse.json({ error: "Module 1 is required" }, { status: 400 });
+      return NextResponse.json({ error: "A module is required" }, { status: 400 });
     }
-    if (!body.module2Id) {
-      return NextResponse.json(
-        { error: "Module 2 is required (non-adaptive tests serve both modules in sequence)" },
-        { status: 400 },
-      );
-    }
-    if (body.moduleId === body.module2Id) {
+    // Module 2 is optional: a test may be a single module (one module or
+    // a short quiz). When present it must differ from Module 1.
+    if (body.module2Id && body.moduleId === body.module2Id) {
       return NextResponse.json(
         { error: "Module 1 and Module 2 must be different" },
         { status: 400 },
@@ -173,6 +171,10 @@ export async function POST(req: Request) {
         body.isAdaptive && typeof body.adaptiveThreshold === "number"
           ? Math.max(0, Math.min(100, Math.round(body.adaptiveThreshold)))
           : 60,
+      is_untimed: Boolean(body.isUntimed),
+      // Keep the time-limit columns even for untimed tests so toggling
+      // back to timed later restores a sensible value; the take page
+      // just ignores them while is_untimed is true.
       time_limit_minutes: body.timeLimitMinutes ?? null,
       time_limit_minutes_module_2:
         typeof body.timeLimitMinutesModule2 === "number"

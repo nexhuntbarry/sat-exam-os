@@ -13,6 +13,7 @@ import {
   EyeOff,
   MoreHorizontal,
   Grid3x3,
+  Infinity as InfinityIcon,
 } from "lucide-react";
 import { clsx } from "clsx";
 import TestTimer from "@/components/tests/TestTimer";
@@ -45,6 +46,8 @@ interface Props {
     id: string;
     name: string;
     timeLimitMinutes: number;
+    /** When true, no countdown is shown and the test never auto-submits. */
+    isUntimed: boolean;
     dueDate: string | null;
     moduleLabel: string | null;
     desmosEnabled: boolean;
@@ -337,7 +340,14 @@ export default function TestTakingClient({
             it for the "I don't want to look at the clock right now"
             case — useful for anxious test-takers. */}
         <div className="flex items-center justify-center gap-2">
-          {timerHidden ? (
+          {test.isUntimed ? (
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-light-bg text-mid-gray font-medium text-sm"
+              title="This test has no time limit"
+            >
+              <InfinityIcon size={14} /> No time limit
+            </div>
+          ) : timerHidden ? (
             <button
               onClick={() => setTimerHidden(false)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-light-bg text-mid-gray hover:text-charcoal text-sm font-medium"

@@ -33,7 +33,7 @@ async function getTestInfo(testId: string, studentId: string) {
     .select(`
       id, test_name, status, time_limit_minutes, time_limit_minutes_module_2,
       due_date, open_date,
-      allow_retake, show_answers_after_submission, module_id, module_2_id,
+      allow_retake, show_answers_after_submission, module_id, module_2_id, is_untimed,
       is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, review_unlocked,
       modules!module_id(module_name, section, module_number)
     `)
@@ -165,7 +165,9 @@ export default async function StudentTestLandingPage({
     | null;
   const m1Limit = test.time_limit_minutes;
   const m2Limit = test.time_limit_minutes_module_2 ?? m1Limit;
-  const timeLimitDisplay = isTwoModule && m1Limit
+  const timeLimitDisplay = test.is_untimed
+    ? "Untimed"
+    : isTwoModule && m1Limit
     ? `${m1Limit} + ${m2Limit} min`
     : m1Limit
     ? `${m1Limit} min`

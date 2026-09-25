@@ -23,7 +23,7 @@ async function getActiveSubmission(testId: string, studentId: string) {
   const { data: test } = await db
     .from("tests")
     .select(
-      "id, test_name, time_limit_minutes, time_limit_minutes_module_2, due_date, question_ids, module_id, is_adaptive, desmos_enabled, formula_sheet_url",
+      "id, test_name, time_limit_minutes, time_limit_minutes_module_2, due_date, question_ids, module_id, is_adaptive, desmos_enabled, formula_sheet_url, is_untimed",
     )
     .eq("id", testId)
     .single();
@@ -149,6 +149,7 @@ async function getActiveSubmission(testId: string, studentId: string) {
       id: test.id,
       name: test.test_name,
       timeLimitMinutes: activeTimeLimit ?? 35,
+      isUntimed: Boolean(test.is_untimed),
       dueDate: test.due_date,
       moduleLabel,
       // Math aids only render on Math tests; Desmos is per-test, the
