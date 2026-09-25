@@ -155,7 +155,7 @@ export default function QuestionRenderer({
   // Layout body — single-column for Math / short R&W; two-column for
   // long R&W passages so the passage stays parked on the left while the
   // student works the stem + choices on the right.
-  const body = (
+  const stemBlock = (
     <>
       {/* Visual flags — image/table indicators stay so students know
           to scroll for the figure. */}
@@ -222,8 +222,11 @@ export default function QuestionRenderer({
         </div>
       )}
 
-      {/* Answer area */}
-      {isMultipleChoice ? (
+    </>
+  );
+
+  // Answer area — choices (MC) or a typed-answer input (SPR).
+  const answerBlock = isMultipleChoice ? (
         <div className="space-y-3">
           {(question.choices ?? []).map((choice) => {
             const isSelected = selectedAnswer === choice.label;
@@ -320,9 +323,7 @@ export default function QuestionRenderer({
             For fractions, you may enter as decimal (0.5) or fraction (1/2). Both are accepted.
           </p>
         </div>
-      )}
-    </>
-  );
+      );
 
   if (passageText) {
     // Bluebook R&W layout: passage left, question + choices right,
@@ -344,10 +345,23 @@ export default function QuestionRenderer({
             </MathMarkdown>
           </HighlightableBlock>
         </div>
-        <div className="space-y-5">{body}</div>
+        <div className="space-y-5">{stemBlock}{answerBlock}</div>
       </div>
     );
   }
 
-  return <div className="space-y-5">{body}</div>;
+  // Non-passage layout. For multiple-choice, park the stem (and any
+  // figure) on the left and the choices on the right so both are visible
+  // without scrolling on laptop-width screens; the columns stack on
+  // narrow screens. Typed-answer (SPR) questions stay single-column.
+  if (isMultipleChoice) {
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
+        <div className="space-y-5 lg:border-r lg:border-divider lg:pr-6">{stemBlock}</div>
+        <div>{answerBlock}</div>
+      </div>
+    );
+  }
+
+  return <div className="space-y-5">{stemBlock}{answerBlock}</div>;
 }

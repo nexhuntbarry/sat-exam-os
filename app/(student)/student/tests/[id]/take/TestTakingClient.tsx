@@ -427,7 +427,7 @@ export default function TestTakingClient({
           "flex-1 overflow-y-auto overflow-x-hidden",
           activeAid && "hidden md:block",
         )}>
-        <div className="max-w-3xl mx-auto p-4 sm:p-6">
+        <div className="max-w-5xl mx-auto p-4 sm:p-6">
           {currentQuestion ? (
             <div className="space-y-6">
               {/* Question header: number on the left, "Mark for Review"
