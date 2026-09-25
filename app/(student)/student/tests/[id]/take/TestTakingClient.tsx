@@ -347,25 +347,34 @@ export default function TestTakingClient({
             >
               <InfinityIcon size={14} /> No time limit
             </div>
-          ) : timerHidden ? (
-            <button
-              onClick={() => setTimerHidden(false)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-light-bg text-mid-gray hover:text-charcoal text-sm font-medium"
-            >
-              <Eye size={14} /> Show Timer
-            </button>
           ) : (
-            <div className="flex items-center gap-2">
-              <TestTimer initialSeconds={timeRemainingSeconds} onExpire={handleTimerExpire} />
-              <button
-                onClick={() => setTimerHidden(true)}
-                className="text-soft-mute hover:text-charcoal p-1"
-                aria-label="Hide timer"
-                title="Hide timer"
-              >
-                <EyeOff size={14} />
-              </button>
-            </div>
+            // Keep TestTimer mounted at all times and toggle visibility
+            // with CSS. Unmounting it on hide (the old behaviour) threw
+            // away its internal countdown state, so unhiding remounted it
+            // from the stale page-load prop and the clock jumped back to
+            // the full limit. The interval keeps running while hidden, so
+            // time still elapses correctly.
+            <>
+              <div className={clsx("flex items-center gap-2", timerHidden && "hidden")}>
+                <TestTimer initialSeconds={timeRemainingSeconds} onExpire={handleTimerExpire} />
+                <button
+                  onClick={() => setTimerHidden(true)}
+                  className="text-soft-mute hover:text-charcoal p-1"
+                  aria-label="Hide timer"
+                  title="Hide timer"
+                >
+                  <EyeOff size={14} />
+                </button>
+              </div>
+              {timerHidden && (
+                <button
+                  onClick={() => setTimerHidden(false)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-light-bg text-mid-gray hover:text-charcoal text-sm font-medium"
+                >
+                  <Eye size={14} /> Show Timer
+                </button>
+              )}
+            </>
           )}
         </div>
 
