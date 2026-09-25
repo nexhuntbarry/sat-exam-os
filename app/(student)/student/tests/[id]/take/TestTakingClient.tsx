@@ -301,7 +301,12 @@ export default function TestTakingClient({
   const questionIds = questions.map((q) => q.id);
 
   return (
-    <div className="flex flex-col h-screen bg-cream">
+    // h-[100dvh] (dynamic viewport) + overflow-hidden pins the top bar and
+    // the Back/Next footer to the screen edges so only the question area
+    // scrolls. Plain h-screen (100vh) runs taller than the visible area on
+    // mobile/tablet browsers with a collapsing address bar, which pushed the
+    // Next button below the fold and forced students to scroll to reach it.
+    <div className="flex flex-col h-[100dvh] overflow-hidden bg-cream">
       {autoSubmitting && (
         <div
           role="alert"
