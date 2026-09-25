@@ -85,6 +85,7 @@ export async function POST(req: Request) {
     openDate?: string;
     dueDate?: string;
     showAnswersAfterSubmission?: boolean;
+    showExplanationsAfterSubmission?: boolean;
     allowRetake?: boolean;
     questionIds?: string[];
     teacherIds?: string[];
@@ -183,6 +184,10 @@ export async function POST(req: Request) {
       open_date: body.openDate ?? null,
       due_date: body.dueDate ?? null,
       show_answers_after_submission: body.showAnswersAfterSubmission ?? false,
+      // Explanations are a sub-option of showing answers. Default true so a
+      // test that shows answers also shows explanations unless the admin
+      // turns them off.
+      show_explanations_after_submission: body.showExplanationsAfterSubmission ?? true,
       allow_retake: body.allowRetake ?? false,
       question_ids: body.questionIds ?? null,
       ...mathAidUpdates,

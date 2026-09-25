@@ -70,6 +70,9 @@ export default function CreateTestClient({ modules, teachers, students, classGro
   const [openDate, setOpenDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [showAnswers, setShowAnswers] = useState(false);
+  // Explanations are a sub-option of showing answers. Default on so
+  // enabling answers also surfaces explanations unless turned off.
+  const [showExplanations, setShowExplanations] = useState(true);
   const [allowRetake, setAllowRetake] = useState(false);
 
   // Desmos calculator toggle. Default ON: the real SAT allows Desmos
@@ -118,6 +121,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
           openDate: openDate || undefined,
           dueDate: dueDate || undefined,
           showAnswersAfterSubmission: showAnswers,
+          showExplanationsAfterSubmission: showExplanations,
           allowRetake,
           teacherIds: selectedTeacherIds,
           studentIds: selectedStudentIds,
@@ -495,6 +499,30 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                   )} />
                 </div>
               </label>
+
+              {/* Explanations sub-toggle — only relevant when answers are
+                  shown. Lets the admin give answers without the full
+                  worked explanation (or vice versa). */}
+              {showAnswers && (
+                <label className="flex items-center justify-between p-3 ml-4 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
+                  <div>
+                    <div className="text-charcoal text-sm font-medium">Show explanations</div>
+                    <div className="text-soft-mute text-xs">Include the worked explanation for each question</div>
+                  </div>
+                  <div
+                    onClick={() => setShowExplanations(!showExplanations)}
+                    className={clsx(
+                      "w-10 h-6 rounded-full transition-colors relative shrink-0",
+                      showExplanations ? "bg-warm-coral" : "bg-light-bg"
+                    )}
+                  >
+                    <span className={clsx(
+                      "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                      showExplanations ? "translate-x-5" : "translate-x-1"
+                    )} />
+                  </div>
+                </label>
+              )}
 
               <label className="flex items-center justify-between p-3 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
                 <div>

@@ -36,7 +36,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
       started_at, submitted_at, time_spent_seconds, attempt_number,
       scaled_score, scaled_section, session_id, adaptive_track,
       tests!inner(
-        test_name, show_answers_after_submission,
+        test_name, show_answers_after_submission, show_explanations_after_submission,
         modules!module_id(module_name, section)
       )
     `)
@@ -53,7 +53,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
   const { data: submission } = await query.maybeSingle();
   if (!submission) return null;
 
-  const test = submission.tests as unknown as { test_name: string; show_answers_after_submission: boolean; modules: { module_name: string; section: string } };
+  const test = submission.tests as unknown as { test_name: string; show_answers_after_submission: boolean; show_explanations_after_submission: boolean; modules: { module_name: string; section: string } };
 
   // Adaptive sessions split the attempt across two submissions. Pull
   // the sibling row(s) so we can stitch a combined score card. We only
@@ -534,7 +534,7 @@ export default async function StudentResultPage({
                       </div>
                     )}
 
-                    {q.explanation && (
+                    {test.show_explanations_after_submission && q.explanation && (
                       <div className="p-3 bg-warm-coral/5 border border-warm-coral/15 rounded-lg">
                         <div className="text-warm-coral text-xs font-medium mb-1">Explanation</div>
                         <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1.5 [&_p]:leading-relaxed">
