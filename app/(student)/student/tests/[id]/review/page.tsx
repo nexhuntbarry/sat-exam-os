@@ -51,7 +51,7 @@ async function getReviewData(testId: string, studentId: string) {
     : [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x));
 
   if (moduleIds.length === 0) {
-    return { test, sections: [] };
+    return { test, sections: [], myAnswers: {} as Record<string, { answer: string | null; isCorrect: boolean }> };
   }
 
   let qquery = db
@@ -73,6 +73,32 @@ async function getReviewData(testId: string, studentId: string) {
   }
 
   const { data: questions } = await qquery;
+
+  // The student's own answers, so the unlocked review also shows what
+  // they picked and whether it was right — not just the answer key.
+  // Use their latest attempt (highest attempt_number); an adaptive
+  // attempt spans two submissions sharing that attempt_number.
+  const myAnswers: Record<string, { answer: string | null; isCorrect: boolean }> = {};
+  const { data: subs } = await db
+    .from("submissions")
+    .select("id, attempt_number")
+    .eq("test_id", testId)
+    .eq("student_id", studentId)
+    .in("status", ["Submitted", "Late"])
+    .order("attempt_number", { ascending: false });
+  if (subs && subs.length > 0) {
+    const latestAttempt = subs[0].attempt_number;
+    const latestSubIds = subs
+      .filter((s) => s.attempt_number === latestAttempt)
+      .map((s) => s.id);
+    const { data: records } = await db
+      .from("answer_records")
+      .select("question_id, student_answer, is_correct")
+      .in("submission_id", latestSubIds);
+    for (const r of records ?? []) {
+      myAnswers[r.question_id] = { answer: r.student_answer, isCorrect: r.is_correct };
+    }
+  }
 
   // Group by module so the page reads as Module 1 / Module 2 ... for
   // adaptive tests; non-adaptive collapses to a single group.
@@ -102,7 +128,7 @@ async function getReviewData(testId: string, studentId: string) {
     groups.get(key)!.questions.push(q);
   }
 
-  return { test, sections: Array.from(groups.values()) };
+  return { test, sections: Array.from(groups.values()), myAnswers };
 }
 
 export default async function StudentTestReviewPage({
@@ -117,7 +143,8 @@ export default async function StudentTestReviewPage({
   const data = await getReviewData(id, user.userId);
   if (!data) notFound();
 
-  const { test, sections } = data;
+  const { test, sections, myAnswers } = data;
+  const tookTest = Object.keys(myAnswers).length > 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -134,8 +161,11 @@ export default async function StudentTestReviewPage({
         <div>
           <h1 className="text-charcoal font-bold text-base">{test.test_name} — class review</h1>
           <p className="text-soft-mute text-xs mt-0.5">
-            Your teacher unlocked the answer key for this test. Read along during class
-            review. The view will close again when the teacher locks it.
+            Your teacher unlocked the answer key for this test.{" "}
+            {tookTest
+              ? "Your own answers are marked below so you can see what you got right and wrong."
+              : "Read along during class review."}{" "}
+            The view will close again when the teacher locks it.
           </p>
         </div>
       </div>
@@ -149,7 +179,9 @@ export default async function StudentTestReviewPage({
           <section key={section.moduleId} className="space-y-4">
             <h2 className="text-charcoal font-semibold text-lg">{section.title}</h2>
             <div className="space-y-4">
-              {section.questions.map((q) => (
+              {section.questions.map((q) => {
+                const mine = myAnswers[q.id];
+                return (
                 <div
                   key={q.id}
                   className="bg-surface border border-divider rounded-2xl p-5 space-y-3"
@@ -161,6 +193,18 @@ export default async function StudentTestReviewPage({
                     {q.question_type === "Student Produced Response" && (
                       <span className="text-soft-mute text-xs">SPR</span>
                     )}
+                    {mine && (
+                      <span
+                        className={clsx(
+                          "ml-auto px-2 py-0.5 rounded-full text-xs font-bold",
+                          mine.isCorrect
+                            ? "bg-status-success/15 text-status-success"
+                            : "bg-status-error/15 text-status-error",
+                        )}
+                      >
+                        {mine.isCorrect ? "You got it right" : "You got it wrong"}
+                      </span>
+                    )}
                   </div>
                   <MathMarkdown className="prose prose-sm max-w-none text-charcoal leading-relaxed [&_p]:my-1.5">
                     {q.question_text}
@@ -170,6 +214,8 @@ export default async function StudentTestReviewPage({
                     <div className="space-y-1.5">
                       {(q.choices as Array<{ label: string; text: string }>).map((c) => {
                         const isCorrect = c.label === q.correct_answer;
+                        const isMine = mine?.answer === c.label;
+                        const mineWrong = isMine && !isCorrect;
                         return (
                           <div
                             key={c.label}
@@ -177,6 +223,8 @@ export default async function StudentTestReviewPage({
                               "flex items-start gap-2.5 p-2.5 rounded-lg text-sm",
                               isCorrect
                                 ? "bg-status-success/10 border border-status-success/30 text-charcoal"
+                                : mineWrong
+                                ? "bg-status-error/10 border border-status-error/30 text-charcoal"
                                 : "text-mid-gray",
                             )}
                           >
@@ -184,11 +232,14 @@ export default async function StudentTestReviewPage({
                             <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">
                               {c.text}
                             </MathMarkdown>
-                            {isCorrect && (
-                              <span className="ml-auto text-status-success text-xs font-bold">
-                                Correct
-                              </span>
-                            )}
+                            <span className="ml-auto flex items-center gap-2 shrink-0">
+                              {isMine && (
+                                <span className="text-mid-gray text-xs font-medium">Your answer</span>
+                              )}
+                              {isCorrect && (
+                                <span className="text-status-success text-xs font-bold">Correct</span>
+                              )}
+                            </span>
                           </div>
                         );
                       })}
@@ -196,11 +247,26 @@ export default async function StudentTestReviewPage({
                   )}
 
                   {q.question_type === "Student Produced Response" && (
-                    <div className="text-xs text-soft-mute">
-                      Correct answer:{" "}
-                      <span className="text-status-success font-semibold">
-                        {q.correct_answer ?? "—"}
-                      </span>
+                    <div className="text-xs text-soft-mute space-y-0.5">
+                      {mine && (
+                        <div>
+                          Your answer:{" "}
+                          <span
+                            className={clsx(
+                              "font-semibold",
+                              mine.isCorrect ? "text-status-success" : "text-status-error",
+                            )}
+                          >
+                            {mine.answer && mine.answer.trim() !== "" ? mine.answer : "(blank)"}
+                          </span>
+                        </div>
+                      )}
+                      <div>
+                        Correct answer:{" "}
+                        <span className="text-status-success font-semibold">
+                          {q.correct_answer ?? "—"}
+                        </span>
+                      </div>
                     </div>
                   )}
 
@@ -215,7 +281,8 @@ export default async function StudentTestReviewPage({
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         ))
