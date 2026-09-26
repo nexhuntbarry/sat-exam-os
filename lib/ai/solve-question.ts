@@ -568,12 +568,39 @@ const ExplainOfficialSchema = z.object({
     ),
 });
 
-const EXPLAIN_OFFICIAL_SYSTEM = `You are an expert SAT tutor writing an answer explanation. You are GIVEN the correct answer — it comes from the official College Board answer key and is authoritative and final. Write a clear, complete explanation of why that answer is correct and briefly why the other choices are wrong. Do NOT question, second-guess, or contradict the given answer, and never state a different letter as the answer.
+const EXPLAIN_OFFICIAL_SYSTEM = `You are an expert SAT tutor writing the final answer explanation a student reads after a test. You are GIVEN the correct answer — it comes from the official College Board answer key and is authoritative and final.
+
+Write ONLY the explanation itself, starting immediately with the reasoning. These are ABSOLUTELY FORBIDDEN and corrupt the explanation:
+- Any meta-narration or process talk: "Wait", "Actually", "Let me", "re-examine", "reconsider", "re-reading", "hold on", "I must", "as required", "the instructions", "the answer key says", "the stored answer".
+- Questioning, hedging, or second-guessing the answer — state the reasoning as settled fact.
+- Ever naming a different letter/value as the answer.
+
+Explain clearly why the given answer is correct and briefly why the other choices are wrong.
 
 FORMATTING — this renders through a Markdown + KaTeX pipeline where $…$ means math mode:
 - MONEY / CURRENCY: never write a bare dollar amount like $170 — a bare $ opens math mode and corrupts the rest of the line. Write money as "170 dollars" or with an escaped sign "\\$170". This applies to every dollar amount.
-- Use $…$ ONLY for actual algebra/equations (e.g. $x \\leq 300$), and make sure every $ you open you also close.
-- Do not narrate your own reasoning process ("wait, let me reconsider", "let me verify") — write only the final, clean explanation.`;
+- Use $…$ ONLY for actual algebra/equations (e.g. $x \\leq 300$), and make sure every $ you open you also close.`;
+
+// Deterministic safety net for answer explanations: strip any LEADING
+// sentences that are process narration ("Wait — let me re-examine…",
+// "re-reading the instructions…") rather than actual explanation, in case
+// the model still slips past the prompt. Only removes leading chatter, so
+// a clean explanation passes through untouched.
+export function stripMetaNarration(raw: string | null | undefined): string {
+  if (!raw) return raw ?? "";
+  const META = /\b(wait|let me|re-?examine|reconsider|re-?reading|hold on|i must|i need to|as required|the instructions|answer key says|second-guess|let me construct|let me write|let me carefully|the correct answer given|the stored (correct )?answer)\b/i;
+  const parts = raw.match(/[^.!?]+[.!?]+|\s*[^.!?]+$/g) ?? [raw];
+  const kept: string[] = [];
+  let started = false;
+  for (const p of parts) {
+    if (!started && META.test(p)) continue;
+    started = true;
+    kept.push(p);
+  }
+  let out = kept.join("").trim();
+  out = out.replace(/^(wait|actually|hmm|okay|ok)[\s,—-]+/i, "").trim();
+  return out || raw;
+}
 
 const EXPLAIN_HARD_ISSUE =
   /missing figure|needs? a figure|no figure|figure shown|based on the graph|image not uploaded|requires drawing|LaTeX|garbled|choices/i;
@@ -663,7 +690,7 @@ export async function explainOfficialAndPersist(
             .from("questions")
             .update({
               correct_answer: ans,
-              explanation: res.object.explanation,
+              explanation: stripMetaNarration(res.object.explanation),
               parsing_status: keep ? "Needs Review" : "Approved",
               parsing_notes: keep
                 ? "Explanation matches official answer; still needs review (figure/choices)"
@@ -743,7 +770,7 @@ export async function regenerateTruncatedExplanations(
           });
           if (!looksTruncated(res.object.explanation)) {
             regenerated++;
-            await db.from("questions").update({ correct_answer: ans, explanation: res.object.explanation, updated_at: new Date().toISOString() }).eq("id", q.id);
+            await db.from("questions").update({ correct_answer: ans, explanation: stripMetaNarration(res.object.explanation), updated_at: new Date().toISOString() }).eq("id", q.id);
           }
         } catch (e) {
           console.error(`[truncation-guard] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
@@ -790,8 +817,9 @@ export async function explainOneAnswer(
       const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
       await logUsage({ userId: callerUserId, route: "explain-one", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: questionId } });
     }
-    await db.from("questions").update({ correct_answer: answer, explanation: res.object.explanation, updated_at: new Date().toISOString() }).eq("id", questionId);
-    return res.object.explanation;
+    const cleaned = stripMetaNarration(res.object.explanation);
+    await db.from("questions").update({ correct_answer: answer, explanation: cleaned, updated_at: new Date().toISOString() }).eq("id", questionId);
+    return cleaned;
   } catch (e) {
     console.error(`[explain-one] ${questionId}:`, e instanceof Error ? e.message : e);
     return null;
