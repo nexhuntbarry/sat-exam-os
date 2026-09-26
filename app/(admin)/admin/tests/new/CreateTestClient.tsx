@@ -484,7 +484,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               <label className="flex items-center justify-between p-3 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
                 <div>
                   <div className="text-charcoal text-sm font-medium">Show answers after submission</div>
-                  <div className="text-soft-mute text-xs">Students can review correct answers</div>
+                  <div className="text-soft-mute text-xs">Students can review correct answers on their results page anytime. Leave off if you only want answers visible during teacher-unlocked class review.</div>
                 </div>
                 <div
                   onClick={() => setShowAnswers(!showAnswers)}

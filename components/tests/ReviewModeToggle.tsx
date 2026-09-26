@@ -62,8 +62,14 @@ export default function ReviewModeToggle({ testId, initialUnlocked }: Props) {
           </div>
           <p className="text-soft-mute text-xs leading-relaxed mt-0.5">
             {unlocked
-              ? "Students assigned to this test can see all questions, correct answers, and explanations right now. Use during in-class walkthroughs."
-              : "Students only see results for tests they themselves submitted. Flip on to open the full answer key for class review."}
+              ? "Students assigned to this test can now see all questions, correct answers, explanations, and their own right/wrong answers. Use during in-class walkthroughs, then lock again to hide it all."
+              : "Students only see results for tests they themselves submitted. Flip on to open the full answer key + their own answers for class review."}
+          </p>
+          <p className="text-soft-mute text-[11px] leading-relaxed mt-1.5 border-t border-divider/60 pt-1.5">
+            Note: locking here hides the review page. If the test&rsquo;s{" "}
+            <span className="font-medium text-mid-gray">&ldquo;Show answers after submission&rdquo;</span>{" "}
+            option is on, students can still see their answers on their own results page
+            independently of this lock. For &ldquo;only during review, then hidden,&rdquo; keep that option off.
           </p>
         </div>
       </div>
