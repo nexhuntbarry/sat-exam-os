@@ -8,6 +8,10 @@ import { QuestionAnalyticsRow } from "@/components/analytics/QuestionAnalyticsRo
 import { StatCard } from "@/components/analytics/StatCard";
 import type { QuestionAnalyticsData } from "@/components/analytics/QuestionAnalyticsRow";
 
+interface QuestionAnalyticsDataExtended extends QuestionAnalyticsData {
+  wrongStudents?: string[];
+}
+
 interface Summary {
   hardestQuestion: { questionNumber: number; correctRate: number } | null;
   easiestQuestion: { questionNumber: number; correctRate: number } | null;
@@ -17,7 +21,7 @@ interface Summary {
 }
 
 interface AnalyticsData {
-  questions: QuestionAnalyticsData[];
+  questions: QuestionAnalyticsDataExtended[];
   summary: Summary | null;
 }
 
@@ -218,13 +222,41 @@ export default function QuestionAnalyticsPage() {
             {data?.summary?.totalSubmissions ? "No questions match the current filters." : "No submissions yet."}
           </div>
         ) : (
-          sorted.map((q) => (
-            <QuestionAnalyticsRow
-              key={q.questionId}
-              q={q}
-              onToggleClassReview={handleToggleClassReview}
-            />
-          ))
+          sorted.map((q) => {
+            const wrongStudents = q.wrongStudents ?? [];
+            return (
+              <div key={q.questionId}>
+                <QuestionAnalyticsRow
+                  q={q}
+                  onToggleClassReview={handleToggleClassReview}
+                />
+                {q.totalSubmissions > 0 && (
+                  <div className="px-12 pb-4 border-b border-divider last:border-0">
+                    {wrongStudents.length > 0 ? (
+                      <details className="group">
+                        <summary className="cursor-pointer list-none flex items-center gap-1.5 py-1 text-sm text-status-error font-medium select-none">
+                          <span className="group-open:rotate-90 transition-transform inline-block text-xs">▶</span>
+                          {wrongStudents.length} student{wrongStudents.length !== 1 ? "s" : ""} missed this
+                        </summary>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {wrongStudents.map((name) => (
+                            <span
+                              key={name}
+                              className="px-2 py-0.5 bg-status-error/10 text-status-error border border-status-error/20 rounded text-xs font-medium"
+                            >
+                              {name}
+                            </span>
+                          ))}
+                        </div>
+                      </details>
+                    ) : (
+                      <p className="py-1 text-xs text-status-success font-medium">Everyone got this right</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
     </div>

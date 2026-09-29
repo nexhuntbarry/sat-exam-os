@@ -1,6 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { Users, GraduationCap, BookOpen, ClipboardList, HelpCircle, Clock } from "lucide-react";
+import { Users, GraduationCap, BookOpen, ClipboardList, HelpCircle, Clock, BarChart3 } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 
 async function getAdminStats() {
@@ -148,6 +148,13 @@ export default async function AdminDashboardPage() {
             >
               <HelpCircle size={15} />
               Manage class groups
+            </a>
+            <a
+              href="/admin/analytics/class-groups"
+              className="flex items-center gap-3 p-3 rounded-xl hover:bg-light-bg transition-colors text-sm text-mid-gray hover:text-charcoal"
+            >
+              <BarChart3 size={15} />
+              Class group analytics
             </a>
           </div>
         </div>

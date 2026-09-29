@@ -111,16 +111,28 @@ export async function GET(
         choiceDistribution: {},
         mostSelectedWrong: null,
         classReview: false,
+        wrongStudents: [],
       })),
       summary: null,
     });
   }
 
-  const { data: answerRecords } = await db
+  type RawAnswerRecord = {
+    question_id: string;
+    student_answer: string | null;
+    correct_answer: string | null;
+    is_correct: boolean | null;
+    time_spent_seconds: number | null;
+    submissions: { student_id: string; users: { display_name: string } } | null;
+  };
+
+  const { data: rawAnswerRecords } = await db
     .from("answer_records")
-    .select("question_id, student_answer, correct_answer, is_correct, time_spent_seconds")
+    .select("question_id, student_answer, correct_answer, is_correct, time_spent_seconds, submissions!inner(student_id, users!inner(display_name))")
     .in("submission_id", subIds)
     .in("question_id", questionIds);
+
+  const answerRecords = (rawAnswerRecords ?? []) as unknown as RawAnswerRecord[];
 
   // Fetch flagged question counts from submissions.answers jsonb
   const { data: submissionsWithAnswers } = await db
@@ -161,20 +173,23 @@ export async function GET(
     totalTime: number;
     timeCount: number;
     choiceDist: Record<string, number>;
+    wrongStudentNames: Set<string>;
   }> = {};
 
-  for (const ar of answerRecords ?? []) {
+  for (const ar of answerRecords) {
     const qid = ar.question_id;
     if (!arMap[qid]) {
-      arMap[qid] = { correctCount: 0, wrongCount: 0, blankCount: 0, totalTime: 0, timeCount: 0, choiceDist: {} };
+      arMap[qid] = { correctCount: 0, wrongCount: 0, blankCount: 0, totalTime: 0, timeCount: 0, choiceDist: {}, wrongStudentNames: new Set() };
     }
     const entry = arMap[qid];
+    const displayName = ar.submissions?.users?.display_name ?? null;
     if (ar.is_correct) {
       entry.correctCount++;
     } else if (!ar.student_answer) {
       entry.blankCount++;
     } else {
       entry.wrongCount++;
+      if (displayName) entry.wrongStudentNames.add(displayName);
     }
     if (ar.time_spent_seconds != null) {
       entry.totalTime += ar.time_spent_seconds;
@@ -218,6 +233,7 @@ export async function GET(
       choiceDistribution: choiceDist,
       mostSelectedWrong,
       classReview: classReviewSet.has(q.id),
+      wrongStudents: Array.from(agg?.wrongStudentNames ?? []).sort(),
     };
   });
 

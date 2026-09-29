@@ -3,8 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { Eye } from "lucide-react";
-import { clsx } from "clsx";
-import MathMarkdown from "@/components/MathMarkdown";
+import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/ReviewQuestionCard";
 
 // Class-walkthrough review of a test. Shows every question + correct
 // answer + explanation regardless of whether the student took the
@@ -57,7 +56,7 @@ async function getReviewData(testId: string, studentId: string) {
   let qquery = db
     .from("questions")
     .select(
-      "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, modules!inner(module_name, section, module_number)",
+      "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
     )
     .in("module_id", moduleIds)
     .neq("parsing_status", "Rejected")
@@ -179,110 +178,13 @@ export default async function StudentTestReviewPage({
           <section key={section.moduleId} className="space-y-4">
             <h2 className="text-charcoal font-semibold text-lg">{section.title}</h2>
             <div className="space-y-4">
-              {section.questions.map((q) => {
-                const mine = myAnswers[q.id];
-                return (
-                <div
+              {section.questions.map((q) => (
+                <ReviewQuestionCard
                   key={q.id}
-                  className="bg-surface border border-divider rounded-2xl p-5 space-y-3"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full bg-warm-coral/15 text-warm-coral text-xs font-semibold">
-                      Q{q.original_question_number}
-                    </span>
-                    {q.question_type === "Student Produced Response" && (
-                      <span className="text-soft-mute text-xs">SPR</span>
-                    )}
-                    {mine && (
-                      <span
-                        className={clsx(
-                          "ml-auto px-2 py-0.5 rounded-full text-xs font-bold",
-                          mine.isCorrect
-                            ? "bg-status-success/15 text-status-success"
-                            : "bg-status-error/15 text-status-error",
-                        )}
-                      >
-                        {mine.isCorrect ? "You got it right" : "You got it wrong"}
-                      </span>
-                    )}
-                  </div>
-                  <MathMarkdown className="prose prose-sm max-w-none text-charcoal leading-relaxed [&_p]:my-1.5">
-                    {q.question_text}
-                  </MathMarkdown>
-
-                  {Array.isArray(q.choices) && q.choices.length > 0 && (
-                    <div className="space-y-1.5">
-                      {(q.choices as Array<{ label: string; text: string }>).map((c) => {
-                        const isCorrect = c.label === q.correct_answer;
-                        const isMine = mine?.answer === c.label;
-                        const mineWrong = isMine && !isCorrect;
-                        return (
-                          <div
-                            key={c.label}
-                            className={clsx(
-                              "flex items-start gap-2.5 p-2.5 rounded-lg text-sm",
-                              isCorrect
-                                ? "bg-status-success/10 border border-status-success/30 text-charcoal"
-                                : mineWrong
-                                ? "bg-status-error/10 border border-status-error/30 text-charcoal"
-                                : "text-mid-gray",
-                            )}
-                          >
-                            <span className="font-semibold shrink-0">{c.label}.</span>
-                            <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">
-                              {c.text}
-                            </MathMarkdown>
-                            <span className="ml-auto flex items-center gap-2 shrink-0">
-                              {isMine && (
-                                <span className="text-mid-gray text-xs font-medium">Your answer</span>
-                              )}
-                              {isCorrect && (
-                                <span className="text-status-success text-xs font-bold">Correct</span>
-                              )}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {q.question_type === "Student Produced Response" && (
-                    <div className="text-xs text-soft-mute space-y-0.5">
-                      {mine && (
-                        <div>
-                          Your answer:{" "}
-                          <span
-                            className={clsx(
-                              "font-semibold",
-                              mine.isCorrect ? "text-status-success" : "text-status-error",
-                            )}
-                          >
-                            {mine.answer && mine.answer.trim() !== "" ? mine.answer : "(blank)"}
-                          </span>
-                        </div>
-                      )}
-                      <div>
-                        Correct answer:{" "}
-                        <span className="text-status-success font-semibold">
-                          {q.correct_answer ?? "—"}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-
-                  {q.explanation && (
-                    <div className="rounded-lg border border-warm-coral/15 bg-warm-coral/5 p-3">
-                      <div className="text-warm-coral text-xs font-medium mb-1">
-                        Explanation
-                      </div>
-                      <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1 [&_p]:leading-relaxed">
-                        {q.explanation}
-                      </MathMarkdown>
-                    </div>
-                  )}
-                </div>
-                );
-              })}
+                  question={q as unknown as ReviewQuestion}
+                  mine={myAnswers[q.id] ?? null}
+                />
+              ))}
             </div>
           </section>
         ))

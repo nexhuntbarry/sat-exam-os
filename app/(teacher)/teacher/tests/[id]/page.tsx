@@ -293,6 +293,12 @@ export default async function TeacherTestDetailPage({
       {/* Action links */}
       <div className="flex flex-wrap gap-3">
         <Link
+          href={`/teacher/tests/${id}/review`}
+          className="px-4 py-2 rounded-xl bg-warm-coral text-white text-sm font-semibold hover:bg-warm-coral-dark transition-colors"
+        >
+          Class Review (projector)
+        </Link>
+        <Link
           href={`/teacher/tests/${id}/results`}
           className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral text-sm font-medium hover:bg-warm-coral/20 transition-colors"
         >
