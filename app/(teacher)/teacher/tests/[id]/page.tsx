@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
+import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -32,7 +33,7 @@ async function getTeacherTest(testId: string, teacherId: string) {
     .from("tests")
     .select(`
       id, test_name, status, time_limit_minutes, due_date, open_date,
-      show_answers_after_submission, allow_retake, review_unlocked,
+      show_answers_after_submission, show_explanations_after_submission, allow_retake, review_unlocked,
       modules!module_id(module_name, section, module_number)
     `)
     .eq("id", testId)
@@ -268,6 +269,14 @@ export default async function TeacherTestDetailPage({
       <ReviewModeToggle
         testId={test.id}
         initialUnlocked={Boolean((test as { review_unlocked?: boolean }).review_unlocked)}
+      />
+
+      <AnswerVisibilityToggle
+        testId={test.id}
+        initialShowAnswers={Boolean((test as { show_answers_after_submission?: boolean }).show_answers_after_submission)}
+        initialShowExplanations={
+          (test as { show_explanations_after_submission?: boolean }).show_explanations_after_submission ?? true
+        }
       />
 
       {/* Stats */}

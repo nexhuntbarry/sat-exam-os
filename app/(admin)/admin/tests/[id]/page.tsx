@@ -7,6 +7,7 @@ import TestDetailActions from "./TestDetailActions";
 import EditTestButton from "./EditTestButton";
 import AddStudentsButton from "./AddStudentsButton";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
+import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
 async function getTest(id: string) {
@@ -17,7 +18,7 @@ async function getTest(id: string) {
     .select(`
       id, test_name, module_id, module_2_id, time_limit_minutes, time_limit_minutes_module_2,
       open_date, due_date,
-      show_answers_after_submission, allow_retake, status, created_at, updated_at,
+      show_answers_after_submission, show_explanations_after_submission, allow_retake, status, created_at, updated_at,
       is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, adaptive_threshold,
       desmos_enabled, formula_sheet_url, review_unlocked,
       modules!module_id(module_name, section, module_number, source_name)
@@ -236,6 +237,14 @@ export default async function TestDetailPage({
       <ReviewModeToggle
         testId={test.id}
         initialUnlocked={Boolean(test.review_unlocked)}
+      />
+
+      <AnswerVisibilityToggle
+        testId={test.id}
+        initialShowAnswers={Boolean(test.show_answers_after_submission)}
+        initialShowExplanations={
+          (test as { show_explanations_after_submission?: boolean }).show_explanations_after_submission ?? true
+        }
       />
 
       {/* Config summary */}
