@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle } from "lucide-react";
 import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
@@ -62,8 +62,20 @@ interface Question {
   } | null;
 }
 
+interface ReviewNav {
+  /** Next still-pending question in this module (Draft / Needs Review). */
+  nextId: string | null;
+  /** Previous still-pending question in this module. */
+  prevId: string | null;
+  /** How many questions in this module still need review. */
+  pendingCount: number;
+  moduleId: string;
+}
+
 interface QuestionReviewPanelProps {
   question: Question;
+  /** When present, enables in-module "Approve & Next" review stepping. */
+  nav?: ReviewNav;
 }
 
 const statusStyles: Record<string, string> = {
@@ -73,8 +85,33 @@ const statusStyles: Record<string, string> = {
   Rejected: "bg-status-error/15 text-status-error",
 };
 
-export default function QuestionReviewPanel({ question: initial }: QuestionReviewPanelProps) {
+export default function QuestionReviewPanel({ question: initial, nav }: QuestionReviewPanelProps) {
   const router = useRouter();
+
+  // Jump to the next pending question in this module (or back to the module
+  // when none are left). Keeps the reviewer on one fast path instead of the
+  // approve → back → lost-my-place round trip.
+  function goNext() {
+    if (!nav) return;
+    if (nav.nextId) router.push(`/admin/questions/${nav.nextId}`);
+    else router.push(`/admin/modules/${nav.moduleId}/review`);
+  }
+
+  async function approveAndNext() {
+    setActionLoading("approve-next");
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/approve`, { method: "POST" });
+      if (res.ok) {
+        goNext();
+      } else {
+        showToast("Action failed", false);
+        setActionLoading(null);
+      }
+    } catch {
+      showToast("Action failed", false);
+      setActionLoading(null);
+    }
+  }
   const [q, setQ] = useState<Question>(initial);
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -203,6 +240,32 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
 
   return (
     <div className="flex flex-col gap-4">
+      {/* In-module review stepper — prev / count / next, so the reviewer
+          moves through a module's pending questions without round-tripping
+          back to the list each time. */}
+      {nav && (
+        <div className="flex items-center justify-between rounded-xl border border-divider bg-surface px-3 py-2 text-sm">
+          <button
+            onClick={() => nav.prevId && router.push(`/admin/questions/${nav.prevId}`)}
+            disabled={!nav.prevId}
+            className="inline-flex items-center gap-1 text-mid-gray hover:text-charcoal disabled:opacity-30 transition-colors"
+          >
+            <ChevronLeft size={16} /> Prev
+          </button>
+          <span className="text-soft-mute text-xs">
+            {nav.pendingCount > 0
+              ? `${nav.pendingCount} left to review in this module`
+              : "All questions in this module reviewed"}
+          </span>
+          <button
+            onClick={() => nav.nextId ? router.push(`/admin/questions/${nav.nextId}`) : router.push(`/admin/modules/${nav.moduleId}/review`)}
+            className="inline-flex items-center gap-1 text-mid-gray hover:text-charcoal transition-colors"
+          >
+            {nav.nextId ? "Next" : "Back to module"} <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Toast */}
       {toast && (
         <div
@@ -245,6 +308,17 @@ export default function QuestionReviewPanel({ question: initial }: QuestionRevie
             <CheckCircle2 size={14} />
             {actionLoading === "approve" ? "..." : "Approve"}
           </button>
+          {nav && (
+            <button
+              onClick={approveAndNext}
+              disabled={actionLoading !== null}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-amber hover:bg-warm-amber/90 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+              title="Approve this question and jump to the next one needing review"
+            >
+              <ArrowRightCircle size={14} />
+              {actionLoading === "approve-next" ? "..." : "Approve & Next"}
+            </button>
+          )}
           <button
             onClick={() => handleAction("reject")}
             disabled={actionLoading !== null || q.parsing_status === "Rejected"}

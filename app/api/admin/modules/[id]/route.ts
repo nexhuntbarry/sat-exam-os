@@ -110,6 +110,55 @@ export async function DELETE(
     return NextResponse.json({ error: "Module not found" }, { status: 404 });
   }
 
+  // Guard against destroying real data. A module can't be deleted straight
+  // off because its questions (and their answer_records) and any tests
+  // reference it. We cascade-delete the module's OWN questions, but refuse
+  // when a test uses the module or students have answered its questions —
+  // deleting then would break a test or lose student attempts.
+  const { data: usedByTests } = await db
+    .from("tests")
+    .select("test_name")
+    .or(
+      `module_id.eq.${id},module_2_id.eq.${id},module_1_id.eq.${id},module_2_easy_id.eq.${id},module_2_hard_id.eq.${id}`,
+    );
+  if (usedByTests && usedByTests.length > 0) {
+    const names = usedByTests.map((t) => t.test_name).join(", ");
+    return NextResponse.json(
+      {
+        error: `This module is used by ${usedByTests.length} test(s): ${names}. Remove it from those tests first, then delete.`,
+      },
+      { status: 409 },
+    );
+  }
+
+  const { data: qRows } = await db.from("questions").select("id").eq("module_id", id);
+  const questionIds = (qRows ?? []).map((q) => q.id);
+
+  if (questionIds.length > 0) {
+    const { count: arCount } = await db
+      .from("answer_records")
+      .select("*", { count: "exact", head: true })
+      .in("question_id", questionIds);
+    if (arCount && arCount > 0) {
+      return NextResponse.json(
+        {
+          error: `Students have answered ${arCount} of this module's questions. Deleting would erase their attempts — this module can't be deleted.`,
+        },
+        { status: 409 },
+      );
+    }
+    // Safe to remove: no tests use it, no student answers exist. Delete the
+    // child questions first so the modules FK no longer blocks the delete.
+    const { error: qErr } = await db.from("questions").delete().eq("module_id", id);
+    if (qErr) {
+      console.error("[modules DELETE] question delete error:", qErr);
+      return NextResponse.json(
+        { error: `Failed to delete module's questions: ${qErr.message}` },
+        { status: 500 },
+      );
+    }
+  }
+
   if (mod.pdf_url) {
     try {
       await del(mod.pdf_url);
@@ -121,7 +170,10 @@ export async function DELETE(
   const { error } = await db.from("modules").delete().eq("id", id);
   if (error) {
     console.error("[modules DELETE] DB error:", error);
-    return NextResponse.json({ error: "Failed to delete module" }, { status: 500 });
+    return NextResponse.json(
+      { error: `Failed to delete module: ${error.message}` },
+      { status: 500 },
+    );
   }
 
   return NextResponse.json({ ok: true });
