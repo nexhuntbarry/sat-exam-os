@@ -4,6 +4,7 @@ import { BarChart2 } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
+import { getTestSections } from "@/lib/teacher-access";
 import { StatCard } from "@/components/analytics/StatCard";
 import {
   CrossTestQuestionTable,
@@ -32,6 +33,7 @@ async function getCrossTestAnalysis(teacherId: string, role: string) {
   // primary scoping signal.
   const directTestIds = new Set<string>();
   const myStudentIds = new Set<string>();
+  let teacherSubjects: (string | null)[] = [];
 
   if (role === "admin") {
     // Admin scope is global — bypass both filters below.
@@ -44,8 +46,9 @@ async function getCrossTestAnalysis(teacherId: string, role: string) {
 
     const { data: myGroups } = await db
       .from("class_group_teachers")
-      .select("class_group_id")
+      .select("class_group_id, subject")
       .eq("teacher_id", teacherId);
+    teacherSubjects = (myGroups ?? []).map((g) => (g.subject as string | null) ?? null);
     const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
     if (groupIds.length > 0) {
       const { data: members } = await db
@@ -86,6 +89,25 @@ async function getCrossTestAnalysis(teacherId: string, role: string) {
       for (const s of data ?? []) dedup.set(s.id as string, s as never);
     }
     submissions = Array.from(dedup.values());
+  }
+
+  // Subject scoping: a class teacher pinned to a subject only analyses that
+  // subject's tests. Drop submissions whose test isn't in their subject.
+  // (teacherSubjects is empty for admins / non-class teachers → no filter.)
+  const allowAllSubjects = teacherSubjects.length === 0 || teacherSubjects.some((s) => !s);
+  if (!allowAllSubjects && submissions.length > 0) {
+    const sections = await getTestSections(
+      db,
+      Array.from(new Set(submissions.map((s) => s.test_id))),
+    );
+    submissions = submissions.filter((s) => {
+      const sec = sections.get(s.test_id) ?? null;
+      return !sec || teacherSubjects.includes(sec);
+    });
+    for (const id of Array.from(directTestIds)) {
+      const sec = sections.get(id) ?? null;
+      if (sec && !teacherSubjects.includes(sec)) directTestIds.delete(id);
+    }
   }
 
   if (submissions.length === 0) {

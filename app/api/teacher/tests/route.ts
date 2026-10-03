@@ -90,22 +90,23 @@ export async function GET() {
     for (const s of studentSubs ?? []) classTestIds.add(s.test_id as string);
   }
 
-  // Subject scoping: direct assignments are always full; class-based
-  // visibility is filtered to the subject(s) the teacher teaches. A NULL
-  // subject on any class row ("both") lifts the filter.
-  const allowAllSubjects = teacherSubjects.length === 0 || teacherSubjects.some((s) => !s);
-  if (!allowAllSubjects && classTestIds.size > 0) {
-    const sections = await getTestSections(db, Array.from(classTestIds));
-    for (const id of Array.from(classTestIds)) {
-      const sec = sections.get(id) ?? null;
-      if (sec && !teacherSubjects.includes(sec)) classTestIds.delete(id);
-    }
-  }
-
   const allVisibleTestIds = new Set<string>([
     ...Array.from(directTestIds),
     ...Array.from(classTestIds),
   ]);
+
+  // Subject scoping: a class teacher pinned to a subject only sees that
+  // subject's tests — including any they're directly on teacher_ids for
+  // (a class teacher is always subject-scoped, matching getTeacherTestAccess).
+  // teacherSubjects is empty for a non-class teacher, which lifts the filter.
+  const allowAllSubjects = teacherSubjects.length === 0 || teacherSubjects.some((s) => !s);
+  if (!allowAllSubjects && allVisibleTestIds.size > 0) {
+    const sections = await getTestSections(db, Array.from(allVisibleTestIds));
+    for (const id of Array.from(allVisibleTestIds)) {
+      const sec = sections.get(id) ?? null;
+      if (sec && !teacherSubjects.includes(sec)) allVisibleTestIds.delete(id);
+    }
+  }
   if (allVisibleTestIds.size === 0) {
     return NextResponse.json({ data: [] });
   }

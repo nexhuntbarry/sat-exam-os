@@ -137,6 +137,18 @@ async function getTestInfo(testId: string, studentId: string) {
     };
   }
 
+  // A teacher/admin can grant a one-off retake even when the test itself
+  // isn't marked allow_retake. Surface a pending (unconsumed) grant so the
+  // UI offers the retake button.
+  const { data: grant } = await db
+    .from("test_retake_grants")
+    .select("id")
+    .eq("test_id", testId)
+    .eq("student_id", studentId)
+    .is("consumed_at", null)
+    .limit(1)
+    .maybeSingle();
+
   return {
     test,
     questionCount: totalQuestionCount,
@@ -144,6 +156,7 @@ async function getTestInfo(testId: string, studentId: string) {
     module2Meta,
     isTwoModule,
     combinedPct,
+    hasRetakeGrant: Boolean(grant),
   };
 }
 
@@ -159,7 +172,7 @@ export default async function StudentTestLandingPage({
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 
-  const { test, questionCount, submission, module2Meta, isTwoModule, combinedPct } = data;
+  const { test, questionCount, submission, module2Meta, isTwoModule, combinedPct, hasRetakeGrant } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -176,7 +189,9 @@ export default async function StudentTestLandingPage({
   const isPastDue = test.due_date && new Date(test.due_date) < new Date();
   const isInProgress = submission?.status === "In Progress";
   const isSubmitted = submission?.status === "Submitted" || submission?.status === "Late";
-  const canRetake = test.allow_retake && isSubmitted;
+  // Retake is offered when the test allows it OR a teacher granted a
+  // one-off retake to this student.
+  const canRetake = (test.allow_retake || hasRetakeGrant) && isSubmitted;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">

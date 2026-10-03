@@ -33,7 +33,9 @@ export default function QuestionAnalyticsPage() {
 
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [sortField, setSortField] = useState<SortField>("correctRate");
+  // Default to question order (full-test review) — reads top-to-bottom like
+  // the test itself, which teachers find clearer than a difficulty ranking.
+  const [sortField, setSortField] = useState<SortField>("questionNumber");
   const [sortAsc, setSortAsc] = useState(true);
   const [domainFilter, setDomainFilter] = useState("all");
   const [difficultyFilter, setDifficultyFilter] = useState("all");

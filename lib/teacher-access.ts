@@ -89,6 +89,40 @@ export async function getTeacherTestAccess(
     return { mode: "admin", studentAllowlist: null };
   }
 
+  // Class teacher takes PRECEDENCE over a direct teacher_ids assignment.
+  // A teacher attached to a class is always scoped to their subject and to
+  // their class's students — even if they also appear in teacher_ids —
+  // otherwise an English teacher who happens to be on teacher_ids would see
+  // Math tests and students outside their class. Only a pure reviewer (on
+  // teacher_ids but NOT a class teacher) gets full "direct" access.
+  const { data: myGroups } = await db
+    .from("class_group_teachers")
+    .select("class_group_id, subject")
+    .eq("teacher_id", user.userId);
+  const rows = myGroups ?? [];
+
+  if (rows.length > 0) {
+    // Subject gate: if every class row is pinned to a specific subject and
+    // none matches this test's subject, deny. NULL subject ("both") lifts it.
+    const subjects = rows.map((r) => (r.subject as string | null) ?? null);
+    const allowAll = subjects.some((s) => !s);
+    if (!allowAll) {
+      const section = await getTestSection(db, testId);
+      if (section && !subjects.includes(section)) {
+        return { mode: null, studentAllowlist: null };
+      }
+    }
+    const groupIds = rows.map((r) => r.class_group_id as string);
+    const { data: members } = await db
+      .from("class_group_members")
+      .select("student_id")
+      .in("class_group_id", groupIds);
+    const allowlist = new Set((members ?? []).map((m) => m.student_id as string));
+    if (allowlist.size === 0) return { mode: null, studentAllowlist: null };
+    return { mode: "class", studentAllowlist: allowlist };
+  }
+
+  // Not a class teacher → full access only if directly assigned.
   const { data: assignment } = await db
     .from("test_assignments")
     .select("teacher_ids")
@@ -98,36 +132,7 @@ export async function getTeacherTestAccess(
   if (teacherIds.includes(user.userId)) {
     return { mode: "direct", studentAllowlist: null };
   }
-
-  // Class-group fallback, subject-scoped.
-  const { data: myGroups } = await db
-    .from("class_group_teachers")
-    .select("class_group_id, subject")
-    .eq("teacher_id", user.userId);
-  const rows = myGroups ?? [];
-  if (rows.length === 0) return { mode: null, studentAllowlist: null };
-
-  // Subject gate: if the teacher's class rows are all pinned to specific
-  // subjects and none matches this test's subject, deny. A NULL subject
-  // ("both") lifts the gate.
-  const subjects = rows.map((r) => (r.subject as string | null) ?? null);
-  const allowAll = subjects.some((s) => !s);
-  if (!allowAll) {
-    const section = await getTestSection(db, testId);
-    if (section && !subjects.includes(section)) {
-      return { mode: null, studentAllowlist: null };
-    }
-  }
-
-  const groupIds = rows.map((r) => r.class_group_id as string);
-  const { data: members } = await db
-    .from("class_group_members")
-    .select("student_id")
-    .in("class_group_id", groupIds);
-  const allowlist = new Set((members ?? []).map((m) => m.student_id as string));
-  if (allowlist.size === 0) return { mode: null, studentAllowlist: null };
-
-  return { mode: "class", studentAllowlist: allowlist };
+  return { mode: null, studentAllowlist: null };
 }
 
 export interface TeacherTestScope {
