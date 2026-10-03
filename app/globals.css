@@ -34,11 +34,23 @@ html {
    GFM table rendered by MathMarkdown would otherwise be a bare, border-
    less <table> that reads as loose stacked numbers. Style it into a real
    table. Scoped to .mathmd so it never touches layout tables. */
+/* Keep wide tables inside their column — scroll horizontally instead of
+   overflowing onto neighbouring content (SAT data tables can be 8+ cols). */
+.mathmd-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+  -webkit-overflow-scrolling: touch;
+}
 .mathmd table {
   border-collapse: collapse;
-  margin: 0.75rem 0;
+  margin: 0;
   font-size: 0.95em;
   line-height: 1.3;
+}
+.mathmd th,
+.mathmd td {
+  white-space: nowrap;
 }
 .mathmd th,
 .mathmd td {

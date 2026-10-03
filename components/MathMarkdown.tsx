@@ -48,6 +48,15 @@ export default function MathMarkdown({
               {children}
             </u>
           ),
+          // Wide data tables (SAT tables can run 8+ columns) would
+          // otherwise overflow their column and bleed over neighbouring
+          // content. Wrap each in a horizontal-scroll container so the
+          // table stays inside its column on narrow layouts.
+          table: ({ children }) => (
+            <div className="mathmd-table-scroll">
+              <table>{children}</table>
+            </div>
+          ),
         }}
       >
         {normalized}
