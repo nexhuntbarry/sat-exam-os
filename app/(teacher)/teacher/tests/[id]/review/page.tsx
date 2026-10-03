@@ -1,5 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { Presentation } from "lucide-react";
@@ -11,17 +12,18 @@ import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/Revi
 // student review so the two never drift. No per-student data here: this
 // screen is shown to the whole class, so who-got-what-wrong lives on the
 // private Question Analytics page instead.
-async function getTeacherReview(testId: string, teacherId: string) {
+//
+// Access: any teacher assigned to the test directly OR as the class-group
+// teacher (getTeacherTestAccess), so a class teacher whose students took
+// the test can run the review even when they're not on teacher_ids.
+async function getTeacherReview(
+  testId: string,
+  user: { userId: string; role: string | null | undefined },
+) {
   const db = getServiceClient();
 
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("test_id, teacher_ids")
-    .eq("test_id", testId)
-    .single();
-  if (!assignment) return null;
-  const teacherIds: string[] = assignment.teacher_ids ?? [];
-  if (!teacherIds.includes(teacherId)) return null;
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === null) return null;
 
   const { data: test } = await db
     .from("tests")
@@ -77,7 +79,7 @@ export default async function TeacherTestReviewPage({
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
   const { id } = await params;
-  const data = await getTeacherReview(id, user.userId);
+  const data = await getTeacherReview(id, user);
   if (!data) notFound();
   const { test, sections } = data;
 

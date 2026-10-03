@@ -1,5 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -15,19 +16,21 @@ const MODULE_LABEL: Record<string, string> = {
   module_2_hard: "Module 2 · Hard",
 };
 
-async function getTeacherTest(testId: string, teacherId: string) {
+async function getTeacherTest(
+  testId: string,
+  user: { userId: string; role: string | null | undefined },
+) {
   const db = getServiceClient();
 
-  // Verify teacher is assigned
+  // Two-track access: direct (on teacher_ids) or class-group teacher.
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === null) return null;
+
   const { data: assignment } = await db
     .from("test_assignments")
-    .select("test_id, teacher_ids, student_ids, class_group_ids")
+    .select("student_ids")
     .eq("test_id", testId)
     .single();
-
-  if (!assignment) return null;
-  const teacherIds: string[] = assignment.teacher_ids ?? [];
-  if (!teacherIds.includes(teacherId)) return null;
 
   const { data: test } = await db
     .from("tests")
@@ -41,9 +44,9 @@ async function getTeacherTest(testId: string, teacherId: string) {
 
   if (!test) return null;
 
-  const studentIds: string[] = assignment.student_ids ?? [];
+  const studentIds: string[] = assignment?.student_ids ?? [];
 
-  const { data: submissions } = await db
+  let subQuery = db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
@@ -52,6 +55,11 @@ async function getTeacherTest(testId: string, teacherId: string) {
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: false });
+  // A class-group teacher only sees their own class's attempts.
+  if (access.mode === "class" && access.studentAllowlist) {
+    subQuery = subQuery.in("student_id", Array.from(access.studentAllowlist));
+  }
+  const { data: submissions } = await subQuery;
 
   return {
     test,
@@ -229,7 +237,7 @@ export default async function TeacherTestDetailPage({
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
-  const data = await getTeacherTest(id, user.userId);
+  const data = await getTeacherTest(id, user);
   if (!data) notFound();
 
   const { test, submissions } = data;

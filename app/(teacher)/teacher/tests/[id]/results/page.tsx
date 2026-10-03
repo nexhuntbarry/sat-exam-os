@@ -1,5 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
+import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { StatCard } from "@/components/analytics/StatCard";
@@ -19,15 +20,16 @@ const MODULE_LABEL: Record<string, string> = {
 async function getResultsData(testId: string, userId: string, role: string) {
   const db = getServiceClient();
 
+  // Two-track access: direct (teacher_ids) or class-group teacher.
+  const access = await getTeacherTestAccess(db, { userId, role }, testId);
+  if (access.mode === null) return null;
+
   const { data: assignment } = await db
     .from("test_assignments")
-    .select("teacher_ids, student_ids")
+    .select("student_ids")
     .eq("test_id", testId)
     .single();
-
   if (!assignment) return null;
-  const teacherIds: string[] = assignment.teacher_ids ?? [];
-  if (role !== "admin" && !teacherIds.includes(userId)) return null;
 
   const { data: test } = await db
     .from("tests")
@@ -39,7 +41,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
 
   const studentIds: string[] = assignment.student_ids ?? [];
 
-  const { data: submissions } = await db
+  let subQuery = db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
@@ -49,6 +51,11 @@ async function getResultsData(testId: string, userId: string, role: string) {
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: false });
+  // A class-group teacher only sees their own class's attempts.
+  if (access.mode === "class" && access.studentAllowlist) {
+    subQuery = subQuery.in("student_id", Array.from(access.studentAllowlist));
+  }
+  const { data: submissions } = await subQuery;
 
   type RawSub = {
     id: string;
