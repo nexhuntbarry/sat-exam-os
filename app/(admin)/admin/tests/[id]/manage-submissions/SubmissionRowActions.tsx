@@ -9,13 +9,18 @@ interface Props {
   submissionIds: string[];
   mode: "attempt" | "single";
   isInProgress?: boolean;
+  /** Whose submission this is — named in the confirm so an admin can't
+   *  reset/delete the wrong student by misclicking a row. */
+  studentName?: string;
 }
 
 export default function SubmissionRowActions({
   submissionIds,
   mode,
   isInProgress = false,
+  studentName,
 }: Props) {
+  const who = studentName ? `${studentName}'s` : "this";
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +57,7 @@ export default function SubmissionRowActions({
             call(
               "delete",
               "DELETE",
-              `Delete the entire attempt (${submissionIds.length} submission${submissionIds.length === 1 ? "" : "s"})? This wipes Module 1 + Module 2 if both exist. Cannot be undone.`,
+              `Delete ${who} entire attempt (${submissionIds.length} submission${submissionIds.length === 1 ? "" : "s"})? This wipes Module 1 + Module 2 if both exist. Cannot be undone.`,
             )
           }
           disabled={busy !== null}
@@ -73,7 +78,7 @@ export default function SubmissionRowActions({
           call(
             "reset",
             "POST",
-            "Reset this submission's answers and restart its timer? The submission row stays but its answers are wiped.",
+            `Reset ${who} submission — wipe its answers and restart the timer? The submission row stays but its answers are cleared. This only affects ${studentName ?? "this student"}.`,
           )
         }
         disabled={busy !== null}
@@ -89,7 +94,7 @@ export default function SubmissionRowActions({
             call(
               "force-submit",
               "POST",
-              "Force submit using the current saved answers? Grades and closes the submission now.",
+              `Force submit ${who} submission using the current saved answers? Grades and closes it now.`,
             )
           }
           disabled={busy !== null}
@@ -105,7 +110,7 @@ export default function SubmissionRowActions({
           call(
             "delete",
             "DELETE",
-            "Delete just this submission row? If part of a 2-module attempt, the OTHER module's submission stays. Use 'Delete attempt' above to wipe both.",
+            `Delete just ${who} submission row? If part of a 2-module attempt, the OTHER module's submission stays. Use 'Delete attempt' above to wipe both.`,
           )
         }
         disabled={busy !== null}

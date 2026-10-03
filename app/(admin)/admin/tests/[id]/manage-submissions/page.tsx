@@ -122,6 +122,7 @@ export default async function ManageSubmissionsPage({
                   attemptKey={key}
                   submissionIds={group.submissions.map((s) => s.id)}
                   mode="attempt"
+                  studentName={group.studentName}
                 />
               </div>
               <table className="w-full text-sm">
@@ -175,6 +176,7 @@ export default async function ManageSubmissionsPage({
                               submissionIds={[s.id]}
                               mode="single"
                               isInProgress={s.status === "In Progress"}
+                              studentName={group.studentName}
                             />
                           </td>
                         </tr>
