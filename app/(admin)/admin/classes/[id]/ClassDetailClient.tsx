@@ -37,6 +37,9 @@ interface Teacher {
 
 interface AssignedTeacher extends Teacher {
   assigned_at: string;
+  /** "Math" | "Reading & Writing" | null (both). Scopes which subject's
+   *  tests this teacher sees for this class. */
+  subject: string | null;
 }
 
 interface Props {
@@ -95,6 +98,20 @@ export default function ClassDetailClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ teacherIds: [teacherId] }),
+      });
+      startTransition(() => router.refresh());
+    } finally {
+      setTeacherLoading(false);
+    }
+  }
+
+  async function setTeacherSubject(teacherId: string, subject: string | null) {
+    setTeacherLoading(true);
+    try {
+      await fetch(`/api/admin/class-groups/${classGroup.id}/teachers`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teacherId, subject }),
       });
       startTransition(() => router.refresh());
     } finally {
@@ -272,12 +289,23 @@ export default function ClassDetailClient({
             {assignedTeachers.map((t) => (
               <div
                 key={t.id}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-warm-coral/10 border border-warm-coral/20 text-sm"
+                className="flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full bg-warm-coral/10 border border-warm-coral/20 text-sm"
               >
                 {t.can_review_questions && (
                   <ShieldCheck size={11} className="text-warm-coral" />
                 )}
                 <span className="text-charcoal">{t.display_name ?? t.email}</span>
+                <select
+                  value={t.subject ?? ""}
+                  onChange={(e) => setTeacherSubject(t.id, e.target.value || null)}
+                  disabled={teacherLoading}
+                  title="Which subject's tests this teacher can see for this class"
+                  className="bg-surface border border-divider rounded-full text-xs text-mid-gray px-2 py-0.5 focus:outline-none focus:border-warm-coral/50 disabled:opacity-50"
+                >
+                  <option value="">Both subjects</option>
+                  <option value="Math">Math only</option>
+                  <option value="Reading & Writing">English only</option>
+                </select>
                 <button
                   onClick={() => removeTeacher(t.id)}
                   disabled={teacherLoading}

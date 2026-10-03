@@ -13,6 +13,56 @@
 // stopped requiring admins to populate teacher_ids on every test.
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+// A test's subject is the section ("Math" | "Reading & Writing") of its
+// module (module_1_id for adaptive tests). Used to scope class teachers to
+// the subject they teach.
+export async function getTestSection(
+  db: SupabaseClient,
+  testId: string,
+): Promise<string | null> {
+  const { data: test } = await db
+    .from("tests")
+    .select("module_id, module_1_id")
+    .eq("id", testId)
+    .maybeSingle();
+  if (!test) return null;
+  const moduleId =
+    (test.module_id as string | null) ?? (test.module_1_id as string | null);
+  if (!moduleId) return null;
+  const { data: mod } = await db
+    .from("modules")
+    .select("section")
+    .eq("id", moduleId)
+    .maybeSingle();
+  return (mod?.section as string | null) ?? null;
+}
+
+// Batch version: testId → section, for filtering a set of tests at once.
+async function getTestSections(
+  db: SupabaseClient,
+  testIds: string[],
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  if (testIds.length === 0) return out;
+  const { data: tests } = await db
+    .from("tests")
+    .select("id, module_id, module_1_id")
+    .in("id", testIds);
+  const moduleOf = new Map<string, string | null>();
+  const moduleIds = new Set<string>();
+  for (const t of tests ?? []) {
+    const m = (t.module_id as string | null) ?? (t.module_1_id as string | null);
+    moduleOf.set(t.id as string, m);
+    if (m) moduleIds.add(m);
+  }
+  const { data: mods } = moduleIds.size
+    ? await db.from("modules").select("id, section").in("id", Array.from(moduleIds))
+    : { data: [] as { id: string; section: string | null }[] };
+  const sectionOf = new Map((mods ?? []).map((m) => [m.id as string, m.section as string | null]));
+  for (const [testId, m] of moduleOf) out.set(testId, m ? sectionOf.get(m) ?? null : null);
+  return out;
+}
+
 export interface TeacherTestAccess {
   /**
    * "admin" – unrestricted (caller is admin).
@@ -49,14 +99,27 @@ export async function getTeacherTestAccess(
     return { mode: "direct", studentAllowlist: null };
   }
 
-  // Class-group fallback.
+  // Class-group fallback, subject-scoped.
   const { data: myGroups } = await db
     .from("class_group_teachers")
-    .select("class_group_id")
+    .select("class_group_id, subject")
     .eq("teacher_id", user.userId);
-  const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
-  if (groupIds.length === 0) return { mode: null, studentAllowlist: null };
+  const rows = myGroups ?? [];
+  if (rows.length === 0) return { mode: null, studentAllowlist: null };
 
+  // Subject gate: if the teacher's class rows are all pinned to specific
+  // subjects and none matches this test's subject, deny. A NULL subject
+  // ("both") lifts the gate.
+  const subjects = rows.map((r) => (r.subject as string | null) ?? null);
+  const allowAll = subjects.some((s) => !s);
+  if (!allowAll) {
+    const section = await getTestSection(db, testId);
+    if (section && !subjects.includes(section)) {
+      return { mode: null, studentAllowlist: null };
+    }
+  }
+
+  const groupIds = rows.map((r) => r.class_group_id as string);
   const { data: members } = await db
     .from("class_group_members")
     .select("student_id")
@@ -107,9 +170,10 @@ export async function getTeacherTestScope(
 
   const { data: myGroups } = await db
     .from("class_group_teachers")
-    .select("class_group_id")
+    .select("class_group_id, subject")
     .eq("teacher_id", user.userId);
-  const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
+  const rows = myGroups ?? [];
+  const groupIds = rows.map((g) => g.class_group_id as string);
   if (groupIds.length === 0) return out;
 
   const { data: members } = await db
@@ -123,8 +187,21 @@ export async function getTeacherTestScope(
     .from("submissions")
     .select("test_id")
     .in("student_id", Array.from(out.myStudentIds));
-  for (const s of studentSubs ?? []) {
-    out.classTestIds.add(s.test_id as string);
+  const classTestIds = new Set<string>();
+  for (const s of studentSubs ?? []) classTestIds.add(s.test_id as string);
+
+  // Subject scoping: keep only tests whose subject the teacher teaches.
+  // A NULL subject on any class row means "both" and lifts the filter.
+  const subjects = rows.map((r) => (r.subject as string | null) ?? null);
+  const allowAll = subjects.some((s) => !s);
+  if (allowAll) {
+    for (const id of classTestIds) out.classTestIds.add(id);
+  } else {
+    const sections = await getTestSections(db, Array.from(classTestIds));
+    for (const id of classTestIds) {
+      const sec = sections.get(id) ?? null;
+      if (!sec || subjects.includes(sec)) out.classTestIds.add(id);
+    }
   }
   return out;
 }

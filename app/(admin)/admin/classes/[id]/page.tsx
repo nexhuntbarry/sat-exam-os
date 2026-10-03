@@ -87,7 +87,7 @@ async function getAssignedTeachers(classGroupId: string) {
     .from("class_group_teachers")
     // class_group_teachers has two FKs to users (teacher_id +
     // assigned_by). Disambiguate so PostgREST embeds the right one.
-    .select(`teacher_id, assigned_at, users!teacher_id(id, email, display_name, can_review_questions)`)
+    .select(`teacher_id, assigned_at, subject, users!teacher_id(id, email, display_name, can_review_questions)`)
     .eq("class_group_id", classGroupId);
   return (data ?? []).map((row) => {
     const u = Array.isArray(row.users) ? row.users[0] : row.users;
@@ -97,6 +97,7 @@ async function getAssignedTeachers(classGroupId: string) {
       display_name: (u.display_name ?? null) as string | null,
       can_review_questions: Boolean(u.can_review_questions),
       assigned_at: row.assigned_at as string,
+      subject: (row.subject ?? null) as string | null,
     };
   });
 }
