@@ -207,7 +207,12 @@ export async function GET(
       questionId: q.id,
       questionNumber: q.original_question_number,
       questionText: q.question_text,
-      choices: q.choices ?? [],
+      // DB choices use { label, text }; the panel reads `letter`. Normalize
+      // so the correct/selected choice actually highlights.
+      choices: (q.choices ?? []).map((c) => {
+        const cc = c as { label?: string; letter?: string; text: string };
+        return { letter: cc.letter ?? cc.label ?? "", text: cc.text };
+      }),
       studentAnswer: ar.student_answer,
       correctAnswer: ar.correct_answer ?? q.correct_answer,
       isCorrect: ar.is_correct,
