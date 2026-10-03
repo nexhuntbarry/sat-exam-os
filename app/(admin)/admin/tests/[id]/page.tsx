@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import TestDetailActions from "./TestDetailActions";
 import EditTestButton from "./EditTestButton";
 import AddStudentsButton from "./AddStudentsButton";
+import AssignTeachersButton from "./AssignTeachersButton";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import { formatDate, formatDateTime } from "@/lib/datetime";
@@ -53,13 +54,14 @@ async function getTest(id: string) {
   const studentIds: string[] = assignment?.student_ids ?? [];
   const classGroupIds: string[] = assignment?.class_group_ids ?? [];
 
-  const [{ data: teachers }, { data: classGroups }] = await Promise.all([
+  const [{ data: teachers }, { data: classGroups }, { data: allTeachers }] = await Promise.all([
     teacherIds.length > 0
       ? db.from("users").select("id, display_name, email").in("id", teacherIds)
       : Promise.resolve({ data: [] }),
     classGroupIds.length > 0
       ? db.from("class_groups").select("id, name").in("id", classGroupIds)
       : Promise.resolve({ data: [] }),
+    db.from("users").select("id, display_name, email").eq("role", "teacher").order("display_name"),
   ]);
 
   const submittedSubs = (submissions ?? []).filter((s) => s.status === "Submitted" || s.status === "Late");
@@ -76,6 +78,7 @@ async function getTest(id: string) {
       classGroupIds,
       teachers: teachers ?? [],
       classGroups: classGroups ?? [],
+      allTeachers: allTeachers ?? [],
     },
     stats: {
       total: (submissions ?? []).length,
@@ -309,7 +312,14 @@ export default async function TestDetailPage({
       {/* Assignment details */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
-          <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Teachers</h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Teachers</h3>
+            <AssignTeachersButton
+              testId={test.id}
+              allTeachers={test.assignment.allTeachers}
+              currentTeacherIds={test.assignment.teacherIds}
+            />
+          </div>
           {test.assignment.teachers.length === 0 ? (
             <p className="text-soft-mute text-sm">None assigned</p>
           ) : test.assignment.teachers.map((t: { id: string; display_name: string; email: string }) => (
