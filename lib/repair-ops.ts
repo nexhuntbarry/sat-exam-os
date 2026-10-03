@@ -12,6 +12,54 @@ import { z } from "zod";
 import katex from "katex";
 import { getServiceClient } from "@/lib/supabase";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+// ── Redundant-equation-figure guard ──────────────────────────────────────
+// Pure-algebra math questions carry their equation in the question TEXT.
+// The figure pass sometimes also attaches a crop, which frequently grabs a
+// neighbouring question's region ("the image is the previous question's
+// answer"). Detect that case so we can skip / strip it. Conservative: only
+// equation-type alts, only when the stem actually has LaTeX, never when a
+// real figure kind is named.
+const EQUATION_ALT = /\b(equation|system of equations|expression|formula|inequalit)/i;
+const REAL_FIGURE_ALT = /\b(graph|plot|scatter|diagram|figure|chart|table|number line|triangle|circle|rectangle|square|polygon|geometr|coordinate|histogram|bar|curve|parabola|dot plot|box plot|angle|shaded|shape|grid|map|drawing|image of|photo)/i;
+const HAS_LATEX = /\$[^$]+\$|\\dfrac|\\frac|\\sqrt|\\left|\^\{?\d/;
+
+export function isRedundantEquationFigure(
+  section: string | null | undefined,
+  questionText: string | null | undefined,
+  alts: string[],
+): boolean {
+  const isMath = (section ?? "").toLowerCase().includes("math");
+  if (!isMath) return false;
+  const alt = (alts ?? []).join(" ; ");
+  if (!alt.trim()) return false;
+  return EQUATION_ALT.test(alt) && !REAL_FIGURE_ALT.test(alt) && HAS_LATEX.test(questionText ?? "");
+}
+
+// Strip redundant equation-crop images across one module. Returns how many
+// were cleared. Called at the end of parsing so new imports self-clean.
+export async function stripRedundantEquationFiguresForModule(
+  moduleId: string,
+  db: SupabaseClient,
+): Promise<number> {
+  const { data } = await db
+    .from("questions")
+    .select("id, section, question_text, has_image, image_urls, image_alts")
+    .eq("module_id", moduleId)
+    .eq("has_image", true);
+  let cleared = 0;
+  for (const q of data ?? []) {
+    const urls = Array.isArray(q.image_urls) ? (q.image_urls as string[]) : [];
+    if (urls.length === 0) continue;
+    const alts = Array.isArray(q.image_alts) ? (q.image_alts as string[]) : [];
+    if (isRedundantEquationFigure(q.section as string | null, q.question_text as string | null, alts)) {
+      await db.from("questions").update({ has_image: false, image_urls: [], image_alts: [], updated_at: new Date().toISOString() }).eq("id", q.id);
+      cleared++;
+    }
+  }
+  return cleared;
+}
 
 const REPAIR_MATH_SYSTEM = `You are re-extracting one SAT question from a PDF because the previous parser run produced text the KaTeX renderer couldn't display. Output a clean replacement.
 
@@ -379,7 +427,7 @@ export async function repairImageForQuestion(
   const { data: row, error: rowErr } = await db
     .from("questions")
     .select(
-      "id, module_id, original_question_number, source_pdf_url, question_text, page_number, has_image, image_urls",
+      "id, module_id, original_question_number, source_pdf_url, question_text, page_number, has_image, image_urls, section",
     )
     .eq("id", questionId)
     .maybeSingle();
@@ -407,6 +455,22 @@ export async function repairImageForQuestion(
     ],
   });
   const regions = result.object.regions;
+
+  // Guard against the "wrong image — it's the previous question's figure"
+  // bug: a pure-algebra math question carries its equation in the TEXT, so
+  // a recovered "figure" is just a redundant equation crop that often grabs
+  // a neighbouring question's region. Don't attach it — clear the flag.
+  if (isRedundantEquationFigure(row.section as string | null, row.question_text as string | null, regions.map((r) => r.alt ?? ""))) {
+    await db
+      .from("questions")
+      .update({ has_image: false, image_urls: [], image_alts: [], updated_at: new Date().toISOString() })
+      .eq("id", questionId);
+    return {
+      ok: true,
+      message: "No figure attached — this question's equation is already in the text (redundant crop skipped).",
+    };
+  }
+
   if (regions.length === 0) {
     // Admin explicitly clicked "Re-extract figure" — they think a
     // figure exists. Don't silently flip has_image=false the way

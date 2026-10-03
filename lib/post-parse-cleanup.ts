@@ -22,6 +22,7 @@
 // blocked on a network blip.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { stripRedundantEquationFiguresForModule } from "@/lib/repair-ops";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -40,6 +41,7 @@ export interface PostParseCleanupSummary {
   answerLetterNormalizations: number;
   duplicateQuestionsRemoved: number;
   blindImagesResolved: number;
+  redundantFiguresStripped: number;
   anomaliesDemoted: number;
   rowsRepromoted: number;
   errors: string[];
@@ -1401,6 +1403,7 @@ export async function runPostParseCleanup(
     answerLetterNormalizations: 0,
     duplicateQuestionsRemoved: 0,
     blindImagesResolved: 0,
+    redundantFiguresStripped: 0,
     anomaliesDemoted: 0,
     rowsRepromoted: 0,
     errors: [],
@@ -1429,6 +1432,14 @@ export async function runPostParseCleanup(
     "repairUnderlines",
     () => repairUnderlines(moduleId, db),
     (v) => (summary.underlinesRepaired = v),
+  );
+  // Strip redundant equation-crop images on math questions (the "wrong
+  // image — previous question's answer" bug): the equation is already in
+  // the text, so the crop is unsafe. Guards against recurrence on import.
+  await safe(
+    "stripRedundantEquationFigures",
+    () => stripRedundantEquationFiguresForModule(moduleId, db),
+    (v) => (summary.redundantFiguresStripped = v),
   );
   await safe(
     "recoverMissingChoices",
