@@ -38,7 +38,7 @@ export async function getTestSection(
 }
 
 // Batch version: testId → section, for filtering a set of tests at once.
-async function getTestSections(
+export async function getTestSections(
   db: SupabaseClient,
   testIds: string[],
 ): Promise<Map<string, string | null>> {

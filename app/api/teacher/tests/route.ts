@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getTestSections } from "@/lib/teacher-access";
 
 // GET /api/teacher/tests
 export async function GET() {
@@ -13,7 +14,9 @@ export async function GET() {
   // Visible tests for this teacher = direct assignment ∪ "my class
   // students took it". teacher_ids is no longer required.
   const directTestIds = new Set<string>();
+  const classTestIds = new Set<string>();
   const myStudentIds = new Set<string>();
+  let teacherSubjects: (string | null)[] = [];
   const directAssignments: Array<{
     test_id: string;
     student_ids: string[] | null;
@@ -56,32 +59,52 @@ export async function GET() {
 
     const { data: myGroups } = await db
       .from("class_group_teachers")
-      .select("class_group_id")
+      .select("class_group_id, subject")
       .eq("teacher_id", user.userId);
     const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
+    teacherSubjects = (myGroups ?? []).map((g) => (g.subject as string | null) ?? null);
     if (groupIds.length > 0) {
       const { data: members } = await db
         .from("class_group_members")
         .select("student_id")
         .in("class_group_id", groupIds);
       for (const m of members ?? []) myStudentIds.add(m.student_id as string);
+
+      // Also surface tests ASSIGNED to the teacher's class groups, even
+      // before any student has taken them (so a newly-added class teacher
+      // sees the class's tests, not only ones with submissions).
+      const { data: groupAssigned } = await db
+        .from("test_assignments")
+        .select("test_id")
+        .overlaps("class_group_ids", groupIds);
+      for (const a of groupAssigned ?? []) classTestIds.add(a.test_id as string);
     }
   }
 
-  // Pull every test_id where any of my class students have a
-  // submission (for the non-admin class path). Union with direct.
-  const indirectTestIds = new Set<string>();
+  // Tests where any of my class students have a submission.
   if (user.role !== "admin" && myStudentIds.size > 0) {
     const { data: studentSubs } = await db
       .from("submissions")
       .select("test_id")
       .in("student_id", Array.from(myStudentIds));
-    for (const s of studentSubs ?? []) indirectTestIds.add(s.test_id as string);
+    for (const s of studentSubs ?? []) classTestIds.add(s.test_id as string);
+  }
+
+  // Subject scoping: direct assignments are always full; class-based
+  // visibility is filtered to the subject(s) the teacher teaches. A NULL
+  // subject on any class row ("both") lifts the filter.
+  const allowAllSubjects = teacherSubjects.length === 0 || teacherSubjects.some((s) => !s);
+  if (!allowAllSubjects && classTestIds.size > 0) {
+    const sections = await getTestSections(db, Array.from(classTestIds));
+    for (const id of Array.from(classTestIds)) {
+      const sec = sections.get(id) ?? null;
+      if (sec && !teacherSubjects.includes(sec)) classTestIds.delete(id);
+    }
   }
 
   const allVisibleTestIds = new Set<string>([
     ...Array.from(directTestIds),
-    ...Array.from(indirectTestIds),
+    ...Array.from(classTestIds),
   ]);
   if (allVisibleTestIds.size === 0) {
     return NextResponse.json({ data: [] });
