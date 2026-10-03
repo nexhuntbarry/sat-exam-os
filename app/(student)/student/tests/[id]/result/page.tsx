@@ -90,6 +90,12 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
       question_type: string;
       explanation: string | null;
       difficulty: string | null;
+      module_id: string;
+      has_image: boolean | null;
+      has_table: boolean | null;
+      image_urls: string[] | null;
+      image_alts: string[] | null;
+      page_number: number | null;
     };
   }[] | null = null;
 
@@ -113,7 +119,8 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
         id, submission_id, question_id, student_answer, correct_answer, is_correct,
         questions!inner(
           original_question_number, question_text, choices, question_type,
-          explanation, difficulty
+          explanation, difficulty, module_id, has_image, has_table,
+          image_urls, image_alts, page_number
         )
       `)
       .in("submission_id", reviewSubmissionIds);
@@ -496,6 +503,27 @@ export default async function StudentResultPage({
                     <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-2">
                       {q.question_text}
                     </MathMarkdown>
+
+                    {/* Question figure: recovered crop(s), else the source PDF page. */}
+                    {q.image_urls && q.image_urls.length > 0 ? (
+                      <div className="flex flex-wrap gap-3">
+                        {q.image_urls.map((url, i) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            key={url}
+                            src={`/api/blob-image?u=${encodeURIComponent(url)}`}
+                            alt={q.image_alts?.[i] ?? "Question figure"}
+                            className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
+                          />
+                        ))}
+                      </div>
+                    ) : (q.has_image || q.has_table) ? (
+                      <iframe
+                        src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
+                        className="w-full h-[420px] rounded-xl border border-divider bg-white"
+                        title={`Question figure (PDF page ${q.page_number ?? 1})`}
+                      />
+                    ) : null}
 
                     {q.question_type === "Multiple Choice" && (q.choices ?? []).length > 0 && (
                       <div className="space-y-1.5">

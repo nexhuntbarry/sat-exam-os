@@ -17,6 +17,12 @@ export interface AnswerDetail {
   timeSpentSeconds: number | null;
   wasFlagged: boolean;
   explanation: string | null;
+  moduleId?: string;
+  hasImage?: boolean;
+  hasTable?: boolean;
+  imageUrls?: string[];
+  imageAlts?: string[];
+  pageNumber?: number | null;
   domain: string | null;
   skill: string | null;
   difficulty: string | null;
@@ -176,6 +182,27 @@ export function SubmissionDetailPanel({
                     );
                   })()}
                 </div>
+
+                {/* Question figure: recovered crop(s), else source PDF page. */}
+                {a.imageUrls && a.imageUrls.length > 0 ? (
+                  <div className="flex flex-wrap gap-3">
+                    {a.imageUrls.map((url, i) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={url}
+                        src={`/api/blob-image?u=${encodeURIComponent(url)}`}
+                        alt={a.imageAlts?.[i] ?? "Question figure"}
+                        className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
+                      />
+                    ))}
+                  </div>
+                ) : (a.hasImage || a.hasTable) && a.moduleId ? (
+                  <iframe
+                    src={`/api/modules/${a.moduleId}/page/${a.pageNumber ?? 1}`}
+                    className="w-full h-[420px] rounded-xl border border-divider bg-white"
+                    title={`Question figure (PDF page ${a.pageNumber ?? 1})`}
+                  />
+                ) : null}
 
                 {/* Choices */}
                 {a.choices.length > 0 && (

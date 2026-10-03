@@ -136,7 +136,8 @@ export async function GET(
       id, submission_id, question_id, student_answer, correct_answer, is_correct, time_spent_seconds,
       questions!inner(
         id, original_question_number, question_text, choices,
-        correct_answer, explanation, difficulty, domain, skill, question_type
+        correct_answer, explanation, difficulty, domain, skill, question_type,
+        module_id, has_image, has_table, image_urls, image_alts, page_number
       )
     `)
     .in("submission_id", siblingIds)
@@ -190,6 +191,12 @@ export async function GET(
       domain: string | null;
       skill: string | null;
       question_type: string;
+      module_id: string;
+      has_image: boolean | null;
+      has_table: boolean | null;
+      image_urls: string[] | null;
+      image_alts: string[] | null;
+      page_number: number | null;
     };
   };
   const mapAnswer = (ar: RawAnswer) => {
@@ -207,6 +214,12 @@ export async function GET(
       timeSpentSeconds: ar.time_spent_seconds,
       wasFlagged,
       explanation: q.explanation,
+      moduleId: q.module_id,
+      hasImage: q.has_image ?? false,
+      hasTable: q.has_table ?? false,
+      imageUrls: q.image_urls ?? [],
+      imageAlts: q.image_alts ?? [],
+      pageNumber: q.page_number,
       domain: q.domain,
       skill: q.skill,
       difficulty: q.difficulty,
