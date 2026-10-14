@@ -191,9 +191,12 @@ export default async function TeacherClassDetailPage({
                     className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                   >
                     <td className="px-5 py-3">
-                      <div className="text-charcoal font-medium">
+                      <Link
+                        href={`/teacher/classes/${group.id}/students/${s.id}`}
+                        className="font-medium text-charcoal hover:text-warm-coral transition-colors"
+                      >
                         {s.display_name ?? s.email}
-                      </div>
+                      </Link>
                       {s.display_name && (
                         <div className="text-soft-mute text-xs">{s.email}</div>
                       )}

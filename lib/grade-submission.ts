@@ -8,7 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { scaleSectionScore } from "@/lib/scoring";
 
-function normalizeAnswer(answer: string | null | undefined): string {
+export function normalizeAnswer(answer: string | null | undefined): string {
   if (answer == null) return "";
   const s = answer.trim().toLowerCase();
   const fractionMatch = s.match(/^(-?\d+)\s*\/\s*(-?\d+)$/);
@@ -20,18 +20,33 @@ function normalizeAnswer(answer: string | null | undefined): string {
   return s;
 }
 
-function answersMatch(
+// A correct_answer may list SEVERAL acceptable answers separated by a
+// newline, "|", or ";" (e.g. an SPR that accepts "1/2" or "0.5", or an
+// MC item where either of two keys is acceptable). The student is correct
+// if their answer matches ANY candidate. A plain single answer (no
+// delimiter) yields one candidate, so existing behavior is unchanged.
+export function answersMatch(
   student: string | null | undefined,
   correct: string | null | undefined,
 ): boolean {
   if (!correct) return false;
+  // Split on newline, "|", ";", a comma BETWEEN non-digits (so a thousands
+  // separator like "1,000" stays intact), or the word "or" (SAT answer keys
+  // write two acceptable SPR values as e.g. "5 or -13").
+  const candidates = String(correct)
+    .split(/\s*(?:\bor\b|[\n;|])\s*|(?<=\D),(?=\D)/i)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+  if (candidates.length === 0) return false;
   const sNorm = normalizeAnswer(student);
-  const cNorm = normalizeAnswer(correct);
-  if (sNorm === cNorm) return true;
   const sNum = parseFloat(sNorm);
-  const cNum = parseFloat(cNorm);
-  if (!isNaN(sNum) && !isNaN(cNum)) {
-    return Math.abs(sNum - cNum) < 0.0001;
+  for (const cand of candidates) {
+    const cNorm = normalizeAnswer(cand);
+    if (sNorm === cNorm) return true;
+    const cNum = parseFloat(cNorm);
+    if (!isNaN(sNum) && !isNaN(cNum) && Math.abs(sNum - cNum) < 0.0001) {
+      return true;
+    }
   }
   return false;
 }

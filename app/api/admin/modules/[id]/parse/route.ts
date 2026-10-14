@@ -376,6 +376,13 @@ export async function POST(
       parsingNotes = `Low AI confidence (${q.ai_confidence_score.toFixed(2)})`;
     }
 
+    // SPR-with-choices defense. The LLM occasionally hallucinates choice
+    // options for Student Produced Response questions. Strip them so the
+    // question is never stored with phantom choices.
+    if (q.question_type === "Student Produced Response" && Array.isArray(q.choices) && q.choices.length > 0) {
+      q.choices = [];
+    }
+
     // MCQ-without-choices defense. The parser occasionally drops the
     // choices array on a Multiple Choice row (5 cases were caught
     // 2026-05-30 in October 2024 SAT English Module 1). Once such a

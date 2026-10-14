@@ -18,6 +18,7 @@ import {
 import { clsx } from "clsx";
 import TestTimer from "@/components/tests/TestTimer";
 import QuestionRenderer from "@/components/tests/QuestionRenderer";
+import QuestionErrorBoundary from "@/components/tests/QuestionErrorBoundary";
 import QuestionNavigator from "@/components/tests/QuestionNavigator";
 import SubmitModal from "@/components/tests/SubmitModal";
 
@@ -466,30 +467,35 @@ export default function TestTakingClient({
                 </button>
               </div>
 
-              <QuestionRenderer
-                question={currentQuestion}
-                selectedAnswer={answers[currentQuestion.id] ?? ""}
-                onAnswer={(ans) => handleAnswer(currentQuestion.id, ans)}
-                questionIndex={currentIndex}
-                totalQuestions={questions.length}
-                annotationsEnabled={test.annotationsEnabled}
-                annotations={annotations[currentQuestion.id] ?? {}}
-                crossedOut={crossedOut[currentQuestion.id] ?? new Set()}
-                onToggleCrossOut={(label) => toggleCrossOut(currentQuestion.id, label)}
-                onAnnotationsChange={(next) => {
-                  setAnnotations((prev) => {
-                    const merged = { ...prev };
-                    if (Object.keys(next).length === 0) {
-                      delete merged[currentQuestion.id];
-                    } else {
-                      merged[currentQuestion.id] = next;
-                    }
-                    annotationsRef.current = merged;
-                    scheduleSave();
-                    return merged;
-                  });
-                }}
-              />
+              <QuestionErrorBoundary
+                key={currentQuestion.id}
+                questionNumber={currentIndex + 1}
+              >
+                <QuestionRenderer
+                  question={currentQuestion}
+                  selectedAnswer={answers[currentQuestion.id] ?? ""}
+                  onAnswer={(ans) => handleAnswer(currentQuestion.id, ans)}
+                  questionIndex={currentIndex}
+                  totalQuestions={questions.length}
+                  annotationsEnabled={test.annotationsEnabled}
+                  annotations={annotations[currentQuestion.id] ?? {}}
+                  crossedOut={crossedOut[currentQuestion.id] ?? new Set()}
+                  onToggleCrossOut={(label) => toggleCrossOut(currentQuestion.id, label)}
+                  onAnnotationsChange={(next) => {
+                    setAnnotations((prev) => {
+                      const merged = { ...prev };
+                      if (Object.keys(next).length === 0) {
+                        delete merged[currentQuestion.id];
+                      } else {
+                        merged[currentQuestion.id] = next;
+                      }
+                      annotationsRef.current = merged;
+                      scheduleSave();
+                      return merged;
+                    });
+                  }}
+                />
+              </QuestionErrorBoundary>
             </div>
           ) : (
             <div className="py-16 text-center text-soft-mute">No questions found.</div>

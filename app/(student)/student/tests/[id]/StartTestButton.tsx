@@ -29,8 +29,12 @@ export default function StartTestButton({ testId, submissionId, isResume }: Prop
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ testId }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed to start test");
+      const text = await res.text();
+      let json: { error?: string } | null = null;
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      if (!res.ok || json === null) {
+        throw new Error(json?.error ?? `Server error (${res.status}). Please try again.`);
+      }
 
       router.push(`/student/tests/${testId}/take`);
     } catch (e) {

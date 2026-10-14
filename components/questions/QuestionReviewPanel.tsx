@@ -531,53 +531,55 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
             </div>
           )}
 
-          {/* Choices */}
-          <div>
-            <label className="block text-xs text-soft-mute mb-2">
-              Answer Choices {q.choices.length === 0 && (
-                <span className="text-soft-mute/70">(none — Student Produced Response)</span>
-              )}
-            </label>
-            {q.choices.length > 0 ? (
-              <div className="space-y-2">
-                {q.choices.map((c) => {
-                  const isCorrect = q.correct_answer === c.label;
-                  return (
-                    <div key={c.label} className="flex items-center gap-2">
-                      <span
-                        className={clsx(
-                          "text-xs w-5 shrink-0 font-semibold text-center rounded-full py-0.5",
-                          isCorrect
-                            ? "bg-warm-amber/25 text-warm-amber"
-                            : "text-soft-mute",
-                        )}
-                      >
-                        {c.label}
-                      </span>
-                      <div className="flex-1 flex flex-col gap-1">
-                        <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 [&_p]:my-0">
-                          {c.text}
-                        </MathMarkdown>
-                        <details className="text-[11px] text-soft-mute">
-                          <summary className="cursor-pointer">Edit raw</summary>
-                          <input
-                            type="text"
-                            value={c.text}
-                            onChange={(e) => updateChoice(c.label, e.target.value)}
-                            className="w-full mt-1 bg-light-bg border border-divider rounded-lg px-2 py-1 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50"
-                          />
-                        </details>
+          {/* Choices — only shown for Multiple Choice questions */}
+          {q.question_type === "Multiple Choice" && (
+            <div>
+              <label className="block text-xs text-soft-mute mb-2">
+                Answer Choices {q.choices.length === 0 && (
+                  <span className="text-soft-mute/70">(none yet)</span>
+                )}
+              </label>
+              {q.choices.length > 0 ? (
+                <div className="space-y-2">
+                  {q.choices.map((c) => {
+                    const isCorrect = q.correct_answer === c.label;
+                    return (
+                      <div key={c.label} className="flex items-center gap-2">
+                        <span
+                          className={clsx(
+                            "text-xs w-5 shrink-0 font-semibold text-center rounded-full py-0.5",
+                            isCorrect
+                              ? "bg-warm-amber/25 text-warm-amber"
+                              : "text-soft-mute",
+                          )}
+                        >
+                          {c.label}
+                        </span>
+                        <div className="flex-1 flex flex-col gap-1">
+                          <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 [&_p]:my-0">
+                            {c.text}
+                          </MathMarkdown>
+                          <details className="text-[11px] text-soft-mute">
+                            <summary className="cursor-pointer">Edit raw</summary>
+                            <input
+                              type="text"
+                              value={c.text}
+                              onChange={(e) => updateChoice(c.label, e.target.value)}
+                              className="w-full mt-1 bg-light-bg border border-divider rounded-lg px-2 py-1 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50"
+                            />
+                          </details>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="text-xs text-soft-mute/70 italic">
-                Student writes the answer directly.
-              </div>
-            )}
-          </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-xs text-soft-mute/70 italic">
+                  No choices yet — add options below or re-parse.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Correct answer + explanation */}
           <div className="grid grid-cols-2 gap-3">
@@ -652,9 +654,21 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
               <label className="block text-xs text-soft-mute mb-1">Type</label>
               <select
                 value={q.question_type ?? ""}
-                onChange={(e) =>
-                  setQ((prev) => ({ ...prev, question_type: (e.target.value || null) as Question["question_type"] }))
-                }
+                onChange={(e) => {
+                  const newType = (e.target.value || null) as Question["question_type"];
+                  setQ((prev) => ({
+                    ...prev,
+                    question_type: newType,
+                    // SPR must never carry choices; MC gets a blank editable set
+                    // if it currently has none so the admin can fill them in.
+                    choices:
+                      newType === "Student Produced Response"
+                        ? []
+                        : newType === "Multiple Choice" && prev.choices.length === 0
+                          ? []
+                          : prev.choices,
+                  }));
+                }}
                 className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
               >
                 <option value="">—</option>

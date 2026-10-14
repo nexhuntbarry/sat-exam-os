@@ -139,9 +139,13 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               : null,
         }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Failed to create test");
-      router.push(`/admin/tests/${json.data.id}`);
+      const text = await res.text();
+      let json: { error?: string; data?: { id: string } } | null = null;
+      try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      if (!res.ok || json === null) {
+        throw new Error(json?.error ?? `Server error (${res.status}). Please try again.`);
+      }
+      router.push(`/admin/tests/${json.data!.id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
       setSubmitting(false);

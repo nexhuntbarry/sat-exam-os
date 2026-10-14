@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
+import { rescoreQuestion } from "@/lib/rescore";
 
 export const maxDuration = 60;
 
@@ -135,7 +136,18 @@ export async function POST(
     if (regenerated) newExplanation = regenerated;
   }
 
-  return NextResponse.json({ data: { ...updated, correct_answer: finalAnswer, explanation: newExplanation } });
+  // Settling the key can flip already-submitted answers — re-grade them so
+  // past score reports reflect the resolved answer.
+  let rescore;
+  if (finalAnswer !== (q.correct_answer as string | null)) {
+    try {
+      rescore = await rescoreQuestion(db, id);
+    } catch (e) {
+      console.error("[resolve-mismatch] rescore failed:", e);
+    }
+  }
+
+  return NextResponse.json({ data: { ...updated, correct_answer: finalAnswer, explanation: newExplanation }, rescore });
 }
 
 /**

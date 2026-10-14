@@ -2,34 +2,10 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { scaleSectionScore } from "@/lib/scoring";
-
-/** Normalize answer for comparison */
-function normalizeAnswer(answer: string | null | undefined): string {
-  if (answer == null) return "";
-  const s = answer.trim().toLowerCase();
-  // Try to convert fractions to decimal for SPR numeric comparison
-  const fractionMatch = s.match(/^(-?\d+)\s*\/\s*(-?\d+)$/);
-  if (fractionMatch) {
-    const num = parseFloat(fractionMatch[1]);
-    const den = parseFloat(fractionMatch[2]);
-    if (den !== 0) return String(Math.round((num / den) * 10000) / 10000);
-  }
-  return s;
-}
-
-function answersMatch(student: string | null | undefined, correct: string | null | undefined): boolean {
-  if (!correct) return false;
-  const sNorm = normalizeAnswer(student);
-  const cNorm = normalizeAnswer(correct);
-  if (sNorm === cNorm) return true;
-  // Numeric comparison for SPR
-  const sNum = parseFloat(sNorm);
-  const cNum = parseFloat(cNorm);
-  if (!isNaN(sNum) && !isNaN(cNum)) {
-    return Math.abs(sNum - cNum) < 0.0001;
-  }
-  return false;
-}
+// Single source of truth for answer comparison (supports multiple
+// acceptable answers). Shared with the cron finalizer and the rescore path
+// so live grading and re-grading can never diverge.
+import { answersMatch } from "@/lib/grade-submission";
 
 // POST /api/student/submissions/[id]/submit
 // Optional JSON body: { answers?: Record<questionId,string>; metadata?: object }
@@ -166,7 +142,7 @@ export async function POST(
       student_answer: studentAnswer,
       correct_answer: q.correct_answer ?? null,
       is_correct: isCorrect,
-      time_spent_seconds: Math.floor(timeSpentSeconds / totalQuestions),
+      time_spent_seconds: totalQuestions > 0 ? Math.floor(timeSpentSeconds / totalQuestions) : 0,
     };
   });
 

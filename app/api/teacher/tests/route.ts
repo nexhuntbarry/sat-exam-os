@@ -78,6 +78,18 @@ export async function GET() {
         .select("test_id")
         .overlaps("class_group_ids", groupIds);
       for (const a of groupAssigned ?? []) classTestIds.add(a.test_id as string);
+
+      // AND tests assigned to my class students INDIVIDUALLY (student_ids),
+      // not via a class_group_ids list — the common case when an admin
+      // assigns a test to students by name. Without this, a class teacher
+      // can't see such a test until a student actually submits it.
+      if (myStudentIds.size > 0) {
+        const { data: studentAssigned } = await db
+          .from("test_assignments")
+          .select("test_id")
+          .overlaps("student_ids", Array.from(myStudentIds));
+        for (const a of studentAssigned ?? []) classTestIds.add(a.test_id as string);
+      }
     }
   }
 
