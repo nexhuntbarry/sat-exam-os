@@ -2,6 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import Link from "next/link";
 import { Plus, FileText, ArrowUp, ArrowDown } from "lucide-react";
 import { clsx } from "clsx";
+import { sectionTitleClass } from "@/lib/section-color";
 import DeleteModuleButton from "./DeleteModuleButton";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate } from "@/lib/datetime";
@@ -35,12 +36,6 @@ const statusStyles: Record<string, string> = {
   failed: "bg-status-error/15 text-status-error",
 };
 
-// Section-based title colour: Math = blue, Reading & Writing (English) = red.
-function sectionTitleClass(section: string | null): string {
-  if (section === "Math") return "text-blue-600";
-  if (section === "Reading & Writing") return "text-red-600";
-  return "text-charcoal";
-}
 
 type SortKey = "name" | "section" | "difficulty" | "questions" | "status" | "uploaded";
 const SORT_LABEL: Record<SortKey, string> = {

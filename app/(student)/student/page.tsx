@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { Clock, ClipboardList, User } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
+import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
@@ -187,7 +188,7 @@ export default async function StudentDashboardPage() {
               return (
                 <div key={t.id} className="px-5 py-3 flex items-center justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <p className="text-charcoal text-sm font-medium truncate">{t.test_name}</p>
+                    <p className={clsx("text-sm font-medium truncate", sectionTitleClass(mod?.section))}>{t.test_name}</p>
                     <p className="text-soft-mute text-xs">
                       {mod?.section ?? "Adaptive"}
                       {t.due_date ? ` · Due ${formatDate(t.due_date)}` : ""}

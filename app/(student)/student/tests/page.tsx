@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
+import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
@@ -213,7 +214,14 @@ async function getStudentTests(studentId: string) {
     byTest.set(s.test_id, list);
   }
 
-  return (tests ?? []).map((t) => {
+  // A Closed test the student never started is just noise (often one
+  // shared by mistake) — hide it. Closed tests they took stay so they
+  // can still open their results.
+  const visible = (tests ?? []).filter(
+    (t) => t.status !== "Closed" || (byTest.get(t.id)?.length ?? 0) > 0,
+  );
+
+  return visible.map((t) => {
     const rows = byTest.get(t.id) ?? [];
     const attempt = buildLatestAttempt(rows);
     let testStatus = "Not Started";
@@ -270,7 +278,7 @@ export default async function StudentTestsPage() {
                   return (
                     <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                       <td className="px-5 py-3">
-                        <Link href={`/student/tests/${test.id}`} className="text-charcoal font-medium hover:text-warm-coral transition-colors">
+                        <Link href={`/student/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral transition-colors", sectionTitleClass(mod?.section))}>
                           {test.test_name}
                         </Link>
                         <div className="text-soft-mute text-xs mt-0.5">

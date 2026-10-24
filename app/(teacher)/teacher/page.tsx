@@ -3,6 +3,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
+import { sectionTitleClass } from "@/lib/section-color";
 import { ClipboardList, Users, BarChart2, AlertTriangle } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
@@ -193,7 +194,7 @@ export default async function TeacherDashboardPage() {
                     <div className="flex-1 min-w-0">
                       <Link
                         href={`/teacher/tests/${t.id}/results`}
-                        className="text-charcoal text-sm font-medium hover:text-warm-coral transition-colors truncate block"
+                        className={clsx("text-sm font-medium hover:text-warm-coral transition-colors truncate block", sectionTitleClass(mod?.section))}
                       >
                         {t.test_name}
                       </Link>

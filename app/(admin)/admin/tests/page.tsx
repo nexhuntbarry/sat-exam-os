@@ -2,6 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import Link from "next/link";
 import { Plus, ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
+import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
@@ -56,32 +57,11 @@ const statusStyles: Record<string, string> = {
 export default async function TestsPage() {
   const tests = await getTests();
 
-  return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      <PageIntro tKey="admin.tests" />
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-charcoal">Tests</h1>
-        <Link
-          href="/admin/tests/new"
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
-        >
-          <Plus size={16} />
-          Create Test
-        </Link>
-      </div>
-
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {tests.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
-            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">
-              No tests yet.{" "}
-              <Link href="/admin/tests/new" className="text-warm-coral hover:underline">
-                Create your first test
-              </Link>
-            </p>
-          </div>
-        ) : (
+  // Closed tests sink into a collapsed section at the bottom so the
+  // list shows what's live by default.
+  const activeTests = tests.filter((t) => t.status !== "Closed");
+  const closedTests = tests.filter((t) => t.status === "Closed");
+  const renderTable = (rows: typeof tests) => (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -96,7 +76,7 @@ export default async function TestsPage() {
                 </tr>
               </thead>
               <tbody>
-                {tests.map((test) => {
+                {rows.map((test) => {
                   // Adaptive tests have no `tests.module_id`; the join
                   // is now LEFT and may return null. Fall back to a
                   // placeholder for the table column rather than
@@ -111,7 +91,7 @@ export default async function TestsPage() {
                     >
                       <td className="px-5 py-3">
                         <Link href={`/admin/tests/${test.id}`} className="hover:text-warm-coral transition-colors">
-                          <div className="font-medium text-charcoal">{test.test_name}</div>
+                          <div className={clsx("font-medium", sectionTitleClass(mod?.section))}>{test.test_name}</div>
                           {test.is_adaptive && (
                             <span className="text-[10px] uppercase tracking-wider text-warm-coral font-semibold">Adaptive</span>
                           )}
@@ -157,6 +137,45 @@ export default async function TestsPage() {
               </tbody>
             </table>
           </div>
+  );
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-6">
+      <PageIntro tKey="admin.tests" />
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-charcoal">Tests</h1>
+        <Link
+          href="/admin/tests/new"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
+        >
+          <Plus size={16} />
+          Create Test
+        </Link>
+      </div>
+
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+        {tests.length === 0 ? (
+          <div className="py-16 text-center space-y-3">
+            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
+            <p className="text-soft-mute text-sm">
+              No tests yet.{" "}
+              <Link href="/admin/tests/new" className="text-warm-coral hover:underline">
+                Create your first test
+              </Link>
+            </p>
+          </div>
+        ) : (
+          <>
+            {activeTests.length > 0 && renderTable(activeTests)}
+            {closedTests.length > 0 && (
+              <details className="border-t border-divider">
+                <summary className="px-5 py-3 text-sm text-soft-mute cursor-pointer hover:text-charcoal select-none">
+                  Closed tests ({closedTests.length})
+                </summary>
+                {renderTable(closedTests)}
+              </details>
+            )}
+          </>
         )}
       </div>
     </div>

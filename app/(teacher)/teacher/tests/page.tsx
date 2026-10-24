@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
+import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
@@ -116,29 +117,11 @@ export default async function TeacherTestsPage() {
 
   const tests = await getTeacherTests(user.userId, user.role === "admin");
 
-  return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <PageIntro tKey="teacher.tests" />
-      <h1 className="text-2xl font-bold text-charcoal">My Tests</h1>
-
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {tests.length === 0 ? (
-          <div className="py-16 px-6 text-center space-y-3 max-w-md mx-auto">
-            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
-            <p className="text-mid-gray text-xs">
-              Build a Draft test in{" "}
-              <Link href="/teacher/teaching-mode" className="text-warm-coral hover:underline">
-                Teaching Mode
-              </Link>
-              {" "}or ask your admin to assign one. The{" "}
-              <Link href="/teacher/help" className="text-warm-coral hover:underline">
-                Quick Start
-              </Link>
-              {" "}walks through the full flow.
-            </p>
-          </div>
-        ) : (
+  // Closed tests sink into a collapsed section at the bottom so the
+  // list shows what's live by default.
+  const activeTests = tests.filter((t) => t.status !== "Closed");
+  const closedTests = tests.filter((t) => t.status === "Closed");
+  const renderTable = (rows: typeof tests) => (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -154,14 +137,14 @@ export default async function TeacherTestsPage() {
                 </tr>
               </thead>
               <tbody>
-                {tests.map((test) => {
+                {rows.map((test) => {
                   const mod = test.modules as unknown as
                     | { module_name: string; section: string; module_number: number | null }
                     | null;
                   return (
                     <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                       <td className="px-5 py-3">
-                        <Link href={`/teacher/tests/${test.id}`} className="text-charcoal font-medium hover:text-warm-coral transition-colors">
+                        <Link href={`/teacher/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral transition-colors", sectionTitleClass(mod?.section))}>
                           {test.test_name}
                         </Link>
                       </td>
@@ -192,6 +175,42 @@ export default async function TeacherTestsPage() {
               </tbody>
             </table>
           </div>
+  );
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6">
+      <PageIntro tKey="teacher.tests" />
+      <h1 className="text-2xl font-bold text-charcoal">My Tests</h1>
+
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+        {tests.length === 0 ? (
+          <div className="py-16 px-6 text-center space-y-3 max-w-md mx-auto">
+            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
+            <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
+            <p className="text-mid-gray text-xs">
+              Build a Draft test in{" "}
+              <Link href="/teacher/teaching-mode" className="text-warm-coral hover:underline">
+                Teaching Mode
+              </Link>
+              {" "}or ask your admin to assign one. The{" "}
+              <Link href="/teacher/help" className="text-warm-coral hover:underline">
+                Quick Start
+              </Link>
+              {" "}walks through the full flow.
+            </p>
+          </div>
+        ) : (
+          <>
+            {activeTests.length > 0 && renderTable(activeTests)}
+            {closedTests.length > 0 && (
+              <details className="border-t border-divider">
+                <summary className="px-5 py-3 text-sm text-soft-mute cursor-pointer hover:text-charcoal select-none">
+                  Closed tests ({closedTests.length})
+                </summary>
+                {renderTable(closedTests)}
+              </details>
+            )}
+          </>
         )}
       </div>
     </div>
