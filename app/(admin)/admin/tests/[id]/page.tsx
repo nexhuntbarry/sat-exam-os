@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import TestDetailActions from "./TestDetailActions";
 import EditTestButton from "./EditTestButton";
 import AddStudentsButton from "./AddStudentsButton";
+import RemoveStudentButton from "./RemoveStudentButton";
 import AssignTeachersButton from "./AssignTeachersButton";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
@@ -54,7 +55,7 @@ async function getTest(id: string) {
   const studentIds: string[] = assignment?.student_ids ?? [];
   const classGroupIds: string[] = assignment?.class_group_ids ?? [];
 
-  const [{ data: teachers }, { data: classGroups }, { data: allTeachers }] = await Promise.all([
+  const [{ data: teachers }, { data: classGroups }, { data: allTeachers }, { data: studentRows }] = await Promise.all([
     teacherIds.length > 0
       ? db.from("users").select("id, display_name, email").in("id", teacherIds)
       : Promise.resolve({ data: [] }),
@@ -62,7 +63,25 @@ async function getTest(id: string) {
       ? db.from("class_groups").select("id, name").in("id", classGroupIds)
       : Promise.resolve({ data: [] }),
     db.from("users").select("id, display_name, email").eq("role", "teacher").order("display_name"),
+    studentIds.length > 0
+      ? db.from("users").select("id, display_name, email").in("id", studentIds)
+      : Promise.resolve({ data: [] }),
   ]);
+
+  // Individually assigned students + their submissions on this test, so
+  // each row can offer Remove (and say whether there's work to delete).
+  const students = ((studentRows ?? []) as { id: string; display_name: string | null; email: string }[])
+    .map((u) => {
+      const subs = (submissions ?? []).filter((s) => s.student_id === u.id);
+      return {
+        id: u.id,
+        name: u.display_name || u.email,
+        email: u.email,
+        submissionCount: subs.length,
+        hasGradedSubmission: subs.some((s) => s.status === "Submitted" || s.status === "Late"),
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 
   const submittedSubs = (submissions ?? []).filter((s) => s.status === "Submitted" || s.status === "Late");
   const avgScore = submittedSubs.length > 0
@@ -76,6 +95,7 @@ async function getTest(id: string) {
       teacherIds,
       studentIds,
       classGroupIds,
+      students,
       teachers: teachers ?? [],
       classGroups: classGroups ?? [],
       allTeachers: allTeachers ?? [],
@@ -337,6 +357,25 @@ export default async function TestDetailPage({
         <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
           <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Individual Students</h3>
           <p className="text-soft-mute text-sm">{test.assignment.studentIds.length} student(s)</p>
+          {test.assignment.students.map((st) => (
+            <div key={st.id} className="flex items-center justify-between gap-2 text-sm">
+              <div className="min-w-0">
+                <div className="text-charcoal truncate">{st.name}</div>
+                {st.submissionCount > 0 && (
+                  <div className="text-soft-mute text-xs">
+                    {st.hasGradedSubmission ? "Submitted" : "In progress"}
+                  </div>
+                )}
+              </div>
+              <RemoveStudentButton
+                testId={test.id}
+                studentId={st.id}
+                studentName={st.name}
+                submissionCount={st.submissionCount}
+                hasGradedSubmission={st.hasGradedSubmission}
+              />
+            </div>
+          ))}
         </div>
       </div>
     </div>
