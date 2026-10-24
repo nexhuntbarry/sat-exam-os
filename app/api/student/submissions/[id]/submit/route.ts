@@ -48,7 +48,7 @@ export async function POST(
   const { data: submission, error: subError } = await db
     .from("submissions")
     .select(
-      "id, test_id, student_id, answers, status, started_at, attempt_number, session_id, module_id, adaptive_track",
+      "id, test_id, student_id, answers, status, started_at, attempt_number, session_id, module_id, adaptive_track, metadata",
     )
     .eq("id", id)
     .eq("student_id", user.userId)
@@ -150,13 +150,6 @@ export async function POST(
   const percentage = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100 * 10) / 10 : 0;
   const scaledScore = totalQuestions > 0 ? scaleSectionScore(percentage) : null;
 
-  // Insert answer records (batch)
-  const { error: arError } = await db.from("answer_records").insert(answerRecords);
-  if (arError) {
-    console.error("[submit/answer_records]", arError);
-    return NextResponse.json({ error: "Failed to save answer records" }, { status: 500 });
-  }
-
   // Update submission. Fold inline answers + metadata in here so we
   // don't need the separate PATCH the UI used to send before submit.
   const submissionUpdates: Record<string, unknown> = {
@@ -171,15 +164,42 @@ export async function POST(
     time_spent_seconds: timeSpentSeconds,
   };
   if (inlineAnswers) submissionUpdates.answers = inlineAnswers;
-  if (inlineMetadata) submissionUpdates.metadata = inlineMetadata;
-  const { error: updateError } = await db
+  if (inlineMetadata) {
+    submissionUpdates.metadata = {
+      ...((submission.metadata ?? {}) as Record<string, unknown>),
+      ...inlineMetadata,
+    };
+  }
+  // Claim-then-write: the conditional update (status still In Progress)
+  // is atomic, so when two submits overlap (client retry after a timeout,
+  // timer expiry + manual click) only one wins. The loser gets the same
+  // 400 as a late duplicate instead of double-inserting answer_records
+  // and creating a second Module 2 row.
+  const { data: claimed, error: updateError } = await db
     .from("submissions")
     .update(submissionUpdates)
-    .eq("id", id);
+    .eq("id", id)
+    .eq("status", "In Progress")
+    .select("id");
 
   if (updateError) {
     console.error("[submit/update_submission]", updateError);
     return NextResponse.json({ error: "Failed to finalize submission" }, { status: 500 });
+  }
+  if (!claimed || claimed.length === 0) {
+    return NextResponse.json({ error: "Submission already submitted" }, { status: 400 });
+  }
+
+  // Insert answer records (batch)
+  const { error: arError } = await db.from("answer_records").insert(answerRecords);
+  if (arError) {
+    console.error("[submit/answer_records]", arError);
+    // Roll the claim back so the student (or the cron finalizer) can retry.
+    await db
+      .from("submissions")
+      .update({ status: "In Progress", submitted_at: null })
+      .eq("id", id);
+    return NextResponse.json({ error: "Failed to save answer records" }, { status: 500 });
   }
 
   // Module 1 → Module 2 handoff. Two paths share the same handoff

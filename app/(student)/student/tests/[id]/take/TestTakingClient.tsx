@@ -61,6 +61,8 @@ interface Props {
 }
 
 const AUTO_SAVE_DEBOUNCE_MS = 3000;
+const SUBMIT_TIMEOUT_MS = 20000;
+const SUBMIT_MAX_ATTEMPTS = 3;
 
 export default function TestTakingClient({
   testId,
@@ -244,14 +246,17 @@ export default function TestTakingClient({
     });
   }
 
-  async function handleSubmit() {
-    setIsSubmitting(true);
-    // Inline-save the latest answers + metadata into the submit
-    // request itself instead of doing a separate PATCH first. One
-    // round trip instead of two — was the dominant cause of the
-    // ~1-minute submit lag students reported.
+  const submitInFlightRef = useRef(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // One submit attempt with a hard timeout. A fetch with no timeout can
+  // hang forever on a flaky connection, leaving the student staring at
+  // "Submitting…" with no way forward.
+  async function postSubmit(): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SUBMIT_TIMEOUT_MS);
     try {
-      const res = await fetch(`/api/student/submissions/${submissionId}/submit`, {
+      return await fetch(`/api/student/submissions/${submissionId}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -261,7 +266,59 @@ export default function TestTakingClient({
             annotations: annotationsRef.current,
           },
         }),
+        signal: controller.signal,
       });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function handleSubmit() {
+    // Timer expiry + a manual click (or a double click) used to fire two
+    // submits; the loser got 400 "already submitted" and silently reset
+    // the UI while the winner's navigation could be lost.
+    if (submitInFlightRef.current) return;
+    submitInFlightRef.current = true;
+    setIsSubmitting(true);
+    setSubmitError(null);
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    // Inline-save the latest answers + metadata into the submit
+    // request itself instead of doing a separate PATCH first. One
+    // round trip instead of two — was the dominant cause of the
+    // ~1-minute submit lag students reported.
+    try {
+      let res: Response | null = null;
+      for (let attempt = 0; attempt < SUBMIT_MAX_ATTEMPTS; attempt++) {
+        try {
+          res = await postSubmit();
+          if (res.ok || res.status < 500) break;
+        } catch {
+          res = null; // network error / timeout → retry
+        }
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      }
+      if (!res) {
+        // Every attempt failed at the network level. Don't auto-reload —
+        // with an expired timer that would loop (load → expire → submit →
+        // fail → reload). Leave the Submit button live; once the connection
+        // is back, a retry either succeeds or gets the 400 below.
+        throw new Error("network");
+      }
+      if (res.status === 401) {
+        submitInFlightRef.current = false;
+        setIsSubmitting(false);
+        setAutoSubmitting(false);
+        setShowSubmitModal(false);
+        setSubmitError("Your session expired. Refresh the page and sign in again — your answers are saved.");
+        return;
+      }
+      if (res.status === 400) {
+        // "Submission already submitted" — an earlier request landed but
+        // its response never reached us. Reload the take page: it opens
+        // Module 2 if one is in progress, otherwise redirects to the test page.
+        window.location.assign(`/student/tests/${testId}/take`);
+        return;
+      }
       if (res.ok) {
         // Adaptive flow: the submit endpoint creates the Module 2 row
         // and returns its id. We use a HARD browser navigation
@@ -281,12 +338,19 @@ export default function TestTakingClient({
           );
         }
       } else {
+        submitInFlightRef.current = false;
         setIsSubmitting(false);
+        setAutoSubmitting(false);
         setShowSubmitModal(false);
+        setSubmitError("Couldn't submit — please try again. Your answers are saved.");
       }
     } catch {
+      // Network failure after all retries.
+      submitInFlightRef.current = false;
       setIsSubmitting(false);
+      setAutoSubmitting(false);
       setShowSubmitModal(false);
+      setSubmitError("Couldn't reach the server. Check your connection and press Submit again — your answers are saved.");
     }
   }
 
@@ -311,6 +375,14 @@ export default function TestTakingClient({
     // real viewport edges and only the question body scrolls. Bonus: a
     // distraction-free, Bluebook-style test mode.
     <div className="fixed inset-0 z-[60] flex flex-col overflow-hidden bg-cream">
+      {submitError && (
+        <div
+          role="alert"
+          className="shrink-0 bg-status-error text-white text-sm px-4 py-2 text-center font-medium"
+        >
+          {submitError}
+        </div>
+      )}
       {autoSubmitting && (
         <div
           role="alert"

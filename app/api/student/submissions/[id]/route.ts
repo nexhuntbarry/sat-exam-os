@@ -125,7 +125,7 @@ export async function PATCH(
   // Verify ownership and status
   const { data: submission, error: fetchError } = await db
     .from("submissions")
-    .select("id, student_id, status")
+    .select("id, student_id, status, metadata")
     .eq("id", id)
     .eq("student_id", user.userId)
     .single();
@@ -140,7 +140,15 @@ export async function PATCH(
 
   const updates: Record<string, unknown> = {};
   if (body.answers !== undefined) updates.answers = body.answers;
-  if (body.metadata !== undefined) updates.metadata = body.metadata;
+  // Merge rather than replace: the client only sends tab_switches +
+  // annotations, and a blind overwrite wiped the server-stamped
+  // module_2_started_at — so a refresh mid-Module 2 restarted its timer.
+  if (body.metadata !== undefined) {
+    updates.metadata = {
+      ...((submission.metadata ?? {}) as Record<string, unknown>),
+      ...body.metadata,
+    };
+  }
 
   const { error } = await db.from("submissions").update(updates).eq("id", id);
   if (error) {
