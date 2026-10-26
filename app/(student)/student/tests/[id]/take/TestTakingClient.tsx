@@ -85,6 +85,17 @@ interface LocalBackup {
   metaChangedAt: number;
   /** Build time of the newest payload the server confirmed. Changes after it never reached the server. */
   syncedAt: number;
+  /** Stable per-device id + last write order sent, so the server can drop out-of-order saves. */
+  clientId?: string;
+  lastClientSeq?: number;
+}
+
+function newClientId() {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
 }
 
 function backupKey(submissionId: string) {
@@ -198,6 +209,12 @@ export default function TestTakingClient({
   const metaChangedAtRef = useRef(0);
   const syncedAtRef = useRef(0);
   const lastFlushedSeqRef = useRef(-1);
+  // A keepalive flush can run alongside a save already in flight, and the
+  // older request may reach the server last. Each request carries a
+  // per-device, strictly increasing clientSeq; the server ignores one
+  // older than the newest it has applied for this clientId.
+  const clientIdRef = useRef<string | null>(null);
+  const lastClientSeqRef = useRef(0);
 
   const saveUrl = `/api/student/submissions/${submissionId}`;
 
@@ -234,6 +251,8 @@ export default function TestTakingClient({
       currentIndex: currentIndexRef.current,
       metaChangedAt: metaChangedAtRef.current,
       syncedAt: syncedAtRef.current,
+      clientId: clientIdRef.current ?? undefined,
+      lastClientSeq: lastClientSeqRef.current,
     };
     try {
       localStorage.setItem(backupKey(submissionId), JSON.stringify(backup));
@@ -242,10 +261,22 @@ export default function TestTakingClient({
     }
   }
 
+  // Acks can arrive out of order (keepalive flush vs. a save in flight);
+  // an older one must never move the synced markers backwards.
   function markSynced(seq: number, builtAt: number) {
-    savedSeqRef.current = Math.max(savedSeqRef.current, seq);
-    syncedAtRef.current = Math.max(syncedAtRef.current, builtAt);
+    if (seq < savedSeqRef.current || builtAt < syncedAtRef.current) return;
+    savedSeqRef.current = seq;
+    syncedAtRef.current = builtAt;
     persistLocal();
+  }
+
+  // Clock-based so it keeps increasing across reloads on this device;
+  // the +1 covers a clock that stepped backwards. Persisted right away.
+  function nextSaveOrder() {
+    if (!clientIdRef.current) clientIdRef.current = newClientId();
+    lastClientSeqRef.current = Math.max(Date.now(), lastClientSeqRef.current + 1);
+    persistLocal();
+    return { clientId: clientIdRef.current, clientSeq: lastClientSeqRef.current };
   }
 
   // On 401, ask Clerk for a fresh session token (the short-lived JWT may
@@ -294,6 +325,7 @@ export default function TestTakingClient({
           answers: answersRef.current,
           answersMode: "merge",
           metadata: buildMetadata(),
+          ...nextSaveOrder(),
         }),
       });
       ok = isJsonOk(res);
@@ -345,17 +377,17 @@ export default function TestTakingClient({
   // document; the local backup covers the case where it still fails.
   function flushWithKeepalive() {
     if (submittedRef.current) return;
-    persistLocal();
+    const order = nextSaveOrder();
     const seq = changeSeqRef.current;
     lastFlushedSeqRef.current = seq;
     const builtAt = Date.now();
     const metadata = buildMetadata();
-    let body = JSON.stringify({ answers: answersRef.current, answersMode: "merge", metadata });
+    let body = JSON.stringify({ answers: answersRef.current, answersMode: "merge", metadata, ...order });
     if (new TextEncoder().encode(body).length > KEEPALIVE_MAX_BYTES) {
       // Annotations are the only unbounded field; drop them rather than
       // the answers. The regular save sends them when the page survives.
       const { annotations: _annotations, ...rest } = metadata;
-      body = JSON.stringify({ answers: answersRef.current, answersMode: "merge", metadata: rest });
+      body = JSON.stringify({ answers: answersRef.current, answersMode: "merge", metadata: rest, ...order });
     }
     try {
       fetch(saveUrl, {
@@ -380,6 +412,10 @@ export default function TestTakingClient({
   // confirmed save (those never reached the server).
   useEffect(() => {
     const local = readBackup(submissionId);
+    // Keep this device's save-order identity across reloads, so a keepalive
+    // from the page we just left can't overwrite this page's newer saves.
+    clientIdRef.current = local?.clientId ?? newClientId();
+    lastClientSeqRef.current = local?.lastClientSeq ?? 0;
     if (!local) return;
     const validIds = new Set(questions.map((q) => q.id));
     const syncedAt = typeof local.syncedAt === "number" ? local.syncedAt : 0;

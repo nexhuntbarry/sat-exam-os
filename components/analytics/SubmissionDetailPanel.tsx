@@ -28,6 +28,8 @@ export interface AnswerDetail {
   difficulty: string | null;
   classReview: boolean;
   privateNote: string;
+  /** Question-level note (student_id NULL), incl. legacy pre-per-student notes. Read-only here. */
+  sharedNote?: string;
   /** Student-applied highlights/notes captured during the take. */
   studentAnnotations?: Record<string, Annotation[]> | null;
 }
@@ -302,19 +304,25 @@ export function SubmissionDetailPanel({
                     {a.classReview ? "Marked for class review" : "Mark for class review"}
                   </button>
 
-                  {/* Question note — stored per test + teacher + question
-                      (test_teacher_notes has no student column), so the
-                      same note shows on every student's copy. */}
+                  {/* Private note — saved for this student only. */}
                   <div>
+                    {a.sharedNote && (
+                      <div className="mb-2 rounded-lg border border-divider bg-light-bg/60 px-3 py-2">
+                        <div className="text-soft-mute text-[11px] mb-0.5">
+                          Question note (shared, all students) — read-only
+                        </div>
+                        <p className="text-mid-gray text-xs whitespace-pre-wrap">{a.sharedNote}</p>
+                      </div>
+                    )}
                     <label className="text-soft-mute text-xs mb-1 block">
-                      Question note (shared across students, visible only to you)
+                      Private note for this student
                     </label>
                     <textarea
                       rows={2}
                       value={notes[a.questionId] ?? ""}
                       onChange={(e) => setNotes((prev) => ({ ...prev, [a.questionId]: e.target.value }))}
                       onBlur={() => onSaveNote(a.questionId, notes[a.questionId] ?? "")}
-                      placeholder="Add a note about this question..."
+                      placeholder="Add a private note about this student’s answer..."
                       className="w-full bg-light-bg border border-divider rounded-lg px-3 py-2 text-sm text-charcoal placeholder:text-charcoal/20 focus:outline-none focus:border-warm-coral/40 resize-none"
                     />
                   </div>

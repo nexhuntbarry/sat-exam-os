@@ -101,13 +101,15 @@ export async function GET(
     studentId: studentIdMap[sid],
   }));
 
-  // Teacher note for this question
+  // Teacher's question-level notes (student_id NULL). Per-student
+  // private notes live on the submission detail page.
   const { data: noteRows } = await db
     .from("test_teacher_notes")
     .select("note_type, note_body")
     .eq("test_id", testId)
     .eq("teacher_id", user.userId)
-    .eq("question_id", questionId);
+    .eq("question_id", questionId)
+    .is("student_id", null);
 
   const classReview = noteRows?.find((n) => n.note_type === "class_review")?.note_body === "true";
   const privateNote = noteRows?.find((n) => n.note_type === "private_note")?.note_body ?? "";

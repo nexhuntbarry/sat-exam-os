@@ -117,6 +117,8 @@ export async function PATCH(
     answers?: Record<string, string | null>;
     answersMode?: string;
     metadata?: Record<string, unknown>;
+    clientId?: unknown;
+    clientSeq?: unknown;
   };
   try {
     body = await req.json();
@@ -131,6 +133,19 @@ export async function PATCH(
     body.metadata && typeof body.metadata === "object"
       ? sanitizeClientMetadata(body.metadata)
       : undefined;
+  // Write ordering per device: the take page can have a keepalive flush and
+  // a regular save in flight at once, and the older one may arrive last.
+  // metadata.client_save_seq maps clientId -> newest clientSeq applied; an
+  // older-or-equal seq from the same client is acknowledged but not
+  // written, so it can't revert a newer answer. Requests without them
+  // (older clients) behave as before.
+  const clientId =
+    typeof body.clientId === "string" && body.clientId.length > 0 && body.clientId.length <= 64
+      ? body.clientId
+      : null;
+  const clientSeq =
+    typeof body.clientSeq === "number" && Number.isFinite(body.clientSeq) ? body.clientSeq : null;
+  if (clientMetadata) delete clientMetadata.client_save_seq;
 
   const db = getServiceClient();
 
@@ -171,6 +186,18 @@ export async function PATCH(
     const savedMeta = (submission.metadata ?? {}) as Record<string, unknown>;
     const version = typeof savedMeta.answers_version === "number" ? savedMeta.answers_version : 0;
 
+    const seqByClient =
+      savedMeta.client_save_seq && typeof savedMeta.client_save_seq === "object"
+        ? (savedMeta.client_save_seq as Record<string, number>)
+        : {};
+    if (clientId && clientSeq != null) {
+      const applied = seqByClient[clientId];
+      if (typeof applied === "number" && clientSeq <= applied) {
+        // The server already holds a newer save from this device.
+        return NextResponse.json({ success: true, stale: true });
+      }
+    }
+
     const updates: Record<string, unknown> = {};
     if (body.answers !== undefined) {
       const patch = body.answers as Record<string, string | null>;
@@ -185,6 +212,9 @@ export async function PATCH(
       ...savedMeta,
       ...(clientMetadata ?? {}),
       answers_version: version + 1,
+      ...(clientId && clientSeq != null
+        ? { client_save_seq: { ...seqByClient, [clientId]: clientSeq } }
+        : {}),
     };
     // Saving answers on a Module 2 whose clock never started (client
     // skipped the intro / ?start=1, or a direct API call) starts it now,

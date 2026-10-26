@@ -4,7 +4,11 @@ import { getServiceClient } from "@/lib/supabase";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // POST /api/teacher/tests/[id]/questions/[question_id]/flag
-// Body: { note_type: "class_review" | "private_note", note_body: string }
+// Body: { note_type: "class_review" | "private_note" | "observation",
+//         note_body: string, submission_id?: string }
+// A private_note with submission_id is saved for that submission's student
+// (per-student note). Without it — and always for class_review /
+// observation — the row is shared (student_id NULL): a question-level note.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string; question_id: string }> }
@@ -23,7 +27,7 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  let body: { note_type?: unknown; note_body?: unknown };
+  let body: { note_type?: unknown; note_body?: unknown; submission_id?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -63,6 +67,24 @@ export async function POST(
     return NextResponse.json({ error: "Question is not part of this test" }, { status: 404 });
   }
 
+  let studentId: string | null = null;
+  if (noteType === "private_note" && typeof body.submission_id === "string" && body.submission_id) {
+    const { data: sub } = await db
+      .from("submissions")
+      .select("student_id")
+      .eq("id", body.submission_id)
+      .eq("test_id", testId)
+      .maybeSingle();
+    if (!sub) {
+      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    }
+    studentId = sub.student_id as string;
+    // A class teacher may only annotate their own class's students.
+    if (access.mode === "class" && !access.studentAllowlist?.has(studentId)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
+
   const { error } = await db.from("test_teacher_notes").upsert(
     {
       test_id: testId,
@@ -70,9 +92,10 @@ export async function POST(
       question_id: questionId,
       note_type: noteType,
       note_body: noteBody,
+      student_id: studentId,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: "test_id,teacher_id,question_id,note_type" }
+    { onConflict: "test_id,teacher_id,question_id,note_type,student_id" }
   );
 
   if (error) {

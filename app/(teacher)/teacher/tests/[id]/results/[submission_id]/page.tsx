@@ -109,13 +109,13 @@ export default function SubmissionDetailPage() {
       const ok = await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note_type: "private_note", note_body: note }),
+        body: JSON.stringify({ note_type: "private_note", note_body: note, submission_id: submissionId }),
       }).then((r) => r.ok, () => false);
       if (!ok) {
-        alert("Couldn't save the question note. Check your connection, then click into the note and away again to retry.");
+        alert("Couldn't save the private note. Check your connection, then click into the note and away again to retry.");
       }
     },
-    [testId]
+    [testId, submissionId]
   );
 
   // Tutor notes — debounced save so the teacher can type freely without

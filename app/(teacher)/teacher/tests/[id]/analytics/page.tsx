@@ -17,6 +17,7 @@ interface Summary {
   easiestQuestion: { questionNumber: number; correctRate: number } | null;
   mostFlaggedQuestion: { questionNumber: number; flaggedCount: number } | null;
   avgClassScore: number | null;
+  answeredCorrectPct?: number | null;
   totalSubmissions: number;
 }
 
@@ -156,6 +157,11 @@ export default function QuestionAnalyticsPage() {
           <StatCard
             label="Avg Class Score"
             value={summary.avgClassScore != null ? `${summary.avgClassScore.toFixed(1)}%` : "—"}
+            sub={
+              summary.answeredCorrectPct != null
+                ? `${summary.answeredCorrectPct.toFixed(1)}% of answered questions correct`
+                : undefined
+            }
             color="emerald"
           />
           <StatCard

@@ -153,19 +153,25 @@ export async function GET(
   // Fetch flagged questions from submission answers jsonb
   const answersJson = submission.answers as Record<string, { flagged?: boolean }>;
 
-  // Fetch teacher notes for this test+teacher
+  // Teacher notes for this test+teacher: shared rows (student_id NULL —
+  // class-review marks and question-level notes, incl. legacy private notes
+  // from before notes were per student) plus this student's private notes.
   const { data: notes } = await db
     .from("test_teacher_notes")
-    .select("question_id, note_type, note_body")
+    .select("question_id, note_type, note_body, student_id")
     .eq("test_id", testId)
-    .eq("teacher_id", user.userId);
+    .eq("teacher_id", user.userId)
+    .or(`student_id.is.null,student_id.eq.${subOwner.student_id as string}`);
 
-  const notesMap: Record<string, { classReview: boolean; privateNote: string }> = {};
+  const notesMap: Record<string, { classReview: boolean; privateNote: string; sharedNote: string }> = {};
   for (const n of notes ?? []) {
     const qid = n.question_id ?? "";
-    if (!notesMap[qid]) notesMap[qid] = { classReview: false, privateNote: "" };
-    if (n.note_type === "class_review") notesMap[qid].classReview = n.note_body === "true";
-    if (n.note_type === "private_note") notesMap[qid].privateNote = n.note_body;
+    if (!notesMap[qid]) notesMap[qid] = { classReview: false, privateNote: "", sharedNote: "" };
+    if (n.note_type === "class_review" && !n.student_id) notesMap[qid].classReview = n.note_body === "true";
+    if (n.note_type === "private_note") {
+      if (n.student_id) notesMap[qid].privateNote = n.note_body;
+      else notesMap[qid].sharedNote = n.note_body;
+    }
   }
 
   const u = submission.users as unknown as { display_name: string; email: string };
@@ -208,7 +214,7 @@ export async function GET(
   };
   const mapAnswer = (ar: RawAnswer) => {
     const q = ar.questions;
-    const noteData = notesMap[q.id] ?? { classReview: false, privateNote: "" };
+    const noteData = notesMap[q.id] ?? { classReview: false, privateNote: "", sharedNote: "" };
     const wasFlagged = answersJson[q.id]?.flagged === true;
     return {
       questionId: q.id,
@@ -237,6 +243,7 @@ export async function GET(
       difficulty: q.difficulty,
       classReview: noteData.classReview,
       privateNote: noteData.privateNote,
+      sharedNote: noteData.sharedNote,
       studentAnnotations: annotationsByQid[q.id] ?? null,
     };
   };

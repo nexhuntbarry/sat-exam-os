@@ -74,13 +74,12 @@ export async function GET(
 
   const questionIds = questions.map((q) => q.id);
 
-  // Aggregate answer records across all submissions for this test
-  // One query: get all answer records for these questions in this test's submissions
+  // Every submission row in scope (any status) — the Avg Class Score below
+  // must match the Results page, which groups all rows into attempts first.
   let submissionIdsQuery = db
     .from("submissions")
-    .select("id, session_id")
-    .eq("test_id", testId)
-    .in("status", ["Submitted", "Late"]);
+    .select("id, session_id, adaptive_track, status, correct_count, total_questions, percentage")
+    .eq("test_id", testId);
   if (access.mode === "class" && access.studentAllowlist) {
     submissionIdsQuery = submissionIdsQuery.in(
       "student_id",
@@ -88,15 +87,38 @@ export async function GET(
     );
   }
   submissionIdsQuery = scopeIds(submissionIdsQuery, "student_id", await getQaUserIds(), user.isQa);
-  const { data: submissionIds } = await submissionIdsQuery;
+  const { data: submissionRows } = await submissionIdsQuery;
 
-  const subIds = (submissionIds ?? []).map((s) => s.id);
-  // Attempts, not module rows: a two-module attempt is two submissions
-  // sharing one session_id. Per-question denominators below use the
-  // number of answer records for that question instead.
-  const totalSubmissions = new Set(
-    (submissionIds ?? []).map((s) => (s.session_id as string | null) ?? s.id),
-  ).size;
+  // Per-question stats use graded (Submitted/Late) module rows.
+  const subIds = (submissionRows ?? [])
+    .filter((s) => s.status === "Submitted" || s.status === "Late")
+    .map((s) => s.id as string);
+
+  // Attempts, exactly as the Results page builds them: group module rows by
+  // session_id; an attempt with any In Progress module isn't submitted; its
+  // score is combined correct/total (single-module: the row's percentage).
+  const attemptRows = new Map<string, NonNullable<typeof submissionRows>>();
+  for (const s of submissionRows ?? []) {
+    const key = (s.session_id as string | null) ?? `solo:${s.id}`;
+    attemptRows.set(key, [...(attemptRows.get(key) ?? []), s]);
+  }
+  const attemptPcts: number[] = [];
+  for (const list of attemptRows.values()) {
+    const rank = (t: unknown) => (t === "module_1" ? 0 : 1);
+    const rows = [...list].sort((a, b) => rank(a.adaptive_track) - rank(b.adaptive_track));
+    const statuses = rows.map((r) => r.status as string);
+    if (statuses.includes("In Progress")) continue;
+    const status = statuses.includes("Late") ? "Late" : statuses[statuses.length - 1];
+    if (status !== "Submitted" && status !== "Late") continue;
+    if (rows.length === 1) {
+      attemptPcts.push(rows[0].percentage != null ? Number(rows[0].percentage) : 0);
+      continue;
+    }
+    const correct = rows.reduce((n, r) => n + ((r.correct_count as number | null) ?? 0), 0);
+    const total = rows.reduce((n, r) => n + ((r.total_questions as number | null) ?? 0), 0);
+    attemptPcts.push(total > 0 ? Math.round((correct / total) * 1000) / 10 : 0);
+  }
+  const totalSubmissions = attemptPcts.length;
 
   if (subIds.length === 0) {
     return NextResponse.json({
@@ -164,7 +186,8 @@ export async function GET(
     .select("question_id, note_type, note_body")
     .eq("test_id", testId)
     .eq("teacher_id", user.userId)
-    .eq("note_type", "class_review");
+    .eq("note_type", "class_review")
+    .is("student_id", null);
 
   const classReviewSet = new Set(
     (notes ?? [])
@@ -259,11 +282,16 @@ export async function GET(
   const hardest = sorted[0] ?? null;
   const easiest = sorted[sorted.length - 1] ?? null;
   const mostFlagged = [...questionRows].sort((a, b) => b.flaggedCount - a.flaggedCount)[0] ?? null;
-  // Overall % correct across every answered question — equals the mean
-  // attempt score on the Results page when every attempt sees the same
-  // number of questions.
-  const answeredTotal = answeredRows.reduce((n, q) => n + q.totalSubmissions, 0);
+  // Avg Class Score = mean of each submitted attempt's combined %, the same
+  // number the Results page shows.
   const avgClassScore =
+    attemptPcts.length > 0
+      ? attemptPcts.reduce((a, b) => a + b, 0) / attemptPcts.length
+      : null;
+  // A different metric: share of all answered questions that were correct
+  // (weights attempts by how many questions they answered).
+  const answeredTotal = answeredRows.reduce((n, q) => n + q.totalSubmissions, 0);
+  const answeredCorrectPct =
     answeredTotal > 0
       ? (answeredRows.reduce((n, q) => n + q.correctCount, 0) / answeredTotal) * 100
       : null;
@@ -281,6 +309,7 @@ export async function GET(
         ? { questionNumber: mostFlagged.questionNumber, flaggedCount: mostFlagged.flaggedCount }
         : null,
       avgClassScore,
+      answeredCorrectPct,
       totalSubmissions,
     },
   });
