@@ -1,6 +1,7 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -18,7 +19,7 @@ const MODULE_LABEL: Record<string, string> = {
 
 async function getTeacherTest(
   testId: string,
-  user: { userId: string; role: string | null | undefined },
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
 ) {
   const db = getServiceClient();
 
@@ -46,14 +47,14 @@ async function getTeacherTest(
 
   const studentIds: string[] = assignment?.student_ids ?? [];
 
-  let subQuery = db
+  let subQuery = scopeUsers(db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, session_id, adaptive_track,
       users!inner(display_name, email)
     `)
-    .eq("test_id", testId)
+    .eq("test_id", testId), user.isQa, "users.email")
     .order("submitted_at", { ascending: false });
   // A class-group teacher only sees their own class's attempts.
   if (access.mode === "class" && access.studentAllowlist) {

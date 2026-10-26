@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/admins/[id]/suspend
 // Super-admin only. Sets the target admin's account_status to "suspended"
@@ -22,6 +23,8 @@ export async function POST(
   }
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { userIds: [id] });
+  if (crossSide) return crossSide;
   if (id === me.userId) {
     return NextResponse.json(
       { error: "You cannot suspend yourself" },

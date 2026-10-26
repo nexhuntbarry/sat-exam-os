@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/teacher/teaching-mode/quick-test
 // Body: { name: string, questionIds: string[], cohortId?: string }
@@ -56,6 +57,8 @@ export async function POST(req: Request) {
       .eq("class_group_id", cohortId);
     studentIds = (members ?? []).map((m) => m.student_id);
   }
+  const crossSide = await forbidCrossSide(teacher, { classGroupIds, userIds: studentIds });
+  if (crossSide) return crossSide;
 
   // Create the test (Draft so the teacher can review before publishing)
   const { data: test, error: testError } = await db

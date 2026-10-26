@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
+import { getQaTestIds, onSide } from "@/lib/qa";
 import { formatDateTime } from "@/lib/datetime";
 import SubmissionRowActions from "./SubmissionRowActions";
 
@@ -34,6 +35,7 @@ export default async function ManageSubmissionsPage({
   const user = await getCurrentUser();
   if (!user || user.role !== "admin") redirect("/sign-in");
   const { id: testId } = await params;
+  if (!onSide(testId, await getQaTestIds(), user.isQa)) notFound();
 
   const db = getServiceClient();
   const { data: test } = await db

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // PATCH /api/admin/class-groups/[id]
 export async function PATCH(
@@ -26,6 +27,9 @@ export async function PATCH(
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
   }
+
+  const crossSide = await forbidCrossSide(authResult, { classGroupIds: [id] });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
   const { error } = await db.from("class_groups").update(patch).eq("id", id);
@@ -53,6 +57,9 @@ export async function DELETE(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { classGroupIds: [id] });
+  if (crossSide) return crossSide;
+
   const db = getServiceClient();
 
   // Surface a friendly count so the UI can warn precisely.

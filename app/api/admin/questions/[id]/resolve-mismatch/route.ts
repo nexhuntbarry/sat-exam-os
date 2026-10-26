@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
 
@@ -29,6 +30,8 @@ export async function POST(
 ) {
   const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const reviewer = authResult;
 
   const { id } = await params;

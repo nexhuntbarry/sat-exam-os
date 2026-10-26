@@ -7,8 +7,9 @@ import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { getQaTestIds, getQaUserIds, scopeIds } from "@/lib/qa";
 
-async function getTeacherTests(teacherId: string, isAdmin: boolean) {
+async function getTeacherTests(teacherId: string, isAdmin: boolean, isQa: boolean) {
   const db = getServiceClient();
 
   // Admins see every test on the platform; teachers only see assignments
@@ -17,6 +18,7 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean) {
   if (!isAdmin) {
     query = query.contains("teacher_ids", JSON.stringify([teacherId]));
   }
+  query = scopeIds(query, "test_id", await getQaTestIds(), isQa);
   const { data: assignments } = await query;
 
   if (!assignments || assignments.length === 0) return [];
@@ -31,11 +33,11 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean) {
       `)
       .in("id", testIds)
       .order("due_date", { ascending: true }),
-    db.from("submissions")
+    scopeIds(db.from("submissions")
       .select(
         "test_id, student_id, status, correct_count, total_questions, percentage, session_id",
       )
-      .in("test_id", testIds),
+      .in("test_id", testIds), "student_id", await getQaUserIds(), isQa),
   ]);
 
   const assignMap: Record<string, { student_ids: string[] }> = {};
@@ -115,7 +117,7 @@ export default async function TeacherTestsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const tests = await getTeacherTests(user.userId, user.role === "admin");
+  const tests = await getTeacherTests(user.userId, user.role === "admin", user.isQa);
 
   // Closed tests sink into a collapsed section at the bottom so the
   // list shows what's live by default.

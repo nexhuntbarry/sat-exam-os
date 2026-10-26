@@ -2,14 +2,15 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { Users, GraduationCap, BookOpen, ClipboardList, HelpCircle, Clock, BarChart3 } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
+import { scopeUsers } from "@/lib/qa";
 
-async function getAdminStats() {
+async function getAdminStats(viewerIsQa: boolean) {
   const db = getServiceClient();
 
   const [pending, approved, teachers, modules] = await Promise.all([
-    db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "pending"),
-    db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "approved"),
-    db.from("users").select("id", { count: "exact", head: true }).eq("role", "teacher").eq("account_status", "approved"),
+    scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "pending"), viewerIsQa),
+    scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "approved"), viewerIsQa),
+    scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "teacher").eq("account_status", "approved"), viewerIsQa),
     db.from("modules").select("id", { count: "exact", head: true }),
   ]);
 
@@ -22,7 +23,8 @@ async function getAdminStats() {
 }
 
 export default async function AdminDashboardPage() {
-  const [user, stats] = await Promise.all([getCurrentUser(), getAdminStats()]);
+  const user = await getCurrentUser();
+  const stats = await getAdminStats(user?.isQa ?? false);
 
   const statCards = [
     {

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { getServiceClient } from "@/lib/supabase";
 import { scaleSectionScore } from "@/lib/scoring";
+import { getCurrentUser } from "@/lib/auth";
+import { getQaClassGroupIds, getQaUserIds, scopeIds } from "@/lib/qa";
 import { BarChart3, Users, ChevronLeft, ClipboardList } from "lucide-react";
 
 // ── Data types ──────────────────────────────────────────────────────────────
@@ -129,22 +131,23 @@ function mean(values: number[]): number | null {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
 
-async function getClassGroupAnalytics(): Promise<GroupStat[]> {
+async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]> {
   const db = getServiceClient();
+  const [qaGroups, qaUsers] = await Promise.all([getQaClassGroupIds(), getQaUserIds()]);
 
   const [groupsRes, membersRes, testsRes, submissionsRes] = await Promise.all([
-    db
+    scopeIds(db
       .from("class_groups")
-      .select("id, name, campus, grade, created_at")
+      .select("id, name, campus, grade, created_at"), "id", qaGroups, viewerIsQa)
       .order("created_at", { ascending: false }),
     db.from("class_group_members").select("class_group_id, student_id"),
     db.from("tests").select("id, test_name, created_at"),
-    db
+    scopeIds(db
       .from("submissions")
       .select(
         "id, student_id, test_id, status, percentage, scaled_score, session_id, adaptive_track",
       )
-      .in("status", ["Submitted", "Late"]),
+      .in("status", ["Submitted", "Late"]), "student_id", qaUsers, viewerIsQa),
   ]);
 
   const groups = (groupsRes.data ?? []) as ClassGroupRow[];
@@ -238,7 +241,7 @@ async function getClassGroupAnalytics(): Promise<GroupStat[]> {
 }
 
 export default async function ClassGroupAnalyticsPage() {
-  const groups = await getClassGroupAnalytics();
+  const groups = await getClassGroupAnalytics((await getCurrentUser())?.isQa ?? false);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">

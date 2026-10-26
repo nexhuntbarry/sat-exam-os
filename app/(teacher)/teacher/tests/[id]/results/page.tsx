@@ -1,6 +1,7 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { StatCard } from "@/components/analytics/StatCard";
@@ -17,11 +18,11 @@ const MODULE_LABEL: Record<string, string> = {
   module_2_hard: "Module 2 · Hard",
 };
 
-async function getResultsData(testId: string, userId: string, role: string) {
+async function getResultsData(testId: string, userId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
 
   // Two-track access: direct (teacher_ids) or class-group teacher.
-  const access = await getTeacherTestAccess(db, { userId, role }, testId);
+  const access = await getTeacherTestAccess(db, { userId, role, isQa }, testId);
   if (access.mode === null) return null;
 
   const { data: assignment } = await db
@@ -41,7 +42,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
 
   const studentIds: string[] = assignment.student_ids ?? [];
 
-  let subQuery = db
+  let subQuery = scopeUsers(db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
@@ -49,7 +50,7 @@ async function getResultsData(testId: string, userId: string, role: string) {
       scaled_score, scaled_section, session_id, adaptive_track,
       users!inner(display_name, email, student_profiles(grade, class_group))
     `)
-    .eq("test_id", testId)
+    .eq("test_id", testId), isQa, "users.email")
     .order("submitted_at", { ascending: false });
   // A class-group teacher only sees their own class's attempts.
   if (access.mode === "class" && access.studentAllowlist) {
@@ -253,7 +254,7 @@ export default async function TestResultsPage({
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
-  const data = await getResultsData(id, user.userId, user.role ?? "");
+  const data = await getResultsData(id, user.userId, user.role ?? "", user.isQa);
   if (!data) notFound();
 
   const { test, stats, scoreDistribution, students } = data;

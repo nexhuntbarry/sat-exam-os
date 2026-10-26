@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaTestIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
 import { getTeacherTestScope } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/test-review?testId=optional
@@ -32,6 +33,8 @@ export async function GET(req: Request) {
     ]);
     testIds = Array.from(union);
   }
+  const qaTests = await getQaTestIds();
+  testIds = testIds.filter((id) => onSide(id, qaTests, user.isQa));
 
   if (testIds.length === 0) {
     return NextResponse.json({
@@ -79,6 +82,7 @@ export async function GET(req: Request) {
       Array.from(scope.myStudentIds),
     );
   }
+  submissionsQuery = scopeIds(submissionsQuery, "student_id", await getQaUserIds(), user.isQa);
   const { data: submissions } = await submissionsQuery;
 
   const subIds = (submissions ?? []).map((s) => s.id);

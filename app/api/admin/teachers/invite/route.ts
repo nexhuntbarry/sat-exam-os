@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { isQaEmail } from "@/lib/qa";
 import { sendEmail } from "@/lib/email/send";
 import { teacherInviteEmail } from "@/lib/email/templates/teacher-invite";
 
@@ -25,6 +26,12 @@ export async function POST(req: Request) {
 
   if (!body.email) {
     return NextResponse.json({ error: "email is required" }, { status: 400 });
+  }
+  if (isQaEmail(body.email) !== authResult.isQa) {
+    return NextResponse.json(
+      { error: "Cannot link QA and real accounts/data" },
+      { status: 403 },
+    );
   }
 
   const canReview = Boolean(body.canReviewQuestions);

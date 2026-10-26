@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
+import { forbidQa } from "@/lib/qa";
 import { repairTableForQuestion } from "@/lib/repair-ops";
 
 // Re-reads the source PDF (Sonnet → Opus) to rebuild a flattened data
@@ -17,6 +18,8 @@ export async function POST(
 ) {
   const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const { id } = await params;
   try {
     const res = await repairTableForQuestion(id);

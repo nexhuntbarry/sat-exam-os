@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // POST /api/teacher/tests/[id]/grant-retake
@@ -36,6 +37,8 @@ export async function POST(
   if (!body.studentId) {
     return NextResponse.json({ error: "studentId is required" }, { status: 400 });
   }
+  const crossSide = await forbidCrossSide(grantor, { userIds: [body.studentId] });
+  if (crossSide) return crossSide;
   // Class teacher cannot grant retakes to students outside their class.
   if (access.mode === "class" && !access.studentAllowlist?.has(body.studentId)) {
     return NextResponse.json(

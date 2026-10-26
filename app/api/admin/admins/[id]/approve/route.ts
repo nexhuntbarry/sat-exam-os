@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/admins/[id]/approve
 // Super-admin only. Sets the target admin's account_status to "approved"
@@ -22,6 +23,8 @@ export async function POST(
   }
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { userIds: [id] });
+  if (crossSide) return crossSide;
   const db = getServiceClient();
 
   const { data: target } = await db

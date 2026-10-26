@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 import { solveQuestionsAndPersist } from "@/lib/ai/solve-question";
 import type { ParsedQuestion } from "@/lib/ai/parse-pdf";
 
@@ -16,6 +17,8 @@ export async function POST(
 ) {
   const auth = await requireRole("admin");
   if (auth instanceof NextResponse) return auth;
+  const qaBlock = forbidQa(auth);
+  if (qaBlock) return qaBlock;
 
   const { id } = await params;
   const db = getServiceClient();

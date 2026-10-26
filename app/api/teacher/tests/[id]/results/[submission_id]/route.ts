@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { forbidCrossSide } from "@/lib/qa";
 
 // Two-track access model:
 // 1) admin → unrestricted
@@ -9,7 +10,7 @@ import { getTeacherTestAccess } from "@/lib/teacher-access";
 // 3) class teacher whose group contains the submitting student
 async function teacherCanReadSubmission(
   db: ReturnType<typeof getServiceClient>,
-  user: { userId: string; role: string | null | undefined },
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
   testId: string,
   studentId: string,
 ): Promise<boolean> {
@@ -46,6 +47,12 @@ export async function GET(
   if (!subOwner) {
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
+
+  const crossSide = await forbidCrossSide(user, {
+    userIds: [subOwner.student_id as string],
+    testIds: [testId],
+  });
+  if (crossSide) return crossSide;
 
   if (user.role !== "admin") {
     const ok = await teacherCanReadSubmission(
@@ -332,6 +339,12 @@ export async function PATCH(
   if (!subOwner) {
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
+  const crossSide = await forbidCrossSide(user, {
+    userIds: [subOwner.student_id as string],
+    testIds: [testId],
+  });
+  if (crossSide) return crossSide;
+
   if (user.role !== "admin") {
     const ok = await teacherCanReadSubmission(
       db,

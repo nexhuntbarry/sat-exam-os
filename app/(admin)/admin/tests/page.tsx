@@ -5,16 +5,18 @@ import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { getCurrentUser } from "@/lib/auth";
+import { getQaTestIds, scopeIds } from "@/lib/qa";
 
-async function getTests() {
+async function getTests(viewerIsQa: boolean) {
   const db = getServiceClient();
-  const { data: tests } = await db
+  const { data: tests } = await scopeIds(db
     .from("tests")
     .select(`
       id, test_name, status, open_date, due_date, created_at,
       is_adaptive,
       modules!module_id(module_name, section, module_number)
-    `)
+    `), "id", await getQaTestIds(), viewerIsQa)
     .order("created_at", { ascending: false });
 
   if (!tests || tests.length === 0) return [];
@@ -55,7 +57,7 @@ const statusStyles: Record<string, string> = {
 };
 
 export default async function TestsPage() {
-  const tests = await getTests();
+  const tests = await getTests((await getCurrentUser())?.isQa ?? false);
 
   // Closed tests sink into a collapsed section at the bottom so the
   // list shows what's live by default.

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 
 // GET /api/teacher/tests/[id]/analytics
@@ -86,6 +87,7 @@ export async function GET(
       Array.from(access.studentAllowlist),
     );
   }
+  submissionIdsQuery = scopeIds(submissionIdsQuery, "student_id", await getQaUserIds(), user.isQa);
   const { data: submissionIds } = await submissionIdsQuery;
 
   const subIds = (submissionIds ?? []).map((s) => s.id);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
 
 // POST /api/admin/submissions/[id]/force-submit
@@ -50,13 +51,15 @@ export async function POST(
   const { data: submission } = await db
     .from("submissions")
     .select(
-      "id, test_id, answers, started_at, status, module_id, adaptive_track",
+      "id, test_id, student_id, answers, started_at, status, module_id, adaptive_track",
     )
     .eq("id", id)
     .maybeSingle();
   if (!submission) {
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
+  const crossSide = await forbidCrossSide(auth, { userIds: [submission.student_id], testIds: [submission.test_id] });
+  if (crossSide) return crossSide;
   if (submission.status !== "In Progress") {
     return NextResponse.json(
       { error: `Submission already ${submission.status}` },

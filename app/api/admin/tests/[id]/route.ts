@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // GET /api/admin/tests/[id]
 export async function GET(
@@ -11,6 +12,8 @@ export async function GET(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { testIds: [id] });
+  if (crossSide) return crossSide;
   const db = getServiceClient();
 
   const { data: test, error } = await db
@@ -60,6 +63,8 @@ export async function PATCH(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { testIds: [id] });
+  if (crossSide) return crossSide;
 
   let body: Record<string, unknown>;
   try {
@@ -67,6 +72,15 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
+
+  const linkCheck = await forbidCrossSide(authResult, {
+    userIds: [
+      ...(Array.isArray(body.teacherIds) ? (body.teacherIds as string[]) : []),
+      ...(Array.isArray(body.studentIds) ? (body.studentIds as string[]) : []),
+    ],
+    classGroupIds: Array.isArray(body.classGroupIds) ? (body.classGroupIds as string[]) : [],
+  });
+  if (linkCheck) return linkCheck;
 
   const db = getServiceClient();
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -158,6 +172,8 @@ export async function DELETE(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { testIds: [id] });
+  if (crossSide) return crossSide;
   const db = getServiceClient();
 
   const { data: target } = await db

@@ -1,18 +1,20 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide, getQaTestIds, scopeIds } from "@/lib/qa";
 
 // GET /api/admin/tests
 export async function GET(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const admin = authResult;
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status") ?? "";
   const moduleId = searchParams.get("moduleId") ?? "";
 
   const db = getServiceClient();
-  let query = db
+  let query = scopeIds(db
     .from("tests")
     .select(`
       id, test_name, module_id, time_limit_minutes, open_date, due_date,
@@ -20,7 +22,7 @@ export async function GET(req: Request) {
       created_by, created_at, updated_at,
       is_adaptive,
       modules!module_id(module_name, section, module_number)
-    `)
+    `), "id", await getQaTestIds(), admin.isQa)
     .order("created_at", { ascending: false });
 
   if (status) query = query.eq("status", status);
@@ -142,6 +144,12 @@ export async function POST(req: Request) {
       );
     }
   }
+
+  const crossSide = await forbidCrossSide(admin, {
+    userIds: [...(body.teacherIds ?? []), ...(body.studentIds ?? [])],
+    classGroupIds: body.classGroupIds,
+  });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
 

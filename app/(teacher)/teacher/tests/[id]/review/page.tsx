@@ -18,7 +18,7 @@ import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/Revi
 // the test can run the review even when they're not on teacher_ids.
 async function getTeacherReview(
   testId: string,
-  user: { userId: string; role: string | null | undefined },
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
 ) {
   const db = getServiceClient();
 

@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { getServiceClient } from "./supabase";
 import type { UserRole } from "./clerk-helpers";
+import { isQaEmail } from "./qa";
 
 export interface CurrentUser {
   clerkId: string;
@@ -13,6 +14,8 @@ export interface CurrentUser {
   isSuperAdmin: boolean;
   /** Implicit TRUE for admins; explicit toggle for "key teacher" reviewers. */
   canReviewQuestions: boolean;
+  /** Hidden QA account (email starts with qa-test-); see lib/qa.ts. */
+  isQa: boolean;
 }
 
 /**
@@ -49,5 +52,6 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     isSuperAdmin: Boolean(user.is_super_admin),
     // Admins implicitly review; teachers only when the explicit flag is on.
     canReviewQuestions: role === "admin" || Boolean(user.can_review_questions),
+    isQa: isQaEmail(user.email),
   };
 }

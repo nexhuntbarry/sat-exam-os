@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { Clock, ClipboardList, User } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -38,6 +39,12 @@ async function getUpcomingTests(userId: string) {
     if (sIds.includes(userId) || classGroupIds.some((cg: string) => cgIds.includes(cg))) {
       matchedTestIds.add(a.test_id);
     }
+  }
+
+  // QA isolation: a student never sees a test from the other side.
+  const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
+  for (const id of Array.from(matchedTestIds)) {
+    if (!onSide(id, qaTests, qaUsers.has(userId))) matchedTestIds.delete(id);
   }
 
   if (matchedTestIds.size === 0) return [];

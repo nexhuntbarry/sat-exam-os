@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 
 // POST /api/admin/questions/bulk-approve
 // Body: { question_ids: string[] } OR { filter: { moduleId?, minConfidence? } }
 export async function POST(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
 
   const body = await req.json().catch(() => ({}));
   const db = getServiceClient();

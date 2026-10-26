@@ -1,5 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
+import { getQaTestIds, onSide } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -73,6 +74,7 @@ export default async function TestSubmissionsPage({
   if (!user || user.role !== "admin") redirect("/sign-in");
 
   const { id } = await params;
+  if (!onSide(id, await getQaTestIds(), user.isQa)) notFound();
   const data = await getSubmissions(id);
   if (!data) notFound();
 

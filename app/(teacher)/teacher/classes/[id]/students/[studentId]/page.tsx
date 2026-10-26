@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import { getCurrentUser } from "@/lib/auth";
+import { getQaClassGroupIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
 import { formatDateTime, formatDate } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
@@ -142,6 +143,10 @@ export default async function TeacherStudentResultsPage({
   if (me.role !== "teacher" && me.role !== "admin") redirect("/dashboard");
 
   const { id, studentId } = await params;
+  if (
+    !onSide(id, await getQaClassGroupIds(), me.isQa) ||
+    !onSide(studentId, await getQaUserIds(), me.isQa)
+  ) notFound();
   const data = await loadStudent(id, studentId, me.userId, me.role === "admin");
   if (!data) notFound();
   const { group, student, submissions } = data;

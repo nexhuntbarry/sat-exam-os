@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // GET /api/admin/tests/[id]/submissions
 export async function GET(
@@ -11,6 +12,8 @@ export async function GET(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { testIds: [id] });
+  if (crossSide) return crossSide;
   const db = getServiceClient();
 
   const { data: submissions, error } = await db

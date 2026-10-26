@@ -1,6 +1,8 @@
 import { getServiceClient } from "@/lib/supabase";
 import { notFound } from "next/navigation";
 import ClassDetailClient from "./ClassDetailClient";
+import { getCurrentUser } from "@/lib/auth";
+import { getQaClassGroupIds, onSide, scopeUsers } from "@/lib/qa";
 
 async function getClassGroup(id: string) {
   const db = getServiceClient();
@@ -59,24 +61,24 @@ async function getMembers(classGroupId: string): Promise<MemberRow[]> {
   });
 }
 
-async function getApprovedStudents() {
+async function getApprovedStudents(viewerIsQa: boolean) {
   const db = getServiceClient();
-  const { data } = await db
+  const { data } = await scopeUsers(db
     .from("users")
     .select("id, email, display_name")
     .eq("role", "student")
-    .eq("account_status", "approved")
+    .eq("account_status", "approved"), viewerIsQa)
     .order("display_name");
   return data ?? [];
 }
 
-async function getAllTeachers() {
+async function getAllTeachers(viewerIsQa: boolean) {
   const db = getServiceClient();
-  const { data } = await db
+  const { data } = await scopeUsers(db
     .from("users")
     .select("id, email, display_name, can_review_questions")
     .eq("role", "teacher")
-    .eq("account_status", "approved")
+    .eq("account_status", "approved"), viewerIsQa)
     .order("display_name");
   return data ?? [];
 }
@@ -108,11 +110,13 @@ export default async function ClassDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const isQa = (await getCurrentUser())?.isQa ?? false;
+  if (!onSide(id, await getQaClassGroupIds(), isQa)) notFound();
   const [classGroup, members, allStudents, allTeachers, assignedTeachers] = await Promise.all([
     getClassGroup(id),
     getMembers(id),
-    getApprovedStudents(),
-    getAllTeachers(),
+    getApprovedStudents(isQa),
+    getAllTeachers(isQa),
     getAssignedTeachers(id),
   ]);
 

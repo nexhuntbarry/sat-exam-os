@@ -12,6 +12,7 @@
 // Either track grants read access; track B is the common case after we
 // stopped requiring admins to populate teacher_ids on every test.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getQaTestIds, getQaUserIds, onSide } from "./qa";
 
 // A test's subject is the section ("Math" | "Reading & Writing") of its
 // module (module_1_id for adaptive tests). Used to scope class teachers to
@@ -82,9 +83,13 @@ export interface TeacherTestAccess {
 
 export async function getTeacherTestAccess(
   db: SupabaseClient,
-  user: { userId: string; role: string | null | undefined },
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
   testId: string,
 ): Promise<TeacherTestAccess> {
+  // QA isolation: a test from the other side is invisible to everyone.
+  if (!onSide(testId, await getQaTestIds(), user.isQa)) {
+    return { mode: null, studentAllowlist: null };
+  }
   if (user.role === "admin") {
     return { mode: "admin", studentAllowlist: null };
   }
@@ -117,7 +122,12 @@ export async function getTeacherTestAccess(
       .from("class_group_members")
       .select("student_id")
       .in("class_group_id", groupIds);
-    const allowlist = new Set((members ?? []).map((m) => m.student_id as string));
+    const qaUsers = await getQaUserIds();
+    const allowlist = new Set(
+      (members ?? [])
+        .map((m) => m.student_id as string)
+        .filter((id) => onSide(id, qaUsers, user.isQa)),
+    );
     if (allowlist.size === 0) return { mode: null, studentAllowlist: null };
     return { mode: "class", studentAllowlist: allowlist };
   }
@@ -155,7 +165,7 @@ export interface TeacherTestScope {
 
 export async function getTeacherTestScope(
   db: SupabaseClient,
-  user: { userId: string; role: string | null | undefined },
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
 ): Promise<TeacherTestScope> {
   const out: TeacherTestScope = {
     directTestIds: new Set(),
@@ -169,8 +179,9 @@ export async function getTeacherTestScope(
     .from("test_assignments")
     .select("test_id")
     .contains("teacher_ids", JSON.stringify([user.userId]));
+  const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
   for (const a of directly ?? []) {
-    out.directTestIds.add(a.test_id as string);
+    if (onSide(a.test_id as string, qaTests, user.isQa)) out.directTestIds.add(a.test_id as string);
   }
 
   const { data: myGroups } = await db
@@ -185,7 +196,9 @@ export async function getTeacherTestScope(
     .from("class_group_members")
     .select("student_id")
     .in("class_group_id", groupIds);
-  for (const m of members ?? []) out.myStudentIds.add(m.student_id as string);
+  for (const m of members ?? []) {
+    if (onSide(m.student_id as string, qaUsers, user.isQa)) out.myStudentIds.add(m.student_id as string);
+  }
   if (out.myStudentIds.size === 0) return out;
 
   const { data: studentSubs } = await db
@@ -193,7 +206,9 @@ export async function getTeacherTestScope(
     .select("test_id")
     .in("student_id", Array.from(out.myStudentIds));
   const classTestIds = new Set<string>();
-  for (const s of studentSubs ?? []) classTestIds.add(s.test_id as string);
+  for (const s of studentSubs ?? []) {
+    if (onSide(s.test_id as string, qaTests, user.isQa)) classTestIds.add(s.test_id as string);
+  }
 
   // Subject scoping: keep only tests whose subject the teacher teaches.
   // A NULL subject on any class row means "both" and lifts the filter.

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide, isQaEmail } from "@/lib/qa";
 import { sendEmail } from "@/lib/email/send";
 import { approvalEmail } from "@/lib/email/templates/approval";
 
@@ -25,6 +26,11 @@ export async function POST(
   } catch {
     // body is optional
   }
+  const crossSide = await forbidCrossSide(authResult, {
+    userIds: [id],
+    classGroupIds: body.classGroupId ? [body.classGroupId] : [],
+  });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
 
@@ -88,7 +94,8 @@ export async function POST(
     .eq("user_id", id)
     .single();
 
-  if (profile?.parent_email) {
+  // QA students' parent_email may be a real address — never mail it.
+  if (profile?.parent_email && !isQaEmail(userRow.email)) {
     sendEmail({
       to: profile.parent_email,
       subject: "Your child's SAT Exam OS account is approved!",

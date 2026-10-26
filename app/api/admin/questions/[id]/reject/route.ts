@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 
 // POST /api/admin/questions/[id]/reject
 export async function POST(
@@ -9,6 +10,8 @@ export async function POST(
 ) {
   const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
 
   const { id } = await params;
   const body = await req.json().catch(() => ({}));

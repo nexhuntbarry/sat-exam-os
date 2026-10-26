@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // DELETE /api/admin/submissions/[id]
 //
@@ -22,12 +23,14 @@ export async function DELETE(
 
   const { data: sub } = await db
     .from("submissions")
-    .select("id")
+    .select("id, student_id, test_id")
     .eq("id", id)
     .maybeSingle();
   if (!sub) {
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
+  const crossSide = await forbidCrossSide(auth, { userIds: [sub.student_id], testIds: [sub.test_id] });
+  if (crossSide) return crossSide;
 
   const { error } = await db.from("submissions").delete().eq("id", id);
   if (error) {

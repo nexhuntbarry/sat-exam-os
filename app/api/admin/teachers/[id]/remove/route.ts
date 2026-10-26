@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { clerkClient } from "@clerk/nextjs/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 export async function POST(
   _req: Request,
@@ -11,6 +12,8 @@ export async function POST(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { userIds: [id] });
+  if (crossSide) return crossSide;
   const db = getServiceClient();
 
   // Hard delete teacher row + cascade teacher_profiles + delete Clerk user

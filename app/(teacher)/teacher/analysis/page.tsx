@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { BarChart2 } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
+import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
 import { getTestSections } from "@/lib/teacher-access";
 import { StatCard } from "@/components/analytics/StatCard";
@@ -19,7 +20,7 @@ interface DomainAgg {
   errorRatePct: number;
 }
 
-async function getCrossTestAnalysis(teacherId: string, role: string) {
+async function getCrossTestAnalysis(teacherId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
 
   // 1. Build the visible test+student scope. Admin sees every test and
@@ -89,6 +90,15 @@ async function getCrossTestAnalysis(teacherId: string, role: string) {
       for (const s of data ?? []) dedup.set(s.id as string, s as never);
     }
     submissions = Array.from(dedup.values());
+  }
+
+  // QA isolation: only aggregate the viewer's side (students + tests).
+  const [qaUsers, qaTests] = await Promise.all([getQaUserIds(), getQaTestIds()]);
+  submissions = submissions.filter(
+    (s) => onSide(s.student_id, qaUsers, isQa) && onSide(s.test_id, qaTests, isQa),
+  );
+  for (const id of Array.from(directTestIds)) {
+    if (!onSide(id, qaTests, isQa)) directTestIds.delete(id);
   }
 
   // Subject scoping: a class teacher pinned to a subject only analyses that
@@ -304,7 +314,7 @@ export default async function TeacherAnalysisPage() {
   if (!user) redirect("/sign-in");
 
   const [data, t] = await Promise.all([
-    getCrossTestAnalysis(user.userId, user.role ?? ""),
+    getCrossTestAnalysis(user.userId, user.role ?? "", user.isQa),
     getTranslations("teacherAnalysis"),
   ]);
 

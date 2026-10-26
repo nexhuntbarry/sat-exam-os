@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { scopeUsers } from "@/lib/qa";
 
 // GET /api/admin/students
 //
@@ -13,18 +14,19 @@ import { getServiceClient } from "@/lib/supabase";
 export async function GET(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const admin = authResult;
 
   const url = new URL(req.url);
   const q = url.searchParams.get("q")?.trim() ?? "";
   const onlyApproved = url.searchParams.get("status") !== "all";
 
   const db = getServiceClient();
-  let query = db
+  let query = scopeUsers(db
     .from("users")
     .select(
       "id, email, display_name, account_status, student_profiles(grade, school, class_group)",
     )
-    .eq("role", "student")
+    .eq("role", "student"), admin.isQa)
     .order("display_name", { ascending: true })
     .limit(200);
 

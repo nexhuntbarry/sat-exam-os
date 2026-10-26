@@ -3,13 +3,14 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import AdminsClient from "./AdminsClient";
 import PageIntro from "@/components/shared/PageIntro";
+import { scopeUsers } from "@/lib/qa";
 
-async function getAdmins() {
+async function getAdmins(viewerIsQa: boolean) {
   const db = getServiceClient();
-  const { data } = await db
+  const { data } = await scopeUsers(db
     .from("users")
     .select("id, email, display_name, account_status, created_at, clerk_user_id, is_super_admin")
-    .eq("role", "admin")
+    .eq("role", "admin"), viewerIsQa)
     .order("created_at", { ascending: true });
   const admins = data ?? [];
 
@@ -38,7 +39,7 @@ async function getAdmins() {
 
 export default async function AdminsPage() {
   const me = await getCurrentUser();
-  const admins = await getAdmins();
+  const admins = await getAdmins(me?.isQa ?? false);
   return (
     <>
       <PageIntro tKey="admin.admins" />

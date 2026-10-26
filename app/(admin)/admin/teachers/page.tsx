@@ -2,13 +2,15 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { getServiceClient } from "@/lib/supabase";
 import TeachersClient from "./TeachersClient";
 import PageIntro from "@/components/shared/PageIntro";
+import { getCurrentUser } from "@/lib/auth";
+import { scopeUsers } from "@/lib/qa";
 
-async function getTeachers() {
+async function getTeachers(viewerIsQa: boolean) {
   const db = getServiceClient();
-  const { data } = await db
+  const { data } = await scopeUsers(db
     .from("users")
     .select(`id, email, display_name, account_status, created_at, clerk_user_id, can_review_questions, teacher_profiles!teacher_profiles_user_id_fkey(assigned_classes, bio, specialty)`)
-    .eq("role", "teacher")
+    .eq("role", "teacher"), viewerIsQa)
     .order("created_at", { ascending: false });
   const teachers = data ?? [];
 
@@ -36,7 +38,7 @@ async function getTeachers() {
 }
 
 export default async function TeachersPage() {
-  const teachers = await getTeachers();
+  const teachers = await getTeachers((await getCurrentUser())?.isQa ?? false);
   return (
     <>
       <PageIntro tKey="admin.teachers" />

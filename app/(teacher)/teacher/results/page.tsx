@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { ClipboardList } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
+import { getQaTestIds, onSide, scopeUsers } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
 import { StatCard } from "@/components/analytics/StatCard";
 import {
@@ -19,7 +20,7 @@ const MODULE_LABEL: Record<string, string> = {
   module_2_hard: "Module 2 · Hard",
 };
 
-async function getCrossTestResults(teacherId: string, role: string) {
+async function getCrossTestResults(teacherId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
 
   // 1. Build the visible test set. Admin sees everything. A teacher sees
@@ -72,6 +73,12 @@ async function getCrossTestResults(teacherId: string, role: string) {
     }
   }
 
+  // QA isolation: drop tests from the other side.
+  const qaTests = await getQaTestIds();
+  for (const id of Array.from(visibleTestIds)) {
+    if (!onSide(id, qaTests, isQa)) visibleTestIds.delete(id);
+  }
+
   if (visibleTestIds.size === 0) {
     return { rows: [], testOptions: [], classOptions: [], totals: { tests: 0, submissions: 0, students: 0 } };
   }
@@ -91,7 +98,7 @@ async function getCrossTestResults(teacherId: string, role: string) {
   }
 
   // 3. Get all submissions for these tests
-  const { data: submissions } = await db
+  const { data: submissions } = await scopeUsers(db
     .from("submissions")
     .select(
       `
@@ -101,7 +108,7 @@ async function getCrossTestResults(teacherId: string, role: string) {
       users!inner(display_name, email)
     `
     )
-    .in("test_id", testIds)
+    .in("test_id", testIds), isQa, "users.email")
     .order("submitted_at", { ascending: false });
 
   // Non-admin filter: keep a submission only if EITHER the test was
@@ -260,7 +267,7 @@ export default async function TeacherResultsPage() {
   if (!user) redirect("/sign-in");
 
   const [data, t] = await Promise.all([
-    getCrossTestResults(user.userId, user.role ?? ""),
+    getCrossTestResults(user.userId, user.role ?? "", user.isQa),
     getTranslations("teacherResults"),
   ]);
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/submissions/[id]/reset
 //
@@ -35,6 +36,8 @@ export async function POST(
   if (!sub) {
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
+  const crossSide = await forbidCrossSide(auth, { userIds: [sub.student_id], testIds: [sub.test_id] });
+  if (crossSide) return crossSide;
 
   // Wipe answer_records first — those mirror the graded state and
   // would otherwise survive into the next attempt.

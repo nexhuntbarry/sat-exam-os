@@ -1,4 +1,5 @@
 import { Resend } from "resend";
+import { isQaEmail } from "@/lib/qa";
 
 const resend = process.env.RESEND_API_KEY
   ? new Resend(process.env.RESEND_API_KEY)
@@ -15,6 +16,12 @@ export interface SendEmailOptions {
 }
 
 export async function sendEmail(opts: SendEmailOptions): Promise<void> {
+  // QA isolation: never deliver to hidden QA accounts; pretend it was sent.
+  const recipients = (Array.isArray(opts.to) ? opts.to : [opts.to]).filter((to) => !isQaEmail(to));
+  if (recipients.length === 0) {
+    console.log("[email:qa] Skipped send to QA address:", { to: opts.to, subject: opts.subject });
+    return;
+  }
   if (!resend) {
     console.log("[email:dev] Would send email:", {
       to: opts.to,
@@ -25,7 +32,7 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
   try {
     await resend.emails.send({
       from: FROM,
-      to: Array.isArray(opts.to) ? opts.to : [opts.to],
+      to: recipients,
       subject: opts.subject,
       html: opts.html,
     });

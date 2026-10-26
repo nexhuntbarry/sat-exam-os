@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getTestSections } from "@/lib/teacher-access";
+import { getQaTestIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
 
 // GET /api/teacher/tests
 export async function GET() {
@@ -107,6 +108,12 @@ export async function GET() {
     ...Array.from(classTestIds),
   ]);
 
+  // QA isolation: drop tests from the other side.
+  const qaTests = await getQaTestIds();
+  for (const id of Array.from(allVisibleTestIds)) {
+    if (!onSide(id, qaTests, user.isQa)) allVisibleTestIds.delete(id);
+  }
+
   // Subject scoping: a class teacher pinned to a subject only sees that
   // subject's tests — including any they're directly on teacher_ids for
   // (a class teacher is always subject-scoped, matching getTeacherTestAccess).
@@ -153,10 +160,10 @@ export async function GET() {
   // Submission counts scoped per visibility track. Direct tests count
   // every submission (legacy global view); class-derived tests count
   // only my class students.
-  let submissionQuery = db
+  let submissionQuery = scopeIds(db
     .from("submissions")
     .select("test_id, student_id, status, score")
-    .in("test_id", testIds);
+    .in("test_id", testIds), "student_id", await getQaUserIds(), user.isQa);
   const { data: subData } = await submissionQuery;
 
   const subMap: Record<string, { total: number; done: number; scores: number[]; students: Set<string> }> = {};

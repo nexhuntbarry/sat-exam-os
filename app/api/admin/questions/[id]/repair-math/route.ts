@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
+import { forbidQa } from "@/lib/qa";
 import { repairMathForQuestion } from "@/lib/repair-ops";
 
 // Up to two sequential Claude calls (Sonnet → Opus) on a
@@ -19,6 +20,8 @@ export async function POST(
 ) {
   const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const { id } = await params;
   try {
     const res = await repairMathForQuestion(id);

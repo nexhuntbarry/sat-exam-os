@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/teachers/[id]/remove — set status=suspended
 export async function POST(
@@ -11,6 +12,8 @@ export async function POST(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { userIds: [id] });
+  if (crossSide) return crossSide;
   const url = new URL(req.url);
 
   if (!url.pathname.endsWith("/remove")) {
@@ -44,6 +47,8 @@ export async function PATCH(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { userIds: [id] });
+  if (crossSide) return crossSide;
   let body: { assignedClasses?: unknown[]; canReviewQuestions?: boolean };
   try {
     body = await req.json();

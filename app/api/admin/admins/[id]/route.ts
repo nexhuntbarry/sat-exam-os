@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // DELETE /api/admin/admins/[id]
 //
@@ -25,6 +26,8 @@ export async function DELETE(
   }
 
   const { id } = await params;
+  const crossSide = await forbidCrossSide(authResult, { userIds: [id] });
+  if (crossSide) return crossSide;
   if (id === me.userId) {
     return NextResponse.json(
       { error: "You cannot delete yourself. Ask another super admin to remove you." },

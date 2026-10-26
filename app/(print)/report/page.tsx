@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaUserIds, onSide } from "@/lib/qa";
 import { formatDate } from "@/lib/datetime";
 import PrintableReport from "@/components/analytics/PrintableReport";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
@@ -40,6 +41,11 @@ export default async function ReportPage({
   } else if (me.role !== "student" && !sp.student) {
     // teacher/admin with no target → nothing to show
     redirect(me.role === "admin" ? "/admin" : "/teacher");
+  }
+
+  // QA isolation: never render a student from the other side.
+  if (!onSide(studentId, await getQaUserIds(), me.isQa)) {
+    redirect(me.role === "admin" ? "/admin" : me.role === "teacher" ? "/teacher" : "/student");
   }
 
   const { data: student } = await db.from("users").select("display_name, email").eq("id", studentId).maybeSingle();

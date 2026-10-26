@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 
 const SETTING_KEY = "math_formula_sheet";
 // Fixed pathname so re-uploads overwrite in place. Vercel Blob requires
@@ -28,6 +29,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const admin = authResult;
 
   const formData = await req.formData();
@@ -90,6 +93,8 @@ export async function POST(req: Request) {
 export async function DELETE() {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
 
   const db = getServiceClient();
   await db.from("app_settings").delete().eq("key", SETTING_KEY);

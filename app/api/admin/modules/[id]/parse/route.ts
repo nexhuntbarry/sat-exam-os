@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { after } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 import {
   parsePdfToQuestions,
   simpleEmbedding,
@@ -87,6 +88,8 @@ export async function POST(
 ) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
 
   const rl = consumeParseQuota(authResult.userId);
   if (!rl.ok) {

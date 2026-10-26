@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getTeacherTestScope } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/skill-stats?domain=Algebra
@@ -30,6 +31,8 @@ export async function GET(req: Request) {
     ]);
     testIds = Array.from(union);
   }
+  const [qaUsers, qaTests] = await Promise.all([getQaUserIds(), getQaTestIds()]);
+  testIds = testIds.filter((id) => onSide(id, qaTests, user.isQa));
   if (testIds.length === 0) {
     return NextResponse.json({ domains: [], skills: [] });
   }
@@ -45,6 +48,7 @@ export async function GET(req: Request) {
     .in("status", ["Submitted", "Late"]);
   const { data: subsRaw } = await subsQuery;
   const subs = (subsRaw ?? []).filter((s) => {
+    if (!onSide(s.student_id as string, qaUsers, user.isQa)) return false;
     if (scope.isAdmin) return true;
     if (scope.directTestIds.has(s.test_id as string)) return true;
     return scope.myStudentIds.has(s.student_id as string);

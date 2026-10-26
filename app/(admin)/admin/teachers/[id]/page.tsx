@@ -5,6 +5,7 @@ import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { formatDate } from "@/lib/datetime";
+import { isQaEmail } from "@/lib/qa";
 
 async function getTeacherDetail(teacherId: string) {
   const db = getServiceClient();
@@ -170,7 +171,7 @@ export default async function AdminTeacherDetailPage({
 
   const { id } = await params;
   const data = await getTeacherDetail(id);
-  if (!data) notFound();
+  if (!data || isQaEmail(data.teacher.email) !== me.isQa) notFound();
 
   const { teacher, classes, stats } = data;
 

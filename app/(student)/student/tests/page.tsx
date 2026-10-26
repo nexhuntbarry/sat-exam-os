@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -181,6 +182,12 @@ async function getStudentTests(studentId: string) {
     if (sIds.includes(studentId) || classGroupIds.some((cg) => cgIds.includes(cg))) {
       matchedTestIds.add(a.test_id);
     }
+  }
+
+  // QA isolation: a student never sees a test from the other side.
+  const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
+  for (const id of Array.from(matchedTestIds)) {
+    if (!onSide(id, qaTests, qaUsers.has(studentId))) matchedTestIds.delete(id);
   }
 
   if (matchedTestIds.size === 0) return [];

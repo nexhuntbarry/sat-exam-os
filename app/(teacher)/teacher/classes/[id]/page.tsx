@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, MapPin, GraduationCap, Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
+import { getQaClassGroupIds, onSide } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
 import { formatDateTime } from "@/lib/datetime";
 
@@ -125,6 +126,7 @@ export default async function TeacherClassDetailPage({
   if (me.role !== "teacher" && me.role !== "admin") redirect("/dashboard");
 
   const { id } = await params;
+  if (!onSide(id, await getQaClassGroupIds(), me.isQa)) notFound();
   const data = await loadClass(id, me.userId, me.role === "admin");
   if (!data) notFound();
   const { group, students, perStudent } = data;

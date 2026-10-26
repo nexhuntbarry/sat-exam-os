@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
 
 const MODULE_LABEL: Record<string, string> = {
@@ -40,6 +41,12 @@ export async function GET() {
     } else if (classGroupIds.some((cg) => cgIds.includes(cg))) {
       matchedTestIds.add(a.test_id);
     }
+  }
+
+  // QA isolation: a student never sees a test from the other side.
+  const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
+  for (const id of Array.from(matchedTestIds)) {
+    if (!onSide(id, qaTests, qaUsers.has(user.userId))) matchedTestIds.delete(id);
   }
 
   if (matchedTestIds.size === 0) {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaClassGroupIds, scopeIds } from "@/lib/qa";
 
 // GET /api/teacher/teaching-mode/cohorts
 // Returns the class groups available to this teacher for the quick-
@@ -16,11 +17,12 @@ export async function GET() {
   const user = authResult;
 
   const db = getServiceClient();
+  const qaGroups = await getQaClassGroupIds();
 
   if (user.role === "admin") {
-    const { data } = await db
+    const { data } = await scopeIds(db
       .from("class_groups")
-      .select("id, name, campus, grade");
+      .select("id, name, campus, grade"), "id", qaGroups, user.isQa);
     return NextResponse.json({ cohorts: data ?? [] });
   }
 
@@ -44,10 +46,10 @@ export async function GET() {
 
   if (cohortIds.size === 0) return NextResponse.json({ cohorts: [] });
 
-  const { data: cohorts } = await db
+  const { data: cohorts } = await scopeIds(db
     .from("class_groups")
     .select("id, name, campus, grade")
-    .in("id", Array.from(cohortIds));
+    .in("id", Array.from(cohortIds)), "id", qaGroups, user.isQa);
 
   return NextResponse.json({ cohorts: cohorts ?? [] });
 }

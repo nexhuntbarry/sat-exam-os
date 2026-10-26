@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/tests/[id]/grant-retake
 // Body: { studentId: string, notes?: string }
@@ -26,6 +27,9 @@ export async function POST(
   if (!body.studentId) {
     return NextResponse.json({ error: "studentId is required" }, { status: 400 });
   }
+
+  const crossSide = await forbidCrossSide(authResult, { testIds: [testId], userIds: [body.studentId] });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
 

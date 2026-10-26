@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getTeacherTestScope } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/skill-questions?skill=Linear+equations&limit=10
@@ -46,7 +47,11 @@ export async function GET(req: Request) {
     .select("id, test_id, student_id")
     .in("status", ["Submitted", "Late"]);
   const { data: allSubs } = await subsQuery;
+  const [qaUsers, qaTests] = await Promise.all([getQaUserIds(), getQaTestIds()]);
   const subs = (allSubs ?? []).filter((s) => {
+    // QA isolation: never mix the other side's answer history in.
+    if (!onSide(s.student_id as string, qaUsers, user.isQa)) return false;
+    if (!onSide(s.test_id as string, qaTests, user.isQa)) return false;
     if (scope.isAdmin) return true;
     if (scope.directTestIds.has(s.test_id as string)) return true;
     return scope.myStudentIds.has(s.student_id as string);

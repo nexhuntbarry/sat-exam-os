@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/class-groups/[id]/teachers
 // Body: { teacherIds: string[] }
@@ -31,6 +32,9 @@ export async function POST(
     return NextResponse.json({ error: "teacherIds is required" }, { status: 400 });
   }
   const subject = normalizeSubject(body.subject);
+
+  const crossSide = await forbidCrossSide(authResult, { classGroupIds: [classGroupId], userIds: incoming });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
   const rows = incoming.map((teacherId) => ({
@@ -74,6 +78,9 @@ export async function PATCH(
   }
   const subject = normalizeSubject(body.subject);
 
+  const crossSide = await forbidCrossSide(authResult, { classGroupIds: [classGroupId], userIds: [body.teacherId] });
+  if (crossSide) return crossSide;
+
   const db = getServiceClient();
   const { error } = await db
     .from("class_group_teachers")
@@ -113,6 +120,9 @@ export async function DELETE(
   if (ids.length === 0) {
     return NextResponse.json({ error: "teacherIds is required" }, { status: 400 });
   }
+
+  const crossSide = await forbidCrossSide(authResult, { classGroupIds: [classGroupId], userIds: ids });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
   const { error, count } = await db

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { del } from "@vercel/blob";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 
 // GET /api/admin/modules/[id]
 export async function GET(
@@ -36,6 +37,8 @@ export async function PATCH(
 ) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const { id } = await params;
 
   let body: {
@@ -97,6 +100,8 @@ export async function DELETE(
 ) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
 
   const { id } = await params;
   const db = getServiceClient();

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
+import { forbidQa } from "@/lib/qa";
 import { clearImageFlag } from "@/lib/repair-ops";
 
 // POST /api/admin/questions/[id]/clear-image-flag
@@ -13,6 +14,8 @@ export async function POST(
 ) {
   const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const { id } = await params;
   const res = await clearImageFlag(id);
   return NextResponse.json(res, { status: res.ok ? 200 : 400 });

@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ArrowLeft, ExternalLink, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
+import { getCurrentUser } from "@/lib/auth";
+import { isQaEmail } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
 import DeleteStudentButton from "./DeleteStudentButton";
@@ -249,8 +251,8 @@ export default async function AdminStudentDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const student = await getStudent(id);
-  if (!student) notFound();
+  const [student, me] = await Promise.all([getStudent(id), getCurrentUser()]);
+  if (!student || isQaEmail(student.email) !== (me?.isQa ?? false)) notFound();
 
   const submissions = (await getStudentSubmissions(id)) as unknown as SubmissionRow[];
   const profile = Array.isArray(student.student_profiles)

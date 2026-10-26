@@ -1,5 +1,6 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
+import { getQaTestIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -8,16 +9,18 @@ import { ClipboardList, Users, BarChart2, AlertTriangle } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
-async function getTeacherDashboardData(userId: string) {
+async function getTeacherDashboardData(userId: string, isQa: boolean) {
   const db = getServiceClient();
+  const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
 
-  // Get assigned tests
-  const { data: assignments } = await db
+  // Get assigned tests (QA isolation: only the viewer's side)
+  const { data: rawAssignments } = await db
     .from("test_assignments")
     .select("test_id, student_ids")
     .contains("teacher_ids", JSON.stringify([userId]));
+  const assignments = (rawAssignments ?? []).filter((a) => onSide(a.test_id as string, qaTests, isQa));
 
-  if (!assignments || assignments.length === 0) {
+  if (assignments.length === 0) {
     return { tests: [], recentSubmissions: [], attentionStudents: [], stats: { assignedTests: 0, studentsCount: 0, weekSubmissions: 0 } };
   }
 
@@ -34,20 +37,20 @@ async function getTeacherDashboardData(userId: string) {
 
   // Get submissions for this week
   const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: weekSubs } = await db
+  const { data: weekSubs } = await scopeIds(db
     .from("submissions")
     .select("id, student_id, test_id, status, percentage, submitted_at, users!inner(display_name, email)")
-    .in("test_id", testIds)
+    .in("test_id", testIds), "student_id", qaUsers, isQa)
     .gte("submitted_at", oneWeekAgo)
     .in("status", ["Submitted", "Late"])
     .order("submitted_at", { ascending: false })
     .limit(10);
 
   // Get submission counts per test
-  const { data: allSubs } = await db
+  const { data: allSubs } = await scopeIds(db
     .from("submissions")
     .select("test_id, status, percentage, student_id")
-    .in("test_id", testIds);
+    .in("test_id", testIds), "student_id", qaUsers, isQa);
 
   const subMap: Record<string, { submitted: number; total: number; scores: number[] }> = {};
   for (const s of allSubs ?? []) {
@@ -119,7 +122,7 @@ export default async function TeacherDashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const { tests, recentSubmissions, attentionStudents, stats } = await getTeacherDashboardData(user.userId);
+  const { tests, recentSubmissions, attentionStudents, stats } = await getTeacherDashboardData(user.userId, user.isQa);
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">

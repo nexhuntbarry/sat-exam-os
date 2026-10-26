@@ -1,6 +1,7 @@
 import { NextResponse, after } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 import {
   repairMathForQuestion,
   repairImageForQuestion,
@@ -30,6 +31,8 @@ export async function POST(
 ) {
   const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const { id } = await params;
   let body: { note?: string } = {};
   try {

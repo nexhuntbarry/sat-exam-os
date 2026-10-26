@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/class-groups/[id]/members — add or remove student
 export async function POST(
@@ -24,6 +25,9 @@ export async function POST(
       { status: 400 }
     );
   }
+
+  const crossSide = await forbidCrossSide(authResult, { classGroupIds: [classGroupId], userIds: [body.studentId] });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
 

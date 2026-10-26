@@ -11,8 +11,9 @@ import AssignTeachersButton from "./AssignTeachersButton";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { getQaTestIds, onSide, scopeUsers } from "@/lib/qa";
 
-async function getTest(id: string) {
+async function getTest(id: string, viewerIsQa: boolean) {
   const db = getServiceClient();
 
   const { data: test, error } = await db
@@ -62,7 +63,7 @@ async function getTest(id: string) {
     classGroupIds.length > 0
       ? db.from("class_groups").select("id, name").in("id", classGroupIds)
       : Promise.resolve({ data: [] }),
-    db.from("users").select("id, display_name, email").eq("role", "teacher").order("display_name"),
+    scopeUsers(db.from("users").select("id, display_name, email").eq("role", "teacher"), viewerIsQa).order("display_name"),
     studentIds.length > 0
       ? db.from("users").select("id, display_name, email").in("id", studentIds)
       : Promise.resolve({ data: [] }),
@@ -123,7 +124,8 @@ export default async function TestDetailPage({
   if (!user || user.role !== "admin") redirect("/sign-in");
 
   const { id } = await params;
-  const test = await getTest(id);
+  if (!onSide(id, await getQaTestIds(), user.isQa)) notFound();
+  const test = await getTest(id, user.isQa);
   if (!test) notFound();
 
   // Eligible modules for the Edit modal — same predicate as the

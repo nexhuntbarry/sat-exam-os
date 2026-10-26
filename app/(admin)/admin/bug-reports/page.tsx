@@ -6,6 +6,7 @@ import PageIntro from "@/components/shared/PageIntro";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
 import { formatDateTime } from "@/lib/datetime";
 import ResolveButton from "./ResolveButton";
+import { getQaUserIds, scopeIds } from "@/lib/qa";
 
 interface Search {
   status?: "open" | "resolved" | "all";
@@ -22,12 +23,12 @@ export default async function BugReportsPage({
   const filter = sp.status ?? "open";
 
   const db = getServiceClient();
-  let q = db
+  let q = scopeIds(db
     .from("bug_reports")
     .select(
       "id, status, note, created_at, resolved_at, reporter_user_id, question_id, module_id, " +
         "questions(original_question_number, parsing_status, parsing_notes, modules(module_name))",
-    )
+    ), "reporter_user_id", await getQaUserIds(), auth.isQa, true)
     .order("created_at", { ascending: false })
     .limit(200);
   if (filter !== "all") q = q.eq("status", filter);
