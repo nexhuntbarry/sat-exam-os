@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { getTestSections } from "@/lib/teacher-access";
-import { getQaTestIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
+import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { getQaUserIds, onSide, scopeIds } from "@/lib/qa";
 
 // GET /api/teacher/tests
 export async function GET() {
@@ -12,125 +12,21 @@ export async function GET() {
 
   const db = getServiceClient();
 
-  // Visible tests for this teacher = direct assignment ∪ "my class
-  // students took it". teacher_ids is no longer required.
-  const directTestIds = new Set<string>();
-  const classTestIds = new Set<string>();
-  const myStudentIds = new Set<string>();
-  let teacherSubjects: (string | null)[] = [];
-  const directAssignments: Array<{
-    test_id: string;
-    student_ids: string[] | null;
-    class_group_ids: string[] | null;
-  }> = [];
-
-  if (user.role === "admin") {
-    const { data: all, error } = await db
-      .from("test_assignments")
-      .select("test_id, student_ids, class_group_ids");
-    if (error) {
-      console.error("[teacher/tests/get admin]", error);
-      return NextResponse.json({ error: "Failed to fetch assignments" }, { status: 500 });
-    }
-    for (const a of all ?? []) {
-      directTestIds.add(a.test_id as string);
-      directAssignments.push({
-        test_id: a.test_id as string,
-        student_ids: (a.student_ids as string[] | null) ?? [],
-        class_group_ids: (a.class_group_ids as string[] | null) ?? [],
-      });
-    }
-  } else {
-    const { data: directly, error: assignError } = await db
-      .from("test_assignments")
-      .select("test_id, student_ids, class_group_ids")
-      .contains("teacher_ids", JSON.stringify([user.userId]));
-    if (assignError) {
-      console.error("[teacher/tests/get]", assignError);
-      return NextResponse.json({ error: "Failed to fetch assignments" }, { status: 500 });
-    }
-    for (const a of directly ?? []) {
-      directTestIds.add(a.test_id as string);
-      directAssignments.push({
-        test_id: a.test_id as string,
-        student_ids: (a.student_ids as string[] | null) ?? [],
-        class_group_ids: (a.class_group_ids as string[] | null) ?? [],
-      });
-    }
-
-    const { data: myGroups } = await db
-      .from("class_group_teachers")
-      .select("class_group_id, subject")
-      .eq("teacher_id", user.userId);
-    const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
-    teacherSubjects = (myGroups ?? []).map((g) => (g.subject as string | null) ?? null);
-    if (groupIds.length > 0) {
-      const { data: members } = await db
-        .from("class_group_members")
-        .select("student_id")
-        .in("class_group_id", groupIds);
-      for (const m of members ?? []) myStudentIds.add(m.student_id as string);
-
-      // Also surface tests ASSIGNED to the teacher's class groups, even
-      // before any student has taken them (so a newly-added class teacher
-      // sees the class's tests, not only ones with submissions).
-      const { data: groupAssigned } = await db
-        .from("test_assignments")
-        .select("test_id")
-        .overlaps("class_group_ids", groupIds);
-      for (const a of groupAssigned ?? []) classTestIds.add(a.test_id as string);
-
-      // AND tests assigned to my class students INDIVIDUALLY (student_ids),
-      // not via a class_group_ids list — the common case when an admin
-      // assigns a test to students by name. Without this, a class teacher
-      // can't see such a test until a student actually submits it.
-      if (myStudentIds.size > 0) {
-        const { data: studentAssigned } = await db
-          .from("test_assignments")
-          .select("test_id")
-          .overlaps("student_ids", Array.from(myStudentIds));
-        for (const a of studentAssigned ?? []) classTestIds.add(a.test_id as string);
-      }
-    }
+  // Visible tests = direct assignment ∪ tests reaching the teacher via
+  // their classes (assigned to the class / its students, or taken by
+  // them), subject-scoped. Shared with My Tests and the dashboard.
+  let scope;
+  try {
+    scope = await getTeacherTestScope(db, user);
+  } catch (err) {
+    console.error("[teacher/tests/get scope]", err);
+    return NextResponse.json({ error: "Failed to fetch assignments" }, { status: 500 });
   }
-
-  // Tests where any of my class students have a submission.
-  if (user.role !== "admin" && myStudentIds.size > 0) {
-    const { data: studentSubs } = await db
-      .from("submissions")
-      .select("test_id")
-      .in("student_id", Array.from(myStudentIds));
-    for (const s of studentSubs ?? []) classTestIds.add(s.test_id as string);
-  }
-
-  const allVisibleTestIds = new Set<string>([
-    ...Array.from(directTestIds),
-    ...Array.from(classTestIds),
-  ]);
-
-  // QA isolation: drop tests from the other side.
-  const qaTests = await getQaTestIds();
-  for (const id of Array.from(allVisibleTestIds)) {
-    if (!onSide(id, qaTests, user.isQa)) allVisibleTestIds.delete(id);
-  }
-
-  // Subject scoping: a class teacher pinned to a subject only sees that
-  // subject's tests — including any they're directly on teacher_ids for
-  // (a class teacher is always subject-scoped, matching getTeacherTestAccess).
-  // teacherSubjects is empty for a non-class teacher, which lifts the filter.
-  const allowAllSubjects = teacherSubjects.length === 0 || teacherSubjects.some((s) => !s);
-  if (!allowAllSubjects && allVisibleTestIds.size > 0) {
-    const sections = await getTestSections(db, Array.from(allVisibleTestIds));
-    for (const id of Array.from(allVisibleTestIds)) {
-      const sec = sections.get(id) ?? null;
-      if (sec && !teacherSubjects.includes(sec)) allVisibleTestIds.delete(id);
-    }
-  }
-  if (allVisibleTestIds.size === 0) {
+  if (scope.testIds.size === 0) {
     return NextResponse.json({ data: [] });
   }
 
-  const testIds = Array.from(allVisibleTestIds);
+  const testIds = Array.from(scope.testIds);
 
   const { data: tests, error: testsError } = await db
     .from("tests")
@@ -147,58 +43,111 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to fetch tests" }, { status: 500 });
   }
 
-  // Build assignment map from direct assignments only. Class-derived
-  // tests get an empty assignment shell so the UI still has the shape.
+  const { data: assignments, error: assignError } = await db
+    .from("test_assignments")
+    .select("test_id, student_ids, class_group_ids")
+    .in("test_id", testIds);
+  if (assignError) {
+    console.error("[teacher/tests/get assignments]", assignError);
+    return NextResponse.json({ error: "Failed to fetch assignments" }, { status: 500 });
+  }
   const assignMap: Record<string, { student_ids: string[]; class_group_ids: string[] }> = {};
-  for (const a of directAssignments) {
-    assignMap[a.test_id] = {
-      student_ids: a.student_ids ?? [],
-      class_group_ids: a.class_group_ids ?? [],
+  for (const a of assignments ?? []) {
+    assignMap[a.test_id as string] = {
+      student_ids: (a.student_ids as string[] | null) ?? [],
+      class_group_ids: (a.class_group_ids as string[] | null) ?? [],
     };
   }
 
-  // Submission counts scoped per visibility track. Direct tests count
-  // every submission (legacy global view); class-derived tests count
-  // only my class students.
-  let submissionQuery = scopeIds(db
-    .from("submissions")
-    .select("test_id, student_id, status, score")
-    .in("test_id", testIds), "student_id", await getQaUserIds(), user.isQa);
-  const { data: subData } = await submissionQuery;
-
-  const subMap: Record<string, { total: number; done: number; scores: number[]; students: Set<string> }> = {};
-  for (const s of subData ?? []) {
-    const tid = s.test_id as string;
-    const sid = s.student_id as string;
-    const isDirect = directTestIds.has(tid);
-    if (!isDirect && !myStudentIds.has(sid)) continue; // class-scoped guard
-    const slot = (subMap[tid] ??= { total: 0, done: 0, scores: [], students: new Set() });
-    slot.total++;
-    slot.students.add(sid);
-    if (s.status === "Submitted" || s.status === "Late") {
-      slot.done++;
-      if (s.score != null) slot.scores.push(Number(s.score));
+  // Roster per test = student_ids ∪ class_group members, limited to my
+  // students unless I see the whole test.
+  const groupIds = Array.from(
+    new Set(Object.values(assignMap).flatMap((a) => a.class_group_ids)),
+  );
+  const membersByGroup = new Map<string, string[]>();
+  if (groupIds.length > 0) {
+    const { data: members, error: memberError } = await db
+      .from("class_group_members")
+      .select("class_group_id, student_id")
+      .in("class_group_id", groupIds);
+    if (memberError) {
+      console.error("[teacher/tests/get members]", memberError);
+      return NextResponse.json({ error: "Failed to fetch assignments" }, { status: 500 });
     }
+    for (const m of members ?? []) {
+      const list = membersByGroup.get(m.class_group_id as string) ?? [];
+      list.push(m.student_id as string);
+      membersByGroup.set(m.class_group_id as string, list);
+    }
+  }
+  const qaUsers = await getQaUserIds();
+
+  // Submission counts: one per attempt (two-module attempts share a
+  // session_id), only my class students unless I see the whole test.
+  const { data: subData, error: subError } = await scopeIds(db
+    .from("submissions")
+    .select("id, test_id, student_id, status, correct_count, total_questions, percentage, session_id")
+    .in("test_id", testIds), "student_id", qaUsers, user.isQa);
+  if (subError) {
+    console.error("[teacher/tests/get submissions]", subError);
+    return NextResponse.json({ error: "Failed to fetch submissions" }, { status: 500 });
+  }
+
+  type SubRow = {
+    id: string;
+    test_id: string;
+    student_id: string;
+    status: string;
+    correct_count: number | null;
+    total_questions: number | null;
+    percentage: number | string | null;
+    session_id: string | null;
+  };
+  const attemptsByTest = new Map<string, Map<string, SubRow[]>>();
+  for (const s of (subData ?? []) as SubRow[]) {
+    if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
+    const attempts = attemptsByTest.get(s.test_id) ?? new Map<string, SubRow[]>();
+    const key = s.session_id ?? s.id;
+    attempts.set(key, [...(attempts.get(key) ?? []), s]);
+    attemptsByTest.set(s.test_id, attempts);
   }
 
   const enriched = (tests ?? []).map((t) => {
     const assign = assignMap[t.id] ?? { student_ids: [], class_group_ids: [] };
-    const subs = subMap[t.id] ?? { total: 0, done: 0, scores: [], students: new Set() };
-    const avgScore = subs.scores.length > 0 ? subs.scores.reduce((a, b) => a + b, 0) / subs.scores.length : null;
-    const isDirect = directTestIds.has(t.id);
-    // For class-scoped (indirect) tests, the "total students" we count
-    // = students of mine who have a submission on this test. For
-    // direct assignment, fall back to assignment.student_ids.length.
-    const totalStudents = isDirect ? assign.student_ids.length : subs.students.size;
+    const all = seesAllStudents(scope, t.id);
+    const roster = new Set<string>();
+    for (const sid of [
+      ...assign.student_ids,
+      ...assign.class_group_ids.flatMap((g) => membersByGroup.get(g) ?? []),
+    ]) {
+      if (!onSide(sid, qaUsers, user.isQa)) continue;
+      if (all || scope.myStudentIds.has(sid)) roster.add(sid);
+    }
+    let submittedCount = 0;
+    const pcts: number[] = [];
+    for (const rows of (attemptsByTest.get(t.id) ?? new Map<string, SubRow[]>()).values()) {
+      if (!rows.every((r) => r.status === "Submitted" || r.status === "Late")) continue;
+      submittedCount++;
+      const correct = rows.reduce((n, r) => n + (r.correct_count ?? 0), 0);
+      const total = rows.reduce((n, r) => n + (r.total_questions ?? 0), 0);
+      if (total > 0) pcts.push((correct / total) * 100);
+      else if (rows[0].percentage != null) pcts.push(Number(rows[0].percentage));
+    }
+    const avgScore = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
     return {
       ...t,
-      assignment: assign,
-      submittedCount: subs.done,
-      totalStudents,
+      // Don't expose other classes' rosters to a class-scoped teacher.
+      assignment: all
+        ? assign
+        : {
+            student_ids: assign.student_ids.filter((sid) => scope.myStudentIds.has(sid)),
+            class_group_ids: assign.class_group_ids.filter((g) => scope.myGroupIds.has(g)),
+          },
+      submittedCount,
+      totalStudents: roster.size,
       avgScore,
     };
   });
-  void submissionQuery;
 
   return NextResponse.json({ data: enriched });
 }

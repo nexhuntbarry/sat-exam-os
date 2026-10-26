@@ -78,7 +78,7 @@ export async function GET(
   // One query: get all answer records for these questions in this test's submissions
   let submissionIdsQuery = db
     .from("submissions")
-    .select("id")
+    .select("id, session_id")
     .eq("test_id", testId)
     .in("status", ["Submitted", "Late"]);
   if (access.mode === "class" && access.studentAllowlist) {
@@ -91,9 +91,14 @@ export async function GET(
   const { data: submissionIds } = await submissionIdsQuery;
 
   const subIds = (submissionIds ?? []).map((s) => s.id);
-  const totalSubmissions = subIds.length;
+  // Attempts, not module rows: a two-module attempt is two submissions
+  // sharing one session_id. Per-question denominators below use the
+  // number of answer records for that question instead.
+  const totalSubmissions = new Set(
+    (submissionIds ?? []).map((s) => (s.session_id as string | null) ?? s.id),
+  ).size;
 
-  if (totalSubmissions === 0) {
+  if (subIds.length === 0) {
     return NextResponse.json({
       questions: questions.map((q) => ({
         questionId: q.id,
@@ -169,6 +174,7 @@ export async function GET(
 
   // Aggregate per question
   const arMap: Record<string, {
+    answered: number;
     correctCount: number;
     wrongCount: number;
     blankCount: number;
@@ -181,9 +187,10 @@ export async function GET(
   for (const ar of answerRecords) {
     const qid = ar.question_id;
     if (!arMap[qid]) {
-      arMap[qid] = { correctCount: 0, wrongCount: 0, blankCount: 0, totalTime: 0, timeCount: 0, choiceDist: {}, wrongStudentNames: new Set() };
+      arMap[qid] = { answered: 0, correctCount: 0, wrongCount: 0, blankCount: 0, totalTime: 0, timeCount: 0, choiceDist: {}, wrongStudentNames: new Set() };
     }
     const entry = arMap[qid];
+    entry.answered++;
     const displayName = ar.submissions?.users?.display_name ?? null;
     if (ar.is_correct) {
       entry.correctCount++;
@@ -226,7 +233,9 @@ export async function GET(
       domain: q.domain,
       skill: q.skill,
       explanation: q.explanation,
-      totalSubmissions,
+      // Students who were served this question (an adaptive Module 2
+      // question is only seen on one track).
+      totalSubmissions: agg?.answered ?? 0,
       correctCount: agg?.correctCount ?? 0,
       wrongCount: agg?.wrongCount ?? 0,
       blankCount: agg?.blankCount ?? 0,
@@ -240,7 +249,8 @@ export async function GET(
   });
 
   // Summary cards
-  const sorted = [...questionRows].sort((a, b) => {
+  const answeredRows = questionRows.filter((q) => q.totalSubmissions > 0);
+  const sorted = [...answeredRows].sort((a, b) => {
     const ar = a.totalSubmissions > 0 ? a.correctCount / a.totalSubmissions : 0;
     const br = b.totalSubmissions > 0 ? b.correctCount / b.totalSubmissions : 0;
     return ar - br;
@@ -249,10 +259,13 @@ export async function GET(
   const hardest = sorted[0] ?? null;
   const easiest = sorted[sorted.length - 1] ?? null;
   const mostFlagged = [...questionRows].sort((a, b) => b.flaggedCount - a.flaggedCount)[0] ?? null;
+  // Overall % correct across every answered question — equals the mean
+  // attempt score on the Results page when every attempt sees the same
+  // number of questions.
+  const answeredTotal = answeredRows.reduce((n, q) => n + q.totalSubmissions, 0);
   const avgClassScore =
-    totalSubmissions > 0
-      ? questionRows.reduce((sum, q) => sum + (q.correctCount / (q.totalSubmissions || 1)), 0) /
-        questionRows.length * 100
+    answeredTotal > 0
+      ? (answeredRows.reduce((n, q) => n + q.correctCount, 0) / answeredTotal) * 100
       : null;
 
   return NextResponse.json({

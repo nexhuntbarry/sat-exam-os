@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
+import { roleError } from "../../../_shared";
 
 // POST /api/admin/class-groups/[id]/teachers
 // Body: { teacherIds: string[] }
@@ -37,6 +38,9 @@ export async function POST(
   if (crossSide) return crossSide;
 
   const db = getServiceClient();
+  const roleErr = await roleError(db, incoming, "teacher");
+  if (roleErr) return NextResponse.json({ error: roleErr }, { status: 400 });
+
   const rows = incoming.map((teacherId) => ({
     class_group_id: classGroupId,
     teacher_id: teacherId,

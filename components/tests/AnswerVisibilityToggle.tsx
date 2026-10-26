@@ -40,6 +40,10 @@ export default function AnswerVisibilityToggle({
       }
       router.refresh();
       return true;
+    } catch {
+      // Network failure (offline) — caller reverts the switch.
+      alert("Couldn't reach the server. Check your connection and try again.");
+      return false;
     } finally {
       setBusy(false);
     }

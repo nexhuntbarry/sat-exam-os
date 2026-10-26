@@ -2,8 +2,10 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import TestTakingClient from "./TestTakingClient";
+import Module2Intro from "./Module2Intro";
+import { isModule2Track, scopeToStudentQuestionSet } from "@/lib/student-exam";
 
-async function getActiveSubmission(testId: string, studentId: string) {
+async function getActiveSubmission(testId: string, studentId: string, startModule2: boolean) {
   const db = getServiceClient();
 
   const { data: submission } = await db
@@ -61,26 +63,16 @@ async function getActiveSubmission(testId: string, studentId: string) {
     }
   }
 
-  let questionQuery = db
-    .from("questions")
-    .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, image_alts")
-    .eq("module_id", activeModuleId)
-    // Students only see Approved. The auto-promote-high-confidence
-    // pass moved the bulk of the question bank into Approved on
-    // 2026-05-30; remaining Draft and Needs Review rows are awaiting
-    // human review and must not reach a graded attempt.
-    .eq("parsing_status", "Approved")
-    .order("original_question_number", { ascending: true });
-
-  // tests.question_ids only filters the legacy single-module path.
-  if (
-    !test.is_adaptive &&
-    test.question_ids &&
-    Array.isArray(test.question_ids) &&
-    test.question_ids.length > 0
-  ) {
-    questionQuery = questionQuery.in("id", test.question_ids);
-  }
+  // Students only see Approved (scopeToStudentQuestionSet). Remaining
+  // Draft and Needs Review rows are awaiting human review and must not
+  // reach a graded attempt — submit/cron grade the very same set.
+  const questionQuery = scopeToStudentQuestionSet(
+    db
+      .from("questions")
+      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, image_alts")
+      .eq("module_id", activeModuleId),
+    test,
+  ).order("original_question_number", { ascending: true });
 
   const { data: questions } = await questionQuery;
 
@@ -90,28 +82,63 @@ async function getActiveSubmission(testId: string, studentId: string) {
   // Counting down from the handoff timestamp would surface "0 minutes
   // left" before the student starts. We solve this by stamping a
   // separate `module2_started_at` into `submission.metadata` on the
-  // FIRST take-page render. Subsequent renders reuse it, so a refresh
+  // first take-page render after the student presses "Start Module 2"
+  // on the transition screen. Subsequent renders reuse it, so a refresh
   // doesn't reset the timer — the cheating window is closed.
-  const isModule2 =
-    submission.adaptive_track === "module_2" ||
-    submission.adaptive_track === "module_2_easy" ||
-    submission.adaptive_track === "module_2_hard";
-  const submissionMetadata = (submission.metadata ?? {}) as Record<string, unknown>;
+  const isModule2 = isModule2Track(submission.adaptive_track);
+  let submissionMetadata = (submission.metadata ?? {}) as Record<string, unknown>;
   let effectiveStartedAtIso = submission.started_at as string;
+  // Module 1 → Module 2 transition screen: the clock is only stamped once
+  // the student presses "Start Module 2" (which reloads with ?start=1).
+  // A reload after that finds the stamp and goes straight to the test.
+  let awaitingModuleStart = false;
   if (isModule2) {
     const existing = submissionMetadata.module_2_started_at as string | undefined;
     if (existing) {
       effectiveStartedAtIso = existing;
+    } else if (!startModule2) {
+      awaitingModuleStart = true;
+      effectiveStartedAtIso = new Date().toISOString();
     } else {
+      // Bump metadata.answers_version with the stamp and guard on the
+      // version we read (same optimistic check the autosave PATCH uses),
+      // so a concurrent autosave can't overwrite metadata without the
+      // stamp — which would silently restart the Module 2 clock.
       const stamp = new Date().toISOString();
-      effectiveStartedAtIso = stamp;
-      await db
+      const version =
+        typeof submissionMetadata.answers_version === "number"
+          ? submissionMetadata.answers_version
+          : 0;
+      let stampQuery = db
         .from("submissions")
         .update({
-          metadata: { ...submissionMetadata, module_2_started_at: stamp },
+          metadata: {
+            ...submissionMetadata,
+            module_2_started_at: stamp,
+            answers_version: version + 1,
+          },
         })
         .eq("id", submission.id)
         .eq("status", "In Progress");
+      stampQuery = version === 0
+        ? stampQuery.is("metadata->answers_version", null)
+        : stampQuery.eq("metadata->answers_version", version);
+      const { data: stamped } = await stampQuery.select("id, metadata");
+      if (stamped && stamped.length > 0) {
+        effectiveStartedAtIso = stamp;
+        submissionMetadata = (stamped[0].metadata ?? {}) as Record<string, unknown>;
+      } else {
+        // Lost a race with an autosave or a parallel render; use whatever
+        // is stored now (a parallel render may have stamped first).
+        const { data: fresh } = await db
+          .from("submissions")
+          .select("metadata")
+          .eq("id", submission.id)
+          .maybeSingle();
+        submissionMetadata = (fresh?.metadata ?? submissionMetadata) as Record<string, unknown>;
+        const freshStamp = submissionMetadata.module_2_started_at as string | undefined;
+        effectiveStartedAtIso = freshStamp ?? stamp;
+      }
     }
   }
 
@@ -127,23 +154,20 @@ async function getActiveSubmission(testId: string, studentId: string) {
   const timeRemainingSeconds = Math.max(0, timeLimitSeconds - elapsedSeconds);
 
   // Label the active module for the take UI so the student knows
-  // they're on Module 2 (and which track) when the page reloads after
-  // the route picker hands off.
+  // they're on Module 2 when the page reloads after the route picker
+  // hands off. The easy/hard track is never shown to students (like
+  // Bluebook) — it's visible to teachers only.
   const moduleLabel = submission.adaptive_track === "module_1"
     ? "Module 1"
-    : submission.adaptive_track === "module_2"
+    : isModule2
     ? "Module 2"
-    : submission.adaptive_track === "module_2_easy"
-    ? "Module 2 · Easy"
-    : submission.adaptive_track === "module_2_hard"
-    ? "Module 2 · Hard"
     : null;
 
   return {
     submission: {
       id: submission.id,
       answers: (submission.answers ?? {}) as Record<string, string>,
-      metadata: (submission.metadata ?? {}) as Record<string, unknown>,
+      metadata: submissionMetadata,
     },
     test: {
       id: test.id,
@@ -161,22 +185,37 @@ async function getActiveSubmission(testId: string, studentId: string) {
     },
     questions: questions ?? [],
     timeRemainingSeconds,
+    awaitingModuleStart,
   };
 }
 
 export default async function TestTakingPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ start?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
-  const data = await getActiveSubmission(id, user.userId);
+  const { start } = await searchParams;
+  const data = await getActiveSubmission(id, user.userId, start === "1");
 
   if (!data) {
     redirect(`/student/tests/${id}`);
+  }
+
+  if (data.awaitingModuleStart) {
+    return (
+      <Module2Intro
+        testId={id}
+        testName={data.test.name}
+        questionCount={data.questions.length}
+        timeLimitMinutes={data.test.isUntimed ? null : data.test.timeLimitMinutes}
+      />
+    );
   }
 
   return (

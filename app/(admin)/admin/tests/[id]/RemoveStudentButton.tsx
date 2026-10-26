@@ -12,6 +12,8 @@ interface Props {
   submissionCount: number;
   /** True when at least one of them is graded (Submitted / Late). */
   hasGradedSubmission: boolean;
+  /** Still sees the test through an assigned class group after removal. */
+  visibleViaGroup: boolean;
 }
 
 export default function RemoveStudentButton({
@@ -20,12 +22,17 @@ export default function RemoveStudentButton({
   studentName,
   submissionCount,
   hasGradedSubmission,
+  visibleViaGroup,
 }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   // An unfinished attempt is almost always junk once the test is taken
   // away, so default to deleting it; graded results default to kept.
-  const [deleteSubs, setDeleteSubs] = useState(submissionCount > 0 && !hasGradedSubmission);
+  // A student who still sees the test via a class group keeps their work
+  // (the API refuses to delete it anyway).
+  const [deleteSubs, setDeleteSubs] = useState(
+    submissionCount > 0 && !hasGradedSubmission && !visibleViaGroup,
+  );
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   // Removed, but the modal stays up to show the class-group warning.
@@ -94,7 +101,13 @@ export default function RemoveStudentButton({
                 <span className="font-semibold">{studentName}</span> will no longer see this test on
                 their dashboard.
               </p>
-              {submissionCount > 0 && (
+              {visibleViaGroup && (
+                <p className="text-mid-gray text-xs">
+                  {studentName} is in a class group assigned to this test, so they will still see it
+                  after this. Their submissions are kept.
+                </p>
+              )}
+              {submissionCount > 0 && !visibleViaGroup && (
                 <label className="flex items-start gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -114,7 +127,7 @@ export default function RemoveStudentButton({
                 </label>
               )}
               {message && (
-                <p className={done ? "text-warm-amber-dark text-xs" : "text-status-error text-xs"}>
+                <p className={done ? "text-mid-gray text-xs" : "text-status-error text-xs"}>
                   {message}
                 </p>
               )}

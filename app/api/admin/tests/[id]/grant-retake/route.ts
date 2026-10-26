@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
+import { roleError } from "../../../_shared";
 
 // POST /api/admin/tests/[id]/grant-retake
 // Body: { studentId: string, notes?: string }
@@ -32,6 +33,34 @@ export async function POST(
   if (crossSide) return crossSide;
 
   const db = getServiceClient();
+
+  const roleErr = await roleError(db, [body.studentId], "student");
+  if (roleErr) return NextResponse.json({ error: roleErr }, { status: 400 });
+
+  // Only students who can actually see the test: individually assigned or
+  // a member of an assigned class group.
+  const { data: assignment } = await db
+    .from("test_assignments")
+    .select("student_ids, class_group_ids")
+    .eq("test_id", testId)
+    .maybeSingle();
+  let assigned = ((assignment?.student_ids as string[] | null) ?? []).includes(body.studentId);
+  const cgIds = (assignment?.class_group_ids as string[] | null) ?? [];
+  if (!assigned && cgIds.length > 0) {
+    const { data: member } = await db
+      .from("class_group_members")
+      .select("student_id")
+      .in("class_group_id", cgIds)
+      .eq("student_id", body.studentId)
+      .limit(1);
+    assigned = (member ?? []).length > 0;
+  }
+  if (!assigned) {
+    return NextResponse.json(
+      { error: "This student is not assigned to this test" },
+      { status: 400 },
+    );
+  }
 
   const { data: existing } = await db
     .from("test_retake_grants")

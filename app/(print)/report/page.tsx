@@ -5,6 +5,7 @@ import { getQaUserIds, onSide } from "@/lib/qa";
 import { formatDate } from "@/lib/datetime";
 import PrintableReport from "@/components/analytics/PrintableReport";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import { getTeacherSubjectsForStudent, inSubjects } from "@/lib/teacher-access";
 
 export const dynamic = "force-dynamic";
 
@@ -22,22 +23,16 @@ export default async function ReportPage({
   const db = getServiceClient();
 
   let studentId = me.userId;
+  // Teacher → only the subject(s) they teach this student (null = all).
+  let subjects: string[] | null = null;
   if (me.role === "admin" && sp.student) {
     studentId = sp.student;
   } else if (me.role === "teacher" && sp.student) {
     // Teacher may only print a student who shares one of their classes.
-    const { data: myClasses } = await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", me.userId);
-    const ids = (myClasses ?? []).map((c) => c.class_group_id);
-    if (ids.length) {
-      const { data: member } = await db
-        .from("class_group_members")
-        .select("id")
-        .eq("student_id", sp.student)
-        .in("class_group_id", ids)
-        .maybeSingle();
-      if (member) studentId = sp.student;
-      else redirect("/teacher");
-    } else redirect("/teacher");
+    const scope = await getTeacherSubjectsForStudent(db, me.userId, sp.student);
+    if (!scope.teaches) redirect("/teacher");
+    studentId = sp.student;
+    subjects = scope.subjects;
   } else if (me.role !== "student" && !sp.student) {
     // teacher/admin with no target → nothing to show
     redirect(me.role === "admin" ? "/admin" : "/teacher");
@@ -49,10 +44,14 @@ export default async function ReportPage({
   }
 
   const { data: student } = await db.from("users").select("display_name, email").eq("id", studentId).maybeSingle();
-  const [breakdownRows, occasions] = await Promise.all([
+  const [allBreakdownRows, allOccasions] = await Promise.all([
     getStudentBreakdownRows(studentId),
     getStudentProgressOccasions(studentId),
   ]);
+  const breakdownRows = allBreakdownRows.filter((r) => inSubjects(r.section, subjects));
+  const occasions = allOccasions
+    .map((o) => ({ ...o, rows: o.rows.filter((r) => inSubjects(r.section, subjects)) }))
+    .filter((o) => o.rows.length > 0 && inSubjects(o.section, subjects));
 
   if (breakdownRows.length === 0) {
     return (

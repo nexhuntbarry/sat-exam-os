@@ -23,12 +23,44 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const body = await req.json();
+  let body: { note_type?: unknown; note_body?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
   const noteType = body.note_type as string;
   const noteBody = String(body.note_body ?? "");
 
   if (!["class_review", "private_note", "observation"].includes(noteType)) {
     return NextResponse.json({ error: "Invalid note_type" }, { status: 400 });
+  }
+
+  // The question must belong to this test (its question_ids, or one of its
+  // modules) — otherwise an unknown id hits the FK and 500s, and another
+  // test's question would be silently accepted.
+  const [{ data: test }, { data: question }] = await Promise.all([
+    db
+      .from("tests")
+      .select("question_ids, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
+      .eq("id", testId)
+      .maybeSingle(),
+    db.from("questions").select("id, module_id").eq("id", questionId).maybeSingle(),
+  ]);
+  const testQuestionIds = (test?.question_ids as string[] | null) ?? [];
+  const testModuleIds = [
+    test?.module_id,
+    test?.module_2_id,
+    test?.module_1_id,
+    test?.module_2_easy_id,
+    test?.module_2_hard_id,
+  ].filter(Boolean);
+  const inTest =
+    !!question &&
+    (testQuestionIds.includes(question.id as string) ||
+      testModuleIds.includes(question.module_id));
+  if (!inTest) {
+    return NextResponse.json({ error: "Question is not part of this test" }, { status: 404 });
   }
 
   const { error } = await db.from("test_teacher_notes").upsert(

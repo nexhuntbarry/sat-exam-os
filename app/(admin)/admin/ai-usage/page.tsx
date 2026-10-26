@@ -86,7 +86,7 @@ export default async function AiUsagePage() {
           <p className="text-soft-mute text-sm text-center py-10">No usage data yet.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Route</th>

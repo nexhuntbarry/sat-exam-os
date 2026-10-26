@@ -1,4 +1,5 @@
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { cache } from "react";
+import { auth } from "@clerk/nextjs/server";
 import { getServiceClient } from "./supabase";
 import type { UserRole } from "./clerk-helpers";
 import { isQaEmail } from "./qa";
@@ -19,16 +20,19 @@ export interface CurrentUser {
 }
 
 /**
- * Returns the current authenticated user merging Clerk + Supabase data.
+ * Returns the current authenticated user: Clerk session (auth(), which
+ * only verifies the session token locally) + the Supabase users row.
+ * Deliberately does NOT call Clerk's currentUser() — that is a Backend
+ * API request, rate-limited per instance, and a class autosaving at once
+ * exhausted it (every save/submit 500'd). Everything we need lives in
+ * the users table. Wrapped in React cache() so a layout + page + nested
+ * server components share one lookup per request.
  * Uses service_role to bypass RLS.
  * Returns null if not authenticated or not found in Supabase.
  */
-export async function getCurrentUser(): Promise<CurrentUser | null> {
+export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
   const { userId: clerkId } = await auth();
   if (!clerkId) return null;
-
-  const clerkUser = await currentUser();
-  if (!clerkUser) return null;
 
   const supabase = getServiceClient();
   const { data: user, error } = await supabase
@@ -54,4 +58,4 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     canReviewQuestions: role === "admin" || Boolean(user.can_review_questions),
     isQa: isQaEmail(user.email),
   };
-}
+});

@@ -24,6 +24,11 @@ const cases: Case[] = [
     input: "the slope is 1/7 here",
     expected: "the slope is $1/7$ here",
   },
+  {
+    name: "strips stray backslash-space before dollar sign (L-06/H-16)",
+    input: "costs \\ $5.00 per item",
+    expected: "costs \\$5.00 per item",
+  },
 ];
 
 let pass = 0;

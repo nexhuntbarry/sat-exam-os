@@ -8,6 +8,7 @@ import { isQaEmail } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
 import DeleteStudentButton from "./DeleteStudentButton";
+import StudentStatusButton from "./StudentStatusButton";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
@@ -316,6 +317,11 @@ export default async function AdminStudentDetailPage({
             notes: profile?.notes ?? null,
           }}
         />
+        <StudentStatusButton
+          studentId={student.id}
+          studentName={student.display_name ?? student.email}
+          status={student.account_status}
+        />
         <DeleteStudentButton
           studentId={student.id}
           studentName={student.display_name ?? student.email}
@@ -397,7 +403,7 @@ export default async function AdminStudentDetailPage({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Test</th>

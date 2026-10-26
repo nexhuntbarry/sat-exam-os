@@ -181,6 +181,39 @@ async function cropRegion(
   }
 }
 
+// A GFM table needs a header row of pipes AND a dash separator row
+// (| --- | --- |). A single line with pipes is not enough.
+export function hasMarkdownTable(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (!lines[i].includes("|")) continue;
+    const sep = lines[i + 1].trim();
+    if (/^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?$/.test(sep)) return true;
+  }
+  return false;
+}
+
+const TABLE_ALT = /\btable\b/i;
+const NON_TABLE_FIGURE_ALT = /\b(graph|plot|scatter|diagram|figure|chart|number line|triangle|circle|rectangle|polygon|geometr|coordinate|histogram|bar|curve|parabola|map|drawing|photo|image of)/i;
+const FULL_PAGE_FALLBACK_ALT = /full-page fallback/i;
+
+/**
+ * True when a region would just screenshot a table the parser already rebuilt
+ * as a Markdown table in the stem — the student would see the table twice.
+ * Real figures (graphs/diagrams) on the same question are kept.
+ */
+export function isRedundantTableRegion(
+  q: Pick<ParsedQuestion, "question_text" | "has_image">,
+  region: { alt?: string | null },
+): boolean {
+  if (!hasMarkdownTable(q.question_text)) return false;
+  const alt = region.alt ?? "";
+  if (TABLE_ALT.test(alt) && !NON_TABLE_FIGURE_ALT.test(alt)) return true;
+  // Full-page fallback stamped only because of has_table → the table is in the text.
+  return FULL_PAGE_FALLBACK_ALT.test(alt) && !q.has_image;
+}
+
 /**
  * Main entry. Renders + crops + uploads in one pass.
  *
@@ -195,10 +228,13 @@ export async function extractAndUploadQuestionImages(
   const errors: string[] = [];
   const byQuestion = new Map<number, { urls: string[]; alts: string[] }>();
 
-  // Collect every unique page referenced by any image_region.
+  // Drop regions that only re-screenshot a table already in the stem as
+  // Markdown, then collect every unique page referenced by any image_region.
+  const regionsFor = (q: ParsedQuestion) =>
+    (q.image_regions ?? []).filter((r) => !isRedundantTableRegion(q, r));
   const pageSet = new Set<number>();
   for (const q of questions) {
-    for (const r of q.image_regions ?? []) {
+    for (const r of regionsFor(q)) {
       if (Number.isFinite(r.page) && r.page >= 1) pageSet.add(Math.floor(r.page));
     }
   }
@@ -231,7 +267,7 @@ export async function extractAndUploadQuestionImages(
 
   let totalUploaded = 0;
   for (const q of questions) {
-    const regions = q.image_regions ?? [];
+    const regions = regionsFor(q);
     if (regions.length === 0) continue;
     const urls: string[] = [];
     const alts: string[] = [];

@@ -1,9 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, ChevronLeft, Check, Calculator, Image as ImageIcon } from "lucide-react";
 import { clsx } from "clsx";
+import { isFullyApproved } from "../module-approval";
+import { datetimeLocalToIso } from "../datetime-local";
 
 interface Module {
   id: string;
@@ -12,6 +14,8 @@ interface Module {
   module_number: number | null;
   parsing_status: string;
   total_questions: number;
+  approved: number;
+  approvalTotal: number;
 }
 
 interface User {
@@ -62,7 +66,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
 
   // Step 2: Config
   const [testName, setTestName] = useState("");
-  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(35);
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number | "">(35);
   const [timeLimitMinutesModule2, setTimeLimitMinutesModule2] = useState<number | "">("");
   // Untimed tests: no countdown, no auto-submit. Off by default so the
   // real-SAT timing stays the norm.
@@ -96,6 +100,35 @@ export default function CreateTestClient({ modules, teachers, students, classGro
     : selectedModule;
   const isMathTest = activeModuleForSection?.section === "Math";
 
+  // Anything typed yet? Then warn before a refresh / tab close wipes it.
+  const dirty = step > 1 || Boolean(selectedModuleId || module1Id || testName);
+  useEffect(() => {
+    if (!dirty || submitting) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [dirty, submitting]);
+
+  const limitInvalid = (v: number | "", optional: boolean) =>
+    v === "" ? !optional : !Number.isInteger(v) || v < 1 || v > 180;
+  const openIso = datetimeLocalToIso(openDate);
+  const dueIso = datetimeLocalToIso(dueDate);
+  const configError = !testName.trim()
+    ? "Test name is required"
+    : testName.trim().length > 150
+      ? "Test name must be at most 150 characters"
+      : !isUntimed && limitInvalid(timeLimitMinutes, false)
+        ? "Time limit must be 1–180 minutes"
+        : !isUntimed && limitInvalid(timeLimitMinutesModule2, true)
+          ? "Module 2 time limit must be 1–180 minutes"
+          : openIso && dueIso && dueIso <= openIso
+            ? "Due date must be after the open date"
+            : null;
+  const duePast = dueIso !== null && new Date(dueIso).getTime() < Date.now();
+
   function handleModuleSelect(mod: Module) {
     setSelectedModuleId(mod.id);
     setTimeLimitMinutes(DEFAULT_TIME_LIMITS[mod.section] ?? 64);
@@ -106,7 +139,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
     setter(arr.includes(item) ? arr.filter((i) => i !== item) : [...arr, item]);
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(allowDuplicateName = false) {
     setSubmitting(true);
     setError("");
     try {
@@ -117,9 +150,11 @@ export default function CreateTestClient({ modules, teachers, students, classGro
           testName,
           moduleId: isAdaptive ? undefined : selectedModuleId,
           module2Id: isAdaptive ? undefined : module2Id || undefined,
-          timeLimitMinutes,
-          openDate: openDate || undefined,
-          dueDate: dueDate || undefined,
+          // Untimed tests keep a remembered limit only if it's valid.
+          timeLimitMinutes: limitInvalid(timeLimitMinutes, false) ? null : timeLimitMinutes,
+          openDate: openIso ?? undefined,
+          dueDate: dueIso ?? undefined,
+          allowDuplicateName,
           showAnswersAfterSubmission: showAnswers,
           showExplanationsAfterSubmission: showExplanations,
           allowRetake,
@@ -140,8 +175,16 @@ export default function CreateTestClient({ modules, teachers, students, classGro
         }),
       });
       const text = await res.text();
-      let json: { error?: string; data?: { id: string } } | null = null;
+      let json: { error?: string; code?: string; data?: { id: string } } | null = null;
       try { json = text ? JSON.parse(text) : null; } catch { json = null; }
+      if (res.status === 409 && json?.code === "duplicate_name") {
+        setSubmitting(false);
+        if (window.confirm(`A test named "${testName.trim()}" already exists. Create another one with the same name?`)) {
+          return handleSubmit(true);
+        }
+        setError("Pick a different test name (Step 2) or confirm the duplicate.");
+        return;
+      }
       if (!res.ok || json === null) {
         throw new Error(json?.error ?? `Server error (${res.status}). Please try again.`);
       }
@@ -152,9 +195,17 @@ export default function CreateTestClient({ modules, teachers, students, classGro
     }
   }
 
-  const eligibleModules = modules.filter(
-    (m) => m.parsing_status === "approved" || m.total_questions >= 5
+  // Students only see Approved questions, so only fully-approved modules
+  // can be used (otherwise unseen questions would count as wrong).
+  const eligibleModules = modules.filter((m) =>
+    isFullyApproved({ approved: m.approved, total: m.approvalTotal }),
   );
+  const hiddenCount = modules.length - eligibleModules.length;
+  const sameSection = (section: string | undefined) =>
+    section ? eligibleModules.filter((m) => m.section === section) : eligibleModules;
+  const module1Section = modules.find((m) => m.id === module1Id)?.section;
+  const optionLabel = (m: Module) =>
+    `${m.module_name} · ${m.section}${m.module_number ? ` M${m.module_number}` : ""} · ${m.approved}/${m.approvalTotal} approved`;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -193,8 +244,15 @@ export default function CreateTestClient({ modules, teachers, students, classGro
         {step === 1 && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-charcoal">Select Module</h2>
-            <p className="text-soft-mute text-sm">
-              Only modules with approved status or ≥5 approved questions are shown.
+            <p className="text-mid-gray text-sm">
+              Only modules whose questions are all Approved are shown.
+              {hiddenCount > 0 && (
+                <>
+                  {" "}
+                  {hiddenCount} module{hiddenCount === 1 ? " is" : "s are"} hidden until review is finished in{" "}
+                  <a href="/admin/modules" className="text-warm-coral hover:underline">Modules</a>.
+                </>
+              )}
             </p>
 
             {/* Adaptive toggle */}
@@ -239,13 +297,17 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                         const m = eligibleModules.find((mm) => mm.id === e.target.value);
                         if (m) handleModuleSelect(m);
                         else setSelectedModuleId("");
+                        // Module 2 must stay in Module 1's section.
+                        if (!m || eligibleModules.find((mm) => mm.id === module2Id)?.section !== m.section) {
+                          setModule2Id("");
+                        }
                       }}
                       className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
                     >
                       <option value="">Select Module 1…</option>
                       {eligibleModules.map((m) => (
                         <option key={m.id} value={m.id}>
-                          {m.module_name} · {m.section}{m.module_number ? ` M${m.module_number}` : ""} · {m.total_questions}q
+                          {optionLabel(m)}
                         </option>
                       ))}
                     </select>
@@ -260,11 +322,11 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                       className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
                     >
                       <option value="">— None (single module / quiz) —</option>
-                      {eligibleModules
+                      {sameSection(selectedModule?.section)
                         .filter((m) => m.id !== selectedModuleId)
                         .map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.module_name} · {m.section}{m.module_number ? ` M${m.module_number}` : ""} · {m.total_questions}q
+                            {optionLabel(m)}
                           </option>
                         ))}
                     </select>
@@ -288,6 +350,11 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                     onChange={(e) => {
                       setModule1Id(e.target.value);
                       const m = eligibleModules.find((mm) => mm.id === e.target.value);
+                      // Tracks must share Module 1's section and differ from it.
+                      const keep = (id: string) =>
+                        !!m && id !== m.id && eligibleModules.find((mm) => mm.id === id)?.section === m.section;
+                      if (!keep(module2EasyId)) setModule2EasyId("");
+                      if (!keep(module2HardId)) setModule2HardId("");
                       if (m && !testName) setTestName(`${m.module_name} (Adaptive)`);
                       if (m) setTimeLimitMinutes(DEFAULT_TIME_LIMITS[m.section] ?? 64);
                     }}
@@ -296,7 +363,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                     <option value="">Select Module 1…</option>
                     {eligibleModules.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.module_name} · {m.section}{m.module_number ? ` M${m.module_number}` : ""}
+                        {optionLabel(m)}
                       </option>
                     ))}
                   </select>
@@ -313,11 +380,13 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                       className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
                     >
                       <option value="">— None —</option>
-                      {eligibleModules.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.module_name}
-                        </option>
-                      ))}
+                      {sameSection(module1Section)
+                        .filter((m) => m.id !== module1Id)
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {optionLabel(m)}
+                          </option>
+                        ))}
                     </select>
                   </div>
                   <div>
@@ -330,11 +399,13 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                       className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
                     >
                       <option value="">— None —</option>
-                      {eligibleModules.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.module_name}
-                        </option>
-                      ))}
+                      {sameSection(module1Section)
+                        .filter((m) => m.id !== module1Id)
+                        .map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {optionLabel(m)}
+                          </option>
+                        ))}
                     </select>
                   </div>
                 </div>
@@ -362,10 +433,6 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                   </p>
                 </div>
 
-                <p className="text-mid-gray text-xs italic">
-                  Note: take-flow + auto-routing land in the next batch — for now this just
-                  records which modules a test will use.
-                </p>
               </div>
             )}
 
@@ -428,7 +495,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               <input
                 type="number"
                 value={timeLimitMinutes}
-                onChange={(e) => setTimeLimitMinutes(parseInt(e.target.value) || 35)}
+                onChange={(e) => setTimeLimitMinutes(e.target.value === "" ? "" : Number(e.target.value))}
                 min={1}
                 max={180}
                 className="w-32 px-4 py-2.5 rounded-xl bg-light-bg border border-divider text-charcoal focus:outline-none focus:border-warm-coral/60 transition-colors"
@@ -450,11 +517,11 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                   onChange={(e) => {
                     const v = e.target.value;
                     if (v === "") setTimeLimitMinutesModule2("");
-                    else setTimeLimitMinutesModule2(parseInt(v) || 35);
+                    else setTimeLimitMinutesModule2(Number(v));
                   }}
                   min={1}
                   max={180}
-                  placeholder={`Same as Module 1 (${timeLimitMinutes})`}
+                  placeholder={`Same as Module 1 (${timeLimitMinutes || "—"})`}
                   className="w-48 px-4 py-2.5 rounded-xl bg-light-bg border border-divider text-charcoal placeholder-soft-mute focus:outline-none focus:border-warm-coral/60 transition-colors"
                 />
                 <p className="text-soft-mute text-xs">
@@ -463,7 +530,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1">
                 <label className="text-mid-gray text-sm font-medium">Open Date</label>
                 <input
@@ -483,6 +550,12 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                 />
               </div>
             </div>
+
+            {duePast && (
+              <p className="text-mid-gray text-xs -mt-2">
+                The due date is in the past — students won&apos;t be able to start this test.
+              </p>
+            )}
 
             <div className="space-y-3">
               <label className="flex items-center justify-between p-3 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
@@ -592,12 +665,14 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               </div>
             )}
 
+            {configError && <p className="text-status-error text-sm">{configError}</p>}
+
             <div className="flex justify-between pt-2">
               <button onClick={() => setStep(1)} className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal hover:border-divider transition-colors text-sm">
                 <ChevronLeft size={16} /> Back
               </button>
               <button
-                disabled={!testName.trim()}
+                disabled={configError !== null}
                 onClick={() => setStep(3)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -704,7 +779,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               </button>
               <button
                 disabled={submitting}
-                onClick={handleSubmit}
+                onClick={() => handleSubmit()}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-amber hover:bg-warm-amber/90 text-charcoal font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {submitting ? "Creating..." : <><Check size={16} /> Create Test</>}

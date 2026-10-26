@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { CheckCircle, Flag, X } from "lucide-react";
 import { clsx } from "clsx";
 
@@ -32,11 +33,64 @@ export default function SubmitModal({
   const unanswered = totalQuestions - answeredCount;
   const flaggedCount = flagged?.size ?? 0;
   const reviewMode = Boolean(questionIds && answers && flagged && onJumpTo);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  const isSubmittingRef = useRef(isSubmitting);
+  isSubmittingRef.current = isSubmitting;
+
+  // Modal dialog behaviour: focus starts on "Keep Reviewing" (the safe
+  // choice), Tab stays inside, Esc closes, focus returns on close.
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    cancelRef.current?.focus();
+    function onKeyDown(e: KeyboardEvent) {
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (!isSubmittingRef.current) onCancelRef.current();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const focusable = Array.from(
+        dialog.querySelectorAll<HTMLElement>("button:not([disabled]), [href], [tabindex]:not([tabindex='-1'])"),
+      );
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !dialog.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+    // Capture phase so the page's own shortcuts never see these keys.
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      previouslyFocused?.focus?.();
+    };
+  }, []);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} aria-hidden="true" />
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="submit-modal-title"
         className={clsx(
           "relative bg-cream border border-divider rounded-2xl shadow-2xl w-full overflow-hidden flex flex-col",
           reviewMode
@@ -46,7 +100,7 @@ export default function SubmitModal({
       >
         <div className="flex items-center justify-between border-b border-divider px-5 py-4">
           <div>
-            <h2 className="text-charcoal font-semibold text-lg">
+            <h2 id="submit-modal-title" className="text-charcoal font-semibold text-lg">
               {reviewMode ? "Check Your Work" : "Submit Test?"}
             </h2>
             <p className="text-soft-mute text-sm">
@@ -117,6 +171,7 @@ export default function SubmitModal({
               </p>
               <div className="flex gap-3">
                 <button
+                  ref={cancelRef}
                   onClick={onCancel}
                   disabled={isSubmitting}
                   className="px-4 py-2 rounded-full border border-divider text-mid-gray hover:text-charcoal text-sm font-medium disabled:opacity-50"
@@ -160,6 +215,7 @@ export default function SubmitModal({
             )}
             <div className="flex gap-3 pt-2">
               <button
+                ref={cancelRef}
                 onClick={onCancel}
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2.5 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm font-medium disabled:opacity-50"

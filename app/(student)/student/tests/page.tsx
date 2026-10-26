@@ -9,6 +9,7 @@ import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
+import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -163,26 +164,8 @@ function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
 async function getStudentTests(studentId: string) {
   const db = getServiceClient();
 
-  // Get student's class groups
-  const { data: membership } = await db
-    .from("class_group_members")
-    .select("class_group_id")
-    .eq("student_id", studentId);
-
-  const classGroupIds = (membership ?? []).map((m) => m.class_group_id);
-
-  const { data: allAssignments } = await db
-    .from("test_assignments")
-    .select("test_id, student_ids, class_group_ids");
-
-  const matchedTestIds = new Set<string>();
-  for (const a of allAssignments ?? []) {
-    const sIds: string[] = a.student_ids ?? [];
-    const cgIds: string[] = a.class_group_ids ?? [];
-    if (sIds.includes(studentId) || classGroupIds.some((cg) => cgIds.includes(cg))) {
-      matchedTestIds.add(a.test_id);
-    }
-  }
+  // Tests assigned directly or via one of the student's class groups.
+  const matchedTestIds = await getAssignedTestIds(db, studentId);
 
   // QA isolation: a student never sees a test from the other side.
   const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
@@ -197,7 +180,7 @@ async function getStudentTests(studentId: string) {
   const [{ data: tests }, { data: submissions }] = await Promise.all([
     db.from("tests")
       .select(`
-        id, test_name, status, due_date, time_limit_minutes, is_adaptive,
+        id, test_name, status, due_date, time_limit_minutes, is_adaptive, module_2_id,
         modules!module_id(module_name, section, module_number)
       `)
       .in("id", testIds)
@@ -237,7 +220,19 @@ async function getStudentTests(studentId: string) {
       else if (attempt.status === "Submitted" || attempt.status === "Late")
         testStatus = "Submitted";
     }
-    return { ...t, attempt, testStatus };
+    // Two-module attempt whose Module 1 is graded but whose Module 2 row
+    // was never created (handoff failed / crashed). It is NOT finished:
+    // the test page's "Continue to Module 2" recreates Module 2.
+    const latestNo = rows[0]?.attempt_number ?? 1;
+    const latestRows = rows.filter((r) => (r.attempt_number ?? 1) === latestNo);
+    const needsModule2 =
+      Boolean(t.is_adaptive || t.module_2_id) &&
+      latestRows.some(
+        (r) => r.adaptive_track === "module_1" && (r.status === "Submitted" || r.status === "Late"),
+      ) &&
+      !latestRows.some((r) => isModule2Track(r.adaptive_track));
+    if (needsModule2) testStatus = "In Progress";
+    return { ...t, attempt, testStatus, needsModule2 };
   });
 }
 
@@ -339,6 +334,13 @@ export default async function StudentTestsPage() {
                             className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium transition-colors"
                           >
                             View Result
+                          </Link>
+                        ) : test.needsModule2 ? (
+                          <Link
+                            href={`/student/tests/${test.id}`}
+                            className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 text-xs font-medium transition-colors"
+                          >
+                            Continue to Module 2
                           </Link>
                         ) : test.testStatus === "In Progress" ? (
                           <div className="flex items-center gap-2 flex-wrap">

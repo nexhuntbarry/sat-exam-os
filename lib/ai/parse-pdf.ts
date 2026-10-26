@@ -2,6 +2,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 import { getServiceClient } from "@/lib/supabase";
+import { hasMarkdownTable } from "@/lib/ai/extract-images";
 
 // ────────────────────────────────────────────
 // Types
@@ -155,7 +156,7 @@ EXTRACTION RULES:
 10. page_number should reflect which page of the PDF the question appears on (1-indexed).
 11. Do NOT skip any questions — extract every numbered question you can find.
 12. For questions you cannot read clearly, still include them with has_image=true (if applicable) and low confidence.
-13. **REQUIRED — IMAGE_REGIONS BOUNDING BOXES**: For EVERY image, graph, diagram, chart, scatter plot, geometric figure, or table that belongs to a question, you MUST populate image_regions with a tight bounding box around it. THIS IS NOT OPTIONAL. The downstream system literally crops these rectangles out of the PDF — without bounding boxes, students see questions like "Refer to the figure" with no figure. Coordinates are fractions of the page dimensions, where (0, 0) is the top-left corner and (1, 1) is the bottom-right corner of the rendered page.
+13. **REQUIRED — IMAGE_REGIONS BOUNDING BOXES**: For EVERY image, graph, diagram, chart, scatter plot, geometric figure, or non-text table (see rule 8 — a data table you reproduced as Markdown gets NO region) that belongs to a question, you MUST populate image_regions with a tight bounding box around it. THIS IS NOT OPTIONAL. The downstream system literally crops these rectangles out of the PDF — without bounding boxes, students see questions like "Refer to the figure" with no figure. Coordinates are fractions of the page dimensions, where (0, 0) is the top-left corner and (1, 1) is the bottom-right corner of the rendered page.
     - **HARD RULE**: If has_image=true OR has_table=true, image_regions MUST contain at least one entry. An empty array when has_image=true is a BUG — do not emit it.
     - **CONCRETE EXAMPLE** of a valid region for a graph occupying the upper-middle of page 3: { "page": 3, "x_pct": 0.12, "y_pct": 0.18, "w_pct": 0.55, "h_pct": 0.32, "alt": "Scatter plot of mass vs. time with line of best fit" }. Numbers are fractions in [0, 1], NOT pixels and NOT percentages out of 100.
     - Include the FULL visual element with a small 1–3% padding on every side so axis labels, captions, and units are not clipped.
@@ -247,7 +248,7 @@ When a question's passage includes a data table, emit it as a GitHub-flavored ma
 - DO NOT inline a table as a single run of pipe-separated text like "Hoard name | Date of contents | ... Broighter Hoard | 1st century BCE | 1896 | gold pieces Balline Hoard | ..." — that flattens the structure and renders as prose.
 - Each cell is one logical value. Don't merge two cells with a slash if the source shows them separately.
 - If the passage references the table in the question stem ("Which choice most effectively uses data from the table…"), leave the stem text as-is and just place the markdown table above it.
-- Set has_table=true on any question that includes a table.
+- A table you reproduced as Markdown is DONE — do NOT also add an image_region / screenshot for it (rule 8). The student would otherwise see the same table twice. Real figures (graphs, diagrams, charts) on the same question still get their own image_region.
 
 UNDERLINED PORTIONS (CRITICAL — SAT R&W question type):
 SAT Reading & Writing has a question family that asks "Which choice best describes the function of the underlined portion in the text…". For those questions, the PDF passage has an actual underline under one word, phrase, clause, or sentence. The student CANNOT answer the question without seeing which portion is underlined, and the AI solver downstream CANNOT score the question without that signal either.
@@ -258,6 +259,15 @@ SAT Reading & Writing has a question family that asks "Which choice best describ
 - Example: "They also saw signs of what might be a synganglion, a brain-like mass of nerve tissue, in the animal's head. <u>This evidence is exciting because it could help us better understand how M. symmetrica is related to other arthropods, such as cave crickets and krill.</u>"
 - If the underlined portion contains math, the math wrap goes INSIDE the <u> tag: "<u>$y = 3x + 2$ is the line of best fit</u>".
 - Same rule applies to choice text when an SAT question quotes an underlined fragment in one of the choices.
+
+PAGE BREAKS — CHOICES BELONG TO THE STEM ABOVE THEM (CRITICAL):
+Many PDFs (e.g. browser printouts titled "Survey: print page") place a question's stem at the BOTTOM of one page and its boxed A/B/C/D choices at the TOP of the NEXT page, after a URL footer ("https://… 3/36") and a date/title header ("10/24/26, 4:59 PM  Survey: print page | …"). Read the document as one continuous stream in reading order and ignore those headers/footers.
+- Choices always FOLLOW their own stem. The A/B/C/D boxes printed at the top of a page, ABOVE a numbered stem, belong to the PREVIOUS question (the stem on the previous page) — NEVER to the stem printed below them on the same page.
+- A question's choices end where the next question's number box / "N." stem begins. A choice list may itself be split across a page break (e.g. A on one page, B–D on the next) — stitch it back together.
+- Before returning, sanity-check every question: its choices must make sense for ITS OWN stem (e.g. word-in-context options must fit the blank in that passage), and no two questions may share the identical set of four choices. If they do, you have shifted choices by one question — fix the binding.
+
+CHECKMARKS = CORRECT ANSWER:
+Some printouts mark the correct choice with a check-mark / check-circle icon (✓, often at the right edge of the choice box, with that box highlighted). When a choice of a question carries such a mark, set correct_answer to that choice's letter. Attribute the mark using the PAGE BREAKS rule above — a checked box at the top of a page belongs to the previous page's stem.
 
 OUTPUT: Return valid JSON only. No markdown, no explanation text, no code fences. Just the raw JSON object.`;
 
@@ -390,7 +400,8 @@ Your job:
 3. For multiple-choice questions answer must be exactly one of: A, B, C, D.
 4. For student-produced response (numeric / fill-in-the-blank) answers, return the literal value as printed (e.g. "12", "3/4", "0.5", "1.25", "7"). Do NOT wrap in LaTeX or quotes. Do NOT convert decimals to fractions or vice versa — return what the key prints.
 5. If you can only read part of the key (e.g. some letters are smudged or cut off at a page break), still return what you can. Set notes to describe which question numbers you couldn't read.
-6. If no answer key is visible at all, set found=false and answers=[]. Do not invent answers from your own solving.
+6. CHECKMARK PRINTOUTS: some PDFs have no separate key but mark the correct choice of each question with a check-mark / check-circle icon (✓) on the choice box. Treat those marks as the answer key (found=true). A question's stem is often at the bottom of one page with its choices at the top of the NEXT page (after a URL footer and date header); choices — and their checkmark — always belong to the stem ABOVE them, i.e. a checked box at the top of a page is the answer to the PREVIOUS page's question, not to the stem printed below it.
+7. If no answer key or checkmarks are visible at all, set found=false and answers=[]. Do not invent answers from your own solving.
 
 Return STRICT JSON matching the schema. No prose, no markdown, no explanations.`;
 
@@ -681,7 +692,9 @@ Return all questions in order via the schema. Confirm you have not missed any be
   let fallbackCount = 0;
   if (!isReadingWriting) {
     for (const q of questions) {
-      const needsVisual = q.has_image || q.has_table;
+      // A table already reproduced as Markdown in the stem needs no crop —
+      // stamping a full-page fallback here screenshotted the same table again.
+      const needsVisual = q.has_image || (q.has_table && !hasMarkdownTable(q.question_text));
       const hasRegions = Array.isArray(q.image_regions) && q.image_regions.length > 0;
       if (needsVisual && !hasRegions) {
         console.warn(

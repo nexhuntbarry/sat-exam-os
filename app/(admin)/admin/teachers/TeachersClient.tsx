@@ -146,7 +146,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
           <>
             <div className="space-y-3">
               <div>
-                <label className="block text-slate-200 text-sm font-medium mb-1">Email *</label>
+                <label className="block text-mid-gray text-sm font-medium mb-1">Email *</label>
                 <input
                   type="email"
                   className={inputCls}
@@ -157,7 +157,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
                 />
               </div>
               <div>
-                <label className="block text-slate-200 text-sm font-medium mb-1">Display Name</label>
+                <label className="block text-mid-gray text-sm font-medium mb-1">Display Name</label>
                 <input
                   className={inputCls}
                   value={displayName}
@@ -265,7 +265,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
             No teachers yet. Invite one to get started.
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-divider text-soft-mute">
                 <th className="text-left px-5 py-3 font-medium">Teacher</th>
@@ -363,7 +363,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
     </div>

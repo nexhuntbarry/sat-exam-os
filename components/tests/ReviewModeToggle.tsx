@@ -36,6 +36,8 @@ export default function ReviewModeToggle({ testId, initialUnlocked }: Props) {
       }
       setUnlocked(next);
       startTransition(() => router.refresh());
+    } catch {
+      alert("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setBusy(false);
     }

@@ -18,7 +18,10 @@ function toArray(r: RoleOrRoles): UserRole[] {
  *   if (result instanceof NextResponse) return result;
  *   const user = result;
  */
-export async function requireRole(roles: RoleOrRoles) {
+export async function requireRole(
+  roles: RoleOrRoles,
+  opts: { allowInactiveStudent?: boolean } = {},
+) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -26,6 +29,20 @@ export async function requireRole(roles: RoleOrRoles) {
   const allowed = toArray(roles);
   if (!user.role || !allowed.includes(user.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  // Pending (not yet approved) and suspended students keep a valid Clerk
+  // session, so the role check alone let them list, start and submit
+  // tests. Only the registration/profile endpoints the pending flow needs
+  // opt out via allowInactiveStudent.
+  if (
+    user.role === "student" &&
+    user.accountStatus !== "approved" &&
+    !opts.allowInactiveStudent
+  ) {
+    return NextResponse.json(
+      { error: "Account not active", accountStatus: user.accountStatus },
+      { status: 403 },
+    );
   }
   return user;
 }

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { Check, X, Search, ChevronDown } from "lucide-react";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import StudentStatusButton from "./[id]/StudentStatusButton";
 
 interface StudentProfile {
   grade: string | null;
@@ -120,7 +121,7 @@ function ApproveModal({
 
         <div className="space-y-3">
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Campus</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Campus</label>
             <input
               className={inputCls}
               value={campus}
@@ -130,7 +131,7 @@ function ApproveModal({
           </div>
 
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Class Group</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Class Group</label>
             <select
               className={inputCls}
               value={classGroupId}
@@ -147,7 +148,7 @@ function ApproveModal({
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-slate-200 text-sm font-medium mb-1">Grade</label>
+              <label className="block text-mid-gray text-sm font-medium mb-1">Grade</label>
               <select
                 className={inputCls}
                 value={grade}
@@ -160,7 +161,7 @@ function ApproveModal({
               </select>
             </div>
             <div>
-              <label className="block text-slate-200 text-sm font-medium mb-1">Target Score</label>
+              <label className="block text-mid-gray text-sm font-medium mb-1">Target Score</label>
               <input
                 type="number"
                 min={400}
@@ -175,7 +176,7 @@ function ApproveModal({
           </div>
 
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Notes</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Notes</label>
             <textarea
               className={`${inputCls} resize-none`}
               rows={2}
@@ -308,7 +309,7 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Name</th>
@@ -317,9 +318,7 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                   <th className="text-left px-5 py-3 font-medium">Parent</th>
                   <th className="text-left px-5 py-3 font-medium">Registered</th>
                   <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
-                  {tab === "pending" && (
-                    <th className="text-left px-5 py-3 font-medium">Actions</th>
-                  )}
+                  <th className="text-left px-5 py-3 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -380,6 +379,15 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                               Reject
                             </button>
                           </div>
+                        </td>
+                      )}
+                      {tab !== "pending" && (
+                        <td className="px-5 py-3">
+                          <StudentStatusButton
+                            studentId={student.id}
+                            studentName={student.display_name ?? student.email}
+                            status={tab}
+                          />
                         </td>
                       )}
                     </tr>

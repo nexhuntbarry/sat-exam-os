@@ -2,27 +2,38 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Send, Lock, Trash2, AlertTriangle } from "lucide-react";
+import { Send, Lock, Trash2, AlertTriangle, RotateCcw } from "lucide-react";
 
 interface Props {
   testId: string;
   testName: string;
   status: string;
+  submissionCount: number;
+  gradedCount: number;
 }
 
-export default function TestDetailActions({ testId, testName, status }: Props) {
+export default function TestDetailActions({ testId, testName, status, submissionCount, gradedCount }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteText, setDeleteText] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  async function handleAction(action: "publish" | "close") {
+  async function handleAction(action: "publish" | "close" | "reopen") {
     setLoading(action);
+    setActionError(null);
     try {
       const res = await fetch(`/api/admin/tests/${testId}/${action}`, { method: "POST" });
-      if (res.ok) router.refresh();
+      if (res.ok) {
+        router.refresh();
+      } else {
+        const j = await res.json().catch(() => ({}));
+        setActionError(j.error ?? `Failed (HTTP ${res.status})`);
+      }
+    } catch {
+      setActionError("Network error");
     } finally {
       setLoading(null);
     }
@@ -49,7 +60,7 @@ export default function TestDetailActions({ testId, testName, status }: Props) {
 
   return (
     <>
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-2 shrink-0 flex-wrap">
         {status === "Draft" && (
           <button
             disabled={loading === "publish"}
@@ -70,6 +81,16 @@ export default function TestDetailActions({ testId, testName, status }: Props) {
             {loading === "close" ? "Closing..." : "Close Test"}
           </button>
         )}
+        {status === "Closed" && (
+          <button
+            disabled={loading === "reopen"}
+            onClick={() => handleAction("reopen")}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-amber hover:bg-warm-amber/90 text-charcoal font-semibold text-sm transition-colors disabled:opacity-50"
+          >
+            <RotateCcw size={14} />
+            {loading === "reopen" ? "Reopening..." : "Reopen"}
+          </button>
+        )}
         <button
           onClick={() => {
             setDeleteOpen(true);
@@ -82,6 +103,9 @@ export default function TestDetailActions({ testId, testName, status }: Props) {
           <Trash2 size={14} />
           Delete
         </button>
+        {actionError && (
+          <p className="basis-full text-status-error text-xs max-w-sm">{actionError}</p>
+        )}
       </div>
 
       {deleteOpen && (
@@ -95,6 +119,12 @@ export default function TestDetailActions({ testId, testName, status }: Props) {
                   This permanently removes <strong>{testName}</strong> along with every
                   submission, answer record, retake grant, and assignment. Cannot be
                   undone.
+                </p>
+                <p className="text-charcoal text-xs mt-2 font-medium">
+                  {submissionCount === 0
+                    ? "No student submissions will be deleted."
+                    : `This deletes ${submissionCount} submission${submissionCount === 1 ? "" : "s"}` +
+                      (gradedCount > 0 ? ` (${gradedCount} already graded).` : ".")}
                 </p>
               </div>
             </div>

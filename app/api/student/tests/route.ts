@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
+import { getAssignedTestIds } from "@/lib/student-exam";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -19,29 +20,8 @@ export async function GET() {
 
   const db = getServiceClient();
 
-  // Get student's class groups
-  const { data: membership } = await db
-    .from("class_group_members")
-    .select("class_group_id")
-    .eq("student_id", user.userId);
-
-  const classGroupIds = (membership ?? []).map((m) => m.class_group_id);
-
-  // Find assignments where student is directly assigned or in a class group
-  const { data: allAssignments } = await db
-    .from("test_assignments")
-    .select("test_id, student_ids, class_group_ids");
-
-  const matchedTestIds = new Set<string>();
-  for (const a of allAssignments ?? []) {
-    const studentIds: string[] = a.student_ids ?? [];
-    const cgIds: string[] = a.class_group_ids ?? [];
-    if (studentIds.includes(user.userId)) {
-      matchedTestIds.add(a.test_id);
-    } else if (classGroupIds.some((cg) => cgIds.includes(cg))) {
-      matchedTestIds.add(a.test_id);
-    }
-  }
+  // Tests assigned directly or via one of the student's class groups.
+  const matchedTestIds = await getAssignedTestIds(db, user.userId);
 
   // QA isolation: a student never sees a test from the other side.
   const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase";
 import { finalizeSubmission } from "@/lib/grade-submission";
+import { moduleStartedAtIso, moduleTimeLimitMinutes } from "@/lib/student-exam";
 
 // One-shot grading + DB writes per stale row. Six minutes is the
 // largest hammer we need — enough headroom for 50+ rows at a slow
@@ -11,6 +12,12 @@ export const maxDuration = 60;
 // configured limit before the cron force-grades it. Keeps last-second
 // answer auto-saves from getting clipped by a tight cron tick.
 const GRACE_MINUTES = 5;
+
+// A Module 2 the student never opened has no clock running (its timer
+// starts on first open, metadata.module_2_started_at). Don't grade it as
+// a zero while they may still come back; only close it out once it has
+// sat untouched this long after the Module 1 handoff.
+const UNOPENED_MODULE_2_GRACE_HOURS = 24;
 
 /**
  * Vercel Cron entry point. Walks every `status = 'In Progress'`
@@ -34,7 +41,7 @@ export async function GET(req: Request) {
   const { data: stale, error } = await db
     .from("submissions")
     .select(
-      "id, test_id, student_id, answers, started_at, module_id, adaptive_track, session_id",
+      "id, test_id, student_id, answers, started_at, module_id, adaptive_track, session_id, metadata",
     )
     .eq("status", "In Progress")
     .order("started_at", { ascending: true });
@@ -51,7 +58,7 @@ export async function GET(req: Request) {
   const { data: tests } = await db
     .from("tests")
     .select(
-      "id, module_id, question_ids, is_adaptive, due_date, time_limit_minutes, time_limit_minutes_module_2",
+      "id, module_id, question_ids, is_adaptive, due_date, time_limit_minutes, time_limit_minutes_module_2, is_untimed",
     )
     .in("id", testIds);
   const testById = new Map<string, NonNullable<typeof tests>[number]>();
@@ -80,36 +87,46 @@ export async function GET(req: Request) {
       continue;
     }
 
-    const isModule2 =
-      sub.adaptive_track === "module_2" ||
-      sub.adaptive_track === "module_2_easy" ||
-      sub.adaptive_track === "module_2_hard";
-    const limitMinutes = isModule2
-      ? test.time_limit_minutes_module_2 ?? test.time_limit_minutes
-      : test.time_limit_minutes;
+    const limitMinutes = moduleTimeLimitMinutes(test, sub.adaptive_track);
     if (!limitMinutes) {
       results.push({
         submissionId: sub.id,
         studentId: sub.student_id,
         track: sub.adaptive_track,
         action: "skipped",
-        reason: "no time limit configured",
+        reason: "untimed or no time limit configured",
       });
       continue;
     }
 
-    const startedAt = new Date(sub.started_at).getTime();
-    const elapsedMin = (Date.now() - startedAt) / 60000;
-    if (elapsedMin < limitMinutes + GRACE_MINUTES) {
-      // Student is still inside their window — leave alone.
-      results.push({
-        submissionId: sub.id,
-        studentId: sub.student_id,
-        track: sub.adaptive_track,
-        action: "skipped",
-        reason: `within window (${Math.round(elapsedMin)}m / ${limitMinutes}m+${GRACE_MINUTES}m grace)`,
-      });
-      continue;
+    // Same clock the take page and autosave use: Module 2 runs from when
+    // the student first opened it, not from the Module 1 handoff.
+    const moduleStartIso = moduleStartedAtIso(sub);
+    if (!moduleStartIso) {
+      const sinceHandoffH = (Date.now() - new Date(sub.started_at).getTime()) / 3_600_000;
+      if (sinceHandoffH < UNOPENED_MODULE_2_GRACE_HOURS) {
+        results.push({
+          submissionId: sub.id,
+          studentId: sub.student_id,
+          track: sub.adaptive_track,
+          action: "skipped",
+          reason: `module 2 not opened yet (${Math.round(sinceHandoffH)}h / ${UNOPENED_MODULE_2_GRACE_HOURS}h)`,
+        });
+        continue;
+      }
+    } else {
+      const elapsedMin = (Date.now() - new Date(moduleStartIso).getTime()) / 60000;
+      if (elapsedMin < limitMinutes + GRACE_MINUTES) {
+        // Student is still inside their window — leave alone.
+        results.push({
+          submissionId: sub.id,
+          studentId: sub.student_id,
+          track: sub.adaptive_track,
+          action: "skipped",
+          reason: `within window (${Math.round(elapsedMin)}m / ${limitMinutes}m+${GRACE_MINUTES}m grace)`,
+        });
+        continue;
+      }
     }
 
     try {
@@ -122,6 +139,7 @@ export async function GET(req: Request) {
           started_at: sub.started_at,
           module_id: sub.module_id,
           adaptive_track: sub.adaptive_track,
+          metadata: sub.metadata,
         },
         test: {
           id: test.id,
@@ -132,6 +150,17 @@ export async function GET(req: Request) {
         },
         db,
       });
+      if (!finalized) {
+        // A student submit (or admin force-submit) won the race.
+        results.push({
+          submissionId: sub.id,
+          studentId: sub.student_id,
+          track: sub.adaptive_track,
+          action: "skipped",
+          reason: "already finalized by another request",
+        });
+        continue;
+      }
       results.push({
         submissionId: sub.id,
         studentId: sub.student_id,

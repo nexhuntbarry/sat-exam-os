@@ -5,28 +5,17 @@ import Link from "next/link";
 import { Clock, BookOpen, Calendar } from "lucide-react";
 import StartTestButton from "./StartTestButton";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import {
+  isModule2Track,
+  isTestAssignedToStudent,
+  scopeToStudentQuestionSet,
+} from "@/lib/student-exam";
 
 async function getTestInfo(testId: string, studentId: string) {
   const db = getServiceClient();
 
-  // Check student has access
-  const { data: membership } = await db
-    .from("class_group_members")
-    .select("class_group_id")
-    .eq("student_id", studentId);
-  const classGroupIds = (membership ?? []).map((m) => m.class_group_id);
-
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("test_id, student_ids, class_group_ids")
-    .eq("test_id", testId)
-    .single();
-
-  if (!assignment) return null;
-  const sIds: string[] = assignment.student_ids ?? [];
-  const cgIds: string[] = assignment.class_group_ids ?? [];
-  const hasAccess = sIds.includes(studentId) || classGroupIds.some((cg) => cgIds.includes(cg));
-  if (!hasAccess) return null;
+  // Check student has access (directly or via a class group).
+  if (!(await isTestAssignedToStudent(db, testId, studentId))) return null;
 
   const { data: test } = await db
     .from("tests")
@@ -62,26 +51,22 @@ async function getTestInfo(testId: string, studentId: string) {
     module2Meta = (m2 as { module_name: string; section: string; module_number: number | null } | null) ?? null;
   }
 
-  // Approved question count — for two-module tests we sum Module 1 +
-  // Module 2 counts so the student sees the full attempt size, not
-  // half of it.
+  // Student-visible (Approved) question count — the same set the take
+  // page shows and submit grades. Two-module tests sum Module 1 + Module 2
+  // so the student sees the full attempt size, not half of it.
   const m1ModuleId = test.is_adaptive ? test.module_1_id : test.module_id;
   const m2ModuleId = test.is_adaptive ? test.module_2_easy_id : test.module_2_id;
+  const countQuestions = (moduleId: string) =>
+    scopeToStudentQuestionSet(
+      db
+        .from("questions")
+        .select("id", { count: "exact", head: true })
+        .eq("module_id", moduleId),
+      test,
+    );
   const [{ count: m1Count }, { count: m2Count }] = await Promise.all([
-    m1ModuleId
-      ? db
-          .from("questions")
-          .select("id", { count: "exact", head: true })
-          .eq("module_id", m1ModuleId)
-          .neq("parsing_status", "Rejected")
-      : Promise.resolve({ count: 0 }),
-    m2ModuleId
-      ? db
-          .from("questions")
-          .select("id", { count: "exact", head: true })
-          .eq("module_id", m2ModuleId)
-          .neq("parsing_status", "Rejected")
-      : Promise.resolve({ count: 0 }),
+    m1ModuleId ? countQuestions(m1ModuleId) : Promise.resolve({ count: 0 }),
+    m2ModuleId ? countQuestions(m2ModuleId) : Promise.resolve({ count: 0 }),
   ]);
   const totalQuestionCount = (m1Count ?? 0) + (m2Count ?? 0);
 
@@ -108,20 +93,28 @@ async function getTestInfo(testId: string, studentId: string) {
       }
     | null = null;
   let combinedPct: number | null = null;
+  // Module 1 graded but no Module 2 row (the handoff failed or the
+  // student crashed before it was created): the attempt is NOT finished.
+  let needsModule2 = false;
   if (subs && subs.length > 0) {
     const latestAttempt = subs[0].attempt_number;
     const sessionRows = subs.filter((s) => s.attempt_number === latestAttempt);
-    const allSubmitted = sessionRows.every(
-      (s) => s.status === "Submitted" || s.status === "Late",
-    );
+    const isDone = (s: { status: string }) => s.status === "Submitted" || s.status === "Late";
+    const allSubmitted = sessionRows.every(isDone);
+    needsModule2 =
+      isTwoModule &&
+      sessionRows.some((s) => s.adaptive_track === "module_1" && isDone(s)) &&
+      !sessionRows.some((s) => isModule2Track(s.adaptive_track));
     if (sessionRows.length > 1 && allSubmitted) {
       const correct = sessionRows.reduce((a, s) => a + (s.correct_count ?? 0), 0);
       const total = sessionRows.reduce((a, s) => a + (s.total_questions ?? 0), 0);
       combinedPct = total > 0 ? Math.round((correct / total) * 1000) / 10 : 0;
     }
-    // Headline submission row: prefer the most recently submitted
-    // row so the "View Result" link routes the student to a fully
-    // graded submission. In Progress falls back to whichever is open.
+    // Headline row: any In Progress module wins (a submitted Module 1
+    // must never hide a half-done Module 2 — the student would see "Test
+    // Submitted" with no way back in). Otherwise the most recently
+    // submitted row, so "View Result" routes to a fully graded submission.
+    const inProgress = sessionRows.find((s) => s.status === "In Progress");
     const sorted = [...sessionRows].sort((a, b) => {
       if (a.submitted_at && b.submitted_at)
         return b.submitted_at.localeCompare(a.submitted_at);
@@ -129,11 +122,12 @@ async function getTestInfo(testId: string, studentId: string) {
       if (b.submitted_at) return 1;
       return 0;
     });
+    const headline = inProgress ?? sorted[0];
     submission = {
-      id: sorted[0].id,
-      status: sorted[0].status,
-      percentage: sorted[0].percentage != null ? Number(sorted[0].percentage) : null,
-      submitted_at: sorted[0].submitted_at,
+      id: headline.id,
+      status: headline.status,
+      percentage: headline.percentage != null ? Number(headline.percentage) : null,
+      submitted_at: headline.submitted_at,
     };
   }
 
@@ -156,6 +150,7 @@ async function getTestInfo(testId: string, studentId: string) {
     module2Meta,
     isTwoModule,
     combinedPct,
+    needsModule2,
     hasRetakeGrant: Boolean(grant),
   };
 }
@@ -172,7 +167,7 @@ export default async function StudentTestLandingPage({
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 
-  const { test, questionCount, submission, module2Meta, isTwoModule, combinedPct, hasRetakeGrant } = data;
+  const { test, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, hasRetakeGrant } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -187,8 +182,10 @@ export default async function StudentTestLandingPage({
     : "—";
 
   const isPastDue = test.due_date && new Date(test.due_date) < new Date();
+  const isNotOpenYet = Boolean(test.open_date && new Date(test.open_date) > new Date());
   const isInProgress = submission?.status === "In Progress";
-  const isSubmitted = submission?.status === "Submitted" || submission?.status === "Late";
+  const isSubmitted =
+    !needsModule2 && (submission?.status === "Submitted" || submission?.status === "Late");
   // Retake is offered when the test allows it OR a teacher granted a
   // one-off retake to this student.
   const canRetake = (test.allow_retake || hasRetakeGrant) && isSubmitted;
@@ -249,7 +246,7 @@ export default async function StudentTestLandingPage({
           <div className="space-y-3">
             <div className="p-4 bg-warm-amber/10 border border-warm-amber/20 rounded-xl text-center">
               <div className="text-warm-amber font-semibold mb-1">
-                Test Submitted{isTwoModule ? " · combined" : ""}
+                Test Submitted{combinedPct != null ? " · combined" : ""}
               </div>
               <div className="text-charcoal text-2xl font-bold">
                 {combinedPct != null
@@ -266,9 +263,22 @@ export default async function StudentTestLandingPage({
               View Result
             </Link>
           </div>
+        ) : needsModule2 && !isPastDue ? (
+          <div className="space-y-3">
+            <p className="text-status-warning text-sm text-center">
+              Module 1 is submitted. Your test isn&apos;t finished yet — continue to Module 2.
+            </p>
+            {/* POST /api/student/submissions recreates the missing Module 2
+                row for this attempt, then opens the take page. */}
+            <StartTestButton testId={test.id} isResume={false} label="Continue to Module 2" />
+          </div>
         ) : isPastDue && !isInProgress ? (
           <div className="p-4 bg-status-error/10 border border-status-error/20 rounded-xl text-center text-status-error">
             This test is no longer available — the due date has passed.
+          </div>
+        ) : isNotOpenYet && !isInProgress ? (
+          <div className="p-4 bg-light-bg border border-divider rounded-xl text-center text-mid-gray">
+            This test opens on {formatDateTime(test.open_date as string)}.
           </div>
         ) : (
           <div className="space-y-3">

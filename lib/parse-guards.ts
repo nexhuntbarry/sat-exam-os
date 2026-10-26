@@ -1,4 +1,5 @@
 import type { getServiceClient } from "@/lib/supabase";
+import { checkChoiceAlignment, type PdfTextChoices } from "@/lib/pdf-text-choices";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -83,4 +84,49 @@ export async function checkNumberContiguity(
     console.warn(`[contiguity] module=${moduleId} has gaps — missing question numbers: ${missing.join(", ")}`);
   }
   return { count: nums.length, expectedMax: max, missing };
+}
+
+// ── Choice-alignment gate ────────────────────────────────────────────
+// Last line of defence against choices bound to the wrong stem (stem at the
+// bottom of page N, choices on page N+1 picked up by the stem BELOW them).
+// Compares every non-flagged MCQ against the PDF text layer (when reliable)
+// or its neighbour's choice set, and demotes mismatches to Needs Review so
+// they can never be auto-promoted. Runs before auto-promote.
+export async function enforceChoiceAlignment(
+  moduleId: string,
+  db: DbClient,
+  pdfText: PdfTextChoices | null,
+): Promise<{ checked: number; demoted: number }> {
+  const { data } = await db
+    .from("questions")
+    .select("id, original_question_number, question_type, choices, parsing_status, parsing_notes")
+    .eq("module_id", moduleId);
+  const rows = (data ?? []) as {
+    id: string;
+    original_question_number: number;
+    question_type: string | null;
+    choices: unknown;
+    parsing_status: string;
+    parsing_notes: string | null;
+  }[];
+  const live = rows.filter((r) => r.parsing_status !== "Rejected");
+  const issues = checkChoiceAlignment(live, pdfText);
+  let demoted = 0;
+  for (const q of live) {
+    const issue = issues.get(q.original_question_number);
+    if (!issue) continue;
+    const base = (q.parsing_notes || "").trim();
+    if (q.parsing_status === "Needs Review" && base.includes("Choice misalignment")) continue;
+    demoted++;
+    await db
+      .from("questions")
+      .update({
+        parsing_status: "Needs Review",
+        parsing_notes: base && !base.includes("Choice misalignment") ? `${base}; ${issue.note}` : issue.note,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", q.id);
+  }
+  console.log(`[choice-alignment-gate] module=${moduleId} checked=${live.length} demoted=${demoted}`);
+  return { checked: live.length, demoted };
 }

@@ -308,7 +308,7 @@ export default async function ClassGroupAnalyticsPage() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full min-w-[640px] text-sm">
                     <thead>
                       <tr className="border-b border-divider text-soft-mute">
                         <th className="text-left px-5 py-3 font-medium">Test</th>

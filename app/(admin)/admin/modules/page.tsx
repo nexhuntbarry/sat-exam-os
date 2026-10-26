@@ -6,6 +6,7 @@ import { sectionTitleClass } from "@/lib/section-color";
 import DeleteModuleButton from "./DeleteModuleButton";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate } from "@/lib/datetime";
+import { approvalCounts, isFullyApproved } from "../tests/module-approval";
 
 interface ModuleRow {
   id: string;
@@ -17,15 +18,20 @@ interface ModuleRow {
   total_questions: number | null;
   parsing_status: string;
   created_at: string;
+  approved: number;
+  approvalTotal: number;
 }
 
 async function getModules(): Promise<ModuleRow[]> {
   const db = getServiceClient();
   const { data } = await db
     .from("modules")
-    .select("id, module_name, section, module_number, difficulty, source_name, total_questions, parsing_status, created_at")
+    .select("id, module_name, section, module_number, difficulty, source_name, total_questions, parsing_status, created_at, questions:questions!module_id(parsing_status)")
     .order("created_at", { ascending: false });
-  return (data ?? []) as ModuleRow[];
+  return (data ?? []).map(({ questions, ...m }) => {
+    const counts = approvalCounts(questions as { parsing_status: string }[] | null);
+    return { ...m, approved: counts.approved, approvalTotal: counts.total } as ModuleRow;
+  });
 }
 
 const statusStyles: Record<string, string> = {
@@ -37,12 +43,13 @@ const statusStyles: Record<string, string> = {
 };
 
 
-type SortKey = "name" | "section" | "difficulty" | "questions" | "status" | "uploaded";
+type SortKey = "name" | "section" | "difficulty" | "questions" | "approval" | "status" | "uploaded";
 const SORT_LABEL: Record<SortKey, string> = {
   name: "Module",
   section: "Section",
   difficulty: "Difficulty",
   questions: "Questions",
+  approval: "Approved",
   status: "Status",
   uploaded: "Uploaded",
 };
@@ -54,6 +61,7 @@ function sortModules(mods: ModuleRow[], key: SortKey, dir: "asc" | "desc"): Modu
       case "section": return `${m.section ?? ""} ${m.module_number ?? 0}`.toLowerCase();
       case "difficulty": return (m.difficulty ?? "").toLowerCase();
       case "questions": return m.total_questions ?? 0;
+      case "approval": return m.approvalTotal ? m.approved / m.approvalTotal : 0;
       case "status": return m.parsing_status;
       case "uploaded": return m.created_at;
     }
@@ -72,7 +80,7 @@ export default async function ModulesPage({
   searchParams: Promise<{ sort?: string; dir?: string }>;
 }) {
   const sp = await searchParams;
-  const sortKey = (["name", "section", "difficulty", "questions", "status", "uploaded"].includes(sp.sort ?? "")
+  const sortKey = (["name", "section", "difficulty", "questions", "approval", "status", "uploaded"].includes(sp.sort ?? "")
     ? sp.sort
     : "name") as SortKey;
   const dir = sp.dir === "desc" ? "desc" : "asc";
@@ -122,13 +130,14 @@ export default async function ModulesPage({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-divider">
                   <Header col="name" />
                   <Header col="section" />
                   <Header col="difficulty" />
                   <Header col="questions" />
+                  <Header col="approval" />
                   <Header col="status" />
                   <Header col="uploaded" />
                   <th className="text-right px-5 py-3" />
@@ -156,6 +165,23 @@ export default async function ModulesPage({
                     </td>
                     <td className="px-5 py-3 text-mid-gray">{mod.difficulty ?? "—"}</td>
                     <td className="px-5 py-3 text-mid-gray">{mod.total_questions}</td>
+                    <td className="px-5 py-3">
+                      {mod.approvalTotal === 0 ? (
+                        <span className="text-soft-mute">—</span>
+                      ) : (
+                        <span
+                          title={isFullyApproved({ approved: mod.approved, total: mod.approvalTotal }) ? "All questions approved" : `${mod.approvalTotal - mod.approved} question(s) not yet approved`}
+                          className={clsx(
+                            "px-2 py-1 rounded-full text-xs font-medium tabular-nums",
+                            isFullyApproved({ approved: mod.approved, total: mod.approvalTotal })
+                              ? "bg-status-success/15 text-status-success"
+                              : "bg-status-error/15 text-status-error",
+                          )}
+                        >
+                          {mod.approved}/{mod.approvalTotal}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-5 py-3">
                       <span
                         className={clsx(

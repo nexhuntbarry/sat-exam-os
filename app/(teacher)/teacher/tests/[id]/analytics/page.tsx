@@ -33,6 +33,7 @@ export default function QuestionAnalyticsPage() {
 
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   // Default to question order (full-test review) — reads top-to-bottom like
   // the test itself, which teachers find clearer than a difficulty ranking.
   const [sortField, setSortField] = useState<SortField>("questionNumber");
@@ -42,19 +43,26 @@ export default function QuestionAnalyticsPage() {
 
   useEffect(() => {
     fetch(`/api/teacher/tests/${testId}/analytics`)
-      .then((r) => r.json())
-      .then(setData)
-      .catch(console.error)
+      .then(async (r) => {
+        if (r.status === 403) throw new Error("forbidden");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        setData(await r.json());
+      })
+      .catch((err: Error) => setLoadError(err.message))
       .finally(() => setLoading(false));
   }, [testId]);
 
   const handleToggleClassReview = useCallback(
     async (questionId: string, current: boolean) => {
-      await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
+      const ok = await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note_type: "class_review", note_body: String(!current) }),
-      });
+      }).then((r) => r.ok, () => false);
+      if (!ok) {
+        alert("Couldn't save the class-review mark. Check your connection and try again.");
+        return;
+      }
       setData((prev) => {
         if (!prev) return prev;
         return {
@@ -72,8 +80,23 @@ export default function QuestionAnalyticsPage() {
     return <div className="max-w-5xl mx-auto py-16 text-center text-soft-mute">Loading analytics...</div>;
   }
 
+  if (loadError === "forbidden") {
+    return (
+      <div className="max-w-5xl mx-auto py-16 text-center space-y-3">
+        <p className="text-charcoal font-semibold">You don&rsquo;t have access to this test&rsquo;s analytics.</p>
+        <p className="text-soft-mute text-sm">It may belong to another class or a subject you don&rsquo;t teach.</p>
+        <Link href="/teacher/tests" className="text-warm-coral text-sm hover:underline">Back to My Tests</Link>
+      </div>
+    );
+  }
+
   if (!data) {
-    return <div className="max-w-5xl mx-auto py-16 text-center text-status-error">Failed to load analytics.</div>;
+    return (
+      <div className="max-w-5xl mx-auto py-16 text-center space-y-3">
+        <p className="text-status-error">Failed to load analytics.</p>
+        <Link href="/teacher/tests" className="text-warm-coral text-sm hover:underline">Back to My Tests</Link>
+      </div>
+    );
   }
 
   const { questions, summary } = data;

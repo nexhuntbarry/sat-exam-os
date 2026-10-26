@@ -4,7 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 
 // GET /api/student/profile
 export async function GET() {
-  const authResult = await requireRole("student");
+  const authResult = await requireRole("student", { allowInactiveStudent: true });
   if (authResult instanceof NextResponse) return authResult;
   const user = authResult;
 
@@ -24,7 +24,7 @@ export async function GET() {
 
 // PATCH /api/student/profile
 export async function PATCH(req: Request) {
-  const authResult = await requireRole("student");
+  const authResult = await requireRole("student", { allowInactiveStudent: true });
   if (authResult instanceof NextResponse) return authResult;
   const user = authResult;
 

@@ -43,6 +43,9 @@ const nextConfig: NextConfig = {
       // `'self'` allows our own pages to frame our own routes while
       // still blocking third-party clickjacking.
       "frame-ancestors 'self'",
+      // Clerk spins up a blob: timer worker; without an explicit
+      // worker-src it falls back to script-src and gets blocked.
+      "worker-src 'self' blob:",
       "base-uri 'self'",
       "form-action 'self'",
     ].join("; ");

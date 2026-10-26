@@ -3,9 +3,9 @@ import { redirect } from "next/navigation";
 import { BarChart2 } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
+import { getQaUserIds, onSide } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
-import { getTestSections } from "@/lib/teacher-access";
+import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { StatCard } from "@/components/analytics/StatCard";
 import {
   CrossTestQuestionTable,
@@ -23,101 +23,26 @@ interface DomainAgg {
 async function getCrossTestAnalysis(teacherId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
 
-  // 1. Build the visible test+student scope. Admin sees every test and
-  // every submission. A teacher's analytics aggregate over:
-  //   (a) tests they're directly on test_assignments.teacher_ids — count
-  //       every submission for those tests (legacy/global scope, useful
-  //       for non-class-teacher reviewers), AND
-  //   (b) every other test whose submissions come from a student in one
-  //       of the teacher's class_groups — counted by student.
-  // teacher_ids assignment is now optional. Class-membership is the
-  // primary scoping signal.
-  const directTestIds = new Set<string>();
-  const myStudentIds = new Set<string>();
-  let teacherSubjects: (string | null)[] = [];
+  // 1. Scope: the shared teacher test set (direct ∪ class-assigned /
+  // class-taken, subject-scoped, QA-isolated). Within a test, a class
+  // teacher only counts their own students; admins and pure reviewers on
+  // teacher_ids count everyone (same rule as getTeacherTestAccess).
+  const scope = await getTeacherTestScope(db, { userId: teacherId, role, isQa });
 
-  if (role === "admin") {
-    // Admin scope is global — bypass both filters below.
-  } else {
-    const { data: directly } = await db
-      .from("test_assignments")
-      .select("test_id")
-      .contains("teacher_ids", JSON.stringify([teacherId]));
-    for (const a of directly ?? []) directTestIds.add(a.test_id as string);
-
-    const { data: myGroups } = await db
-      .from("class_group_teachers")
-      .select("class_group_id, subject")
-      .eq("teacher_id", teacherId);
-    teacherSubjects = (myGroups ?? []).map((g) => (g.subject as string | null) ?? null);
-    const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
-    if (groupIds.length > 0) {
-      const { data: members } = await db
-        .from("class_group_members")
-        .select("student_id")
-        .in("class_group_id", groupIds);
-      for (const m of members ?? []) myStudentIds.add(m.student_id as string);
-    }
-  }
-
-  // 2. Fetch submitted/late submissions in scope. For non-admins, that's
-  // submissions whose test is in directTestIds OR whose student is in
-  // myStudentIds. We can't express the OR cleanly in a single PostgREST
-  // filter, so fetch each side then merge.
-  let submissions: { id: string; test_id: string; student_id: string }[] = [];
-  if (role === "admin") {
+  // 2. Submitted/late submissions in scope.
+  let submissions: { id: string; test_id: string; student_id: string; session_id: string | null }[] = [];
+  if (scope.testIds.size > 0) {
     const { data } = await db
       .from("submissions")
-      .select("id, test_id, student_id")
+      .select("id, test_id, student_id, session_id")
+      .in("test_id", Array.from(scope.testIds))
       .in("status", ["Submitted", "Late"]);
-    submissions = (data ?? []) as typeof submissions;
-  } else {
-    const dedup = new Map<string, { id: string; test_id: string; student_id: string }>();
-    if (directTestIds.size > 0) {
-      const { data } = await db
-        .from("submissions")
-        .select("id, test_id, student_id")
-        .in("test_id", Array.from(directTestIds))
-        .in("status", ["Submitted", "Late"]);
-      for (const s of data ?? []) dedup.set(s.id as string, s as never);
-    }
-    if (myStudentIds.size > 0) {
-      const { data } = await db
-        .from("submissions")
-        .select("id, test_id, student_id")
-        .in("student_id", Array.from(myStudentIds))
-        .in("status", ["Submitted", "Late"]);
-      for (const s of data ?? []) dedup.set(s.id as string, s as never);
-    }
-    submissions = Array.from(dedup.values());
-  }
-
-  // QA isolation: only aggregate the viewer's side (students + tests).
-  const [qaUsers, qaTests] = await Promise.all([getQaUserIds(), getQaTestIds()]);
-  submissions = submissions.filter(
-    (s) => onSide(s.student_id, qaUsers, isQa) && onSide(s.test_id, qaTests, isQa),
-  );
-  for (const id of Array.from(directTestIds)) {
-    if (!onSide(id, qaTests, isQa)) directTestIds.delete(id);
-  }
-
-  // Subject scoping: a class teacher pinned to a subject only analyses that
-  // subject's tests. Drop submissions whose test isn't in their subject.
-  // (teacherSubjects is empty for admins / non-class teachers → no filter.)
-  const allowAllSubjects = teacherSubjects.length === 0 || teacherSubjects.some((s) => !s);
-  if (!allowAllSubjects && submissions.length > 0) {
-    const sections = await getTestSections(
-      db,
-      Array.from(new Set(submissions.map((s) => s.test_id))),
+    const qaUsers = await getQaUserIds();
+    submissions = ((data ?? []) as typeof submissions).filter(
+      (s) =>
+        onSide(s.student_id, qaUsers, isQa) &&
+        (seesAllStudents(scope, s.test_id) || scope.myStudentIds.has(s.student_id)),
     );
-    submissions = submissions.filter((s) => {
-      const sec = sections.get(s.test_id) ?? null;
-      return !sec || teacherSubjects.includes(sec);
-    });
-    for (const id of Array.from(directTestIds)) {
-      const sec = sections.get(id) ?? null;
-      if (sec && !teacherSubjects.includes(sec)) directTestIds.delete(id);
-    }
   }
 
   if (submissions.length === 0) {
@@ -126,11 +51,11 @@ async function getCrossTestAnalysis(teacherId: string, role: string, isQa: boole
       .select("id, test_name")
       .in(
         "id",
-        Array.from(directTestIds.size > 0 ? directTestIds : new Set([""])),
+        Array.from(scope.testIds.size > 0 ? scope.testIds : new Set([""])),
       );
     return {
       empty: true as const,
-      totals: { tests: directTestIds.size, submissions: 0, uniqueQuestions: 0 },
+      totals: { tests: scope.testIds.size, submissions: 0, uniqueQuestions: 0 },
       testOptions: (teacherTestsForEmpty ?? [])
         .map((t) => ({ id: t.id, name: t.test_name as string }))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -199,7 +124,7 @@ async function getCrossTestAnalysis(teacherId: string, role: string, isQa: boole
   if (questionIds.length === 0) {
     return {
       empty: true as const,
-      totals: { tests: testIds.length, submissions: subList.length, uniqueQuestions: 0 },
+      totals: { tests: testIds.length, submissions: new Set(subList.map((s) => s.session_id ?? s.id)).size, uniqueQuestions: 0 },
       testOptions: teacherTests
         .map((t) => ({ id: t.id, name: t.test_name }))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -298,7 +223,8 @@ async function getCrossTestAnalysis(teacherId: string, role: string, isQa: boole
     empty: false as const,
     totals: {
       tests: testIds.length,
-      submissions: subList.length,
+      // Attempts, not module rows (two-module attempts share a session_id).
+      submissions: new Set(subList.map((s) => s.session_id ?? s.id)).size,
       uniqueQuestions: rows.length,
     },
     rows,

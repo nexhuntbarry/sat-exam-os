@@ -1,3 +1,4 @@
+import { scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
@@ -39,17 +40,17 @@ async function getTeacherReview(
     : [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x));
   if (moduleIds.length === 0) return { test, sections: [] };
 
-  let qquery = db
-    .from("questions")
-    .select(
-      "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
-    )
-    .in("module_id", moduleIds)
-    .neq("parsing_status", "Rejected")
-    .order("original_question_number", { ascending: true });
-  if (!test.is_adaptive && Array.isArray(test.question_ids) && test.question_ids.length > 0) {
-    qquery = qquery.in("id", test.question_ids);
-  }
+  // Same question set students see and are graded on.
+  const qquery = scopeToStudentQuestionSet(
+    db
+      .from("questions")
+      .select(
+        "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
+      )
+      .in("module_id", moduleIds)
+      .order("original_question_number", { ascending: true }),
+    test,
+  );
   const { data: questions } = await qquery;
 
   type Section = { moduleId: string; title: string; questions: NonNullable<typeof questions> };

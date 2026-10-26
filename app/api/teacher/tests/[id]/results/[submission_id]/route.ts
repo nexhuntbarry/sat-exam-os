@@ -371,8 +371,8 @@ export async function PATCH(
   const { error } = await db
     .from("submissions")
     .update({
+      // submissions has no updated_at column — writing one 500s (PGRST204).
       tutor_notes: body.tutorNotes.slice(0, 8000), // hard cap to keep rows bounded
-      updated_at: new Date().toISOString(),
     })
     .eq("id", submissionId)
     .eq("test_id", testId);

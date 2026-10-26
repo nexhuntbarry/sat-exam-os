@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { getQaTestIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
-import { getTeacherTestScope } from "@/lib/teacher-access";
+import { getQaUserIds, scopeIds } from "@/lib/qa";
+import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/test-review?testId=optional
 // Returns the latest (or specified) published/closed test that the teacher's
@@ -22,19 +22,7 @@ export async function GET(req: Request) {
   // teachers were previously locked out entirely because this endpoint
   // only checked test_assignments.teacher_ids.
   const scope = await getTeacherTestScope(db, user);
-  let testIds: string[];
-  if (scope.isAdmin) {
-    const { data: all } = await db.from("test_assignments").select("test_id");
-    testIds = (all ?? []).map((a) => a.test_id as string);
-  } else {
-    const union = new Set<string>([
-      ...Array.from(scope.directTestIds),
-      ...Array.from(scope.classTestIds),
-    ]);
-    testIds = Array.from(union);
-  }
-  const qaTests = await getQaTestIds();
-  testIds = testIds.filter((id) => onSide(id, qaTests, user.isQa));
+  const testIds = Array.from(scope.testIds);
 
   if (testIds.length === 0) {
     return NextResponse.json({
@@ -71,12 +59,10 @@ export async function GET(req: Request) {
   // also directly assigned to them (full-scope mode).
   let submissionsQuery = db
     .from("submissions")
-    .select("id")
+    .select("id, session_id")
     .eq("test_id", selected.id)
     .in("status", ["Submitted", "Late"]);
-  const directScopeOnSelected =
-    scope.isAdmin || scope.directTestIds.has(selected.id);
-  if (!directScopeOnSelected && scope.myStudentIds.size > 0) {
+  if (!seesAllStudents(scope, selected.id)) {
     submissionsQuery = submissionsQuery.in(
       "student_id",
       Array.from(scope.myStudentIds),
@@ -86,9 +72,13 @@ export async function GET(req: Request) {
   const { data: submissions } = await submissionsQuery;
 
   const subIds = (submissions ?? []).map((s) => s.id);
-  const totalSubmissions = subIds.length;
+  // Count attempts, not module rows: a two-module attempt is two
+  // submissions sharing one session_id.
+  const totalSubmissions = new Set(
+    (submissions ?? []).map((s) => (s.session_id as string | null) ?? s.id),
+  ).size;
 
-  if (totalSubmissions === 0) {
+  if (subIds.length === 0) {
     return NextResponse.json({
       tests: tests.map((t) => ({ id: t.id, test_name: t.test_name, status: t.status })),
       selectedTest: { id: selected.id, test_name: selected.test_name, status: selected.status },

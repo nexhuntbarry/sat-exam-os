@@ -302,15 +302,19 @@ export function SubmissionDetailPanel({
                     {a.classReview ? "Marked for class review" : "Mark for class review"}
                   </button>
 
-                  {/* Private note */}
+                  {/* Question note — stored per test + teacher + question
+                      (test_teacher_notes has no student column), so the
+                      same note shows on every student's copy. */}
                   <div>
-                    <label className="text-soft-mute text-xs mb-1 block">Private note</label>
+                    <label className="text-soft-mute text-xs mb-1 block">
+                      Question note (shared across students, visible only to you)
+                    </label>
                     <textarea
                       rows={2}
                       value={notes[a.questionId] ?? ""}
                       onChange={(e) => setNotes((prev) => ({ ...prev, [a.questionId]: e.target.value }))}
                       onBlur={() => onSaveNote(a.questionId, notes[a.questionId] ?? "")}
-                      placeholder="Add a private note..."
+                      placeholder="Add a note about this question..."
                       className="w-full bg-light-bg border border-divider rounded-lg px-3 py-2 text-sm text-charcoal placeholder:text-charcoal/20 focus:outline-none focus:border-warm-coral/40 resize-none"
                     />
                   </div>

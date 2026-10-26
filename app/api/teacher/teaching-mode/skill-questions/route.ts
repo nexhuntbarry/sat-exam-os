@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
-import { getTeacherTestScope } from "@/lib/teacher-access";
+import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/skill-questions?skill=Linear+equations&limit=10
 // Returns candidate practice questions for that skill, sorted by class error
@@ -52,8 +52,7 @@ export async function GET(req: Request) {
     // QA isolation: never mix the other side's answer history in.
     if (!onSide(s.student_id as string, qaUsers, user.isQa)) return false;
     if (!onSide(s.test_id as string, qaTests, user.isQa)) return false;
-    if (scope.isAdmin) return true;
-    if (scope.directTestIds.has(s.test_id as string)) return true;
+    if (seesAllStudents(scope, s.test_id as string)) return true;
     return scope.myStudentIds.has(s.student_id as string);
   });
   void subsQuery;

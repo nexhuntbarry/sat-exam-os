@@ -28,11 +28,12 @@ async function getTests(viewerIsQa: boolean) {
     db.from("submissions").select("test_id, status").in("test_id", testIds),
   ]);
 
-  const assignMap: Record<string, { teachers: number; students: number }> = {};
+  const assignMap: Record<string, { teachers: number; students: number; classes: number }> = {};
   for (const a of assignments ?? []) {
     assignMap[a.test_id] = {
       teachers: (a.teacher_ids ?? []).length,
       students: (a.student_ids ?? []).length,
+      classes: (a.class_group_ids ?? []).length,
     };
   }
 
@@ -45,7 +46,7 @@ async function getTests(viewerIsQa: boolean) {
 
   return tests.map((t) => ({
     ...t,
-    assignment: assignMap[t.id] ?? { teachers: 0, students: 0 },
+    assignment: assignMap[t.id] ?? { teachers: 0, students: 0, classes: 0 },
     submissions: subMap[t.id] ?? { done: 0, total: 0 },
   }));
 }
@@ -65,7 +66,7 @@ export default async function TestsPage() {
   const closedTests = tests.filter((t) => t.status === "Closed");
   const renderTable = (rows: typeof tests) => (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[640px] text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Test Name</th>
@@ -116,8 +117,8 @@ export default async function TestsPage() {
                           {test.status}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        {test.assignment.teachers}T · {test.assignment.students}S
+                      <td className="px-5 py-3 text-mid-gray whitespace-nowrap" title="Teachers · Students · Class groups">
+                        {test.assignment.teachers}T · {test.assignment.students}S · {test.assignment.classes}C
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
                         {test.submissions.done} / {test.submissions.total}

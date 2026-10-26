@@ -1,18 +1,29 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { scaleSectionScore } from "@/lib/scoring";
-// Single source of truth for answer comparison (supports multiple
-// acceptable answers). Shared with the cron finalizer and the rescore path
-// so live grading and re-grading can never diverge.
-import { answersMatch } from "@/lib/grade-submission";
+// Single grading path shared with the cron finalizer and admin
+// force-submit, so live grading and re-grading can never diverge.
+import { finalizeSubmission } from "@/lib/grade-submission";
+import {
+  isModule2Track,
+  mergeAnswers,
+  moduleStartedAtIso,
+  sanitizeClientMetadata,
+  stampModule2Start,
+} from "@/lib/student-exam";
 
 // POST /api/student/submissions/[id]/submit
-// Optional JSON body: { answers?: Record<questionId,string>; metadata?: object }
+// Optional JSON body:
+//   { answers?: Record<questionId,string|null>; answersMode?: "merge";
+//     metadata?: object }
 // When the client supplies the latest answers in the request body, we use
 // them directly and skip the separate autosave PATCH the UI used to fire
 // first. Cuts submit latency roughly in half by collapsing two round
-// trips into one.
+// trips into one. answersMode "merge" overlays them on the saved answers
+// (null clears one) instead of replacing the whole map.
+//
+// Submitting after the module deadline (limit + grace) is still accepted
+// and graded, but the submission is marked "Late".
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -28,17 +39,23 @@ export async function POST(
   // POST roundtrip into one POST. If parsing fails or fields are
   // missing we simply skip the save — grading still falls back to the
   // last DB-persisted answers.
-  let inlineAnswers: Record<string, string> | null = null;
+  let inlineAnswers: Record<string, string | null> | null = null;
   let inlineMetadata: Record<string, unknown> | null = null;
+  let mergeMode = false;
   try {
     const body = (await req.clone().json()) as
-      | { answers?: Record<string, string>; metadata?: Record<string, unknown> }
+      | {
+          answers?: Record<string, string | null>;
+          answersMode?: string;
+          metadata?: Record<string, unknown>;
+        }
       | undefined;
     if (body?.answers && typeof body.answers === "object") {
       inlineAnswers = body.answers;
     }
+    mergeMode = body?.answersMode === "merge";
     if (body?.metadata && typeof body.metadata === "object") {
-      inlineMetadata = body.metadata;
+      inlineMetadata = sanitizeClientMetadata(body.metadata);
     }
   } catch {
     /* No body / non-JSON → fall back to DB-stored answers. */
@@ -68,7 +85,7 @@ export async function POST(
   const { data: test, error: testError } = await db
     .from("tests")
     .select(
-      "id, module_id, module_2_id, time_limit_minutes, due_date, question_ids, is_adaptive, module_2_easy_id, module_2_hard_id, adaptive_threshold",
+      "id, module_id, module_2_id, time_limit_minutes, time_limit_minutes_module_2, is_untimed, due_date, question_ids, is_adaptive, module_2_easy_id, module_2_hard_id, adaptive_threshold",
     )
     .eq("id", submission.test_id)
     .single();
@@ -77,130 +94,70 @@ export async function POST(
     return NextResponse.json({ error: "Test not found" }, { status: 500 });
   }
 
-  // Grade against the submission's own module — for legacy/non-adaptive
-  // submissions this matches tests.module_id; for adaptive it picks the
-  // correct slot (module_1 / module_2_easy / module_2_hard).
-  const gradingModuleId = submission.module_id ?? test.module_id;
-  if (!gradingModuleId) {
-    return NextResponse.json({ error: "Submission has no module" }, { status: 500 });
-  }
-
-  const { data: gradingModule } = await db
-    .from("modules")
-    .select("section")
-    .eq("id", gradingModuleId)
-    .maybeSingle();
-  const moduleSection = gradingModule?.section ?? null;
-
-  const now = new Date();
-  const startedAt = new Date(submission.started_at);
-  const timeSpentSeconds = Math.floor((now.getTime() - startedAt.getTime()) / 1000);
-
-  // Determine status
-  const isPastDue = test.due_date && new Date(test.due_date) < now;
-  const finalStatus = isPastDue ? "Late" : "Submitted";
-
-  // Fetch questions for grading
-  let questionQuery = db
-    .from("questions")
-    .select("id, correct_answer, question_type, original_question_number")
-    .eq("module_id", gradingModuleId)
-    .neq("parsing_status", "Rejected")
-    .order("original_question_number", { ascending: true });
-
-  // tests.question_ids is a per-test subset only meaningful on the
-  // single-module path. Adaptive tests grade every question of the
-  // selected module, so skip the filter when adaptive.
-  if (
-    !test.is_adaptive &&
-    test.question_ids &&
-    Array.isArray(test.question_ids) &&
-    test.question_ids.length > 0
-  ) {
-    questionQuery = questionQuery.in("id", test.question_ids);
-  }
-
-  const { data: questions, error: qError } = await questionQuery;
-  if (qError || !questions) {
-    return NextResponse.json({ error: "Failed to fetch questions" }, { status: 500 });
+  // Submitting a Module 2 whose clock never started stamps it first (same
+  // guarded write as the take page), then the deadline is enforced from
+  // that stamp — no unlimited time via a direct API submit.
+  let submissionMetadata = submission.metadata as unknown;
+  if (isModule2Track(submission.adaptive_track) && !moduleStartedAtIso(submission)) {
+    submissionMetadata = await stampModule2Start(db, submission.id, submission.metadata);
   }
 
   // Prefer the answers the client just sent (latest). Fall back to
   // whatever's in the DB if the client didn't supply any.
-  const answers = (inlineAnswers ??
-    (submission.answers as Record<string, string> | null) ??
-    {}) as Record<string, string>;
-  const totalQuestions = questions.length;
+  const savedAnswers = (submission.answers ?? {}) as Record<string, string>;
+  const answersOverride = inlineAnswers
+    ? mergeMode
+      ? mergeAnswers(savedAnswers, inlineAnswers)
+      : mergeAnswers({}, inlineAnswers)
+    : undefined;
 
-  // Grade each question
-  const answerRecords = questions.map((q) => {
-    const studentAnswer = answers[q.id] ?? null;
-    const isCorrect = answersMatch(studentAnswer, q.correct_answer);
-    return {
-      submission_id: id,
-      question_id: q.id,
-      student_answer: studentAnswer,
-      correct_answer: q.correct_answer ?? null,
-      is_correct: isCorrect,
-      time_spent_seconds: totalQuestions > 0 ? Math.floor(timeSpentSeconds / totalQuestions) : 0,
-    };
-  });
-
-  const correctCount = answerRecords.filter((r) => r.is_correct).length;
-  const percentage = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100 * 10) / 10 : 0;
-  const scaledScore = totalQuestions > 0 ? scaleSectionScore(percentage) : null;
-
-  // Update submission. Fold inline answers + metadata in here so we
-  // don't need the separate PATCH the UI used to send before submit.
-  const submissionUpdates: Record<string, unknown> = {
-    status: finalStatus,
-    submitted_at: now.toISOString(),
-    score: correctCount,
-    correct_count: correctCount,
-    total_questions: totalQuestions,
-    percentage,
-    scaled_score: scaledScore,
-    scaled_section: moduleSection,
-    time_spent_seconds: timeSpentSeconds,
-  };
-  if (inlineAnswers) submissionUpdates.answers = inlineAnswers;
-  if (inlineMetadata) {
-    submissionUpdates.metadata = {
-      ...((submission.metadata ?? {}) as Record<string, unknown>),
-      ...inlineMetadata,
-    };
-  }
-  // Claim-then-write: the conditional update (status still In Progress)
-  // is atomic, so when two submits overlap (client retry after a timeout,
-  // timer expiry + manual click) only one wins. The loser gets the same
-  // 400 as a late duplicate instead of double-inserting answer_records
-  // and creating a second Module 2 row.
-  const { data: claimed, error: updateError } = await db
-    .from("submissions")
-    .update(submissionUpdates)
-    .eq("id", id)
-    .eq("status", "In Progress")
-    .select("id");
-
-  if (updateError) {
-    console.error("[submit/update_submission]", updateError);
+  let graded;
+  try {
+    graded = await finalizeSubmission({
+      submissionId: id,
+      submission: {
+        id: submission.id,
+        test_id: submission.test_id,
+        answers: savedAnswers,
+        started_at: submission.started_at,
+        module_id: submission.module_id,
+        adaptive_track: submission.adaptive_track,
+        metadata: submissionMetadata,
+      },
+      test: {
+        id: test.id,
+        module_id: test.module_id,
+        question_ids: (test.question_ids as string[] | null) ?? null,
+        is_adaptive: test.is_adaptive,
+        due_date: test.due_date,
+        time_limit_minutes: test.time_limit_minutes,
+        time_limit_minutes_module_2: test.time_limit_minutes_module_2,
+        is_untimed: test.is_untimed,
+      },
+      enforceTimeLimit: true,
+      answersOverride,
+      // Fold inline metadata in here so we don't need the separate PATCH
+      // the UI used to send before submit.
+      extraUpdates: inlineMetadata
+        ? {
+            metadata: {
+              ...((submissionMetadata ?? {}) as Record<string, unknown>),
+              ...inlineMetadata,
+            },
+          }
+        : undefined,
+      db,
+    });
+  } catch (e) {
+    console.error("[submit/finalize]", e);
     return NextResponse.json({ error: "Failed to finalize submission" }, { status: 500 });
   }
-  if (!claimed || claimed.length === 0) {
+  // Lost the claim: an overlapping submit (client retry, timer expiry +
+  // manual click, cron) already finalized it. Same 400 as a late duplicate.
+  if (!graded) {
     return NextResponse.json({ error: "Submission already submitted" }, { status: 400 });
   }
-
-  // Insert answer records (batch)
-  const { error: arError } = await db.from("answer_records").insert(answerRecords);
-  if (arError) {
-    console.error("[submit/answer_records]", arError);
-    // Roll the claim back so the student (or the cron finalizer) can retry.
-    await db
-      .from("submissions")
-      .update({ status: "In Progress", submitted_at: null })
-      .eq("id", id);
-    return NextResponse.json({ error: "Failed to save answer records" }, { status: 500 });
-  }
+  const { status: finalStatus, correctCount, totalQuestions, percentage, timeSpentSeconds } = graded;
 
   // Module 1 → Module 2 handoff. Two paths share the same handoff
   // shape (insert a fresh In-Progress submission in the same session),

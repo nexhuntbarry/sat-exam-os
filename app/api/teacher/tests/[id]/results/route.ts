@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
-import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 
 const MODULE_LABEL: Record<string, string> = {
@@ -49,14 +49,10 @@ export async function GET(
 
   if (!test) return NextResponse.json({ error: "Test not found" }, { status: 404 });
 
-  // Roster size for "not started" calculation. For a class-scoped
-  // teacher, "assigned" means the intersection of their class roster
-  // with the test's student_ids — that's the count they actually
-  // teach for this test.
-  const assignmentStudentIds: string[] = (assignment.student_ids as string[] | null) ?? [];
-  const studentIds = studentAllowlist
-    ? assignmentStudentIds.filter((sid) => studentAllowlist!.has(sid))
-    : assignmentStudentIds;
+  // Roster for the "not started" calculation: student_ids ∪ members of
+  // class_group_ids (class assignment is the common case), intersected
+  // with the class roster for a class-scoped teacher.
+  const studentIds = await getAssignedStudentIds(db, assignment, user.isQa, studentAllowlist);
 
   // Fetch submissions with student profiles. Filter to the allowlist
   // when present so the class teacher only sees their own students'
@@ -232,13 +228,9 @@ export async function GET(
   // Summary stats — computed over attempts (grouped rows) so multi-
   // module sessions don't double-count.
   const submitted = studentRows.filter((r) => r.status === "Submitted" || r.status === "Late");
-  // Clamp at 0 — for class-scoped teachers, `studentIds` is the
-  // intersection of assignment.student_ids and the class roster, while
-  // `studentRows` already filters to that roster. Students who
-  // submitted but weren't explicitly on assignment.student_ids (e.g.
-  // test was assigned by class_group, not by individual) would
-  // otherwise produce a negative "not started" count.
-  const notStarted = Math.max(0, studentIds.length - studentRows.length);
+  // Students on the roster with no attempt at all.
+  const startedStudents = new Set(studentRows.map((r) => r.studentId));
+  const notStarted = Array.from(studentIds).filter((sid) => !startedStudents.has(sid)).length;
   const inProgress = studentRows.filter((r) => r.status === "In Progress").length;
   const late = studentRows.filter((r) => r.status === "Late").length;
 
@@ -281,7 +273,7 @@ export async function GET(
   return NextResponse.json({
     test,
     stats: {
-      totalAssigned: studentIds.length,
+      totalAssigned: studentIds.size,
       submittedCount: submitted.length,
       notStartedCount: notStarted,
       inProgressCount: inProgress,

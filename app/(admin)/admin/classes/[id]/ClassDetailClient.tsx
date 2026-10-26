@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle } from "lucide-react";
+import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil } from "lucide-react";
 
 interface ClassGroup {
   id: string;
@@ -48,6 +48,7 @@ interface Props {
   allStudents: Student[];
   allTeachers: Teacher[];
   assignedTeachers: AssignedTeacher[];
+  linkedTests: { id: string; name: string }[];
 }
 
 export default function ClassDetailClient({
@@ -56,8 +57,42 @@ export default function ClassDetailClient({
   allStudents,
   allTeachers,
   assignedTeachers,
+  linkedTests,
 }: Props) {
   const router = useRouter();
+
+  const [renaming, setRenaming] = useState(false);
+  const [newName, setNewName] = useState(classGroup.name);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+
+  async function saveName() {
+    const name = newName.trim();
+    if (!name) {
+      setRenameError("Name cannot be empty");
+      return;
+    }
+    setRenameBusy(true);
+    setRenameError(null);
+    try {
+      const res = await fetch(`/api/admin/class-groups/${classGroup.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setRenameError(j.error ?? "Failed to rename");
+        return;
+      }
+      setRenaming(false);
+      router.refresh();
+    } catch {
+      setRenameError("Network error");
+    } finally {
+      setRenameBusy(false);
+    }
+  }
   const [, startTransition] = useTransition();
   const [addStudentId, setAddStudentId] = useState("");
   const [addTeacherId, setAddTeacherId] = useState("");
@@ -170,8 +205,47 @@ export default function ClassDetailClient({
         >
           <ArrowLeft size={20} />
         </a>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-charcoal">{classGroup.name}</h1>
+        <div className="flex-1 min-w-0">
+          {renaming ? (
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && saveName()}
+                  className="flex-1 min-w-0 bg-surface border border-divider rounded-xl px-3 py-1.5 text-lg font-bold text-charcoal focus:outline-none focus:border-warm-coral/50"
+                  aria-label="Class name"
+                  autoFocus
+                />
+                <button
+                  onClick={saveName}
+                  disabled={renameBusy || !newName.trim()}
+                  className="px-3 py-1.5 rounded-xl bg-warm-coral text-white text-sm font-semibold disabled:opacity-40"
+                >
+                  {renameBusy ? "Saving…" : "Save"}
+                </button>
+                <button
+                  onClick={() => { setRenaming(false); setNewName(classGroup.name); setRenameError(null); }}
+                  className="px-3 py-1.5 rounded-xl border border-divider text-mid-gray text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+              {renameError && <p className="text-status-error text-xs">{renameError}</p>}
+            </div>
+          ) : (
+            <h1 className="text-2xl font-bold text-charcoal flex items-center gap-2">
+              <span className="truncate">{classGroup.name}</span>
+              <button
+                onClick={() => { setNewName(classGroup.name); setRenaming(true); }}
+                className="p-1.5 rounded-lg text-soft-mute hover:text-charcoal hover:bg-light-bg"
+                aria-label="Rename class"
+                title="Rename class"
+              >
+                <Pencil size={14} />
+              </button>
+            </h1>
+          )}
           <p className="text-soft-mute text-sm">
             {classGroup.campus && `${classGroup.campus} · `}
             {classGroup.grade && `Grade ${classGroup.grade} · `}
@@ -202,9 +276,22 @@ export default function ClassDetailClient({
                 <p className="text-mid-gray text-xs mt-0.5 leading-relaxed">
                   This permanently removes <strong>{classGroup.name}</strong> along with all
                   its student memberships ({members.length}) and teacher assignments
-                  ({assignedTeachers.length}). Tests already assigned to this class are NOT
-                  deleted, but their class link becomes orphan. This cannot be undone.
+                  ({assignedTeachers.length}). This cannot be undone.
                 </p>
+                {linkedTests.length > 0 ? (
+                  <div className="text-mid-gray text-xs mt-2">
+                    It will be removed from {linkedTests.length} test{linkedTests.length === 1 ? "" : "s"}
+                    {" "}(the tests themselves are kept; students who only had them through this class
+                    lose access):
+                    <ul className="list-disc pl-4 mt-1 max-h-28 overflow-y-auto">
+                      {linkedTests.map((t) => (
+                        <li key={t.id} className="text-charcoal">{t.name}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : (
+                  <p className="text-mid-gray text-xs mt-2">No tests are assigned to this class.</p>
+                )}
               </div>
             </div>
             <div className="px-5 py-4 space-y-2">
@@ -359,7 +446,7 @@ export default function ClassDetailClient({
             No members yet. Add students above.
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="text-soft-mute border-b border-divider">
                 <th className="text-left px-5 py-3 font-medium">Student</th>
@@ -399,7 +486,7 @@ export default function ClassDetailClient({
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
     </div>

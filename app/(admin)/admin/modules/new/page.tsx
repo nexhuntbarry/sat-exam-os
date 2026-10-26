@@ -116,7 +116,7 @@ export default function NewModulePage() {
 
       <div className="bg-surface border border-divider rounded-2xl p-6 space-y-5">
         <div>
-          <label className="block text-slate-200 text-sm font-medium mb-1">Module Name *</label>
+          <label className="block text-mid-gray text-sm font-medium mb-1">Module Name *</label>
           <input
             className={inputCls}
             value={form.moduleName}
@@ -128,7 +128,7 @@ export default function NewModulePage() {
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Section *</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Section *</label>
             <select
               className={inputCls}
               value={form.section}
@@ -139,7 +139,7 @@ export default function NewModulePage() {
             </select>
           </div>
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Module Number *</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Module Number *</label>
             <select
               className={inputCls}
               value={form.moduleNumber}
@@ -153,7 +153,7 @@ export default function NewModulePage() {
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Difficulty</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Difficulty</label>
             <select
               className={inputCls}
               value={form.difficulty}
@@ -167,7 +167,7 @@ export default function NewModulePage() {
             </select>
           </div>
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Source Name</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Source Name</label>
             <input
               className={inputCls}
               value={form.sourceName}
@@ -178,7 +178,7 @@ export default function NewModulePage() {
         </div>
 
         <div>
-          <label className="block text-slate-200 text-sm font-medium mb-1">Version / Date</label>
+          <label className="block text-mid-gray text-sm font-medium mb-1">Version / Date</label>
           <input
             className={inputCls}
             value={form.version}
@@ -188,7 +188,7 @@ export default function NewModulePage() {
         </div>
 
         <div>
-          <label className="block text-slate-200 text-sm font-medium mb-2">PDF File *</label>
+          <label className="block text-mid-gray text-sm font-medium mb-2">PDF File *</label>
           <label className="flex flex-col items-center justify-center gap-3 p-8 border-2 border-dashed border-divider rounded-2xl cursor-pointer hover:border-warm-coral/50 transition-colors">
             <Upload size={28} className="text-soft-mute" />
             {file ? (

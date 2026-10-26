@@ -3,7 +3,13 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaClassGroupIds, getQaUserIds, onSide } from "@/lib/qa";
+import { getQaClassGroupIds, getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
+import {
+  getStudentAssignedTestIds,
+  getTeacherSubjectsForStudent,
+  getTestSections,
+  inSubjects,
+} from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { formatDateTime, formatDate } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
@@ -26,6 +32,7 @@ async function loadStudent(
   studentId: string,
   teacherId: string,
   isAdmin: boolean,
+  isQa: boolean,
 ) {
   const db = getServiceClient();
 
@@ -57,23 +64,20 @@ async function loadStudent(
 
   // Authz model: teacher already proved ownership of this class_group
   // above (class_group_teachers check) AND the student belongs to this
-  // class_group (class_group_members check). That's the gate. Showing
-  // every test this student has taken is fine — the teacher is
-  // legitimately responsible for the student's progress.
-  //
-  // We do NOT additionally require the teacher to be on
-  // test_assignments.teacher_ids — admins routinely create tests on
-  // behalf of teachers without adding the teacher to that JSON array,
-  // and the screen would render empty for the most common workflow.
-  // The student-scope check is what enforces the "own students only"
-  // requirement, not the test-assignment check.
-  void teacherId;
-  void isAdmin;
+  // class_group (class_group_members check). That's the gate. We show the
+  // tests this student took in the subject(s) the teacher teaches this
+  // class (same subject rule as getTeacherTestAccess / the results API),
+  // without requiring the teacher to be on test_assignments.teacher_ids.
+  const subjects = isAdmin
+    ? null
+    : (await getTeacherSubjectsForStudent(db, teacherId, studentId, classGroupId)).subjects;
+
   const { data: subs } = await db
     .from("submissions")
     .select(
-      `id, test_id, status, score, percentage, started_at, submitted_at,
-       tests!inner(id, test_name, due_date, modules!module_id(section))`,
+      `id, test_id, status, score, percentage, correct_count, total_questions,
+       started_at, submitted_at, session_id, adaptive_track,
+       tests!inner(id, test_name, due_date)`,
     )
     .eq("student_id", studentId)
     .order("submitted_at", { ascending: false, nullsFirst: false })
@@ -85,52 +89,74 @@ async function loadStudent(
     status: string;
     score: number | string | null;
     percentage: number | string | null;
+    correct_count: number | null;
+    total_questions: number | null;
     started_at: string | null;
     submitted_at: string | null;
+    session_id: string | null;
+    adaptive_track: string | null;
     tests:
-      | {
-          id: string;
-          test_name: string;
-          due_date: string | null;
-          modules: { section: string } | { section: string }[] | null;
-        }
-      | {
-          id: string;
-          test_name: string;
-          due_date: string | null;
-          modules: { section: string } | { section: string }[] | null;
-        }[]
+      | { id: string; test_name: string; due_date: string | null }
+      | { id: string; test_name: string; due_date: string | null }[]
       | null;
   };
-  const submissions = ((subs ?? []) as unknown as SubRow[]).map((s) => {
-    const t = (Array.isArray(s.tests) ? s.tests[0] : s.tests) as
-      | {
-          id: string;
-          test_name: string;
-          due_date: string | null;
-          modules: { section: string } | { section: string }[] | null;
-        }
-      | null;
-    const m = t
-      ? ((Array.isArray(t.modules) ? t.modules[0] : t.modules) as
-          | { section: string }
-          | null)
-      : null;
+  const rows = (subs ?? []) as unknown as SubRow[];
+  const qaTests = await getQaTestIds();
+  const [sectionOf, assignedTestIds] = await Promise.all([
+    getTestSections(db, Array.from(new Set(rows.map((r) => r.test_id)))),
+    getStudentAssignedTestIds(db, studentId, isQa),
+  ]);
+  const visible = (testId: string) =>
+    onSide(testId, qaTests, isQa) && inSubjects(sectionOf.get(testId) ?? null, subjects);
+
+  // One row per attempt: two-module attempts are two submissions sharing
+  // a session_id.
+  const attempts = new Map<string, SubRow[]>();
+  for (const r of rows) {
+    if (!visible(r.test_id)) continue;
+    const key = r.session_id ?? r.id;
+    attempts.set(key, [...(attempts.get(key) ?? []), r]);
+  }
+  const submissions = Array.from(attempts.values()).map((list) => {
+    const sorted = [...list].sort((a, b) =>
+      (a.adaptive_track === "module_1" ? 0 : 1) - (b.adaptive_track === "module_1" ? 0 : 1),
+    );
+    const head = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const t = (Array.isArray(head.tests) ? head.tests[0] : head.tests) ?? null;
+    const correct = sorted.reduce((n, r) => n + (r.correct_count ?? 0), 0);
+    const total = sorted.reduce((n, r) => n + (r.total_questions ?? 0), 0);
+    const statuses = sorted.map((r) => r.status);
+    const status = statuses.includes("In Progress")
+      ? "In Progress"
+      : statuses.includes("Late")
+      ? "Late"
+      : last.status;
     return {
-      id: s.id,
-      testId: s.test_id,
+      // Detail page stitches both modules via session_id from the last one.
+      id: last.id,
+      testId: head.test_id,
       testName: t?.test_name ?? "—",
       dueDate: t?.due_date ?? null,
-      section: m?.section ?? null,
-      status: s.status,
-      score: s.score == null ? null : Number(s.score),
-      percentage: s.percentage == null ? null : Number(s.percentage),
-      submittedAt: s.submitted_at,
-      startedAt: s.started_at,
+      section: sectionOf.get(head.test_id) ?? null,
+      status,
+      percentage: sorted.length > 1
+        ? total > 0 ? Math.round((correct / total) * 1000) / 10 : null
+        : head.percentage == null ? null : Number(head.percentage),
+      submittedAt: sorted.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
     };
   });
 
-  return { group, student, submissions };
+  // Assigned = tests assigned to the student (directly or via a class)
+  // plus any they took, in the teacher's subject(s).
+  const assignedSections = await getTestSections(db, Array.from(assignedTestIds));
+  const assigned = new Set<string>();
+  for (const id of assignedTestIds) {
+    if (inSubjects(assignedSections.get(id) ?? null, subjects)) assigned.add(id);
+  }
+  for (const a of submissions) assigned.add(a.testId);
+
+  return { group, student, submissions, subjects, assignedCount: assigned.size };
 }
 
 export default async function TeacherStudentResultsPage({
@@ -147,11 +173,16 @@ export default async function TeacherStudentResultsPage({
     !onSide(id, await getQaClassGroupIds(), me.isQa) ||
     !onSide(studentId, await getQaUserIds(), me.isQa)
   ) notFound();
-  const data = await loadStudent(id, studentId, me.userId, me.role === "admin");
+  const data = await loadStudent(id, studentId, me.userId, me.role === "admin", me.isQa);
   if (!data) notFound();
-  const { group, student, submissions } = data;
-  const breakdownRows = await getStudentBreakdownRows(studentId);
-  const occasions = await getStudentProgressOccasions(studentId);
+  const { group, student, submissions, subjects, assignedCount } = data;
+  // Only the subject(s) this teacher teaches the class.
+  const breakdownRows = (await getStudentBreakdownRows(studentId)).filter((r) =>
+    inSubjects(r.section, subjects),
+  );
+  const occasions = (await getStudentProgressOccasions(studentId))
+    .map((o) => ({ ...o, rows: o.rows.filter((r) => inSubjects(r.section, subjects)) }))
+    .filter((o) => o.rows.length > 0 && inSubjects(o.section, subjects));
 
   const completed = submissions.filter(
     (s) => s.status === "Submitted" || s.status === "Late",
@@ -194,8 +225,8 @@ export default async function TeacherStudentResultsPage({
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        <Stat label="Tests assigned" value={String(submissions.length)} />
-        <Stat label="Completed" value={String(completed.length)} />
+        <Stat label="Tests assigned" value={String(assignedCount)} />
+        <Stat label="Completed" value={String(new Set(completed.map((s) => s.testId)).size)} />
         <Stat
           label="Avg score"
           value={avg == null ? "—" : `${avg.toFixed(1)}%`}

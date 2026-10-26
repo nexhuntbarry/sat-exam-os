@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { classNameTaken } from "../_shared";
 
 // POST /api/admin/class-groups — create
 export async function POST(req: Request) {
@@ -15,17 +16,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (!body.name) {
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  if (!name) {
     return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
 
   const db = getServiceClient();
+  if (await classNameTaken(db, name, admin.isQa)) {
+    return NextResponse.json({ error: "A class with this name already exists" }, { status: 409 });
+  }
   const { data, error } = await db
     .from("class_groups")
     .insert({
-      name: body.name,
-      campus: body.campus ?? null,
-      grade: body.grade ?? null,
+      name,
+      campus: body.campus?.trim() || null,
+      grade: body.grade?.trim() || null,
       created_by: admin.userId,
     })
     .select("id")

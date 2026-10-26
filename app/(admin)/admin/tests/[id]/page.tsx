@@ -8,10 +8,12 @@ import EditTestButton from "./EditTestButton";
 import AddStudentsButton from "./AddStudentsButton";
 import RemoveStudentButton from "./RemoveStudentButton";
 import AssignTeachersButton from "./AssignTeachersButton";
+import AssignClassGroupsButton from "./AssignClassGroupsButton";
+import { approvalCounts, isFullyApproved } from "../module-approval";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import { formatDate, formatDateTime } from "@/lib/datetime";
-import { getQaTestIds, onSide, scopeUsers } from "@/lib/qa";
+import { getQaClassGroupIds, getQaTestIds, onSide, scopeIds, scopeUsers } from "@/lib/qa";
 
 async function getTest(id: string, viewerIsQa: boolean) {
   const db = getServiceClient();
@@ -56,7 +58,8 @@ async function getTest(id: string, viewerIsQa: boolean) {
   const studentIds: string[] = assignment?.student_ids ?? [];
   const classGroupIds: string[] = assignment?.class_group_ids ?? [];
 
-  const [{ data: teachers }, { data: classGroups }, { data: allTeachers }, { data: studentRows }] = await Promise.all([
+  const qaGroups = await getQaClassGroupIds();
+  const [{ data: teachers }, { data: classGroups }, { data: allTeachers }, { data: studentRows }, { data: allClassGroups }] = await Promise.all([
     teacherIds.length > 0
       ? db.from("users").select("id, display_name, email").in("id", teacherIds)
       : Promise.resolve({ data: [] }),
@@ -67,7 +70,20 @@ async function getTest(id: string, viewerIsQa: boolean) {
     studentIds.length > 0
       ? db.from("users").select("id, display_name, email").in("id", studentIds)
       : Promise.resolve({ data: [] }),
+    scopeIds(db.from("class_groups").select("id, name, campus, grade"), "id", qaGroups, viewerIsQa).order("name"),
   ]);
+
+  // Individually assigned students who are also in an assigned class group
+  // keep seeing the test after Remove (M-17).
+  const { data: groupMembers } =
+    classGroupIds.length > 0 && studentIds.length > 0
+      ? await db
+          .from("class_group_members")
+          .select("student_id")
+          .in("class_group_id", classGroupIds)
+          .in("student_id", studentIds)
+      : { data: [] as { student_id: string }[] };
+  const viaGroup = new Set((groupMembers ?? []).map((m) => m.student_id as string));
 
   // Individually assigned students + their submissions on this test, so
   // each row can offer Remove (and say whether there's work to delete).
@@ -80,6 +96,7 @@ async function getTest(id: string, viewerIsQa: boolean) {
         email: u.email,
         submissionCount: subs.length,
         hasGradedSubmission: subs.some((s) => s.status === "Submitted" || s.status === "Late"),
+        visibleViaGroup: viaGroup.has(u.id),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -100,6 +117,7 @@ async function getTest(id: string, viewerIsQa: boolean) {
       teachers: teachers ?? [],
       classGroups: classGroups ?? [],
       allTeachers: allTeachers ?? [],
+      allClassGroups: allClassGroups ?? [],
     },
     stats: {
       total: (submissions ?? []).length,
@@ -128,9 +146,8 @@ export default async function TestDetailPage({
   const test = await getTest(id, user.isQa);
   if (!test) notFound();
 
-  // Eligible modules for the Edit modal — same predicate as the
-  // create page: approved or with ≥5 approved questions. Keep this in
-  // sync with /admin/tests/new logic.
+  // Eligible modules for the Edit modal — same predicate as the create
+  // page: every non-rejected question Approved (see module-approval.ts).
   const db = getServiceClient();
   const { data: modulesRaw } = await db
     .from("modules")
@@ -161,20 +178,16 @@ export default async function TestDetailPage({
     ].filter((x): x is string => Boolean(x)),
   );
   const eligibleModules = ((modulesRaw ?? []) as ModRow[])
-    .filter((m) => {
-      if (currentModuleIds.has(m.id)) return true;
-      if (m.parsing_status === "approved") return true;
-      const approvedCount = (m.questions ?? []).filter(
-        (q) => q.parsing_status === "Approved",
-      ).length;
-      return approvedCount >= 5;
-    })
-    .map((m) => ({
+    .map((m) => ({ m, counts: approvalCounts(m.questions) }))
+    .filter(({ m, counts }) => currentModuleIds.has(m.id) || isFullyApproved(counts))
+    .map(({ m, counts }) => ({
       id: m.id,
       module_name: m.module_name,
       section: m.section,
       module_number: m.module_number,
       total_questions: m.total_questions,
+      approved: counts.approved,
+      approvalTotal: counts.total,
     }));
 
   // Adaptive tests have no single tests.module_id, so the join may
@@ -192,9 +205,9 @@ export default async function TestDetailPage({
         <span className="text-charcoal">{test.test_name}</span>
       </div>
 
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-3 mb-1 flex-wrap">
             <h1 className="text-2xl font-bold text-charcoal">{test.test_name}</h1>
             <span className={clsx("px-2.5 py-1 rounded-full text-xs font-semibold", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
               {test.status}
@@ -254,8 +267,15 @@ export default async function TestDetailPage({
               desmos_enabled: Boolean(test.desmos_enabled),
             }}
             modules={eligibleModules}
+            hasSubmissions={test.stats.total > 0}
           />
-          <TestDetailActions testId={test.id} testName={test.test_name} status={test.status} />
+          <TestDetailActions
+            testId={test.id}
+            testName={test.test_name}
+            status={test.status}
+            submissionCount={test.stats.total}
+            gradedCount={test.stats.submitted}
+          />
         </div>
       </div>
 
@@ -296,7 +316,7 @@ export default async function TestDetailPage({
           { label: "Show Answers", value: test.show_answers_after_submission ? "Yes" : "No" },
           { label: "Teachers", value: String(test.assignment.teacherIds.length) },
           { label: "Students", value: String(test.assignment.studentIds.length) },
-          { label: "Class Groups", value: String(test.assignment.classGroupIds.length) },
+          { label: "Class Groups", value: String(test.assignment.classGroups.length) },
         ].map(({ label, value }) => (
           <div key={label} className="bg-surface border border-divider rounded-xl p-4">
             <div className="text-soft-mute text-xs mb-1">{label}</div>
@@ -349,7 +369,14 @@ export default async function TestDetailPage({
           ))}
         </div>
         <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
-          <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Class Groups</h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Class Groups</h3>
+            <AssignClassGroupsButton
+              testId={test.id}
+              allClassGroups={test.assignment.allClassGroups}
+              currentClassGroupIds={test.assignment.classGroups.map((cg: { id: string }) => cg.id)}
+            />
+          </div>
           {test.assignment.classGroups.length === 0 ? (
             <p className="text-soft-mute text-sm">None assigned</p>
           ) : test.assignment.classGroups.map((cg: { id: string; name: string }) => (
@@ -375,6 +402,7 @@ export default async function TestDetailPage({
                 studentName={st.name}
                 submissionCount={st.submissionCount}
                 hasGradedSubmission={st.hasGradedSubmission}
+                visibleViaGroup={st.visibleViaGroup}
               />
             </div>
           ))}

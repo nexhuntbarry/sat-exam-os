@@ -66,7 +66,17 @@ export async function POST(
   if (body.grade) profilePatch.grade = body.grade;
   if (body.targetScore) profilePatch.target_score = body.targetScore;
   if (body.notes) profilePatch.notes = body.notes;
-  if (body.classGroupId) profilePatch.class_group = body.classGroupId;
+  if (body.classGroupId) {
+    // student_profiles.class_group is a free-text label shown in the
+    // profile editor; store the class name, not its uuid. Membership
+    // itself lives in class_group_members below.
+    const { data: cg } = await db
+      .from("class_groups")
+      .select("name")
+      .eq("id", body.classGroupId)
+      .maybeSingle();
+    if (cg) profilePatch.class_group = cg.name;
+  }
 
   if (Object.keys(profilePatch).length > 0) {
     await db
@@ -81,6 +91,12 @@ export async function POST(
       { class_group_id: body.classGroupId, student_id: id },
       { onConflict: "class_group_id,student_id" }
     );
+  }
+
+  // Reactivating a suspended student reuses this route; don't send a
+  // fresh "you're approved" welcome to them or their parent.
+  if (userRow.account_status === "suspended") {
+    return NextResponse.json({ ok: true, reactivated: true });
   }
 
   // Send approval email (non-blocking)

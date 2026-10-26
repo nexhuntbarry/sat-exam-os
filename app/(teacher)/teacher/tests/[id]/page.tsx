@@ -1,6 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { canManageTestSettings, getTeacherTestAccess } from "@/lib/teacher-access";
 import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -66,6 +66,7 @@ async function getTeacherTest(
     test,
     studentIds,
     submissions: submissions ?? [],
+    canManageSettings: await canManageTestSettings(db, user, testId),
   };
 }
 
@@ -241,7 +242,7 @@ export default async function TeacherTestDetailPage({
   const data = await getTeacherTest(id, user);
   if (!data) notFound();
 
-  const { test, submissions } = data;
+  const { test, submissions, canManageSettings } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -275,18 +276,29 @@ export default async function TeacherTestDetailPage({
         </p>
       </div>
 
-      <ReviewModeToggle
-        testId={test.id}
-        initialUnlocked={Boolean((test as { review_unlocked?: boolean }).review_unlocked)}
-      />
+      {canManageSettings ? (
+        <>
+          <ReviewModeToggle
+            testId={test.id}
+            initialUnlocked={Boolean((test as { review_unlocked?: boolean }).review_unlocked)}
+          />
 
-      <AnswerVisibilityToggle
-        testId={test.id}
-        initialShowAnswers={Boolean((test as { show_answers_after_submission?: boolean }).show_answers_after_submission)}
-        initialShowExplanations={
-          (test as { show_explanations_after_submission?: boolean }).show_explanations_after_submission ?? true
-        }
-      />
+          <AnswerVisibilityToggle
+            testId={test.id}
+            initialShowAnswers={Boolean((test as { show_answers_after_submission?: boolean }).show_answers_after_submission)}
+            initialShowExplanations={
+              (test as { show_explanations_after_submission?: boolean }).show_explanations_after_submission ?? true
+            }
+          />
+        </>
+      ) : (
+        <div className="rounded-2xl border border-divider bg-surface px-4 py-3 text-xs text-soft-mute leading-relaxed">
+          Class review is <span className="font-medium text-mid-gray">{(test as { review_unlocked?: boolean }).review_unlocked ? "unlocked" : "locked"}</span>
+          {" · "}answers after submission are{" "}
+          <span className="font-medium text-mid-gray">{(test as { show_answers_after_submission?: boolean }).show_answers_after_submission ? "shown" : "hidden"}</span>.
+          {" "}These settings apply to every class taking this test, so only the test&rsquo;s owner or an admin can change them.
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">

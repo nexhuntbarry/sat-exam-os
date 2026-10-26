@@ -83,8 +83,8 @@ export default async function BugReportsPage({
           No bug reports {filter !== "all" ? `with status "${filter}"` : ""}.
         </p>
       ) : (
-        <div className="bg-surface rounded-xl border border-border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-surface rounded-xl border border-border overflow-x-auto">
+          <table className="w-full min-w-[640px] text-sm">
             <thead className="bg-light-bg text-left text-xs uppercase text-soft-mute">
               <tr>
                 <th className="px-4 py-2.5">Question</th>

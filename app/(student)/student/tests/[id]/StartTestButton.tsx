@@ -8,9 +8,11 @@ interface Props {
   testId: string;
   submissionId?: string;
   isResume: boolean;
+  /** Overrides the default "Start Test" / "Resume Test" text. */
+  label?: string;
 }
 
-export default function StartTestButton({ testId, submissionId, isResume }: Props) {
+export default function StartTestButton({ testId, submissionId, isResume, label }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -52,7 +54,7 @@ export default function StartTestButton({ testId, submissionId, isResume }: Prop
         className="w-full py-4 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
       >
         {isResume ? <RotateCcw size={20} /> : <Play size={20} />}
-        {loading ? "Loading..." : isResume ? "Resume Test" : "Start Test"}
+        {loading ? "Loading..." : label ?? (isResume ? "Resume Test" : "Start Test")}
       </button>
     </div>
   );

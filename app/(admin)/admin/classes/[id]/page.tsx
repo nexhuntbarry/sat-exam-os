@@ -104,6 +104,20 @@ async function getAssignedTeachers(classGroupId: string) {
   });
 }
 
+// Tests that list this class in test_assignments.class_group_ids — shown
+// in the delete confirmation so the admin knows what loses the class.
+async function getLinkedTests(classGroupId: string) {
+  const db = getServiceClient();
+  const { data } = await db
+    .from("test_assignments")
+    .select("test_id, tests(test_name)")
+    .contains("class_group_ids", [classGroupId]);
+  return (data ?? []).map((row) => {
+    const t = Array.isArray(row.tests) ? row.tests[0] : row.tests;
+    return { id: row.test_id as string, name: ((t as { test_name?: string } | null)?.test_name ?? "Untitled test") };
+  });
+}
+
 export default async function ClassDetailPage({
   params,
 }: {
@@ -112,12 +126,13 @@ export default async function ClassDetailPage({
   const { id } = await params;
   const isQa = (await getCurrentUser())?.isQa ?? false;
   if (!onSide(id, await getQaClassGroupIds(), isQa)) notFound();
-  const [classGroup, members, allStudents, allTeachers, assignedTeachers] = await Promise.all([
+  const [classGroup, members, allStudents, allTeachers, assignedTeachers, linkedTests] = await Promise.all([
     getClassGroup(id),
     getMembers(id),
     getApprovedStudents(isQa),
     getAllTeachers(isQa),
     getAssignedTeachers(id),
+    getLinkedTests(id),
   ]);
 
   if (!classGroup) notFound();
@@ -129,6 +144,7 @@ export default async function ClassDetailPage({
       allStudents={allStudents}
       allTeachers={allTeachers}
       assignedTeachers={assignedTeachers}
+      linkedTests={linkedTests}
     />
   );
 }

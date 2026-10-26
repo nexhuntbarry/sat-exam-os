@@ -64,7 +64,10 @@ export async function GET(
     .eq("question_id", questionId);
 
   const records = answerRecords ?? [];
-  const totalSubmissions = subIds.length;
+  // Denominator = students who answered this question. Counting every
+  // submission row would double the base on two-module tests (one row
+  // per module) and include students never served an adaptive track.
+  const totalSubmissions = records.length;
 
   // Choice distribution
   const choiceDist: Record<string, number> = {};

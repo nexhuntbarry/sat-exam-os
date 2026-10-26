@@ -13,6 +13,14 @@ import katex from "katex";
 import { getServiceClient } from "@/lib/supabase";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PDFDocument } from "pdf-lib";
+import {
+  extractChoicesFromPdfText,
+  lookupPdfTextQuestion,
+  diffChoices,
+  formatChoices,
+  type PdfTextChoices,
+} from "@/lib/pdf-text-choices";
 
 // ── Redundant-equation-figure guard ──────────────────────────────────────
 // Pure-algebra math questions carry their equation in the question TEXT.
@@ -626,11 +634,18 @@ export async function recoverMissingFigures(
     if (hasImg) return false;
     // Blind image (flagged has_image but nothing cropped) → always try.
     if (q.has_image === true) return true;
+    // A table the parser already rebuilt as Markdown in the stem is not a
+    // missing figure — cropping it would show the student the same table
+    // twice. Only a non-table visual reference counts for those rows.
+    const text = q.question_text || "";
+    const mdTable = hasMarkdownTable(text);
+    const stemForFigure = mdTable ? text.replace(/\btables?\b/gi, "") : text;
     // The stem explicitly references a visual → force a figure-find attempt
     // even when the parser never set has_image.
-    if (STEM_FIGURE.test(q.question_text || "")) return true;
+    if (STEM_FIGURE.test(stemForFigure)) return true;
     // Otherwise only if the audit/notes point at a figure problem.
-    return FIGURE_NOTE.test(q.parsing_notes || "");
+    const notes = q.parsing_notes || "";
+    return FIGURE_NOTE.test(mdTable ? notes.replace(/\btables?\b/gi, "") : notes);
   });
 
   let recovered = 0, approved = 0, stillMissing = 0;
@@ -681,7 +696,9 @@ const RepairChoicesSchema = z.object({
     .array(z.object({ label: z.enum(["A", "B", "C", "D"]), text: z.string() }))
     .describe("The four answer choices A,B,C,D copied verbatim from the page."),
 });
-const REPAIR_CHOICES_SYSTEM = `You are extracting the four answer choices for one SAT multiple-choice question from a PDF page. Copy each choice A/B/C/D character-for-character from the page — no paraphrase. Wrap math in $…$. Return exactly four entries in order.`;
+const REPAIR_CHOICES_SYSTEM = `You are extracting the four answer choices for one SAT multiple-choice question from a PDF. Copy each choice A/B/C/D character-for-character — no paraphrase. Wrap math in $…$. Return exactly four entries in order.
+
+PAGE BREAKS (CRITICAL): a question's stem is often at the BOTTOM of one page and its boxed A/B/C/D choices continue at the TOP of the NEXT page, after a URL footer and a date/title header. Choices always FOLLOW their own stem: the choices printed at the top of a page ABOVE a numbered stem belong to the PREVIOUS question — never take them for the stem below. Return the four choices that come directly AFTER the given stem in reading order, even when that means reading onto the next page, and stop at the next question's number.`;
 
 function choicesLookBroken(choices: unknown): boolean {
   if (!Array.isArray(choices) || choices.length < 4) return true;
@@ -691,7 +708,46 @@ function choicesLookBroken(choices: unknown): boolean {
   });
 }
 
-export async function repairChoicesForQuestion(questionId: string): Promise<RepairResult & { choices?: unknown }> {
+/**
+ * Cut the stem page and its neighbours out of the PDF so the model sees the
+ * stem plus the page its choices spill onto — not 30 unrelated pages whose
+ * choices it can mis-bind. Returns null (→ send the whole PDF) when the page
+ * is unknown or the PDF can't be sliced.
+ */
+async function slicePdfAroundPage(
+  pdfBase64: string,
+  page: number | null,
+): Promise<{ base64: string; first: number; last: number } | null> {
+  if (!page || page < 1) return null;
+  try {
+    const src = await PDFDocument.load(Buffer.from(pdfBase64, "base64"), { ignoreEncryption: true });
+    const n = src.getPageCount();
+    if (n <= 3) return null;
+    const first = Math.max(1, page - 1);
+    const last = Math.min(n, page + 1);
+    const out = await PDFDocument.create();
+    const pages = await out.copyPages(src, Array.from({ length: last - first + 1 }, (_, i) => first - 1 + i));
+    for (const p of pages) out.addPage(p);
+    return { base64: Buffer.from(await out.save()).toString("base64"), first, last };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Re-extract one question's A/B/C/D choices from its source PDF.
+ *
+ * When the PDF has a usable text layer, the AI result is cross-checked
+ * against the choices that follow the stem in the text layer; a disagreement
+ * returns ok:false and nothing is written (the AI grabbed a neighbour's
+ * choices). `dryRun` returns the re-extracted choices without writing — used
+ * by scripts/audit-choice-alignment.ts. `pdfBase64` / `pdfText` let batch
+ * callers reuse one download / text pass for a whole module.
+ */
+export async function repairChoicesForQuestion(
+  questionId: string,
+  opts: { dryRun?: boolean; pdfBase64?: string; pdfText?: PdfTextChoices | null } = {},
+): Promise<RepairResult & { choices?: { label: "A" | "B" | "C" | "D"; text: string }[]; textLayerChoices?: { label: string; text: string }[] }> {
   const db = getServiceClient();
   const { data: row } = await db
     .from("questions")
@@ -702,7 +758,12 @@ export async function repairChoicesForQuestion(questionId: string): Promise<Repa
   if (row.question_type !== "Multiple Choice") return { ok: false, message: "Not a multiple-choice question" };
   if (!row.source_pdf_url) return { ok: false, message: "No source PDF" };
 
-  const pdfBase64 = await fetchPdfBase64(row.source_pdf_url as string);
+  const pdfBase64 = opts.pdfBase64 ?? (await fetchPdfBase64(row.source_pdf_url as string));
+  const page = (row.page_number as number | null) ?? null;
+  const slice = await slicePdfAroundPage(pdfBase64, page);
+  const where = slice
+    ? `This excerpt contains original pages ${slice.first}–${slice.last}; the question's stem starts on original page ${page} (excerpt page ${page! - slice.first + 1}). Its choices may continue onto the following page.`
+    : `Question ${row.original_question_number ?? "?"} is on page ${page ?? "?"}; its choices may continue onto the following page.`;
   const result = await generateObject({
     model: anthropic("claude-sonnet-4-6"),
     schema: RepairChoicesSchema,
@@ -711,10 +772,10 @@ export async function repairChoicesForQuestion(questionId: string): Promise<Repa
       {
         role: "user",
         content: [
-          { type: "file", data: pdfBase64, mediaType: "application/pdf" },
+          { type: "file", data: slice?.base64 ?? pdfBase64, mediaType: "application/pdf" },
           {
             type: "text",
-            text: `Question ${row.original_question_number ?? "?"} is on page ${row.page_number ?? "?"}.\n\nStem:\n${row.question_text ?? ""}\n\nReturn the four A/B/C/D answer choices verbatim.`,
+            text: `Question ${row.original_question_number ?? "?"}. ${where}\n\nStem:\n${row.question_text ?? ""}\n\nReturn the four A/B/C/D answer choices that follow THIS stem, verbatim.`,
           },
         ],
       },
@@ -724,11 +785,41 @@ export async function repairChoicesForQuestion(questionId: string): Promise<Repa
   if (choicesLookBroken(choices)) {
     return { ok: false, message: "Re-extraction still produced incomplete/garbled choices", choices };
   }
-  await db
-    .from("questions")
-    .update({ choices, updated_at: new Date().toISOString() })
-    .eq("id", row.id);
-  return { ok: true, message: `Choices re-extracted (${choices.length}).`, choices };
+
+  // Deterministic cross-check against the PDF text layer.
+  let pdfText = opts.pdfText;
+  if (pdfText === undefined) {
+    try {
+      pdfText = await extractChoicesFromPdfText(pdfBase64);
+    } catch {
+      pdfText = null;
+    }
+  }
+  const textQ = pdfText ? lookupPdfTextQuestion(pdfText, row.original_question_number as number) : null;
+  if (textQ) {
+    const { diffs } = diffChoices(choices, textQ.choices);
+    if (diffs.length > 0) {
+      return {
+        ok: false,
+        message: `Re-extracted choices disagree with the PDF text (PDF: ${formatChoices(textQ.choices)})`,
+        choices,
+        textLayerChoices: textQ.choices,
+      };
+    }
+  }
+
+  if (!opts.dryRun) {
+    await db
+      .from("questions")
+      .update({ choices, updated_at: new Date().toISOString() })
+      .eq("id", row.id);
+  }
+  return {
+    ok: true,
+    message: `Choices re-extracted (${choices.length})${textQ ? ", verified against PDF text" : ""}.`,
+    choices,
+    textLayerChoices: textQ?.choices,
+  };
 }
 
 /**
@@ -743,19 +834,30 @@ export async function recoverBrokenChoices(
 ): Promise<{ attempted: number; fixed: number; approved: number; stillBroken: number }> {
   const { data } = await db
     .from("questions")
-    .select("id, original_question_number, parsing_notes, choices, question_type")
+    .select("id, original_question_number, parsing_notes, choices, question_type, source_pdf_url")
     .eq("module_id", moduleId)
     .eq("parsing_status", "Needs Review")
     .eq("question_type", "Multiple Choice");
-  const OTHER_NOTE = /figure|graph|LaTeX|math\/|self-contradict|official key=|answer\/explanation/i;
+  // "misalign" rows had choices from a neighbouring question: their
+  // explanation was written for the wrong options, so a human re-checks them
+  // even after the choices are fixed.
+  const OTHER_NOTE = /figure|graph|LaTeX|math\/|self-contradict|official key=|answer\/explanation|misalign/i;
   const targets = (data ?? []).filter(
     (q) => choicesLookBroken(q.choices) || /choice/i.test(q.parsing_notes || ""),
   );
 
+  // One download + text-layer pass per source PDF, shared by every target.
+  const pdfCache = new Map<string, { pdfBase64: string; pdfText: PdfTextChoices | null }>();
   let fixed = 0, approved = 0, stillBroken = 0;
   for (const q of targets) {
     try {
-      const res = await repairChoicesForQuestion(q.id as string);
+      const url = q.source_pdf_url as string | null;
+      if (url && !pdfCache.has(url)) {
+        const pdfBase64 = await fetchPdfBase64(url);
+        const pdfText = await extractChoicesFromPdfText(pdfBase64).catch(() => null);
+        pdfCache.set(url, { pdfBase64, pdfText });
+      }
+      const res = await repairChoicesForQuestion(q.id as string, url ? pdfCache.get(url) : {});
       if (res.ok) {
         fixed++;
         if (!OTHER_NOTE.test(q.parsing_notes || "")) {

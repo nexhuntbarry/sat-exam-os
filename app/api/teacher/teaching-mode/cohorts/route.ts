@@ -5,12 +5,10 @@ import { getQaClassGroupIds, scopeIds } from "@/lib/qa";
 
 // GET /api/teacher/teaching-mode/cohorts
 // Returns the class groups available to this teacher for the quick-
-// create cohort picker. Sources, unioned:
-//   1) class_groups the teacher owns directly via class_group_teachers
-//      (primary signal — these are "my classes")
-//   2) class_group_ids referenced by any test where the teacher is
-//      directly on test_assignments.teacher_ids (legacy reviewer mode)
-// Admin sees every class group.
+// create cohort picker: only the classes the teacher actually teaches
+// (class_group_teachers). Classes merely referenced by some test they're on
+// teacher_ids for are NOT theirs — listing them let a teacher assign tests
+// to (and then read results of) other classes. Admin sees every class group.
 export async function GET() {
   const authResult = await requireRole(["teacher", "admin"]);
   if (authResult instanceof NextResponse) return authResult;
@@ -26,23 +24,15 @@ export async function GET() {
     return NextResponse.json({ cohorts: data ?? [] });
   }
 
-  const cohortIds = new Set<string>();
-
-  const { data: owned } = await db
+  const { data: owned, error } = await db
     .from("class_group_teachers")
     .select("class_group_id")
     .eq("teacher_id", user.userId);
-  for (const g of owned ?? []) cohortIds.add(g.class_group_id as string);
-
-  const { data: assignments } = await db
-    .from("test_assignments")
-    .select("class_group_ids")
-    .contains("teacher_ids", JSON.stringify([user.userId]));
-  for (const a of assignments ?? []) {
-    for (const id of (a.class_group_ids as string[] | null) ?? []) {
-      cohortIds.add(id);
-    }
+  if (error) {
+    console.error("[teaching-mode/cohorts]", error);
+    return NextResponse.json({ error: "Failed to load classes" }, { status: 500 });
   }
+  const cohortIds = new Set((owned ?? []).map((g) => g.class_group_id as string));
 
   if (cohortIds.size === 0) return NextResponse.json({ cohorts: [] });
 

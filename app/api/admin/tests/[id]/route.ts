@@ -2,6 +2,17 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
+import {
+  TEST_STATUSES,
+  dateOrderError,
+  moduleApprovalError,
+  moduleSetError,
+  parseTimestamp,
+  roleError,
+  testNameError,
+  thresholdError,
+  timeLimitError,
+} from "../../_shared";
 
 // GET /api/admin/tests/[id]
 export async function GET(
@@ -83,56 +94,155 @@ export async function PATCH(
   if (linkCheck) return linkCheck;
 
   const db = getServiceClient();
+  const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
+
+  const { data: current } = await db
+    .from("tests")
+    .select("is_adaptive, status, open_date, due_date, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!current) return bad("Test not found", 404);
+
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
-  if (body.testName !== undefined) updates.test_name = String(body.testName).trim();
-  if (body.timeLimitMinutes !== undefined) updates.time_limit_minutes = body.timeLimitMinutes;
-  if (body.timeLimitMinutesModule2 !== undefined)
+  // Same field rules as POST /api/admin/tests.
+  if (body.testName !== undefined) {
+    const err = testNameError(body.testName);
+    if (err) return bad(err);
+    updates.test_name = String(body.testName).trim();
+  }
+  if (body.timeLimitMinutes !== undefined) {
+    const err = timeLimitError(body.timeLimitMinutes, "Time limit");
+    if (err) return bad(err);
+    updates.time_limit_minutes = body.timeLimitMinutes;
+  }
+  if (body.timeLimitMinutesModule2 !== undefined) {
+    const err = timeLimitError(body.timeLimitMinutesModule2, "Module 2 time limit");
+    if (err) return bad(err);
     updates.time_limit_minutes_module_2 = body.timeLimitMinutesModule2;
-  if (body.openDate !== undefined) updates.open_date = body.openDate;
-  if (body.dueDate !== undefined) updates.due_date = body.dueDate;
+  }
+  if (body.openDate !== undefined) {
+    const { value, error } = parseTimestamp(body.openDate, "Open date");
+    if (error) return bad(error);
+    updates.open_date = value;
+  }
+  if (body.dueDate !== undefined) {
+    const { value, error } = parseTimestamp(body.dueDate, "Due date");
+    if (error) return bad(error);
+    updates.due_date = value;
+  }
+  if (body.openDate !== undefined || body.dueDate !== undefined) {
+    const err = dateOrderError(
+      (body.openDate !== undefined ? updates.open_date : current.open_date) as string | null,
+      (body.dueDate !== undefined ? updates.due_date : current.due_date) as string | null,
+    );
+    if (err) return bad(err);
+  }
   if (body.showAnswersAfterSubmission !== undefined) updates.show_answers_after_submission = body.showAnswersAfterSubmission;
   if (body.allowRetake !== undefined) updates.allow_retake = body.allowRetake;
-  if (body.status !== undefined) updates.status = body.status;
+  if (body.status !== undefined) {
+    if (!TEST_STATUSES.includes(body.status as (typeof TEST_STATUSES)[number])) {
+      return bad(`Status must be one of ${TEST_STATUSES.join(", ")}`);
+    }
+    updates.status = body.status;
+  }
   if (body.questionIds !== undefined) updates.question_ids = body.questionIds;
   if (body.desmosEnabled !== undefined) updates.desmos_enabled = Boolean(body.desmosEnabled);
   if (body.formulaSheetUrl !== undefined) updates.formula_sheet_url = body.formulaSheetUrl;
+  if (body.adaptiveThreshold !== undefined) {
+    const err = thresholdError(body.adaptiveThreshold);
+    if (err) return bad(err);
+    updates.adaptive_threshold = body.adaptiveThreshold;
+  }
+
   // Module swaps. is_adaptive is intentionally NOT mutable here — once
   // a test is created adaptive vs non-adaptive, switching mid-stream
   // would orphan existing submissions whose adaptive_track/session_id
   // were keyed on the original mode. Admins who need a different mode
   // create a new test.
-  if (body.moduleId !== undefined) updates.module_id = body.moduleId;
-  if (body.module2Id !== undefined) updates.module_2_id = body.module2Id;
-  if (body.module1Id !== undefined) updates.module_1_id = body.module1Id;
-  if (body.module2EasyId !== undefined) updates.module_2_easy_id = body.module2EasyId;
-  if (body.module2HardId !== undefined) updates.module_2_hard_id = body.module2HardId;
-  if (body.adaptiveThreshold !== undefined)
-    updates.adaptive_threshold = body.adaptiveThreshold;
+  const moduleFields = {
+    moduleId: "module_id",
+    module2Id: "module_2_id",
+    module1Id: "module_1_id",
+    module2EasyId: "module_2_easy_id",
+    module2HardId: "module_2_hard_id",
+  } as const;
+  const next: Record<string, string | null> = {
+    module_id: current.module_id,
+    module_2_id: current.module_2_id,
+    module_1_id: current.module_1_id,
+    module_2_easy_id: current.module_2_easy_id,
+    module_2_hard_id: current.module_2_hard_id,
+  };
+  let modulesChanged = false;
+  for (const [key, col] of Object.entries(moduleFields)) {
+    const v = body[key];
+    if (v === undefined) continue;
+    const value = v ? String(v) : null;
+    if (value === next[col]) continue;
+    next[col] = value;
+    updates[col] = value;
+    modulesChanged = true;
+  }
 
-  // Defense against the "exam only shows one module" regression. A
-  // non-adaptive test that ends up with module_2_id = null leaves the
-  // /submissions/[id]/submit handoff with nothing to dispatch to and
-  // the student sees Module 1 alone. The DB CHECK constraint added
-  // in migration 0024 makes the same write fail loud, but we also
-  // intercept here so the error surfaces as a 400 with a clear
-  // message instead of a generic 500.
-  if (body.module2Id !== undefined && body.module2Id === null) {
-    const { data: current } = await db
-      .from("tests")
-      .select("is_adaptive")
-      .eq("id", id)
-      .maybeSingle();
-    if (current && current.is_adaptive !== true) {
-      return NextResponse.json(
-        {
-          error:
-            "Non-adaptive tests must keep Module 2 set. Pick a Module 2 from the dropdown or switch the test to adaptive first.",
-        },
-        { status: 400 },
+  if (modulesChanged) {
+    // Existing submissions (and their grades) point at the old module's
+    // questions; swapping would make review, scores and new attempts
+    // disagree. Force a new test instead.
+    const { count } = await db
+      .from("submissions")
+      .select("id", { count: "exact", head: true })
+      .eq("test_id", id);
+    if ((count ?? 0) > 0) {
+      return bad(
+        "This test already has submissions, so its modules can't be changed. Create a new test with the modules you want instead.",
+        409,
       );
     }
+
+    if (current.is_adaptive) {
+      if (!next.module_1_id) return bad("Adaptive test requires Module 1");
+      if (!next.module_2_easy_id && !next.module_2_hard_id) {
+        return bad("Adaptive test requires at least one Module 2 track (easy or hard)");
+      }
+      if (next.module_1_id === next.module_2_easy_id || next.module_1_id === next.module_2_hard_id) {
+        return bad("Module 2 tracks must differ from Module 1");
+      }
+    } else {
+      if (!next.module_id) return bad("A module is required");
+      if (next.module_2_id && next.module_2_id === next.module_id) {
+        return bad("Module 1 and Module 2 must be different");
+      }
+      // Single-module tests are valid (migration 0025), but clearing an
+      // existing Module 2 is almost always an accident that leaves the
+      // exam showing one module. Only block that transition.
+      if (current.module_2_id && !next.module_2_id) {
+        return bad(
+          "This test already has a Module 2. Pick a replacement instead of clearing it, or create a single-module test.",
+        );
+      }
+    }
+
+    const ids = (current.is_adaptive
+      ? [next.module_1_id, next.module_2_easy_id, next.module_2_hard_id]
+      : [next.module_id, next.module_2_id]
+    ).filter((x): x is string => Boolean(x));
+    const err = (await moduleSetError(db, ids)) ?? (await moduleApprovalError(db, ids));
+    if (err) return bad(err);
   }
+
+  if (updates.status === "Published" && current.status !== "Published") {
+    const ids = [
+      next.module_id, next.module_2_id, next.module_1_id, next.module_2_easy_id, next.module_2_hard_id,
+    ].filter((x): x is string => Boolean(x));
+    const err = await moduleApprovalError(db, ids);
+    if (err) return bad(err, 409);
+  }
+
+  const roleErr =
+    (await roleError(db, Array.isArray(body.teacherIds) ? (body.teacherIds as string[]) : undefined, "teacher")) ??
+    (await roleError(db, Array.isArray(body.studentIds) ? (body.studentIds as string[]) : undefined, "student"));
+  if (roleErr) return bad(roleErr);
 
   const { error } = await db.from("tests").update(updates).eq("id", id);
   if (error) {
@@ -188,10 +298,7 @@ export async function DELETE(
   const { error } = await db.from("tests").delete().eq("id", id);
   if (error) {
     console.error("[admin/tests/DELETE]", error);
-    return NextResponse.json(
-      { error: `Failed to delete test: ${error.message}` },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to delete test" }, { status: 500 });
   }
 
   return NextResponse.json({

@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
-import { getTeacherTestScope } from "@/lib/teacher-access";
+import { getQaUserIds, onSide } from "@/lib/qa";
+import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 
 // GET /api/teacher/teaching-mode/skill-stats?domain=Algebra
 // Returns top weakest skills (by error rate) within the requested domain,
@@ -20,19 +20,8 @@ export async function GET(req: Request) {
   const db = getServiceClient();
 
   const scope = await getTeacherTestScope(db, user);
-  let testIds: string[];
-  if (scope.isAdmin) {
-    const { data: all } = await db.from("test_assignments").select("test_id");
-    testIds = (all ?? []).map((a) => a.test_id as string);
-  } else {
-    const union = new Set<string>([
-      ...Array.from(scope.directTestIds),
-      ...Array.from(scope.classTestIds),
-    ]);
-    testIds = Array.from(union);
-  }
-  const [qaUsers, qaTests] = await Promise.all([getQaUserIds(), getQaTestIds()]);
-  testIds = testIds.filter((id) => onSide(id, qaTests, user.isQa));
+  const testIds = Array.from(scope.testIds);
+  const qaUsers = await getQaUserIds();
   if (testIds.length === 0) {
     return NextResponse.json({ domains: [], skills: [] });
   }
@@ -49,8 +38,7 @@ export async function GET(req: Request) {
   const { data: subsRaw } = await subsQuery;
   const subs = (subsRaw ?? []).filter((s) => {
     if (!onSide(s.student_id as string, qaUsers, user.isQa)) return false;
-    if (scope.isAdmin) return true;
-    if (scope.directTestIds.has(s.test_id as string)) return true;
+    if (seesAllStudents(scope, s.test_id as string)) return true;
     return scope.myStudentIds.has(s.student_id as string);
   });
   void subsQuery;

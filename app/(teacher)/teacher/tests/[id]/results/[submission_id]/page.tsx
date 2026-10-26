@@ -81,18 +81,23 @@ export default function SubmissionDetailPage() {
 
   const handleToggleClassReview = useCallback(
     async (questionId: string, current: boolean) => {
-      await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
+      const ok = await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note_type: "class_review", note_body: String(!current) }),
-      });
+      }).then((r) => r.ok, () => false);
+      if (!ok) {
+        alert("Couldn't save the class-review mark. Check your connection and try again.");
+        return;
+      }
+      const flip = (a: AnswerDetail) =>
+        a.questionId === questionId ? { ...a, classReview: !current } : a;
       setData((prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          answers: prev.answers.map((a) =>
-            a.questionId === questionId ? { ...a, classReview: !current } : a
-          ),
+          answers: prev.answers.map(flip),
+          modules: prev.modules?.map((m) => ({ ...m, answers: m.answers.map(flip) })),
         };
       });
     },
@@ -101,11 +106,14 @@ export default function SubmissionDetailPage() {
 
   const handleSaveNote = useCallback(
     async (questionId: string, note: string) => {
-      await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
+      const ok = await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ note_type: "private_note", note_body: note }),
-      });
+      }).then((r) => r.ok, () => false);
+      if (!ok) {
+        alert("Couldn't save the question note. Check your connection, then click into the note and away again to retry.");
+      }
     },
     [testId]
   );
@@ -113,7 +121,7 @@ export default function SubmissionDetailPage() {
   // Tutor notes — debounced save so the teacher can type freely without
   // a "Save" click. Visible status: "Saving…" / "Saved".
   const [tutorNotes, setTutorNotes] = useState("");
-  const [tutorStatus, setTutorStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [tutorStatus, setTutorStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const tutorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -133,10 +141,9 @@ export default function SubmissionDetailPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ tutorNotes: v }),
         });
-        if (res.ok) setTutorStatus("saved");
-        else setTutorStatus("idle");
+        setTutorStatus(res.ok ? "saved" : "error");
       } catch {
-        setTutorStatus("idle");
+        setTutorStatus("error");
       }
     }, 700);
   }
@@ -299,6 +306,11 @@ export default function SubmissionDetailPage() {
               <>
                 <Save size={11} className="text-warm-amber" /> Saved
               </>
+            )}
+            {tutorStatus === "error" && (
+              <span role="alert" className="text-status-error">
+                Save failed — keep typing to retry
+              </span>
             )}
           </span>
         </div>

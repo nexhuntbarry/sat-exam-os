@@ -281,7 +281,7 @@ export default async function AdminTeacherDetailPage({
                     No students enrolled in this class yet.
                   </div>
                 ) : (
-                  <table className="w-full text-sm">
+                  <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
                     <thead>
                       <tr className="border-b border-divider text-soft-mute">
                         <th className="text-left px-5 py-2 font-medium">Student</th>
@@ -319,7 +319,7 @@ export default async function AdminTeacherDetailPage({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </table></div>
                 )}
               </div>
             ))}

@@ -2,24 +2,28 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, MapPin, GraduationCap, Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaClassGroupIds, onSide } from "@/lib/qa";
+import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
+import { getTestSections, inSubjects } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { formatDateTime } from "@/lib/datetime";
 
 export const dynamic = "force-dynamic";
 
-async function loadClass(id: string, teacherId: string, isAdmin: boolean) {
+async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: boolean) {
   const db = getServiceClient();
 
-  // Teacher must be assigned to this group; admin sees everything.
+  // Teacher must be assigned to this group; admin sees everything. The
+  // link's subject (NULL = both) scopes which tests count below.
+  let subjects: string[] | null = null;
   if (!isAdmin) {
     const { data: link } = await db
       .from("class_group_teachers")
-      .select("id")
+      .select("id, subject")
       .eq("class_group_id", id)
       .eq("teacher_id", teacherId)
       .maybeSingle();
     if (!link) return null;
+    subjects = link.subject ? [link.subject as string] : null;
   }
 
   const { data: group } = await db
@@ -52,22 +56,28 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean) {
 
   // Pull every submission for these students so we can compute averages
   // and last-active per student.
-  const { data: subs } = studentIds.length
-    ? await db
-        .from("submissions")
-        .select(
-          "id, student_id, status, percentage, submitted_at, test_id, tests!inner(test_name)",
-        )
-        .in("student_id", studentIds)
-        .order("submitted_at", { ascending: false })
-    : { data: [] };
+  const [{ data: subs }, { data: assignments }] = await Promise.all([
+    studentIds.length
+      ? db
+          .from("submissions")
+          .select(
+            "id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, test_id, tests!inner(test_name)",
+          )
+          .in("student_id", studentIds)
+          .order("submitted_at", { ascending: false })
+      : Promise.resolve({ data: [] }),
+    db.from("test_assignments").select("test_id, student_ids, class_group_ids"),
+  ]);
 
   type Sub = {
     id: string;
     student_id: string;
     status: string;
+    correct_count: number | null;
+    total_questions: number | null;
     percentage: number | string | null;
     submitted_at: string | null;
+    session_id: string | null;
     test_id: string;
     tests:
       | { test_name: string }
@@ -76,41 +86,70 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean) {
   };
   const subRows = (subs ?? []) as unknown as Sub[];
 
+  // Only tests on the viewer's QA side and in the subject this teacher
+  // teaches the class.
+  const qaTests = await getQaTestIds();
+  const candidateTests = new Set<string>(subRows.map((s) => s.test_id));
+  for (const a of assignments ?? []) candidateTests.add(a.test_id as string);
+  const sectionOf = await getTestSections(db, Array.from(candidateTests));
+  const visible = (testId: string) =>
+    onSide(testId, qaTests, isQa) && inSubjects(sectionOf.get(testId) ?? null, subjects);
+
+  // Assigned per student = tests assigned to this class ∪ assigned to the
+  // student individually ∪ tests they took.
+  const classTests = new Set<string>();
+  const assignedTo: Record<string, Set<string>> = {};
+  for (const a of assignments ?? []) {
+    const testId = a.test_id as string;
+    if (!visible(testId)) continue;
+    if (((a.class_group_ids as string[] | null) ?? []).includes(id)) classTests.add(testId);
+    for (const sid of (a.student_ids as string[] | null) ?? []) {
+      (assignedTo[sid] ??= new Set()).add(testId);
+    }
+  }
+
+  // Group module rows into attempts (two-module attempts share a session_id).
+  const attempts = new Map<string, Sub[]>();
+  for (const s of subRows) {
+    if (!visible(s.test_id)) continue;
+    const key = s.session_id ?? s.id;
+    attempts.set(key, [...(attempts.get(key) ?? []), s]);
+  }
+
+  type Latest = { test_name: string; submitted_at: string | null; percentage: number | null };
   const perStudent: Record<
     string,
-    {
-      total: number;
-      completed: number;
-      scores: number[];
-      latest: { test_name: string; submitted_at: string | null; percentage: number | null } | null;
-    }
+    { total: number; completed: number; scores: number[]; latest: Latest | null }
   > = {};
-  for (const s of subRows) {
-    const slot = perStudent[s.student_id] ?? {
-      total: 0,
-      completed: 0,
-      scores: [] as number[],
-      latest: null as
-        | { test_name: string; submitted_at: string | null; percentage: number | null }
-        | null,
-    };
-    slot.total++;
-    const isDone = s.status === "Submitted" || s.status === "Late";
-    if (isDone) {
-      slot.completed++;
-      if (s.percentage != null) slot.scores.push(Number(s.percentage));
-    }
-    if (!slot.latest && isDone) {
-      const t = (Array.isArray(s.tests) ? s.tests[0] : s.tests) as
+  const tested: Record<string, Set<string>> = {};
+  const completedTests: Record<string, Set<string>> = {};
+  for (const rows of attempts.values()) {
+    const head = rows[0];
+    const sid = head.student_id;
+    const slot = (perStudent[sid] ??= { total: 0, completed: 0, scores: [], latest: null });
+    (tested[sid] ??= new Set()).add(head.test_id);
+    if (!rows.every((r) => r.status === "Submitted" || r.status === "Late")) continue;
+    (completedTests[sid] ??= new Set()).add(head.test_id);
+    const correct = rows.reduce((n, r) => n + (r.correct_count ?? 0), 0);
+    const total = rows.reduce((n, r) => n + (r.total_questions ?? 0), 0);
+    const pct = rows.length > 1
+      ? total > 0 ? Math.round((correct / total) * 1000) / 10 : null
+      : head.percentage == null ? null : Number(head.percentage);
+    if (pct != null) slot.scores.push(pct);
+    const submittedAt = rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
+    if (!slot.latest || (submittedAt ?? "") > (slot.latest.submitted_at ?? "")) {
+      const t = (Array.isArray(head.tests) ? head.tests[0] : head.tests) as
         | { test_name: string }
         | null;
-      slot.latest = {
-        test_name: t?.test_name ?? "—",
-        submitted_at: s.submitted_at,
-        percentage: s.percentage == null ? null : Number(s.percentage),
-      };
+      slot.latest = { test_name: t?.test_name ?? "—", submitted_at: submittedAt, percentage: pct };
     }
-    perStudent[s.student_id] = slot;
+  }
+  for (const sid of studentIds) {
+    const all = new Set([...classTests, ...(assignedTo[sid] ?? []), ...(tested[sid] ?? [])]);
+    if (all.size === 0 && !perStudent[sid]) continue;
+    const slot = (perStudent[sid] ??= { total: 0, completed: 0, scores: [], latest: null });
+    slot.total = all.size;
+    slot.completed = completedTests[sid]?.size ?? 0;
   }
 
   return { group, students, perStudent };
@@ -127,7 +166,7 @@ export default async function TeacherClassDetailPage({
 
   const { id } = await params;
   if (!onSide(id, await getQaClassGroupIds(), me.isQa)) notFound();
-  const data = await loadClass(id, me.userId, me.role === "admin");
+  const data = await loadClass(id, me.userId, me.role === "admin", me.isQa);
   if (!data) notFound();
   const { group, students, perStudent } = data;
 

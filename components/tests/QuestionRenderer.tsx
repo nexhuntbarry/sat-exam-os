@@ -112,6 +112,13 @@ interface QuestionRendererProps {
    *  show strikethrough styling so the student can rule them out. */
   crossedOut?: Set<string>;
   onToggleCrossOut?: (label: string) => void;
+  /** Show the inline PDF "Source figure" fallback. False by default so
+   *  students never see raw PDF pages during a test. Pass true only in
+   *  reviewer / admin contexts where the original source is useful. */
+  showSourceFigure?: boolean;
+  /** Show internal "Has Image" / "Has Table" debug badges. False by
+   *  default — these are for reviewers / admins only. */
+  showDebugBadges?: boolean;
 }
 
 export default function QuestionRenderer({
@@ -125,6 +132,8 @@ export default function QuestionRenderer({
   onAnnotationsChange,
   crossedOut,
   onToggleCrossOut,
+  showSourceFigure = false,
+  showDebugBadges = false,
 }: QuestionRendererProps) {
   const isMultipleChoice = question.question_type === "Multiple Choice";
   void questionIndex;
@@ -157,9 +166,8 @@ export default function QuestionRenderer({
   // student works the stem + choices on the right.
   const stemBlock = (
     <>
-      {/* Visual flags — image/table indicators stay so students know
-          to scroll for the figure. */}
-      {(question.has_image || question.has_table) && (
+      {/* Debug badges — only shown in reviewer / admin contexts (L-11). */}
+      {showDebugBadges && (question.has_image || question.has_table) && (
         <div>
           <span className="px-2 py-1 rounded-full bg-status-warning/15 text-status-warning text-xs font-medium inline-flex items-center gap-1">
             {question.has_image ? "Has Image" : "Has Table"}
@@ -179,10 +187,11 @@ export default function QuestionRenderer({
         </MathMarkdown>
       </HighlightableBlock>
 
-      {/* Inline PDF page — FALLBACK, shown only when we don't have a clean
-          extracted crop. When figure recovery produced a cropped image we show
-          that instead (below); rendering both duplicated the chart. */}
-      {(question.has_image || question.has_table) &&
+      {/* Inline PDF page — reviewer / admin only (M-20). Hidden from students
+          by default (showSourceFigure=false). Only shown when we don't have a
+          clean extracted crop; rendering both duplicated the chart. */}
+      {showSourceFigure &&
+        (question.has_image || question.has_table) &&
         !(question.image_urls && question.image_urls.length > 0) && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -206,8 +215,7 @@ export default function QuestionRenderer({
         </div>
       )}
 
-      {/* Optional fallback — extracted crops still rendered when present, as
-          an enhancement to the inline PDF view. */}
+      {/* Extracted image crops (M-21: max-w-full keeps images within column). */}
       {question.image_urls && question.image_urls.length > 0 && (
         <div className="flex flex-wrap gap-3">
           {question.image_urls.map((url, i) => (
@@ -215,8 +223,11 @@ export default function QuestionRenderer({
             <img
               key={url}
               src={`/api/blob-image?u=${encodeURIComponent(url)}`}
-              alt={question.image_alts?.[i] ?? "Question image"}
-              className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
+              alt={
+                question.image_alts?.[i] ??
+                `Figure for question ${question.original_question_number}`
+              }
+              className="max-w-full rounded-xl border border-divider bg-white"
             />
           ))}
         </div>
@@ -227,7 +238,7 @@ export default function QuestionRenderer({
 
   // Answer area — choices (MC) or a typed-answer input (SPR).
   const answerBlock = isMultipleChoice ? (
-        <div className="space-y-3">
+        <div role="radiogroup" className="space-y-3">
           {(question.choices ?? []).map((choice) => {
             const isSelected = selectedAnswer === choice.label;
             const isCrossed = crossedOut?.has(choice.label) ?? false;
@@ -243,6 +254,8 @@ export default function QuestionRenderer({
                 )}
               >
                 <button
+                  role="radio"
+                  aria-checked={isSelected && !isCrossed}
                   // Bluebook treats crossed-out as "don't pick this".
                   // Clicking the body of a crossed choice un-crosses it
                   // and selects it; clicking when not crossed selects.
@@ -260,6 +273,7 @@ export default function QuestionRenderer({
                   }}
                   className={clsx(
                     "flex-1 flex items-start gap-3 p-4 text-left transition-all text-charcoal",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-warm-coral focus-visible:ring-offset-1 rounded-xl",
                     isCrossed && "line-through opacity-50 hover:opacity-70",
                     !isCrossed && "hover:bg-light-bg",
                   )}
@@ -311,16 +325,24 @@ export default function QuestionRenderer({
         </div>
       ) : (
         <div className="space-y-2">
-          <label className="text-soft-mute text-sm">Your Answer</label>
+          <label htmlFor={`spr-${question.id}`} className="text-soft-mute text-sm">Your Answer</label>
           <input
+            id={`spr-${question.id}`}
             type="text"
+            // No inputMode="decimal": iOS's decimal pad has no "-" or "/",
+            // which negative and fraction answers need.
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+            maxLength={12}
             value={selectedAnswer}
             onChange={(e) => onAnswer(e.target.value)}
             placeholder="Enter your answer (e.g. 3, 1/2, 0.5)"
             className="w-full max-w-xs px-4 py-3 rounded-xl bg-surface border border-divider text-charcoal placeholder-soft-mute focus:outline-none focus:border-warm-coral/60 focus:bg-surface transition-colors"
           />
           <p className="text-soft-mute text-xs">
-            For fractions, you may enter as decimal (0.5) or fraction (1/2). Both are accepted.
+            Numbers only, no units. For fractions, you may enter a decimal (0.5) or a fraction (1/2); both are accepted.
           </p>
         </div>
       );

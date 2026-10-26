@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { Eye } from "lucide-react";
 import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/ReviewQuestionCard";
+import { isTestAssignedToStudent, scopeToStudentQuestionSet } from "@/lib/student-exam";
 
 // Class-walkthrough review of a test. Shows every question + correct
 // answer + explanation regardless of whether the student took the
@@ -12,22 +13,7 @@ async function getReviewData(testId: string, studentId: string) {
   const db = getServiceClient();
 
   // Verify the student is assigned to this test (direct or via class).
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("test_id, student_ids, class_group_ids")
-    .eq("test_id", testId)
-    .single();
-  if (!assignment) return null;
-
-  const { data: membership } = await db
-    .from("class_group_members")
-    .select("class_group_id")
-    .eq("student_id", studentId);
-  const cgIds: string[] = (membership ?? []).map((m) => m.class_group_id);
-  const sIds: string[] = assignment.student_ids ?? [];
-  const cgAssigned: string[] = assignment.class_group_ids ?? [];
-  const hasAccess = sIds.includes(studentId) || cgIds.some((c) => cgAssigned.includes(c));
-  if (!hasAccess) return null;
+  if (!(await isTestAssignedToStudent(db, testId, studentId))) return null;
 
   const { data: test } = await db
     .from("tests")
@@ -53,23 +39,16 @@ async function getReviewData(testId: string, studentId: string) {
     return { test, sections: [], myAnswers: {} as Record<string, { answer: string | null; isCorrect: boolean }> };
   }
 
-  let qquery = db
-    .from("questions")
-    .select(
-      "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
-    )
-    .in("module_id", moduleIds)
-    .neq("parsing_status", "Rejected")
-    .order("original_question_number", { ascending: true });
-
-  if (
-    !test.is_adaptive &&
-    test.question_ids &&
-    Array.isArray(test.question_ids) &&
-    test.question_ids.length > 0
-  ) {
-    qquery = qquery.in("id", test.question_ids);
-  }
+  // Same Approved-only set students were shown and graded on.
+  const qquery = scopeToStudentQuestionSet(
+    db
+      .from("questions")
+      .select(
+        "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
+      )
+      .in("module_id", moduleIds),
+    test,
+  ).order("original_question_number", { ascending: true });
 
   const { data: questions } = await qquery;
 

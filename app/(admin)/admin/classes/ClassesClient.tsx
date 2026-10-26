@@ -21,14 +21,17 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: () 
   const [error, setError] = useState<string | null>(null);
 
   async function handleCreate() {
-    if (!name) return;
+    if (!name.trim()) {
+      setError("Group name is required");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/admin/class-groups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, campus: campus || undefined, grade: grade || undefined }),
+        body: JSON.stringify({ name: name.trim(), campus: campus.trim() || undefined, grade: grade.trim() || undefined }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -58,7 +61,7 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: () 
 
         <div className="space-y-3">
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Group Name *</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Group Name *</label>
             <input
               className={inputCls}
               value={name}
@@ -68,7 +71,7 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: () 
             />
           </div>
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Campus</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Campus</label>
             <input
               className={inputCls}
               value={campus}
@@ -77,7 +80,7 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: () 
             />
           </div>
           <div>
-            <label className="block text-slate-200 text-sm font-medium mb-1">Grade</label>
+            <label className="block text-mid-gray text-sm font-medium mb-1">Grade</label>
             <select
               className={inputCls}
               value={grade}
@@ -106,7 +109,7 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: () 
           </button>
           <button
             onClick={handleCreate}
-            disabled={loading || !name}
+            disabled={loading || !name.trim()}
             className="flex-1 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-60 transition-colors"
           >
             {loading ? "Creating..." : "Create"}

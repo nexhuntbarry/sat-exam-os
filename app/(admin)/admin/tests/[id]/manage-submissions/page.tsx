@@ -127,7 +127,7 @@ export default async function ManageSubmissionsPage({
                   studentName={group.studentName}
                 />
               </div>
-              <table className="w-full text-sm">
+              <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
                 <thead className="bg-light-bg text-soft-mute text-xs uppercase tracking-wider">
                   <tr>
                     <th className="text-left px-4 py-2 font-medium">Module</th>
@@ -185,7 +185,7 @@ export default async function ManageSubmissionsPage({
                       );
                     })}
                 </tbody>
-              </table>
+              </table></div>
             </div>
           ))}
         </div>

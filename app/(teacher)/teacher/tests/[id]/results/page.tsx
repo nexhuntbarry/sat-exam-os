@@ -1,12 +1,13 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-access";
 import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { StatCard } from "@/components/analytics/StatCard";
 import { ScoreDistributionChart } from "@/components/analytics/ScoreDistributionChart";
 import { StudentResultsTable } from "@/components/analytics/StudentResultsTable";
+import { ExportCsvButton } from "@/components/analytics/ExportCsvButton";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
@@ -27,9 +28,9 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
 
   const { data: assignment } = await db
     .from("test_assignments")
-    .select("student_ids")
+    .select("student_ids, class_group_ids")
     .eq("test_id", testId)
-    .single();
+    .maybeSingle();
   if (!assignment) return null;
 
   const { data: test } = await db
@@ -40,7 +41,14 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
 
   if (!test) return null;
 
-  const studentIds: string[] = assignment.student_ids ?? [];
+  // Assigned roster = student_ids ∪ class_group members, limited to the
+  // class roster for a class-scoped teacher.
+  const studentIds = await getAssignedStudentIds(
+    db,
+    assignment,
+    isQa,
+    access.mode === "class" ? access.studentAllowlist : null,
+  );
 
   let subQuery = scopeUsers(db
     .from("submissions")
@@ -222,12 +230,14 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     buckets[idx].count++;
   }
 
+  const startedStudents = new Set(studentRows.map((r) => r.studentId));
+
   return {
     test,
     stats: {
-      totalAssigned: studentIds.length,
+      totalAssigned: studentIds.size,
       submittedCount: submitted.length,
-      notStartedCount: Math.max(0, studentIds.length - studentRows.length),
+      notStartedCount: Array.from(studentIds).filter((sid) => !startedStudents.has(sid)).length,
       inProgressCount: studentRows.filter((r) => r.status === "In Progress").length,
       lateCount: studentRows.filter((r) => r.status === "Late").length,
       avgScore,
@@ -285,7 +295,11 @@ export default async function TestResultsPage({
             {test.due_date && ` · Due ${formatDate(test.due_date)}`}
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-start gap-3">
+          <ExportCsvButton
+            testId={id}
+            filename={`${test.test_name.replace(/[^a-z0-9]/gi, "_")}-results.csv`}
+          />
           <Link
             href={`/teacher/tests/${id}/analytics`}
             className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral text-sm font-medium hover:bg-warm-coral/20 transition-colors"

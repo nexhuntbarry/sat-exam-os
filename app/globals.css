@@ -35,12 +35,35 @@ html {
    less <table> that reads as loose stacked numbers. Style it into a real
    table. Scoped to .mathmd so it never touches layout tables. */
 /* Keep wide tables inside their column — scroll horizontally instead of
-   overflowing onto neighbouring content (SAT data tables can be 8+ cols). */
+   overflowing onto neighbouring content (SAT data tables can be 8+ cols).
+   M-21/M-22: add right-edge fade shadow + "scroll →" hint so students
+   know the table continues beyond the visible area. */
 .mathmd-table-scroll {
+  position: relative;
   max-width: 100%;
   overflow-x: auto;
   margin: 0.75rem 0;
   -webkit-overflow-scrolling: touch;
+  /* Scroll-shadow: a gradient on the right edge fades content into the
+     background, signaling more columns. background-attachment:local
+     makes it disappear once the user has scrolled all the way right. */
+  background:
+    linear-gradient(to right, #FFFFFF 30%, transparent) left / 24px 100% no-repeat local,
+    linear-gradient(to left,  #E4E4E4 0%, transparent 80%) right / 32px 100% no-repeat local;
+}
+/* "scroll →" hint label — visible only when the table is wider than its
+   container (i.e. it overflows). We keep it minimal so it doesn't crowd
+   the question content. Hidden once the table fits without scrolling. */
+.mathmd-table-scroll::after {
+  content: "scroll →";
+  position: sticky;
+  right: 0;
+  display: block;
+  text-align: right;
+  font-size: 0.7rem;
+  color: var(--color-soft-mute, #9C9999);
+  padding: 0.15rem 0.5rem 0;
+  pointer-events: none;
 }
 .mathmd table {
   border-collapse: collapse;
@@ -50,7 +73,13 @@ html {
 }
 .mathmd th,
 .mathmd td {
+  /* Allow header cells to wrap on narrow screens (M-22). Data cells keep
+     nowrap so numbers / formulas stay on one line. */
   white-space: nowrap;
+}
+.mathmd thead th {
+  white-space: normal;
+  word-break: break-word;
 }
 .mathmd th,
 .mathmd td {

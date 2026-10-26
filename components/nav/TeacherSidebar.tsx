@@ -1,7 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   ClipboardList,
@@ -13,9 +11,9 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { clsx } from "clsx";
+import SidebarShell, { type NavItem } from "@/components/nav/SidebarShell";
 
-const baseNavItems = [
+const baseNavItems: NavItem[] = [
   { href: "/teacher", icon: LayoutDashboard, label: "Dashboard", exact: true },
   { href: "/teacher/teaching-mode", icon: Presentation, label: "Teaching Mode" },
   { href: "/teacher/classes", icon: Users, label: "My Classes" },
@@ -26,7 +24,7 @@ const baseNavItems = [
   { href: "/teacher/settings", icon: Settings, label: "Settings" },
 ];
 
-const reviewerItem = {
+const reviewerItem: NavItem = {
   href: "/reviewer/questions",
   icon: ShieldCheck,
   label: "Question Review",
@@ -38,36 +36,15 @@ interface Props {
 }
 
 export default function TeacherSidebar({ canReview = false }: Props) {
-  const pathname = usePathname();
   const navItems = canReview
     ? [...baseNavItems.slice(0, 6), reviewerItem, ...baseNavItems.slice(6)]
     : baseNavItems;
 
   return (
-    <aside className="w-56 shrink-0 border-r border-divider flex flex-col bg-cream min-h-0">
-      <nav className="flex-1 py-4 px-2 overflow-y-auto">
-        <p className="px-3 mb-2 text-xs font-semibold text-soft-mute uppercase tracking-widest">
-          Teacher
-        </p>
-        {navItems.map(({ href, icon: Icon, label, exact }) => {
-          const active = exact ? pathname === href : pathname.startsWith(href);
-          return (
-            <Link
-              key={href}
-              href={href}
-              className={clsx(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors mb-0.5",
-                active
-                  ? "bg-warm-coral/15 text-warm-coral"
-                  : "text-mid-gray hover:text-charcoal hover:bg-light-bg"
-              )}
-            >
-              <Icon size={16} />
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
-    </aside>
+    <SidebarShell
+      heading="Teacher"
+      items={navItems}
+      activeClassName="bg-warm-coral/15 text-warm-coral"
+    />
   );
 }

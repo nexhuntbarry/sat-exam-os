@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { ClipboardList } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaTestIds, onSide, scopeUsers } from "@/lib/qa";
+import { scopeUsers } from "@/lib/qa";
+import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { StatCard } from "@/components/analytics/StatCard";
 import {
@@ -23,61 +24,11 @@ const MODULE_LABEL: Record<string, string> = {
 async function getCrossTestResults(teacherId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
 
-  // 1. Build the visible test set. Admin sees everything. A teacher sees
-  // (a) tests they're directly assigned to AND (b) every test that any
-  // student in their class_groups has a submission for — that's what
-  // "my students' results" actually means once admin creates tests
-  // without putting the teacher on test_assignments.teacher_ids.
-  let visibleTestIds = new Set<string>();
-  // Tracks the student-id allowlist for the non-admin "class group"
-  // path. Submissions in this set show even if their test isn't on the
-  // direct-assignment list. Empty for admin (no filter).
-  const myStudentIds = new Set<string>();
-  // Tests where the teacher is on the test_assignments.teacher_ids
-  // array directly. For those, ANY submission shows (legacy behavior).
-  const directTestIds = new Set<string>();
-
-  if (role === "admin") {
-    const { data: all } = await db.from("test_assignments").select("test_id");
-    visibleTestIds = new Set((all ?? []).map((a) => a.test_id as string));
-  } else {
-    const { data: directly } = await db
-      .from("test_assignments")
-      .select("test_id")
-      .contains("teacher_ids", JSON.stringify([teacherId]));
-    for (const a of directly ?? []) {
-      visibleTestIds.add(a.test_id as string);
-      directTestIds.add(a.test_id as string);
-    }
-
-    // Class-group derived: every test any of my students has a
-    // submission for.
-    const { data: myGroups } = await db
-      .from("class_group_teachers")
-      .select("class_group_id")
-      .eq("teacher_id", teacherId);
-    const groupIds = (myGroups ?? []).map((g) => g.class_group_id as string);
-    if (groupIds.length > 0) {
-      const { data: members } = await db
-        .from("class_group_members")
-        .select("student_id")
-        .in("class_group_id", groupIds);
-      for (const m of members ?? []) myStudentIds.add(m.student_id as string);
-      if (myStudentIds.size > 0) {
-        const { data: studentSubs } = await db
-          .from("submissions")
-          .select("test_id")
-          .in("student_id", Array.from(myStudentIds));
-        for (const s of studentSubs ?? []) visibleTestIds.add(s.test_id as string);
-      }
-    }
-  }
-
-  // QA isolation: drop tests from the other side.
-  const qaTests = await getQaTestIds();
-  for (const id of Array.from(visibleTestIds)) {
-    if (!onSide(id, qaTests, isQa)) visibleTestIds.delete(id);
-  }
+  // 1. Visible tests: the shared teacher scope (direct ∪ class-assigned /
+  // class-taken), subject-scoped like getTeacherTestAccess so a Math-only
+  // teacher never sees R&W results here while the API returns 403 for them.
+  const scope = await getTeacherTestScope(db, { userId: teacherId, role, isQa });
+  const visibleTestIds = scope.testIds;
 
   if (visibleTestIds.size === 0) {
     return { rows: [], testOptions: [], classOptions: [], totals: { tests: 0, submissions: 0, students: 0 } };
@@ -118,9 +69,8 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
   // set would leak co-students from other classes who happened to
   // take the same test.
   const subs = (submissions ?? []).filter((s) => {
-    if (role === "admin") return true;
-    if (directTestIds.has(s.test_id as string)) return true;
-    return myStudentIds.has(s.student_id as string);
+    if (seesAllStudents(scope, s.test_id as string)) return true;
+    return scope.myStudentIds.has(s.student_id as string);
   });
 
   // 3b. Class groups via student_profiles (separate query — no FK to submissions)

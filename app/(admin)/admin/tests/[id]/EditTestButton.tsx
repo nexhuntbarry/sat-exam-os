@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, X, AlertTriangle } from "lucide-react";
+import { datetimeLocalToIso, isoToDatetimeLocal } from "../datetime-local";
 
 interface ModuleOption {
   id: string;
@@ -10,6 +11,8 @@ interface ModuleOption {
   section: string;
   module_number: number | null;
   total_questions?: number | null;
+  approved?: number;
+  approvalTotal?: number;
 }
 
 interface TestData {
@@ -34,26 +37,17 @@ interface TestData {
 interface Props {
   test: TestData;
   modules: ModuleOption[];
+  /** Modules are locked once any student has started the test. */
+  hasSubmissions: boolean;
 }
 
-// Helpers ----------------------------------------------------------
-function isoToDatetimeLocal(iso: string | null): string {
-  if (!iso) return "";
-  // Truncate timezone & seconds for <input type="datetime-local"> compat
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function moduleLabel(m: ModuleOption): string {
+  const counts =
+    m.approvalTotal !== undefined ? ` · ${m.approved}/${m.approvalTotal} approved` : "";
+  return `${m.module_name} · ${m.section}${m.module_number ? ` M${m.module_number}` : ""}${counts}`;
 }
 
-function datetimeLocalToIso(value: string): string | null {
-  if (!value) return null;
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return null;
-  return d.toISOString();
-}
-
-export default function EditTestButton({ test, modules }: Props) {
+export default function EditTestButton({ test, modules, hasSubmissions }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -70,7 +64,7 @@ export default function EditTestButton({ test, modules }: Props) {
   const [adaptiveThreshold, setAdaptiveThreshold] = useState<number>(
     test.adaptive_threshold ?? 60,
   );
-  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number>(
+  const [timeLimitMinutes, setTimeLimitMinutes] = useState<number | "">(
     test.time_limit_minutes ?? 35,
   );
   const [timeLimitMinutesModule2, setTimeLimitMinutesModule2] = useState<number | "">(
@@ -102,7 +96,28 @@ export default function EditTestButton({ test, modules }: Props) {
     setError(null);
   }
 
+  const limitInvalid = (v: number | "", optional: boolean) =>
+    v === "" ? !optional : !Number.isInteger(v) || v < 1 || v > 180;
+  const openIso = datetimeLocalToIso(openDate);
+  const dueIso = datetimeLocalToIso(dueDate);
+  const validationError = !testName.trim()
+    ? "Test name is required"
+    : testName.trim().length > 150
+      ? "Test name must be at most 150 characters"
+      : limitInvalid(timeLimitMinutes, false)
+        ? "Module 1 time limit must be 1–180 minutes"
+        : limitInvalid(timeLimitMinutesModule2, true)
+          ? "Module 2 time limit must be 1–180 minutes"
+          : openIso && dueIso && dueIso <= openIso
+            ? "Due date must be after the open date"
+            : null;
+  const duePast = dueIso !== null && new Date(dueIso).getTime() < Date.now();
+
   async function save() {
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -110,20 +125,26 @@ export default function EditTestButton({ test, modules }: Props) {
         testName: testName.trim(),
         timeLimitMinutes,
         timeLimitMinutesModule2: timeLimitMinutesModule2 === "" ? null : Number(timeLimitMinutesModule2),
-        openDate: datetimeLocalToIso(openDate),
-        dueDate: datetimeLocalToIso(dueDate),
+        openDate: openIso,
+        dueDate: dueIso,
         showAnswersAfterSubmission: showAnswers,
         allowRetake,
         desmosEnabled,
       };
+      // Only send module fields that actually changed: the API refuses
+      // module edits on tests with submissions, and re-sending an unchanged
+      // empty Module 2 must not look like "clear Module 2".
+      const changed = (key: string, value: string, original: string | null) => {
+        if (value !== (original ?? "")) body[key] = value || null;
+      };
       if (test.is_adaptive) {
-        body.module1Id = module1Id || null;
-        body.module2EasyId = module2EasyId || null;
-        body.module2HardId = module2HardId || null;
+        changed("module1Id", module1Id, test.module_1_id);
+        changed("module2EasyId", module2EasyId, test.module_2_easy_id);
+        changed("module2HardId", module2HardId, test.module_2_hard_id);
         body.adaptiveThreshold = adaptiveThreshold;
       } else {
-        body.moduleId = moduleId || null;
-        body.module2Id = module2Id || null;
+        changed("moduleId", moduleId, test.module_id);
+        changed("module2Id", module2Id, test.module_2_id);
       }
       const res = await fetch(`/api/admin/tests/${test.id}`, {
         method: "PATCH",
@@ -213,6 +234,12 @@ export default function EditTestButton({ test, modules }: Props) {
                     ({test.is_adaptive ? "Adaptive" : "Two-module"} mode)
                   </span>
                 </p>
+                {hasSubmissions && (
+                  <p className="text-xs text-mid-gray">
+                    Modules are locked because students have already started this test.
+                    Create a new test to use different modules.
+                  </p>
+                )}
                 {test.is_adaptive ? (
                   <>
                     <Field label="Module 1">
@@ -220,12 +247,12 @@ export default function EditTestButton({ test, modules }: Props) {
                         value={module1Id}
                         onChange={(e) => setModule1Id(e.target.value)}
                         className="input"
+                        disabled={hasSubmissions}
                       >
                         <option value="">— None —</option>
                         {eligible.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.module_name} · {m.section}
-                            {m.module_number ? ` M${m.module_number}` : ""}
+                            {moduleLabel(m)}
                           </option>
                         ))}
                       </select>
@@ -236,13 +263,16 @@ export default function EditTestButton({ test, modules }: Props) {
                           value={module2EasyId}
                           onChange={(e) => setModule2EasyId(e.target.value)}
                           className="input"
+                          disabled={hasSubmissions}
                         >
                           <option value="">— None —</option>
-                          {eligible.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.module_name}
-                            </option>
-                          ))}
+                          {eligible
+                            .filter((m) => m.id !== module1Id)
+                            .map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {moduleLabel(m)}
+                              </option>
+                            ))}
                         </select>
                       </Field>
                       <Field label="Module 2 · Hard">
@@ -250,13 +280,16 @@ export default function EditTestButton({ test, modules }: Props) {
                           value={module2HardId}
                           onChange={(e) => setModule2HardId(e.target.value)}
                           className="input"
+                          disabled={hasSubmissions}
                         >
                           <option value="">— None —</option>
-                          {eligible.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.module_name}
-                            </option>
-                          ))}
+                          {eligible
+                            .filter((m) => m.id !== module1Id)
+                            .map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {moduleLabel(m)}
+                              </option>
+                            ))}
                         </select>
                       </Field>
                     </div>
@@ -282,12 +315,12 @@ export default function EditTestButton({ test, modules }: Props) {
                         value={moduleId}
                         onChange={(e) => setModuleId(e.target.value)}
                         className="input"
+                        disabled={hasSubmissions}
                       >
                         <option value="">— None —</option>
                         {eligible.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {m.module_name} · {m.section}
-                            {m.module_number ? ` M${m.module_number}` : ""}
+                            {moduleLabel(m)}
                           </option>
                         ))}
                       </select>
@@ -297,14 +330,14 @@ export default function EditTestButton({ test, modules }: Props) {
                         value={module2Id}
                         onChange={(e) => setModule2Id(e.target.value)}
                         className="input"
+                        disabled={hasSubmissions}
                       >
                         <option value="">— None —</option>
                         {eligible
                           .filter((m) => m.id !== moduleId)
                           .map((m) => (
                             <option key={m.id} value={m.id}>
-                              {m.module_name} · {m.section}
-                              {m.module_number ? ` M${m.module_number}` : ""}
+                              {moduleLabel(m)}
                             </option>
                           ))}
                       </select>
@@ -318,9 +351,10 @@ export default function EditTestButton({ test, modules }: Props) {
                   <input
                     type="number"
                     min={1}
+                    max={180}
                     value={timeLimitMinutes}
                     onChange={(e) =>
-                      setTimeLimitMinutes(Math.max(1, Number(e.target.value) || 1))
+                      setTimeLimitMinutes(e.target.value === "" ? "" : Number(e.target.value))
                     }
                     className="input"
                   />
@@ -329,14 +363,11 @@ export default function EditTestButton({ test, modules }: Props) {
                   <input
                     type="number"
                     min={1}
+                    max={180}
                     placeholder="Falls back to Module 1's"
                     value={timeLimitMinutesModule2}
                     onChange={(e) =>
-                      setTimeLimitMinutesModule2(
-                        e.target.value === ""
-                          ? ""
-                          : Math.max(1, Number(e.target.value) || 1),
-                      )
+                      setTimeLimitMinutesModule2(e.target.value === "" ? "" : Number(e.target.value))
                     }
                     className="input"
                   />
@@ -383,7 +414,14 @@ export default function EditTestButton({ test, modules }: Props) {
                 />
               </div>
 
-              {error && <p className="text-status-error text-sm">{error}</p>}
+              {duePast && (
+                <p className="text-mid-gray text-xs">
+                  The due date is in the past — students won&apos;t be able to start this test.
+                </p>
+              )}
+              {(error || validationError) && (
+                <p className="text-status-error text-sm">{error ?? validationError}</p>
+              )}
             </div>
 
             <div className="px-5 py-3 border-t border-divider flex justify-end gap-2 sticky bottom-0 bg-surface">
@@ -396,7 +434,7 @@ export default function EditTestButton({ test, modules }: Props) {
               </button>
               <button
                 onClick={save}
-                disabled={busy || !testName.trim()}
+                disabled={busy || validationError !== null}
                 className="px-4 py-1.5 rounded-lg bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-40"
               >
                 {busy ? "Saving…" : "Save changes"}

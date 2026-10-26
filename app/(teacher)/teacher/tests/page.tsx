@@ -7,25 +7,19 @@ import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
-import { getQaTestIds, getQaUserIds, scopeIds } from "@/lib/qa";
+import { getQaUserIds, scopeIds } from "@/lib/qa";
+import { getAssignedStudentIds, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 
-async function getTeacherTests(teacherId: string, isAdmin: boolean, isQa: boolean) {
+async function getTeacherTests(user: { userId: string; role: string | null; isQa: boolean }) {
   const db = getServiceClient();
 
-  // Admins see every test on the platform; teachers only see assignments
-  // that include their user id.
-  let query = db.from("test_assignments").select("test_id, student_ids, class_group_ids");
-  if (!isAdmin) {
-    query = query.contains("teacher_ids", JSON.stringify([teacherId]));
-  }
-  query = scopeIds(query, "test_id", await getQaTestIds(), isQa);
-  const { data: assignments } = await query;
+  // Admins see every test; teachers see tests they're directly assigned
+  // to plus tests assigned to / taken by their classes (subject-scoped).
+  const scope = await getTeacherTestScope(db, user);
+  if (scope.testIds.size === 0) return [];
+  const testIds = Array.from(scope.testIds);
 
-  if (!assignments || assignments.length === 0) return [];
-
-  const testIds = assignments.map((a) => a.test_id);
-
-  const [{ data: tests }, { data: subData }] = await Promise.all([
+  const [{ data: tests, error: testsError }, { data: assignments, error: assignError }, { data: subData, error: subError }] = await Promise.all([
     db.from("tests")
       .select(`
         id, test_name, status, due_date, time_limit_minutes,
@@ -33,17 +27,26 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean, isQa: boolea
       `)
       .in("id", testIds)
       .order("due_date", { ascending: true }),
+    db.from("test_assignments")
+      .select("test_id, student_ids, class_group_ids")
+      .in("test_id", testIds),
     scopeIds(db.from("submissions")
       .select(
         "test_id, student_id, status, correct_count, total_questions, percentage, session_id",
       )
-      .in("test_id", testIds), "student_id", await getQaUserIds(), isQa),
+      .in("test_id", testIds), "student_id", await getQaUserIds(), user.isQa),
   ]);
+  if (testsError) throw new Error(`tests lookup failed: ${testsError.message}`);
+  if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
+  if (subError) throw new Error(`submissions lookup failed: ${subError.message}`);
 
-  const assignMap: Record<string, { student_ids: string[] }> = {};
-  for (const a of assignments) {
-    assignMap[a.test_id] = { student_ids: a.student_ids ?? [] };
-  }
+  // Roster per test = student_ids ∪ class_group members, limited to the
+  // teacher's own students unless they see the whole test.
+  const rosterSize: Record<string, number> = {};
+  await Promise.all((assignments ?? []).map(async (a) => {
+    const allowlist = seesAllStudents(scope, a.test_id as string) ? null : scope.myStudentIds;
+    rosterSize[a.test_id as string] = (await getAssignedStudentIds(db, a, user.isQa, allowlist)).size;
+  }));
 
   type SubRow = {
     test_id: string;
@@ -60,6 +63,7 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean, isQa: boolea
   // then average those.
   const subsByTest = new Map<string, SubRow[]>();
   for (const s of (subData ?? []) as SubRow[]) {
+    if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
     const list = subsByTest.get(s.test_id) ?? [];
     list.push(s);
     subsByTest.set(s.test_id, list);
@@ -93,14 +97,13 @@ async function getTeacherTests(teacherId: string, isAdmin: boolean, isQa: boolea
   }
 
   return (tests ?? []).map((t) => {
-    const assign = assignMap[t.id] ?? { student_ids: [] };
     const agg = aggregates[t.id] ?? { done: 0, pcts: [] };
     const avgScore = agg.pcts.length > 0
       ? agg.pcts.reduce((a, b) => a + b, 0) / agg.pcts.length
       : null;
     return {
       ...t,
-      totalStudents: assign.student_ids.length,
+      totalStudents: rosterSize[t.id] ?? 0,
       submittedCount: agg.done,
       avgScore,
     };
@@ -117,7 +120,7 @@ export default async function TeacherTestsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const tests = await getTeacherTests(user.userId, user.role === "admin", user.isQa);
+  const tests = await getTeacherTests(user);
 
   // Closed tests sink into a collapsed section at the bottom so the
   // list shows what's live by default.

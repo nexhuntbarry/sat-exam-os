@@ -63,38 +63,56 @@ export default function QuestionDetailPage() {
   const [data, setData] = useState<DetailData | null>(null);
   const [loading, setLoading] = useState(true);
   const [note, setNote] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [noteError, setNoteError] = useState(false);
 
   useEffect(() => {
     fetch(`/api/teacher/tests/${testId}/analytics/${questionId}`)
-      .then((r) => r.json())
-      .then((json) => {
+      .then(async (r) => {
+        if (r.status === 403) throw new Error("forbidden");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const json = await r.json();
         setData(json);
         setNote(json.privateNote ?? "");
       })
-      .catch(console.error)
+      .catch((err: Error) => setLoadError(err.message))
       .finally(() => setLoading(false));
   }, [testId, questionId]);
 
   const handleToggleClassReview = useCallback(async () => {
     if (!data) return;
     const next = !data.classReview;
-    await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
+    const ok = await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ note_type: "class_review", note_body: String(next) }),
-    });
+    }).then((r) => r.ok, () => false);
+    if (!ok) {
+      alert("Couldn't save the class-review mark. Check your connection and try again.");
+      return;
+    }
     setData((prev) => prev ? { ...prev, classReview: next } : prev);
   }, [data, testId, questionId]);
 
   const handleSaveNote = useCallback(async () => {
-    await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
+    const ok = await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ note_type: "private_note", note_body: note }),
-    });
+    }).then((r) => r.ok, () => false);
+    setNoteError(!ok);
   }, [testId, questionId, note]);
 
   if (loading) return <div className="max-w-4xl mx-auto py-16 text-center text-soft-mute">Loading...</div>;
+  if (loadError === "forbidden") {
+    return (
+      <div className="max-w-4xl mx-auto py-16 text-center space-y-3">
+        <p className="text-charcoal font-semibold">You don&rsquo;t have access to this test&rsquo;s analytics.</p>
+        <p className="text-soft-mute text-sm">It may belong to another class or a subject you don&rsquo;t teach.</p>
+        <Link href="/teacher/tests" className="text-warm-coral text-sm hover:underline">Back to My Tests</Link>
+      </div>
+    );
+  }
   if (!data) return <div className="max-w-4xl mx-auto py-16 text-center text-status-error">Not found.</div>;
 
   const { question, stats, wrongStudents, rightStudents, wrongStudentSubmissions, classReview } = data;
@@ -317,7 +335,15 @@ export default function QuestionDetailPage() {
           placeholder="Add a private note about this question..."
           className="w-full bg-light-bg border border-divider rounded-lg px-3 py-2 text-sm text-charcoal placeholder:text-charcoal/20 focus:outline-none focus:border-warm-coral/40 resize-none"
         />
-        <p className="text-soft-mute text-xs">Saves automatically when you click away.</p>
+        {noteError ? (
+          <p role="alert" className="text-status-error text-xs">
+            Couldn&rsquo;t save the note. Check your connection, then click away again to retry.
+          </p>
+        ) : (
+          <p className="text-soft-mute text-xs">
+            Only you see this note. It&rsquo;s about the question, not one student. Saves automatically when you click away.
+          </p>
+        )}
       </div>
     </div>
   );

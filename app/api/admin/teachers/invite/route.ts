@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { isQaEmail } from "@/lib/qa";
+import { isValidEmail, normalizeEmail } from "../../_shared";
 import { sendEmail } from "@/lib/email/send";
 import { teacherInviteEmail } from "@/lib/email/templates/teacher-invite";
 
@@ -24,10 +25,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (!body.email) {
+  // Emails are compared case-insensitively everywhere; store lowercase so
+  // "Ann@x.com" and "ann@x.com" can't become two teacher rows.
+  const email = normalizeEmail(body.email);
+  if (!email) {
     return NextResponse.json({ error: "email is required" }, { status: 400 });
   }
-  if (isQaEmail(body.email) !== authResult.isQa) {
+  if (!isValidEmail(email)) {
+    return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
+  }
+  if (isQaEmail(email) !== authResult.isQa) {
     return NextResponse.json(
       { error: "Cannot link QA and real accounts/data" },
       { status: 403 },
@@ -39,11 +46,25 @@ export async function POST(req: Request) {
 
   // Pre-check for existing user by email — return 409 with a flag so the
   // admin UI can prompt "user exists, resend invite?" instead of a hard fail.
-  const { data: existing } = await db
+  const { data: matches, error: lookupErr } = await db
     .from("users")
     .select("id, email, display_name, role, account_status")
-    .eq("email", body.email)
-    .maybeSingle();
+    .ilike("email", email.replace(/[\\%_]/g, "\\$&"))
+    .limit(2);
+  if (lookupErr) {
+    console.error("[invite-teacher] lookup error:", lookupErr);
+    return NextResponse.json({ error: "Failed to check existing users" }, { status: 500 });
+  }
+  const existing = (matches ?? []).find((u) => u.role === "teacher") ?? matches?.[0] ?? null;
+
+  // A student/admin with this email must not be turned into (or flagged
+  // like) a teacher by the resend path.
+  if (existing && existing.role !== "teacher") {
+    return NextResponse.json(
+      { error: `This email already belongs to a ${existing.role} account, so it can't be invited as a teacher.` },
+      { status: 409 },
+    );
+  }
 
   if (existing && !body.resend) {
     return NextResponse.json(
@@ -69,8 +90,8 @@ export async function POST(req: Request) {
     const { data: newUser, error: insertErr } = await db
       .from("users")
       .insert({
-        email: body.email,
-        display_name: body.displayName ?? body.email.split("@")[0],
+        email,
+        display_name: body.displayName?.trim() || email.split("@")[0],
         role: "teacher",
         account_status: "pending",
         can_review_questions: canReview,
@@ -90,7 +111,7 @@ export async function POST(req: Request) {
   }
 
   // Build invite URL — Clerk sign-in with email pre-filled (best effort)
-  const inviteUrl = `${BASE_URL}/sign-in?email=${encodeURIComponent(body.email)}`;
+  const inviteUrl = `${BASE_URL}/sign-in?email=${encodeURIComponent(email)}`;
 
   // Send invite email — DB row is already created, so any failure here
   // becomes a non-fatal warning (admin can re-invite or share the link
@@ -99,7 +120,7 @@ export async function POST(req: Request) {
   const { subject, html } = teacherInviteEmail(inviteUrl, admin.displayName);
   let emailWarning: string | null = null;
   try {
-    await sendEmail({ to: body.email, subject, html });
+    await sendEmail({ to: email, subject, html });
   } catch (err) {
     emailWarning = err instanceof Error ? err.message : String(err);
     console.error("[invite-teacher] email failed:", err);

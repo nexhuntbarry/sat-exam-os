@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
+import { roleError } from "../../../_shared";
 
 // POST /api/admin/class-groups/[id]/members — add or remove student
 export async function POST(
@@ -32,6 +33,8 @@ export async function POST(
   const db = getServiceClient();
 
   if (body.action === "add") {
+    const roleErr = await roleError(db, [body.studentId], "student");
+    if (roleErr) return NextResponse.json({ error: roleErr }, { status: 400 });
     const { error } = await db.from("class_group_members").upsert(
       { class_group_id: classGroupId, student_id: body.studentId },
       { onConflict: "class_group_id,student_id" }

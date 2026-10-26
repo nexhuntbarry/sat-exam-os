@@ -2,12 +2,13 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
-import { Clock, ClipboardList, User } from "lucide-react";
+import { ClipboardList, User } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
 
 async function getStudentProfile(userId: string) {
   const db = getServiceClient();
@@ -22,24 +23,7 @@ async function getStudentProfile(userId: string) {
 async function getUpcomingTests(userId: string) {
   const db = getServiceClient();
 
-  const { data: membership } = await db
-    .from("class_group_members")
-    .select("class_group_id")
-    .eq("student_id", userId);
-  const classGroupIds = (membership ?? []).map((m) => m.class_group_id);
-
-  const { data: allAssignments } = await db
-    .from("test_assignments")
-    .select("test_id, student_ids, class_group_ids");
-
-  const matchedTestIds = new Set<string>();
-  for (const a of allAssignments ?? []) {
-    const sIds: string[] = a.student_ids ?? [];
-    const cgIds: string[] = a.class_group_ids ?? [];
-    if (sIds.includes(userId) || classGroupIds.some((cg: string) => cgIds.includes(cg))) {
-      matchedTestIds.add(a.test_id);
-    }
-  }
+  const matchedTestIds = await getAssignedTestIds(db, userId);
 
   // QA isolation: a student never sees a test from the other side.
   const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
@@ -60,13 +44,32 @@ async function getUpcomingTests(userId: string) {
 
   const { data: submissions } = await db
     .from("submissions")
-    .select("test_id, status")
+    .select("test_id, status, attempt_number, adaptive_track")
     .eq("student_id", userId)
-    .in("test_id", testIds);
+    .in("test_id", testIds)
+    .order("attempt_number", { ascending: false });
 
+  // Status of each test's latest attempt. Any In Progress module wins (a
+  // submitted Module 1 must not hide an open Module 2), and a graded
+  // Module 1 with no Module 2 row yet (failed handoff) is still in
+  // progress — the test page offers "Continue to Module 2".
   const subMap: Record<string, string> = {};
+  const byTest = new Map<string, NonNullable<typeof submissions>>();
   for (const s of submissions ?? []) {
-    if (!subMap[s.test_id]) subMap[s.test_id] = s.status;
+    const list = byTest.get(s.test_id) ?? [];
+    list.push(s);
+    byTest.set(s.test_id, list);
+  }
+  for (const [testId, rows] of byTest) {
+    const latest = rows.filter((r) => r.attempt_number === rows[0].attempt_number);
+    const m1Done = latest.some(
+      (r) => r.adaptive_track === "module_1" && (r.status === "Submitted" || r.status === "Late"),
+    );
+    const hasM2 = latest.some((r) => isModule2Track(r.adaptive_track));
+    subMap[testId] =
+      latest.some((r) => r.status === "In Progress") || (m1Done && !hasM2)
+        ? "In Progress"
+        : latest[0].status;
   }
 
   return (tests ?? []).map((t) => ({
@@ -79,42 +82,12 @@ export default async function StudentDashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const isPending = user.accountStatus === "pending";
-  const [profile, upcomingTests] = isPending
-    ? [null, []]
-    : await Promise.all([getStudentProfile(user.userId), getUpcomingTests(user.userId)]);
-
-  if (isPending) {
-    return (
-      <div className="max-w-2xl mx-auto flex flex-col items-center justify-center min-h-[60vh] text-center space-y-6">
-        <div className="p-6 rounded-full bg-status-warning/10 border border-status-warning/20">
-          <Clock size={40} className="text-status-warning" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold text-charcoal mb-3">Account Pending Approval</h1>
-          <p className="text-mid-gray leading-relaxed">
-            Your registration has been submitted successfully. An administrator will review
-            and approve your account shortly. You will receive an email notification once
-            your account is approved.
-          </p>
-        </div>
-        <div className="bg-surface border border-divider rounded-2xl p-5 w-full text-left space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-soft-mute">Name</span>
-            <span className="text-charcoal">{user.displayName}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-soft-mute">Email</span>
-            <span className="text-charcoal">{user.email}</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-soft-mute">Status</span>
-            <span className="text-status-warning font-medium">Pending Approval</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Pending / suspended accounts never reach here — app/(student)/layout.tsx
+  // renders the account-status screen instead.
+  const [profile, upcomingTests] = await Promise.all([
+    getStudentProfile(user.userId),
+    getUpcomingTests(user.userId),
+  ]);
 
   const hasCompleteProfile = profile?.grade && profile?.school;
 

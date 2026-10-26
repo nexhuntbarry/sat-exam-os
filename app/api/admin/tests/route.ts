@@ -2,6 +2,16 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, getQaTestIds, scopeIds } from "@/lib/qa";
+import {
+  dateOrderError,
+  moduleApprovalError,
+  moduleSetError,
+  parseTimestamp,
+  roleError,
+  testNameError,
+  thresholdError,
+  timeLimitError,
+} from "../_shared";
 
 // GET /api/admin/tests
 export async function GET(req: Request) {
@@ -106,6 +116,8 @@ export async function POST(req: Request) {
     timeLimitMinutesModule2?: number | null;
     /** When true, the test has no countdown and never auto-submits. */
     isUntimed?: boolean;
+    /** Set after the admin confirmed the duplicate-name warning. */
+    allowDuplicateName?: boolean;
   };
 
   try {
@@ -114,9 +126,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (!body.testName?.trim()) {
-    return NextResponse.json({ error: "Test name is required" }, { status: 400 });
-  }
+  const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
+
+  const nameErr = testNameError(body.testName);
+  if (nameErr) return bad(nameErr);
+  const limitErr =
+    timeLimitError(body.timeLimitMinutes, "Time limit") ??
+    timeLimitError(body.timeLimitMinutesModule2, "Module 2 time limit") ??
+    thresholdError(body.adaptiveThreshold);
+  if (limitErr) return bad(limitErr);
+  const open = parseTimestamp(body.openDate, "Open date");
+  if (open.error) return bad(open.error);
+  const due = parseTimestamp(body.dueDate, "Due date");
+  if (due.error) return bad(due.error);
+  const orderErr = dateOrderError(open.value, due.value);
+  if (orderErr) return bad(orderErr);
 
   if (body.isAdaptive) {
     if (!body.module1Id) {
@@ -130,6 +154,9 @@ export async function POST(req: Request) {
         { error: "Adaptive test requires at least one Module 2 track (easy or hard)" },
         { status: 400 },
       );
+    }
+    if (body.module1Id === body.module2EasyId || body.module1Id === body.module2HardId) {
+      return bad("Module 2 tracks must differ from Module 1");
     }
   } else {
     if (!body.moduleId) {
@@ -152,6 +179,36 @@ export async function POST(req: Request) {
   if (crossSide) return crossSide;
 
   const db = getServiceClient();
+
+  const moduleIds = (body.isAdaptive
+    ? [body.module1Id, body.module2EasyId, body.module2HardId]
+    : [body.moduleId, body.module2Id]
+  ).filter((x): x is string => Boolean(x));
+  const moduleErr =
+    (await moduleSetError(db, moduleIds)) ??
+    (await moduleApprovalError(db, moduleIds)) ??
+    (await roleError(db, body.teacherIds, "teacher")) ??
+    (await roleError(db, body.studentIds, "student"));
+  if (moduleErr) return bad(moduleErr);
+
+  // Duplicate names make the delete-confirm (type the full name) and the
+  // test lists ambiguous. Warn once; the client resends with
+  // allowDuplicateName after the admin confirms. Scoped to the admin's
+  // side so QA names never collide with real ones.
+  if (!body.allowDuplicateName) {
+    const { data: dup } = await scopeIds(
+      db.from("tests").select("id").ilike("test_name", body.testName.trim().replace(/[\\%_]/g, "\\$&")),
+      "id",
+      await getQaTestIds(),
+      admin.isQa,
+    ).limit(1);
+    if (dup && dup.length > 0) {
+      return NextResponse.json(
+        { error: "A test with this name already exists", code: "duplicate_name" },
+        { status: 409 },
+      );
+    }
+  }
 
   // Math-aid columns only exist after migration 0018; only set them
   // when the admin actually opted in so a brand-new project (or one
@@ -189,8 +246,8 @@ export async function POST(req: Request) {
         typeof body.timeLimitMinutesModule2 === "number"
           ? body.timeLimitMinutesModule2
           : null,
-      open_date: body.openDate ?? null,
-      due_date: body.dueDate ?? null,
+      open_date: open.value,
+      due_date: due.value,
       show_answers_after_submission: body.showAnswersAfterSubmission ?? false,
       // Explanations are a sub-option of showing answers. Default true so a
       // test that shows answers also shows explanations unless the admin
@@ -207,14 +264,7 @@ export async function POST(req: Request) {
 
   if (testError || !test) {
     console.error("[admin/tests/post]", testError);
-    return NextResponse.json(
-      {
-        error: testError?.message
-          ? `Failed to create test: ${testError.message}`
-          : "Failed to create test",
-      },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to create test" }, { status: 500 });
   }
 
   // Create assignment

@@ -174,6 +174,16 @@ function escapeBareCurrency(text: string): string {
   );
 }
 
+// AI parser artefact: `\ $` (LaTeX protected space before a dollar sign)
+// leaks into prose when the AI thought it was in a math environment but the
+// surrounding `$...$` wrapper was dropped. The rendered output shows a literal
+// backslash-space before the dollar (e.g. "\ $5.00") which looks broken.
+// Safe to strip the `\ ` (backslash-space) from unprotected prose; it is
+// meaningless in Markdown/HTML context.
+function stripStrayLatexSpace(text: string): string {
+  return text.replace(/\\ (?=\$)/g, "");
+}
+
 // Collapse orphan `{,}` thin-space marks left behind when the AI
 // thought it was emitting math but skipped the `$...$` wrap (so
 // `1{,}150` lands as literal text instead of rendering as `1,150`).
@@ -236,6 +246,7 @@ export function normalizeMath(text: string): string {
     .map((part) => {
       if (part.startsWith(PLACEHOLDER_PREFIX)) return part;
       let p = part;
+      p = stripStrayLatexSpace(p);
       p = escapeBareCurrency(p);
       p = wrapBalancedCommand(p, "frac", 2);
       p = wrapBalancedCommand(p, "sqrt", 1);

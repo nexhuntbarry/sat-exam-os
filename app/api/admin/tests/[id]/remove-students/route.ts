@@ -13,7 +13,9 @@ import { forbidCrossSide } from "@/lib/qa";
 //
 // A student can still see the test if one of their class groups is
 // assigned to it — those are returned in `stillVisibleViaGroup` so the
-// UI can say so instead of claiming the test is gone.
+// UI can say so instead of claiming the test is gone. Their submissions
+// are never deleted: they can keep working on the test, so wiping their
+// progress would only lose work.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -58,6 +60,23 @@ export async function POST(
   const actuallyRemoved = existing.filter((s) => removeSet.has(s));
   const removed = actuallyRemoved.length;
 
+  const cgIds: string[] = (assignment.class_group_ids as string[]) ?? [];
+  let stillVisibleViaGroup: string[] = [];
+  if (cgIds.length > 0) {
+    const { data: members, error: membersError } = await db
+      .from("class_group_members")
+      .select("student_id")
+      .in("class_group_id", cgIds)
+      .in("student_id", incoming);
+    if (membersError) {
+      console.error("[remove-students] class group lookup error:", membersError);
+      return NextResponse.json({ error: "Failed to remove students" }, { status: 500 });
+    }
+    stillVisibleViaGroup = Array.from(new Set((members ?? []).map((m) => m.student_id as string)));
+  }
+  const visibleSet = new Set(stillVisibleViaGroup);
+  const deletable = actuallyRemoved.filter((s) => !visibleSet.has(s));
+
   const { error } = await db
     .from("test_assignments")
     .update({ student_ids: remaining })
@@ -69,12 +88,12 @@ export async function POST(
   }
 
   let deletedSubmissions = 0;
-  if (body.deleteSubmissions && actuallyRemoved.length > 0) {
+  if (body.deleteSubmissions && deletable.length > 0) {
     const { data: deleted, error: delError } = await db
       .from("submissions")
       .delete()
       .eq("test_id", testId)
-      .in("student_id", actuallyRemoved)
+      .in("student_id", deletable)
       .select("id");
     if (delError) {
       console.error("[remove-students] submission delete error:", delError);
@@ -84,17 +103,6 @@ export async function POST(
       );
     }
     deletedSubmissions = deleted?.length ?? 0;
-  }
-
-  const cgIds: string[] = (assignment.class_group_ids as string[]) ?? [];
-  let stillVisibleViaGroup: string[] = [];
-  if (cgIds.length > 0) {
-    const { data: members } = await db
-      .from("class_group_members")
-      .select("student_id")
-      .in("class_group_id", cgIds)
-      .in("student_id", incoming);
-    stillVisibleViaGroup = Array.from(new Set((members ?? []).map((m) => m.student_id as string)));
   }
 
   return NextResponse.json({ ok: true, removed, deletedSubmissions, stillVisibleViaGroup });

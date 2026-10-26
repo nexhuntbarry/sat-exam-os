@@ -287,7 +287,7 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
             No admins yet.
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b border-divider text-soft-mute">
                 <th className="text-left px-5 py-3 font-medium">Admin</th>
@@ -407,7 +407,7 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
                 );
               })}
             </tbody>
-          </table>
+          </table></div>
         )}
       </div>
 

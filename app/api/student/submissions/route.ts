@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
+import { isTestAssignedToStudent } from "@/lib/student-exam";
 
 // POST /api/student/submissions — start a test (create submission)
 export async function POST(req: Request) {
@@ -29,7 +30,7 @@ export async function POST(req: Request) {
   const { data: test, error: testError } = await db
     .from("tests")
     .select(
-      "id, status, allow_retake, due_date, time_limit_minutes, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, adaptive_threshold",
+      "id, status, allow_retake, open_date, due_date, time_limit_minutes, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, adaptive_threshold",
     )
     .eq("id", body.testId)
     .single();
@@ -40,6 +41,16 @@ export async function POST(req: Request) {
 
   if (test.status !== "Published") {
     return NextResponse.json({ error: "Test is not available" }, { status: 403 });
+  }
+
+  // Only students the test is assigned to (directly or via a class group,
+  // same rule as the My Tests list) may start it.
+  if (!(await isTestAssignedToStudent(db, body.testId, user.userId))) {
+    return NextResponse.json({ error: "Test is not assigned to you" }, { status: 403 });
+  }
+
+  if (test.open_date && new Date(test.open_date) > new Date()) {
+    return NextResponse.json({ error: "Test is not open yet" }, { status: 403 });
   }
 
   if (test.due_date && new Date(test.due_date) < new Date()) {

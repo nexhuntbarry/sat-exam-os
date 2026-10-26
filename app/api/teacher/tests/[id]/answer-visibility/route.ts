@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { canManageTestSettings, getTeacherTestAccess } from "@/lib/teacher-access";
 
 // POST /api/teacher/tests/[id]/answer-visibility
 // Body: { showAnswers?: boolean; showExplanations?: boolean }
@@ -9,8 +9,8 @@ import { getTeacherTestAccess } from "@/lib/teacher-access";
 // Live toggle for what students see on their own results page after
 // submitting — separate from the class-review unlock. Lets a teacher/admin
 // flip answer + explanation visibility on an ALREADY-created test without
-// rebuilding it. Admins can toggle any test; teachers only tests they have
-// access to.
+// rebuilding it. Admins can toggle any test; teachers only tests they own
+// (teacher_ids / creator) — the setting is shared by every assigned class.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -38,6 +38,14 @@ export async function POST(
   if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  // This flag lives on the tests row and applies to every class the test
+  // is assigned to, so only an admin or the test's owner may flip it.
+  if (!(await canManageTestSettings(db, user, testId))) {
+    return NextResponse.json(
+      { error: "Only the test's owner or an admin can change answer visibility for a shared test" },
+      { status: 403 },
+    );
+  }
 
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (typeof body.showAnswers === "boolean") update.show_answers_after_submission = body.showAnswers;
@@ -47,7 +55,7 @@ export async function POST(
   if (error) {
     console.error("[teacher/tests/answer-visibility]", error);
     return NextResponse.json(
-      { error: `Failed to update: ${error.message}` },
+      { error: "Failed to update" },
       { status: 500 },
     );
   }

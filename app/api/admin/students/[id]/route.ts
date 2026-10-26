@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { forbidCrossSide } from "@/lib/qa";
+import { forbidCrossSide, isQaEmail } from "@/lib/qa";
+import { isValidEmail, normalizeEmail } from "../../_shared";
 
 // PATCH /api/admin/students/[id] — edit student
 export async function PATCH(
@@ -35,6 +36,42 @@ export async function PATCH(
     }
   }
 
+  if (typeof userUpdate.email === "string") {
+    const email = normalizeEmail(userUpdate.email);
+    if (!isValidEmail(email)) {
+      return NextResponse.json({ error: "Enter a valid email address" }, { status: 400 });
+    }
+    const { data: current } = await db
+      .from("users")
+      .select("email")
+      .eq("id", id)
+      .eq("role", "student")
+      .maybeSingle();
+    if (!current) return NextResponse.json({ error: "Student not found" }, { status: 404 });
+    // The qa-test- prefix decides which side (QA vs real) an account lives
+    // on; an email edit must never move a student across that line.
+    if (isQaEmail(email) !== isQaEmail(current.email)) {
+      return NextResponse.json(
+        { error: "This email change would move the student between QA and real accounts" },
+        { status: 400 },
+      );
+    }
+    if (email !== (current.email ?? "").toLowerCase()) {
+      const { data: dup } = await db
+        .from("users")
+        .select("id")
+        .ilike("email", email.replace(/[\\%_]/g, "\\$&"))
+        .neq("id", id)
+        .limit(1);
+      if (dup && dup.length > 0) {
+        return NextResponse.json({ error: "Another account already uses this email" }, { status: 409 });
+      }
+    }
+    // Note: this is the app's contact email only. Sign-in identity lives
+    // in Clerk (users are matched by clerk_user_id) and is not changed here.
+    userUpdate.email = email;
+  }
+
   if (Object.keys(userUpdate).length > 0) {
     const { error } = await db
       .from("users")
@@ -43,6 +80,9 @@ export async function PATCH(
       .eq("role", "student");
     if (error) {
       console.error("[admin/students/PATCH user]", error);
+      if (error.code === "23505") {
+        return NextResponse.json({ error: "Another account already uses this email" }, { status: 409 });
+      }
       return NextResponse.json({ error: "Failed to update student" }, { status: 500 });
     }
   }

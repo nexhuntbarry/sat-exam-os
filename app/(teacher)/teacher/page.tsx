@@ -1,6 +1,7 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
-import { getQaTestIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
+import { getQaUserIds, scopeIds } from "@/lib/qa";
+import { getAssignedStudentIds, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -9,68 +10,100 @@ import { ClipboardList, Users, BarChart2, AlertTriangle } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
-async function getTeacherDashboardData(userId: string, isQa: boolean) {
+async function getTeacherDashboardData(user: { userId: string; role: string | null; isQa: boolean }) {
   const db = getServiceClient();
-  const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
 
-  // Get assigned tests (QA isolation: only the viewer's side)
-  const { data: rawAssignments } = await db
-    .from("test_assignments")
-    .select("test_id, student_ids")
-    .contains("teacher_ids", JSON.stringify([userId]));
-  const assignments = (rawAssignments ?? []).filter((a) => onSide(a.test_id as string, qaTests, isQa));
-
-  if (assignments.length === 0) {
+  // Same visible-test set as My Tests: direct ∪ class-assigned/taken,
+  // subject-scoped, QA-isolated.
+  const scope = await getTeacherTestScope(db, user);
+  if (scope.testIds.size === 0) {
     return { tests: [], recentSubmissions: [], attentionStudents: [], stats: { assignedTests: 0, studentsCount: 0, weekSubmissions: 0 } };
   }
+  const testIds = Array.from(scope.testIds);
+  const qaUsers = await getQaUserIds();
 
-  const testIds = assignments.map((a) => a.test_id);
-  const allStudentIds = [...new Set(assignments.flatMap((a) => (a.student_ids as string[]) ?? []))];
+  const [{ data: tests, error: testsError }, { data: assignments, error: assignError }, { data: allSubs, error: subError }] = await Promise.all([
+    db
+      .from("tests")
+      .select("id, test_name, status, due_date, modules!module_id(module_name, section)")
+      .in("id", testIds)
+      .eq("status", "Published")
+      .order("due_date", { ascending: true })
+      .limit(10),
+    db.from("test_assignments").select("test_id, student_ids, class_group_ids").in("test_id", testIds),
+    scopeIds(db
+      .from("submissions")
+      .select("id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, users!inner(display_name, email)")
+      .in("test_id", testIds), "student_id", qaUsers, user.isQa),
+  ]);
+  if (testsError) throw new Error(`tests lookup failed: ${testsError.message}`);
+  if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
+  if (subError) throw new Error(`submissions lookup failed: ${subError.message}`);
 
-  const { data: tests } = await db
-    .from("tests")
-    .select("id, test_name, status, due_date, modules!module_id(module_name, section)")
-    .in("id", testIds)
-    .eq("status", "Published")
-    .order("due_date", { ascending: true })
-    .limit(10);
+  // Assigned roster per test (student_ids ∪ class members), limited to my
+  // students unless I see the whole test.
+  const rosterByTest = new Map<string, Set<string>>();
+  await Promise.all((assignments ?? []).map(async (a) => {
+    const allowlist = seesAllStudents(scope, a.test_id as string) ? null : scope.myStudentIds;
+    rosterByTest.set(a.test_id as string, await getAssignedStudentIds(db, a, user.isQa, allowlist));
+  }));
+  const allStudentIds = new Set<string>();
+  for (const roster of rosterByTest.values()) for (const sid of roster) allStudentIds.add(sid);
 
-  // Get submissions for this week
+  // Group module rows into attempts (two-module attempts share a session_id)
+  // so counts and averages don't double-count.
+  type SubRow = {
+    id: string;
+    test_id: string;
+    student_id: string;
+    status: string;
+    correct_count: number | null;
+    total_questions: number | null;
+    percentage: number | string | null;
+    submitted_at: string | null;
+    session_id: string | null;
+    users: unknown;
+  };
+  const attemptRows = new Map<string, SubRow[]>();
+  for (const s of (allSubs ?? []) as SubRow[]) {
+    if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
+    const key = s.session_id ?? s.id;
+    attemptRows.set(key, [...(attemptRows.get(key) ?? []), s]);
+  }
+  const attempts = Array.from(attemptRows.entries()).map(([key, rows]) => {
+    const correct = rows.reduce((n, r) => n + (r.correct_count ?? 0), 0);
+    const total = rows.reduce((n, r) => n + (r.total_questions ?? 0), 0);
+    const done = rows.every((r) => r.status === "Submitted" || r.status === "Late");
+    const percentage = total > 0
+      ? (correct / total) * 100
+      : rows[0].percentage != null ? Number(rows[0].percentage) : null;
+    const submittedAt = rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
+    return {
+      id: key,
+      testId: rows[0].test_id,
+      studentId: rows[0].student_id,
+      status: done ? (rows.some((r) => r.status === "Late") ? "Late" : "Submitted") : "In Progress",
+      done,
+      percentage,
+      submitted_at: submittedAt,
+      student: rows[0].users as { display_name: string; email: string },
+    };
+  });
+
   const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  const { data: weekSubs } = await scopeIds(db
-    .from("submissions")
-    .select("id, student_id, test_id, status, percentage, submitted_at, users!inner(display_name, email)")
-    .in("test_id", testIds), "student_id", qaUsers, isQa)
-    .gte("submitted_at", oneWeekAgo)
-    .in("status", ["Submitted", "Late"])
-    .order("submitted_at", { ascending: false })
-    .limit(10);
+  const weekAttempts = attempts
+    .filter((a) => a.done && a.submitted_at && a.submitted_at >= oneWeekAgo)
+    .sort((a, b) => (b.submitted_at ?? "").localeCompare(a.submitted_at ?? ""));
 
-  // Get submission counts per test
-  const { data: allSubs } = await scopeIds(db
-    .from("submissions")
-    .select("test_id, status, percentage, student_id")
-    .in("test_id", testIds), "student_id", qaUsers, isQa);
-
-  const subMap: Record<string, { submitted: number; total: number; scores: number[] }> = {};
-  for (const s of allSubs ?? []) {
-    if (!subMap[s.test_id]) subMap[s.test_id] = { submitted: 0, total: 0, scores: [] };
-    subMap[s.test_id].total++;
-    if (s.status === "Submitted" || s.status === "Late") {
-      subMap[s.test_id].submitted++;
-      if (s.percentage != null) subMap[s.test_id].scores.push(Number(s.percentage));
-    }
-  }
-
-  // Students needing attention: < 60% on recent submissions
+  const submittedByTest: Record<string, number> = {};
   const studentScores: Record<string, number[]> = {};
-  for (const s of allSubs ?? []) {
-    if ((s.status === "Submitted" || s.status === "Late") && s.percentage != null) {
-      if (!studentScores[s.student_id]) studentScores[s.student_id] = [];
-      studentScores[s.student_id].push(Number(s.percentage));
-    }
+  for (const a of attempts) {
+    if (!a.done) continue;
+    submittedByTest[a.testId] = (submittedByTest[a.testId] ?? 0) + 1;
+    if (a.percentage != null) (studentScores[a.studentId] ??= []).push(a.percentage);
   }
 
+  // Students needing attention: < 60% average across attempts
   const lowStudentIds = Object.entries(studentScores)
     .filter(([, scores]) => {
       const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
@@ -90,24 +123,20 @@ async function getTeacherDashboardData(userId: string, isQa: boolean) {
       : null,
   }));
 
-  const enrichedTests = (tests ?? []).map((t) => {
-    const assign = assignments.find((a) => a.test_id === t.id);
-    const studentCount = (assign?.student_ids as string[] ?? []).length;
-    const subs = subMap[t.id] ?? { submitted: 0, total: 0, scores: [] };
-    return { ...t, studentCount, submittedCount: subs.submitted };
-  });
+  const enrichedTests = (tests ?? []).map((t) => ({
+    ...t,
+    studentCount: rosterByTest.get(t.id)?.size ?? 0,
+    submittedCount: submittedByTest[t.id] ?? 0,
+  }));
 
   return {
     tests: enrichedTests,
-    recentSubmissions: (weekSubs ?? []).map((s) => ({
-      ...s,
-      student: s.users as unknown as { display_name: string; email: string },
-    })),
+    recentSubmissions: weekAttempts.slice(0, 10),
     attentionStudents: attentionWithScores,
     stats: {
       assignedTests: testIds.length,
-      studentsCount: allStudentIds.length,
-      weekSubmissions: weekSubs?.length ?? 0,
+      studentsCount: allStudentIds.size,
+      weekSubmissions: weekAttempts.length,
     },
   };
 }
@@ -122,7 +151,7 @@ export default async function TeacherDashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const { tests, recentSubmissions, attentionStudents, stats } = await getTeacherDashboardData(user.userId, user.isQa);
+  const { tests, recentSubmissions, attentionStudents, stats } = await getTeacherDashboardData(user);
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
