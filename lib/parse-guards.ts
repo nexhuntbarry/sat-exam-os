@@ -63,6 +63,10 @@ export async function enforceCompleteness(
         return t.trim().length > 0 && !/partially visible|no text|placeholder|not visible/i.test(t);
       });
       if (good.length < 4) problems.push(`${good.length}/4 choices`);
+      // A key stored as the choice TEXT ("84") instead of its letter grades every student wrong.
+      const labels = new Set(ch.map((c) => (c as { label?: string } | null)?.label));
+      const key = (q.correct_answer ?? "").trim();
+      if (key && !key.split(/\s*,\s*/).every((k) => labels.has(k))) problems.push(`answer "${key}" is not a choice letter`);
     }
     if (!q.correct_answer || !q.correct_answer.trim()) problems.push("no answer");
     const placeholder = findParsePlaceholder(q.question_text, q.choices);
