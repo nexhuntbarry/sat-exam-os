@@ -9,7 +9,8 @@ const MAX_BYTES = 10 * 1024 * 1024;
  * error string to send back as a 400.
  */
 export async function uploadScreenshots(form: FormData): Promise<string[] | string> {
-  const files = form.getAll("screenshots").filter((f): f is File => f instanceof File && f.size > 0);
+  // Not `instanceof File`: the runtime's multipart entries aren't always the global File class.
+  const files = form.getAll("screenshots").filter((f): f is File => typeof f !== "string" && f.size > 0);
   if (files.length > MAX_FILES) return `At most ${MAX_FILES} screenshots per message`;
   for (const f of files) {
     if (!f.type.startsWith("image/")) return `${f.name} is not an image`;
