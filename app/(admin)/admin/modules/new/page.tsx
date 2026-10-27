@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Upload } from "lucide-react";
 import { upload } from "@vercel/blob/client";
+import UploadConfirmDialog from "@/components/modules/UploadConfirmDialog";
 
 export default function NewModulePage() {
   const router = useRouter();
@@ -19,16 +20,23 @@ export default function NewModulePage() {
   const [loading, setLoading] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   function set<K extends keyof typeof form>(k: K, v: (typeof form)[K]) {
     setForm((p) => ({ ...p, [k]: v }));
   }
 
-  async function handleSubmit() {
+  function handleSubmit() {
     if (!form.moduleName || !file) {
       setError("Module name and PDF file are required.");
       return;
     }
+    setShowConfirm(true);
+  }
+
+  async function doUpload() {
+    setShowConfirm(false);
+    if (!form.moduleName || !file) return;
     setLoading(true);
     setError(null);
     setUploadPct(0);
@@ -236,6 +244,13 @@ export default function NewModulePage() {
           </p>
         </div>
       </div>
+
+      {showConfirm && (
+        <UploadConfirmDialog
+          onConfirm={doUpload}
+          onCancel={() => setShowConfirm(false)}
+        />
+      )}
     </div>
   );
 }

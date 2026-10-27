@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { extractAnswerKey, fetchPdfAsBase64 } from "@/lib/ai/parse-pdf";
+import { keyModuleMismatchNote } from "@/lib/parse-guards";
 
 // Vercel Hobby caps Serverless Functions at 300s; this probe usually
 // finishes in <30s but headroom matters when PDFs are large.
@@ -31,7 +32,7 @@ export async function POST(
 
   const { data: mod, error: fetchError } = await db
     .from("modules")
-    .select("id, pdf_url")
+    .select("id, pdf_url, module_name, module_number")
     .eq("id", id)
     .single();
 
@@ -53,6 +54,14 @@ export async function POST(
 
   try {
     const key = await extractAnswerKey(pdfBase64, authResult.userId);
+    // Key page for a different module: don't offer it. The admin then parses
+    // without a key and the parse route flags every question for review.
+    const mismatch = key.found
+      ? keyModuleMismatchNote(key.keyTitle, key.questionHeader, mod.module_name, mod.module_number)
+      : null;
+    if (mismatch) {
+      return NextResponse.json({ found: false, count: 0, answers: {}, notes: mismatch });
+    }
     return NextResponse.json({
       found: key.found,
       count: Object.keys(key.answers).length,

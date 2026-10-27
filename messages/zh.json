@@ -255,6 +255,19 @@
         "medium": "中等",
         "hard": "困難",
         "mixed": "混合"
+      },
+      "uploadConfirm": {
+        "title": "上傳前請確認",
+        "subtitle": "請勾選所有項目才能開始上傳。",
+        "check1": "此檔案只包含單一模組（例如 Module 1 或 Module 2），且檔名有標明是哪個模組。",
+        "check2": "若 PDF 含有答案頁，該答案頁屬於本模組（答案頁標題，例如「Module 1 AK」，與題目頁的「Section N, Module M」標題相符）。",
+        "check3": "每一題的頁面完整，邊緣沒有裁切，圖表、表格及四個選項均清楚可見。",
+        "check4": "掃描或截圖的清晰度足以讀取每個字和數字。",
+        "check5": "題目順序正確，無缺漏（R&W 共 27 題，Math 共 22 題）。",
+        "check6": "在表單中選擇的科目（Math 或 Reading & Writing）與 PDF 相符。",
+        "note": "系統無法清楚識別的題目將進入「待審核」並附上原因。",
+        "cancel": "取消",
+        "confirm": "確認並上傳"
       }
     },
     "questions": {

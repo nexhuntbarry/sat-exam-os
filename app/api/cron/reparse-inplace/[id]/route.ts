@@ -10,7 +10,14 @@ import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncate
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
 import { recoverMissingFigures, recoverBrokenChoices } from "@/lib/repair-ops";
-import { enforceCompleteness, checkNumberContiguity } from "@/lib/parse-guards";
+import {
+  enforceCompleteness,
+  checkNumberContiguity,
+  keyModuleMismatchNote,
+  keyDisagreementNote,
+  flagQuestionsForReview,
+  enforceStemIntegrity,
+} from "@/lib/parse-guards";
 import { autoPromoteModule } from "@/lib/auto-promote";
 
 export const maxDuration = 800;
@@ -62,10 +69,17 @@ export async function POST(
 
   // Fill any missing official answers by extracting the key from the PDF.
   let keyEntries = officialByNum.size;
+  // Key page titled for a different module than the questions → not applied.
+  let keyModuleNote: string | null = null;
   try {
     const b64 = await fetchPdfAsBase64(mod.pdf_url);
     const key = await extractAnswerKey(b64);
-    if (key.found) {
+    keyModuleNote = key.found
+      ? keyModuleMismatchNote(key.keyTitle, key.questionHeader, mod.module_name, mod.module_number)
+      : null;
+    if (keyModuleNote) {
+      console.warn(`[reparse-inplace] answer key NOT applied — key page "${key.keyTitle}" vs questions "${key.questionHeader ?? mod.module_name}"`);
+    } else if (key.found) {
       for (const [num, ans] of Object.entries(key.answers)) {
         officialByNum.set(Number(num), ans as string);
       }
@@ -158,9 +172,11 @@ export async function POST(
   let reconciled = 0;
   const { data: rows } = await db
     .from("questions")
-    .select("id, correct_answer, official_answer")
+    .select("id, original_question_number, question_type, correct_answer, official_answer")
     .eq("module_id", id)
     .not("official_answer", "is", null);
+  let keyCompared = 0;
+  const keyDisagreeNums: number[] = [];
   for (const r of rows ?? []) {
     const off = r.official_answer as string;
     const ai = r.correct_answer as string | null;
@@ -169,7 +185,10 @@ export async function POST(
       (ai.trim().length === 1 && off.trim().length === 1
         ? ai.trim().toUpperCase() === off.trim().toUpperCase()
         : ai.trim().replace(/\s+/g, "") === off.trim().replace(/\s+/g, ""));
+    const isMc = r.question_type === "Multiple Choice";
+    if (isMc && ai) keyCompared++;
     if (!agree) {
+      if (isMc && ai) keyDisagreeNums.push(r.original_question_number as number);
       reconciled++;
       await db
         .from("questions")
@@ -193,6 +212,13 @@ export async function POST(
   try { figures = await recoverMissingFigures(id, db); } catch (e) { figures = { error: String(e) }; }
   try { choicesRecovery = await recoverBrokenChoices(id, db); } catch (e) { choicesRecovery = { error: String(e) }; }
   try { await enforceCompleteness(id, db); } catch (e) { console.error("[reparse-inplace] completeness-gate:", e); }
+  // Answer-key + stem guards — after every pass that can Approve, before auto-promote.
+  try {
+    if (keyModuleNote) await flagQuestionsForReview(id, db, keyModuleNote);
+    const disagreeNote = keyDisagreementNote(keyDisagreeNums.length, keyCompared);
+    if (disagreeNote) await flagQuestionsForReview(id, db, disagreeNote, keyDisagreeNums);
+    await enforceStemIntegrity(id, db);
+  } catch (e) { console.error("[reparse-inplace] key/stem guards:", e); }
   try { await checkNumberContiguity(id, db); } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
   try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
 

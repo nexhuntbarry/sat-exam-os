@@ -36,7 +36,7 @@ import { z } from "zod";
 import sharp from "sharp";
 import { readPrintoutLayout, type LayoutElement, type LayoutLine, type PrintoutLayout, type Rect } from "@/lib/printout-layout";
 import { renderPdfPages } from "@/lib/ai/extract-images";
-import { MATH_FORMAT_RULES, logUsage, type ModuleMetadata, type ParsedQuestion, type ParsedImageRegion } from "@/lib/ai/parse-pdf";
+import { MATH_FORMAT_RULES, QUOTE_RULE, logUsage, type ModuleMetadata, type ParsedQuestion, type ParsedImageRegion } from "@/lib/ai/parse-pdf";
 import { normalizeChoiceText } from "@/lib/pdf-text-choices";
 
 type Label = "A" | "B" | "C" | "D";
@@ -264,6 +264,8 @@ For each TEXT piece (plain text already extracted from the PDF): return the SAME
 Blanks are written as exactly six underscores "______". Keep <u>…</u> underline tags that appear in text pieces.
 
 ${MATH_FORMAT_RULES}
+
+${QUOTE_RULE}
 
 Return one entry per slot id you were given, in the same order.`;
 

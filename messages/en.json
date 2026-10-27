@@ -255,6 +255,19 @@
         "medium": "Medium",
         "hard": "Hard",
         "mixed": "Mixed"
+      },
+      "uploadConfirm": {
+        "title": "Before you upload",
+        "subtitle": "Check all boxes to enable upload.",
+        "check1": "This file is one module only (e.g. Module 1 OR Module 2), and the filename says which one.",
+        "check2": "If the PDF has an answer-key page, it's for THIS module (the key title, e.g. \"Module 1 AK\", matches the questions' \"Section N, Module M\" header).",
+        "check3": "Every question page is complete — nothing cut off at the edges, and figures, tables, and all 4 choices are visible.",
+        "check4": "The scan or screenshots are clear enough to read every word and number.",
+        "check5": "Questions are in order with none missing (27 for R&W, 22 for Math).",
+        "check6": "The section (Math vs Reading & Writing) chosen in the form matches the PDF.",
+        "note": "Questions the system can't read clearly will go to Needs Review with the reason.",
+        "cancel": "Cancel",
+        "confirm": "Confirm & upload"
       }
     },
     "questions": {

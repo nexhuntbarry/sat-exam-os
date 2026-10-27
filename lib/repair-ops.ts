@@ -13,6 +13,7 @@ import katex from "katex";
 import { getServiceClient } from "@/lib/supabase";
 import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
+import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
 import {
@@ -85,6 +86,8 @@ Hard rules:
 - Every $ in a field needs a matching closing $ in the SAME field. Currency $ must be escaped as \\$.
 - Every $...$ region must hold a real math expression — never a number alone, never English prose.
 - For Multiple Choice, return exactly four choices labelled A, B, C, D.
+
+${QUOTE_RULE}
 
 Return JSON only.`;
 

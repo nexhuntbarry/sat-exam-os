@@ -115,6 +115,12 @@ const ParsedQuestionsSchema = z.object({
 // Shared number/math/currency formatting rules — also used by the
 // crop-transcription step in lib/printout-parser.ts so both paths emit the
 // same $…$ conventions.
+// Structured output ends a JSON string at the first unescaped straight double
+// quote — everything after it is lost (Oct 2024 English M2: four stems stopped
+// right before a quoted title, one passage opening with "Tomato" came back
+// empty). Typographic quotes can't close a JSON string, so ask for those.
+export const QUOTE_RULE = `QUOTATION MARKS (CRITICAL): inside every text field, write double quotation marks as typographic quotes “ and ” — NEVER a bare straight " character. A straight " ends the JSON string and silently cuts off the rest of the passage. Example: write the poem “Title,” NOT the poem "Title,". Single quotes/apostrophes are fine as-is.`;
+
 export const MATH_FORMAT_RULES = `FORMATTING NUMBERS, MATH, AND DOLLAR SIGNS (CRITICAL — single source of truth):
 
 This block REPLACES every earlier rule about "$", "\\$", math wrapping, and number escaping. Apply it to question_text, every choice's text, correct_answer, AND explanation.
@@ -204,6 +210,8 @@ SKILL: A more specific skill within the domain (e.g., "Linear equations in one v
 CONCEPT: Even finer-grained concept (e.g., "Solving for x", "Author's purpose", "Comma usage").
 
 ${MATH_FORMAT_RULES}
+
+${QUOTE_RULE}
 
 MULTIPLE CHOICE QUESTIONS (CRITICAL — never drop the choices):
 Every SAT question marked Multiple Choice in this PDF has exactly four labelled options A, B, C, D. The downstream system stores them in a JSON array and uses that array to render the choice buttons; if the array is empty or missing the student sees the stem with no options to pick from.
@@ -364,6 +372,14 @@ const ANSWER_KEY_SCHEMA = z.object({
     )
     .describe("Empty array when found=false."),
   notes: z.string().nullable().describe("Optional one-line note about ambiguity or partial extraction."),
+  key_title: z
+    .string()
+    .nullable()
+    .describe('Title/heading printed on the answer-key page, verbatim (e.g. "SAT ENGLISH MODULE 2 AK / US-A-Reading 2"). Null when there is no titled key page.'),
+  question_header: z
+    .string()
+    .nullable()
+    .describe('Section/module header printed at the top of the QUESTION pages, verbatim (e.g. "Section 1, Module 1: Reading and Writing"). Null when absent.'),
 });
 
 export interface AnswerKey {
@@ -371,6 +387,10 @@ export interface AnswerKey {
   /** question_number → official answer */
   answers: Record<number, string>;
   notes: string | null;
+  /** Heading on the answer-key page, verbatim ("SAT ENGLISH MODULE 2 AK"). */
+  keyTitle: string | null;
+  /** Header on the question pages, verbatim ("Section 1, Module 1: …"). */
+  questionHeader: string | null;
 }
 
 const ANSWER_KEY_SYSTEM_PROMPT = `You are an SAT module answer-key extractor. The PDF you receive contains a SAT practice module that may or may not include an answer key — typically printed on the last page or last few pages, sometimes labelled "Answer Key", "Answers", "Solutions", "Answer Explanations", or rendered as a simple table, list, or grid.
@@ -383,6 +403,7 @@ Your job:
 5. If you can only read part of the key (e.g. some letters are smudged or cut off at a page break), still return what you can. Set notes to describe which question numbers you couldn't read.
 6. CHECKMARK PRINTOUTS: some PDFs have no separate key but mark the correct choice of each question with a check-mark / check-circle icon (✓) on the choice box. Treat those marks as the answer key (found=true). A question's stem is often at the bottom of one page with its choices at the top of the NEXT page (after a URL footer and date header); choices — and their checkmark — always belong to the stem ABOVE them, i.e. a checked box at the top of a page is the answer to the PREVIOUS page's question, not to the stem printed below it.
 7. If no answer key or checkmarks are visible at all, set found=false and answers=[]. Do not invent answers from your own solving.
+8. Copy the answer-key page's title verbatim into key_title, and the section/module header printed on the question pages (e.g. "Section 1, Module 1: Reading and Writing") verbatim into question_header. Report them as printed even if they name different modules.
 
 Return STRICT JSON matching the schema. No prose, no markdown, no explanations.`;
 
@@ -457,6 +478,8 @@ export async function extractAnswerKey(
     found: result.object.found,
     answers: {},
     notes: result.object.notes ?? null,
+    keyTitle: result.object.key_title ?? null,
+    questionHeader: result.object.question_header ?? null,
   };
   for (const a of result.object.answers) {
     out.answers[a.question_number] = a.answer.trim();

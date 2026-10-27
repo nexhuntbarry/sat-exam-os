@@ -16,7 +16,15 @@ import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncate
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
 import { recoverMissingFigures, recoverBrokenChoices, repairChoicesForQuestion } from "@/lib/repair-ops";
-import { enforceCompleteness, checkNumberContiguity, enforceChoiceAlignment } from "@/lib/parse-guards";
+import {
+  enforceCompleteness,
+  checkNumberContiguity,
+  enforceChoiceAlignment,
+  keyModuleMismatchNote,
+  keyDisagreementNote,
+  flagQuestionsForReview,
+  enforceStemIntegrity,
+} from "@/lib/parse-guards";
 import {
   extractChoicesFromPdfText,
   isTextLayerReliable,
@@ -144,7 +152,7 @@ export async function POST(
   const { data: mod, error: fetchError } = await db
     .from("modules")
     .select(
-      "id, pdf_url, section, difficulty, module_number, parsing_status, parsing_started_at",
+      "id, module_name, pdf_url, section, difficulty, module_number, parsing_status, parsing_started_at",
     )
     .eq("id", id)
     .single();
@@ -297,10 +305,21 @@ export async function POST(
     // answers against the official key (Phase 3 below), not just uploads that
     // came through the probe-answer-key step. Non-fatal: if no key is found the
     // parse proceeds on solver-derived answers as before.
+    // A key page titled for a different module than the questions (e.g. a
+    // "Module 2" PDF whose pages say "Section 1, Module 1" but whose key page
+    // says "MODULE 2 AK") is NOT applied; every question goes to Needs Review.
+    let keyModuleNote: string | null = null;
     if (!answerKey) {
       try {
         const probed = await extractAnswerKey(pdfBase64, authResult.userId);
-        if (probed.found && Object.keys(probed.answers).length > 0) {
+        keyModuleNote = probed.found
+          ? keyModuleMismatchNote(probed.keyTitle, probed.questionHeader, mod.module_name, mod.module_number)
+          : null;
+        if (keyModuleNote) {
+          console.warn(
+            `[modules/parse] answer key NOT applied — key page "${probed.keyTitle}" vs questions "${probed.questionHeader ?? mod.module_name}"`,
+          );
+        } else if (probed.found && Object.keys(probed.answers).length > 0) {
           answerKey = probed.answers;
           console.log(
             `[modules/parse] auto-extracted official answer key: ${Object.keys(probed.answers).length} answers`,
@@ -668,10 +687,12 @@ export async function POST(
     // compare the two, overwrite correct_answer with the official one,
     // and flag mismatches for admin review.
     let mismatchCount = 0;
+    let keyCompared = 0;
+    const keyDisagreeNums: number[] = [];
     if (answerKey) {
       const { data: solvedRows } = await db
         .from("questions")
-        .select("id, original_question_number, correct_answer, official_answer, parsing_notes, parsing_status")
+        .select("id, original_question_number, question_type, correct_answer, official_answer, parsing_notes, parsing_status")
         .eq("module_id", id)
         .not("official_answer", "is", null);
 
@@ -680,9 +701,12 @@ export async function POST(
         const officialAns = row.official_answer as string;
         // Solver may not have answered yet (timeout) — skip until next run.
         if (!aiAns) continue;
+        const isMc = row.question_type === "Multiple Choice";
+        if (isMc) keyCompared++;
 
         if (!answersAgree(aiAns, officialAns)) {
           mismatchCount++;
+          if (isMc) keyDisagreeNums.push(row.original_question_number as number);
           const hint = `Mismatch: AI answered ${aiAns}, official ${officialAns}`;
           const existingNotes = (row.parsing_notes as string | null) ?? "";
           const newNotes = existingNotes ? `${existingNotes}; ${hint}` : hint;
@@ -850,6 +874,21 @@ export async function POST(
       }
     } catch (err) {
       console.error("[modules/parse] completeness-gate crashed:", err);
+    }
+
+    // Phase 5d'' — answer-key + stem guards. Run here, after every pass that
+    // can Approve a row (explain-official, figure/choice recovery) and before
+    // auto-promote, so these flags stick.
+    try {
+      if (keyModuleNote) await flagQuestionsForReview(id, db, keyModuleNote);
+      const disagreeNote = keyDisagreementNote(keyDisagreeNums.length, keyCompared);
+      if (disagreeNote) {
+        console.warn(`[modules/parse] key-disagreement module=${id} ${keyDisagreeNums.length}/${keyCompared} — flagging`);
+        await flagQuestionsForReview(id, db, disagreeNote, keyDisagreeNums);
+      }
+      await enforceStemIntegrity(id, db);
+    } catch (err) {
+      console.error("[modules/parse] key/stem guards crashed:", err);
     }
 
     // Phase 5d' — choice-alignment gate: re-check every stored MCQ against the
