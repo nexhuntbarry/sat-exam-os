@@ -15,6 +15,8 @@ interface Notification {
     module_name?: string | null;
     message?: string;
     auto?: boolean;
+    request_id?: string;
+    status?: string;
   } | null;
   read_at: string | null;
   created_at: string;
@@ -86,6 +88,7 @@ export default function NotificationBell() {
   };
 
   function href(n: Notification): string {
+    if (n.payload?.kind === "support_reply") return `/admin/support#${n.payload.request_id}`;
     const q = n.payload?.question_id;
     return q ? `/admin/questions/${q}` : "#";
   }
@@ -102,6 +105,13 @@ export default function NotificationBell() {
         title: `Report resolved — ${where}`,
         body: p.message || "The issue you reported was fixed.",
       };
+    }
+    if (p.kind === "support_reply") {
+      const title =
+        p.status === "fixed" ? "Your problem report is fixed"
+        : p.status === "needs_approval" ? "Your request needs Barry's approval"
+        : "Reply to your problem report";
+      return { title, body: p.message || "" };
     }
     return { title: n.type, body: p.message || "" };
   }

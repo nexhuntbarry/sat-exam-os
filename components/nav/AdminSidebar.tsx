@@ -13,6 +13,7 @@ import {
   Zap,
   ShieldCheck,
   Bug,
+  LifeBuoy,
 } from "lucide-react";
 import SidebarShell, { type NavItem } from "@/components/nav/SidebarShell";
 
@@ -27,6 +28,7 @@ const navItems: NavItem[] = [
   { href: "/admin/classes", icon: FolderKanban, label: "Classes" },
   { href: "/admin/reports", icon: BarChart2, label: "Reports" },
   { href: "/admin/bug-reports", icon: Bug, label: "Bug Reports" },
+  { href: "/admin/support", icon: LifeBuoy, label: "Report a Problem" },
   { href: "/admin/ai-usage", icon: Zap, label: "AI Usage" },
   { href: "/admin/settings", icon: Settings, label: "Settings" },
 ];
