@@ -28,8 +28,11 @@ function Composer({ url, placeholder, button, onDone }: {
   const previews = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
   useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p)), [previews]);
 
-  const addFiles = (list: FileList | File[]) =>
-    setFiles((prev) => [...prev, ...Array.from(list).filter((f) => f.type.startsWith("image/"))].slice(0, 6));
+  const addFiles = (list: FileList | File[]) => {
+    // Copy now: the input's FileList is cleared right after this call.
+    const picked = Array.from(list).filter((f) => f.type.startsWith("image/"));
+    setFiles((prev) => [...prev, ...picked].slice(0, 6));
+  };
 
   async function send() {
     if (!body.trim()) return setError("Please describe the problem.");
