@@ -21,6 +21,8 @@ export interface ParsedImageRegion {
   w_pct: number;
   h_pct: number;
   alt: string;
+  /** Crop padding as a page fraction; omitted → cropper default (2.5%). */
+  pad?: number;
 }
 
 export interface ParsedQuestion {
@@ -40,6 +42,11 @@ export interface ParsedQuestion {
   page_number: number;
   ai_confidence_score: number;
   image_regions: ParsedImageRegion[];
+  /**
+   * Plain-language reasons this question must be reviewed by a human,
+   * written into parsing_notes ("Needs review: …") at insert time.
+   */
+  review_reasons?: string[];
 }
 
 // ────────────────────────────────────────────
@@ -101,40 +108,51 @@ const ParsedQuestionsSchema = z.object({
   questions: z.array(ParsedQuestionSchema),
 });
 
-// Lighter schema for Reading & Writing modules. R&W passages are token-heavy
-// and the section rarely contains tables/formulas, so we drop image_regions /
-// has_table / has_formula entirely — saving extraction tokens and keeping
-// long modules from blowing the Vercel function timeout.
-const ParsedQuestionRwSchema = z.object({
-  original_question_number: z.number().describe("Positive integer question number"),
-  question_text: z.string().describe("Question text (non-empty)"),
-  choices: z
-    .array(
-      z.object({
-        label: z.enum(["A", "B", "C", "D"]),
-        text: z.string(),
-      }),
-    )
-    .describe("Up to 4 multiple-choice options; empty array for SPR"),
-  correct_answer: z.string().nullable(),
-  explanation: z.string().nullable(),
-  difficulty: z.enum(["Easy", "Medium", "Hard"]),
-  domain: z.string().describe("Domain (non-empty)"),
-  skill: z.string().describe("Skill (non-empty)"),
-  concept: z.string().describe("Concept (non-empty)"),
-  question_type: z.enum(["Multiple Choice", "Student Produced Response"]),
-  has_image: z.boolean(),
-  page_number: z.number().describe("Positive integer page number"),
-  ai_confidence_score: z.number().describe("Confidence between 0 and 1"),
-});
-
-const ParsedQuestionsRwSchema = z.object({
-  questions: z.array(ParsedQuestionRwSchema),
-});
-
 // ────────────────────────────────────────────
 // System prompt
 // ────────────────────────────────────────────
+
+// Shared number/math/currency formatting rules — also used by the
+// crop-transcription step in lib/printout-parser.ts so both paths emit the
+// same $…$ conventions.
+export const MATH_FORMAT_RULES = `FORMATTING NUMBERS, MATH, AND DOLLAR SIGNS (CRITICAL — single source of truth):
+
+This block REPLACES every earlier rule about "$", "\\$", math wrapping, and number escaping. Apply it to question_text, every choice's text, correct_answer, AND explanation.
+
+For each token you write, pick ONE of these forms — never combine them:
+
+(a) Pure value (a number with no operator, variable, fraction, root, exponent, or LaTeX command):
+    Examples: 180, 45, 1,150, 0.40, -4, -12, 0.33
+    Write it BARE. No \$, no $...$, no backslash.
+    A leading minus sign is part of the value, NOT an operator — "-12" is still a pure value and goes bare.
+    RIGHT: "180", "-12", "-0.33" | WRONG: "$180$", "$-12$", "\\$180", "\\$180$", "\\180"
+
+(b) Currency in prose (a dollar amount being described, not computed):
+    Examples: \\$5 admission, the \\$1,150 fee, earned \\$2.40 in interest
+    Write \\$ then the digits. No surrounding $...$ wrap.
+    RIGHT: "\\$5 admission" | WRONG: "$5 admission", "$\\$5$", "\\5"
+
+(c) Math expression (contains an operator, variable, fraction, root, exponent, OR a LaTeX command like \\frac \\sqrt \\text):
+    Examples: $y = 3x + 2$, $\\frac{1}{2}$, $x^{2}$, $13u = 3u$, $\\sqrt{133}$, $RS = \\sqrt{133}$
+    Wrap in single "$" for inline, "$$" for display. Use LaTeX commands inside.
+    RIGHT: "$y = 3x + 2$" | WRONG: "y = 3x + 2", "$1/2$", "$0.5$"
+
+(d) Mixed currency + math in one sentence:
+    Treat each piece by its own rule. Currency stays \\$<digits>, math goes in $...$, English words stay plain. NEVER lump them inside one wrap.
+    RIGHT: "the bus rents for \\$950 plus $50t$ per hour"
+    WRONG: "\\$950 + 50t = \\$1,150\\$" (everything inside one currency wrap)
+    WRONG: "$\\$950 + 50(t - 2) = \\$1,150$" (escaped currency inside math wrap)
+
+DO NOT write a backslash directly before a digit (\\3, \\10, \\13, \\47, etc.) — there are no \\3 or \\13 LaTeX commands, only \\$<digits> for currency. A digit is just a digit; if it isn't currency, write it bare.
+
+DO NOT use ASCII pseudo-math like "1/7", "x^2", or "sqrt(x)" inside or outside a math wrap — always render as LaTeX inside $...$.
+
+SELF-CHECK BEFORE RETURNING — walk every field once and verify:
+
+1. Count unescaped "$" glyphs in the field (treat every "\\$" as zero). The remaining count MUST be EVEN. Odd = unclosed math; most often a currency "$" you forgot to escape.
+2. Each "$...$" pair must contain a real math expression (operator, variable, fraction, LaTeX command). If you find a pair whose content is just a number ("$180$", "$45$") or English prose ("$themeasureofangleB$"), redo: numbers go bare (rule a), prose goes outside.
+3. No "\\<digit>" anywhere — if you see "\\3", "\\10", "\\13", remove the backslash.
+4. No "\\$<digit>$" anywhere — that's a doubly-escaped wrap. Pick form (a) for plain numbers or form (c) for math.`;
 
 const SYSTEM_PROMPT = `You are an expert SAT exam content extractor. Your job is to carefully parse SAT exam PDFs and extract every question with 100% accuracy.
 
@@ -185,44 +203,7 @@ DIFFICULTY: Use Easy / Medium / Hard based on typical SAT difficulty conventions
 SKILL: A more specific skill within the domain (e.g., "Linear equations in one variable", "Inferences", "Transitions", etc.)
 CONCEPT: Even finer-grained concept (e.g., "Solving for x", "Author's purpose", "Comma usage").
 
-FORMATTING NUMBERS, MATH, AND DOLLAR SIGNS (CRITICAL — single source of truth):
-
-This block REPLACES every earlier rule about "$", "\\$", math wrapping, and number escaping. Apply it to question_text, every choice's text, correct_answer, AND explanation.
-
-For each token you write, pick ONE of these forms — never combine them:
-
-(a) Pure value (a number with no operator, variable, fraction, root, exponent, or LaTeX command):
-    Examples: 180, 45, 1,150, 0.40, -4, -12, 0.33
-    Write it BARE. No \$, no $...$, no backslash.
-    A leading minus sign is part of the value, NOT an operator — "-12" is still a pure value and goes bare.
-    RIGHT: "180", "-12", "-0.33" | WRONG: "$180$", "$-12$", "\\$180", "\\$180$", "\\180"
-
-(b) Currency in prose (a dollar amount being described, not computed):
-    Examples: \\$5 admission, the \\$1,150 fee, earned \\$2.40 in interest
-    Write \\$ then the digits. No surrounding $...$ wrap.
-    RIGHT: "\\$5 admission" | WRONG: "$5 admission", "$\\$5$", "\\5"
-
-(c) Math expression (contains an operator, variable, fraction, root, exponent, OR a LaTeX command like \\frac \\sqrt \\text):
-    Examples: $y = 3x + 2$, $\\frac{1}{2}$, $x^{2}$, $13u = 3u$, $\\sqrt{133}$, $RS = \\sqrt{133}$
-    Wrap in single "$" for inline, "$$" for display. Use LaTeX commands inside.
-    RIGHT: "$y = 3x + 2$" | WRONG: "y = 3x + 2", "$1/2$", "$0.5$"
-
-(d) Mixed currency + math in one sentence:
-    Treat each piece by its own rule. Currency stays \\$<digits>, math goes in $...$, English words stay plain. NEVER lump them inside one wrap.
-    RIGHT: "the bus rents for \\$950 plus $50t$ per hour"
-    WRONG: "\\$950 + 50t = \\$1,150\\$" (everything inside one currency wrap)
-    WRONG: "$\\$950 + 50(t - 2) = \\$1,150$" (escaped currency inside math wrap)
-
-DO NOT write a backslash directly before a digit (\\3, \\10, \\13, \\47, etc.) — there are no \\3 or \\13 LaTeX commands, only \\$<digits> for currency. A digit is just a digit; if it isn't currency, write it bare.
-
-DO NOT use ASCII pseudo-math like "1/7", "x^2", or "sqrt(x)" inside or outside a math wrap — always render as LaTeX inside $...$.
-
-SELF-CHECK BEFORE RETURNING — walk every field once and verify:
-
-1. Count unescaped "$" glyphs in the field (treat every "\\$" as zero). The remaining count MUST be EVEN. Odd = unclosed math; most often a currency "$" you forgot to escape.
-2. Each "$...$" pair must contain a real math expression (operator, variable, fraction, LaTeX command). If you find a pair whose content is just a number ("$180$", "$45$") or English prose ("$themeasureofangleB$"), redo: numbers go bare (rule a), prose goes outside.
-3. No "\\<digit>" anywhere — if you see "\\3", "\\10", "\\13", remove the backslash.
-4. No "\\$<digit>$" anywhere — that's a doubly-escaped wrap. Pick form (a) for plain numbers or form (c) for math.
+${MATH_FORMAT_RULES}
 
 MULTIPLE CHOICE QUESTIONS (CRITICAL — never drop the choices):
 Every SAT question marked Multiple Choice in this PDF has exactly four labelled options A, B, C, D. The downstream system stores them in a JSON array and uses that array to render the choice buttons; if the array is empty or missing the student sees the stem with no options to pick from.
@@ -564,8 +545,12 @@ export async function parsePdfToQuestions(
   // the prompt and use a lighter schema, since long passages already eat
   // most of the token budget and the figure pipeline is being replaced by
   // an inline-iframe approach on the rendering side anyway.
+  // R&W modules carry charts, graphs, tables and figures too ("Which choice
+  // most effectively uses data from the graph…"). They get the SAME figure
+  // handling as Math: full schema with image_regions, cropper always runs.
+  // Never replace a figure with a "[Bar chart: …]" text description.
   const rwAddendum = isReadingWriting
-    ? `\n\nThis is Reading & Writing — questions are passage-based and almost never include images, tables, or formulas. Set has_image=false unless a question literally references an embedded figure. Do NOT emit image_regions / has_table / has_formula fields; the lighter R&W schema does not include them.`
+    ? `\n\nThis is Reading & Writing. Passages are text, but questions here DO include charts, graphs, tables and other figures (e.g. "uses data from the graph/table"). Treat them exactly as for Math: data tables you can read → Markdown table in question_text (rule 8); every graph, chart, diagram or image → has_image=true plus a tight image_regions bounding box. NEVER replace a figure with a text description such as "[Bar chart: …]" — the figure is cropped from the PDF and shown to the student as an image.`
     : "";
   const userPrompt = `This PDF is a SAT exam module. Extract EVERY numbered question. SAT modules normally contain 22-27 questions. Do NOT stop early — read every page top to bottom and keep extracting until you reach the last numbered question in the PDF.
 
@@ -586,7 +571,7 @@ Return all questions in order via the schema. Confirm you have not missed any be
   async function runExtraction(extraInstruction: string) {
     return await generateObject({
       model: anthropic("claude-sonnet-4-6"),
-      schema: isReadingWriting ? ParsedQuestionsRwSchema : ParsedQuestionsSchema,
+      schema: ParsedQuestionsSchema,
       system: SYSTEM_PROMPT,
       messages: [
         {
@@ -668,29 +653,16 @@ Return all questions in order via the schema. Confirm you have not missed any be
     });
   }
 
-  // Normalize: the R&W schema omits image_regions / has_table / has_formula,
-  // so backfill safe defaults before downstream code accesses those fields.
-  // The new inline-iframe rendering path doesn't need image_regions, but
-  // keeping the field shape consistent avoids ad-hoc undefined checks
-  // throughout the parse route.
   const questions: ParsedQuestion[] = result.object.questions.map((q) => ({
     ...q,
-    has_table: "has_table" in q ? (q as { has_table: boolean }).has_table : false,
-    has_formula:
-      "has_formula" in q ? (q as { has_formula: boolean }).has_formula : false,
-    image_regions:
-      "image_regions" in q
-        ? (q as { image_regions: ParsedImageRegion[] }).image_regions
-        : [],
+    image_regions: q.image_regions ?? [],
   })) as ParsedQuestion[];
 
-  // Post-extraction fallback (Math only): any question flagged has_image /
+  // Post-extraction fallback (both sections): any question flagged has_image /
   // has_table that came back with empty image_regions gets a full-page region
-  // stamped on so the cropper at least crops the entire page. R&W skips this
-  // because the iframe renderer is the primary path and image_regions stays
-  // empty by design.
+  // stamped on so the cropper at least crops the entire page.
   let fallbackCount = 0;
-  if (!isReadingWriting) {
+  {
     for (const q of questions) {
       // A table already reproduced as Markdown in the stem needs no crop —
       // stamping a full-page fallback here screenshotted the same table again.

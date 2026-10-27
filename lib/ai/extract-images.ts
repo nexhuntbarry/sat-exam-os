@@ -38,7 +38,7 @@ export interface ExtractImagesResult {
  * Renders the requested PDF pages to PNG buffers using pdfjs-dist + the
  * @napi-rs/canvas factory pdfjs-dist v5 ships with native node support for.
  */
-async function renderPdfPages(
+export async function renderPdfPages(
   pdfBase64: string,
   pageNumbers: Set<number>,
 ): Promise<Map<number, { png: Buffer; widthPx: number; heightPx: number }>> {
@@ -149,12 +149,14 @@ async function cropRegion(
   pagePng: Buffer,
   widthPx: number,
   heightPx: number,
-  region: { x_pct: number; y_pct: number; w_pct: number; h_pct: number },
+  region: { x_pct: number; y_pct: number; w_pct: number; h_pct: number; pad?: number },
 ): Promise<Buffer | null> {
   // Pad the AI's bbox by ~2.5% of the page on every side, clamped to the
   // page, so a slightly-tight box doesn't clip the figure (e.g. the bottom
-  // of a graph). The model tends to draw boxes a hair too small.
-  const PAD_PCT = 0.025;
+  // of a graph). The model tends to draw boxes a hair too small. Regions
+  // measured from the PDF itself (lib/printout-parser.ts) are exact and
+  // carry their own small pad.
+  const PAD_PCT = region.pad ?? 0.025;
   const padX = PAD_PCT * widthPx;
   const padY = PAD_PCT * heightPx;
   const left = Math.max(0, Math.floor(region.x_pct * widthPx - padX));

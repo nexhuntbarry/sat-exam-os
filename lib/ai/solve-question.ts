@@ -603,7 +603,7 @@ export function stripMetaNarration(raw: string | null | undefined): string {
 }
 
 const EXPLAIN_HARD_ISSUE =
-  /missing figure|needs? a figure|no figure|figure shown|based on the graph|image not uploaded|requires drawing|LaTeX|garbled|choices/i;
+  /missing figure|needs? a figure|no figure|figure shown|based on the graph|image not uploaded|requires drawing|LaTeX|garbled|choices|needs review:/i;
 
 interface ExplainRow {
   id: string;
@@ -692,8 +692,10 @@ export async function explainOfficialAndPersist(
               correct_answer: ans,
               explanation: stripMetaNarration(res.object.explanation),
               parsing_status: keep ? "Needs Review" : "Approved",
+              // Keep the original defect note on rows staying in review — it
+              // names WHAT to fix (e.g. the PDF's real choices).
               parsing_notes: keep
-                ? "Explanation matches official answer; still needs review (figure/choices)"
+                ? `${q.parsing_notes ? `${q.parsing_notes}; ` : ""}Explanation matches official answer; still needs review (figure/choices)`
                 : "Answer = official key; explanation matches (verified)",
               updated_at: new Date().toISOString(),
             })

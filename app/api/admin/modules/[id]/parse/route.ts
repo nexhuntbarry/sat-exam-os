@@ -15,9 +15,18 @@ import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
-import { recoverMissingFigures, recoverBrokenChoices } from "@/lib/repair-ops";
-import { enforceCompleteness, checkNumberContiguity } from "@/lib/parse-guards";
+import { recoverMissingFigures, recoverBrokenChoices, repairChoicesForQuestion } from "@/lib/repair-ops";
+import { enforceCompleteness, checkNumberContiguity, enforceChoiceAlignment } from "@/lib/parse-guards";
+import {
+  extractChoicesFromPdfText,
+  isTextLayerReliable,
+  lookupPdfTextQuestion,
+  checkChoiceAlignment,
+  type PdfTextChoices,
+} from "@/lib/pdf-text-choices";
 import { autoPromoteModule } from "@/lib/auto-promote";
+import { parsePrintoutPdf } from "@/lib/printout-parser";
+import type { ParsedQuestion } from "@/lib/ai/parse-pdf";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -124,6 +133,13 @@ export async function POST(
     // No body / invalid JSON → parse without answer key (legacy behaviour).
   }
 
+  // An answer key the admin uploaded is authoritative: the PDF checkmarks never
+  // override it. Where they disagree the question goes to Needs Review.
+  let adminKey: Record<number, string> | null = answerKey ? { ...answerKey } : null;
+  const keyConflicts = new Map<number, string>();
+  const noteKeyConflict = (n: number, admin: string, pdf: string) =>
+    keyConflicts.set(n, `Needs review: the uploaded answer key says ${admin} but the source PDF ticks ${pdf} — confirm which is right`);
+
   // Fetch module
   const { data: mod, error: fetchError } = await db
     .from("modules")
@@ -168,175 +184,259 @@ export async function POST(
     })
     .eq("id", id);
 
-  // Step A — Pre-parse classifier: is this PDF actually a SAT test?
-  // Cheap Haiku call up front so we can fail fast on garbage uploads.
-  let pdfBase64: string;
+  // Everything after the lock is taken runs inside one guard: an unexpected
+  // throw must never leave the module stuck in "parsing". If questions were
+  // already saved (module marked parsed) the status is left alone and only
+  // the error is recorded.
   try {
-    pdfBase64 = await fetchPdfAsBase64(mod.pdf_url);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error("[modules/parse] PDF fetch failed:", err);
-    await db
-      .from("modules")
-      .update({
-        parsing_status: "failed",
-        parsing_error: errorMsg,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    return NextResponse.json({ error: "PDF fetch failed", detail: errorMsg }, { status: 500 });
-  }
-
-  let classification;
-  try {
-    classification = await classifyPdfIsSat(pdfBase64, authResult.userId);
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error("[modules/parse] classifier failed:", err);
-    await db
-      .from("modules")
-      .update({
-        parsing_status: "failed",
-        parsing_error: errorMsg,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    return NextResponse.json({ error: "Classifier failed", detail: errorMsg }, { status: 500 });
-  }
-  if (!classification.is_sat || classification.confidence < SAT_CONFIDENCE_THRESHOLD) {
-    const reason = `${classification.reason} (confidence ${classification.confidence.toFixed(2)})`;
-    await db
-      .from("modules")
-      .update({
-        parsing_status: "rejected_not_sat",
-        parsing_error: reason,
-        parsing_completed_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    return NextResponse.json(
-      {
-        rejected: true,
-        is_sat: classification.is_sat,
-        confidence: classification.confidence,
-        reason: classification.reason,
-      },
-      { status: 200 },
-    );
-  }
-
-  // Step A2 — Auto-extract the official answer key from the PDF when the
-  // caller didn't supply one. SAT modules print the key on the last page(s),
-  // and it is authoritative ground truth — far more reliable than the AI
-  // solver's derived answer. Pulling it here means EVERY parse reconciles its
-  // answers against the official key (Phase 3 below), not just uploads that
-  // came through the probe-answer-key step. Non-fatal: if no key is found the
-  // parse proceeds on solver-derived answers as before.
-  if (!answerKey) {
+    // Step A — Pre-parse classifier: is this PDF actually a SAT test?
+    // Cheap Haiku call up front so we can fail fast on garbage uploads.
+    let pdfBase64: string;
     try {
-      const probed = await extractAnswerKey(pdfBase64, authResult.userId);
-      if (probed.found && Object.keys(probed.answers).length > 0) {
-        answerKey = probed.answers;
-        console.log(
-          `[modules/parse] auto-extracted official answer key: ${Object.keys(probed.answers).length} answers`,
-        );
-      } else {
-        console.log("[modules/parse] no official answer key found in PDF");
-      }
+      pdfBase64 = await fetchPdfAsBase64(mod.pdf_url);
     } catch (err) {
-      console.error("[modules/parse] auto answer-key extract failed (non-fatal):", err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error("[modules/parse] PDF fetch failed:", err);
+      await db
+        .from("modules")
+        .update({
+          parsing_status: "failed",
+          parsing_error: errorMsg,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+      return NextResponse.json({ error: "PDF fetch failed", detail: errorMsg }, { status: 500 });
     }
-  }
 
-  // Step B — Extract questions (existing logic)
-  let parsedQuestions;
-  try {
-    parsedQuestions = await parsePdfToQuestions(
-      mod.pdf_url,
-      {
-        section: mod.section as "Math" | "Reading & Writing",
-        difficulty_hint: (mod.difficulty ?? "Mixed") as
-          | "Easy"
-          | "Medium"
-          | "Hard"
-          | "Mixed",
-        moduleNumber: mod.module_number ?? null,
-      },
-      authResult.userId
-    );
-  } catch (err) {
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.error("[modules/parse] parsePdfToQuestions failed:", err);
-    await db
-      .from("modules")
-      .update({
-        parsing_status: "failed",
-        parsing_error: errorMsg,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    return NextResponse.json({ error: "Parse failed", detail: errorMsg }, { status: 500 });
-  }
-
-  if (parsedQuestions.length === 0) {
-    await db
-      .from("modules")
-      .update({
-        parsing_status: "failed",
-        parsing_error: "AI returned 0 questions. PDF may be empty or unreadable.",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-    return NextResponse.json(
-      { error: "No questions extracted" },
-      { status: 422 }
-    );
-  }
-
-  // Normalize question numbers to 1..N. Some source PDFs are a slice of a
-  // larger booklet where questions carry their continuous printed number
-  // (e.g. a Reading & Writing Module 2 numbered 137–163); every SAT module
-  // should read 1..N on its own. If the lowest number isn't 1, shift every
-  // question — AND the answer key, so the two stay aligned — down by the same
-  // offset. The parser preserves order, so a simple offset keeps them 1..N.
-  {
-    const minNum = Math.min(
-      ...parsedQuestions.map((q) => q.original_question_number),
-    );
-    const offset = minNum - 1;
-    if (offset > 0) {
-      for (const q of parsedQuestions) {
-        q.original_question_number -= offset;
-      }
-      if (answerKey) {
-        const shifted: Record<number, string> = {};
-        for (const [k, v] of Object.entries(answerKey)) {
-          shifted[Number(k) - offset] = v;
-        }
-        answerKey = shifted;
-      }
-      console.log(
-        `[modules/parse] normalized question numbers: shifted by -${offset} → 1..${parsedQuestions.length}`,
+    let classification;
+    try {
+      classification = await classifyPdfIsSat(pdfBase64, authResult.userId);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error("[modules/parse] classifier failed:", err);
+      await db
+        .from("modules")
+        .update({
+          parsing_status: "failed",
+          parsing_error: errorMsg,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+      return NextResponse.json({ error: "Classifier failed", detail: errorMsg }, { status: 500 });
+    }
+    if (!classification.is_sat || classification.confidence < SAT_CONFIDENCE_THRESHOLD) {
+      const reason = `${classification.reason} (confidence ${classification.confidence.toFixed(2)})`;
+      await db
+        .from("modules")
+        .update({
+          parsing_status: "rejected_not_sat",
+          parsing_error: reason,
+          parsing_completed_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+      return NextResponse.json(
+        {
+          rejected: true,
+          is_sat: classification.is_sat,
+          confidence: classification.confidence,
+          reason: classification.reason,
+        },
+        { status: 200 },
       );
     }
-  }
 
-  // Step C — Extract & upload question images (graphs, tables, diagrams)
-  // We already have pdfBase64 in memory from the classifier step; reuse it
-  // rather than re-fetching from Blob. Failures are non-fatal: questions
-  // are still saved, they just won't have inline images.
-  //
-  // For Reading & Writing we normally SKIP the cropper — R&W questions almost
-  // never include figures and the cropper is the slowest stage in the function
-  // budget. But some R&W "which choice uses data from the graph/table"
-  // questions DO carry a figure; blanket-skipping left those blind. So: run the
-  // cropper for Math always, and for R&W only when at least one question was
-  // actually flagged as having a figure (cheap when there are none).
-  const anyFigure = parsedQuestions.some(
-    (q) => q.has_image || (q.image_regions?.length ?? 0) > 0,
-  );
-  let imageMap: Map<number, { urls: string[]; alts: string[] }> = new Map();
-  if (mod.section !== "Reading & Writing" || anyFigure) {
+    const moduleMeta = {
+      section: mod.section as "Math" | "Reading & Writing",
+      difficulty_hint: (mod.difficulty ?? "Mixed") as "Easy" | "Medium" | "Hard" | "Mixed",
+      moduleNumber: mod.module_number ?? null,
+    };
+
+    // Step A1 — Structural parse for text-layer printouts (old-website "Survey:
+    // print page" PDFs and anything with the same number-box / A–D skeleton).
+    // Questions, choices and the checked answer come from the PDF layout itself,
+    // so choices can never be bound to the wrong stem; only image crops are
+    // transcribed by the model, one labelled slot at a time. When the PDF isn't
+    // in this format, `detected` is false and the AI parse below runs as before.
+    let printoutQuestions: ParsedQuestion[] | null = null;
+    try {
+      const printout = await parsePrintoutPdf(pdfBase64, moduleMeta, authResult.userId);
+      // SAT modules have a fixed size; a printout parse that comes up short
+      // (a layout quirk the walker didn't follow) falls back to the AI parse.
+      const expected = moduleMeta.section === "Math" ? 22 : 27;
+      if (printout.detected && printout.questions.length < expected) {
+        console.warn(
+          `[modules/parse] printout parser found ${printout.questions.length} < ${expected} questions — falling back to the AI parse`,
+        );
+      } else if (printout.detected) {
+        printoutQuestions = printout.questions;
+        // The checked answers ARE the official key for these printouts —
+        // except where the admin uploaded a key (that wins; disagreement → review).
+        const key: Record<number, string> = { ...(answerKey ?? {}) };
+        for (const q of printout.questions) {
+          const n = q.original_question_number;
+          if (!q.correct_answer) continue;
+          if (adminKey?.[n]) {
+            if (adminKey[n].trim().toUpperCase() !== q.correct_answer.trim().toUpperCase()) noteKeyConflict(n, adminKey[n], q.correct_answer);
+            q.correct_answer = adminKey[n];
+          } else if (!key[n]) {
+            key[n] = q.correct_answer;
+          }
+        }
+        if (Object.keys(key).length > 0) answerKey = key;
+        console.log(`[modules/parse] printout parser: ${JSON.stringify(printout.stats)}`);
+      }
+    } catch (err) {
+      console.error("[modules/parse] printout parser failed (falling back to AI parse):", err);
+    }
+
+    // Step A2 — Auto-extract the official answer key from the PDF when the
+    // caller didn't supply one. SAT modules print the key on the last page(s),
+    // and it is authoritative ground truth — far more reliable than the AI
+    // solver's derived answer. Pulling it here means EVERY parse reconciles its
+    // answers against the official key (Phase 3 below), not just uploads that
+    // came through the probe-answer-key step. Non-fatal: if no key is found the
+    // parse proceeds on solver-derived answers as before.
+    if (!answerKey) {
+      try {
+        const probed = await extractAnswerKey(pdfBase64, authResult.userId);
+        if (probed.found && Object.keys(probed.answers).length > 0) {
+          answerKey = probed.answers;
+          console.log(
+            `[modules/parse] auto-extracted official answer key: ${Object.keys(probed.answers).length} answers`,
+          );
+        } else {
+          console.log("[modules/parse] no official answer key found in PDF");
+        }
+      } catch (err) {
+        console.error("[modules/parse] auto answer-key extract failed (non-fatal):", err);
+      }
+    }
+
+    // Step B — Extract questions (AI parse, unless the printout parser already did)
+    let parsedQuestions;
+    try {
+      parsedQuestions = printoutQuestions ?? (await parsePdfToQuestions(mod.pdf_url, moduleMeta, authResult.userId));
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error("[modules/parse] parsePdfToQuestions failed:", err);
+      await db
+        .from("modules")
+        .update({
+          parsing_status: "failed",
+          parsing_error: errorMsg,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+      return NextResponse.json({ error: "Parse failed", detail: errorMsg }, { status: 500 });
+    }
+
+    if (parsedQuestions.length === 0) {
+      await db
+        .from("modules")
+        .update({
+          parsing_status: "failed",
+          parsing_error: "AI returned 0 questions. PDF may be empty or unreadable.",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+      return NextResponse.json(
+        { error: "No questions extracted" },
+        { status: 422 }
+      );
+    }
+
+    // Normalize question numbers to 1..N. Some source PDFs are a slice of a
+    // larger booklet where questions carry their continuous printed number
+    // (e.g. a Reading & Writing Module 2 numbered 137–163); every SAT module
+    // should read 1..N on its own. If the lowest number isn't 1, shift every
+    // question — AND the answer key, so the two stay aligned — down by the same
+    // offset. The parser preserves order, so a simple offset keeps them 1..N.
+    {
+      const minNum = Math.min(
+        ...parsedQuestions.map((q) => q.original_question_number),
+      );
+      const offset = minNum - 1;
+      if (offset > 0) {
+        for (const q of parsedQuestions) {
+          q.original_question_number -= offset;
+        }
+        const shift = (k: Record<number, string>) => {
+          const shifted: Record<number, string> = {};
+          for (const [n, v] of Object.entries(k)) shifted[Number(n) - offset] = v;
+          return shifted;
+        };
+        if (answerKey) answerKey = shift(answerKey);
+        if (adminKey) adminKey = shift(adminKey);
+        console.log(
+          `[modules/parse] normalized question numbers: shifted by -${offset} → 1..${parsedQuestions.length}`,
+        );
+      }
+    }
+
+    // Step B2 — PDF text-layer cross-check. The single-pass AI extraction can
+    // bind choices to the wrong stem when a stem sits at the bottom of page N
+    // and its choices at the top of page N+1 (after a URL footer + header): the
+    // stem printed BELOW those choices on page N+1 gets them instead (off-by-one
+    // shift). When the PDF has a text layer we walk it in reading order — which
+    // is immune to that — and (a) adopt checkmarked choices as the official
+    // answer, (b) flag every MCQ whose AI choices disagree. No text layer →
+    // fall back to "identical choices to the previous question" detection.
+    let pdfText: PdfTextChoices | null = null;
+    try {
+      pdfText = await extractChoicesFromPdfText(pdfBase64);
+    } catch (err) {
+      console.error("[modules/parse] PDF text-layer pass failed (non-fatal):", err);
+    }
+    if (pdfText && isTextLayerReliable(pdfText, parsedQuestions.length)) {
+      // Printouts that mark the correct choice with a check-circle: the mark is
+      // read straight off the PDF, so it beats the AI answer-key probe (which
+      // suffers the same page-break mis-binding). Require most questions to be
+      // marked so a stray glyph can't masquerade as a key.
+      const marked = [...pdfText.byNumber.values()].filter((t) => t.checked).length;
+      if (marked >= Math.ceil(pdfText.byNumber.size * 0.5)) {
+        const key: Record<number, string> = { ...(answerKey ?? {}) };
+        let overrides = 0;
+        for (const q of parsedQuestions) {
+          const n = q.original_question_number;
+          const tq = lookupPdfTextQuestion(pdfText, n);
+          if (!tq?.checked) continue;
+          if (adminKey?.[n]) {
+            // Admin-supplied key wins; a disagreeing tick is flagged, not applied.
+            if (adminKey[n].trim().toUpperCase() !== tq.checked) noteKeyConflict(n, adminKey[n], tq.checked);
+            continue;
+          }
+          if (key[n] && key[n] !== tq.checked) overrides++;
+          key[n] = tq.checked;
+        }
+        answerKey = key;
+        console.log(
+          `[modules/parse] checkmark answers from PDF text: ${marked} marked, ${overrides} disagreed with the AI key probe (checkmark wins)`,
+        );
+      }
+    }
+    let misaligned: ReturnType<typeof checkChoiceAlignment> = new Map();
+    try {
+      misaligned = checkChoiceAlignment(parsedQuestions, pdfText);
+    } catch (err) {
+      console.error("[modules/parse] choice-alignment check failed (non-fatal):", err);
+    }
+    if (misaligned.size > 0) {
+      console.warn(
+        `[modules/parse] choice misalignment on Q${[...misaligned.keys()].join(", Q")} — flagging for review`,
+      );
+    }
+
+    // Step C — Extract & upload question images (graphs, tables, diagrams)
+    // We already have pdfBase64 in memory from the classifier step; reuse it
+    // rather than re-fetching from Blob. Failures are non-fatal: questions
+    // are still saved, they just won't have inline images.
+    //
+    // Runs for EVERY section. Reading & Writing modules carry charts, graphs,
+    // tables and figures too, and must get the same figure extraction as Math —
+    // never skip the cropper for R&W, and never stand in a text description
+    // ("[Bar chart: …]") for a figure.
+    let imageMap: Map<number, { urls: string[]; alts: string[] }> = new Map();
     try {
       const result = await extractAndUploadQuestionImages(
         pdfBase64,
@@ -347,397 +447,478 @@ export async function POST(
     } catch (err) {
       console.error("[modules/parse] image extraction failed (non-fatal):", err);
     }
-  }
 
-  // Fetch existing questions in same section for duplicate detection
-  const { data: existingQuestions } = await db
-    .from("questions")
-    .select("id, question_text, question_text_embedding")
-    .eq("section", mod.section)
-    .neq("module_id", id);
+    // Fetch existing questions in same section for duplicate detection
+    const { data: existingQuestions } = await db
+      .from("questions")
+      .select("id, question_text, question_text_embedding")
+      .eq("section", mod.section)
+      .neq("module_id", id);
 
-  const existing = existingQuestions ?? [];
+    const existing = existingQuestions ?? [];
 
-  // Step D — INSERT every question NOW with correct_answer/explanation = null.
-  // The solver runs in the background after the response is sent (see `after`
-  // block below) and UPDATES each row as solutions arrive. This unblocks the
-  // UI in ~30s instead of waiting the full ~3 min for the solver to finish.
-  let needsReviewCount = 0;
-  let totalInserted = 0;
-  const avgConfidence =
-    parsedQuestions.reduce((sum, q) => sum + q.ai_confidence_score, 0) /
-    parsedQuestions.length;
+    // Step D — INSERT every question NOW with correct_answer/explanation = null.
+    // The solver runs in the background after the response is sent (see `after`
+    // block below) and UPDATES each row as solutions arrive. This unblocks the
+    // UI in ~30s instead of waiting the full ~3 min for the solver to finish.
+    let needsReviewCount = 0;
+    let totalInserted = 0;
+    const avgConfidence =
+      parsedQuestions.reduce((sum, q) => sum + q.ai_confidence_score, 0) /
+      parsedQuestions.length;
 
-  for (const q of parsedQuestions) {
-    const embedding = simpleEmbedding(q.question_text);
-    let parsingStatus: "Draft" | "Needs Review" = "Draft";
-    let parsingNotes: string | null = null;
+    for (const q of parsedQuestions) {
+      const embedding = simpleEmbedding(q.question_text);
+      let parsingStatus: "Draft" | "Needs Review" = "Draft";
+      let parsingNotes: string | null = null;
 
-    // Low confidence → Needs Review
-    if (q.ai_confidence_score < 0.7) {
-      parsingStatus = "Needs Review";
-      parsingNotes = `Low AI confidence (${q.ai_confidence_score.toFixed(2)})`;
-    }
+      // Low confidence → Needs Review
+      if (q.ai_confidence_score < 0.7) {
+        parsingStatus = "Needs Review";
+        parsingNotes = `Low AI confidence (${q.ai_confidence_score.toFixed(2)})`;
+      }
 
-    // SPR-with-choices defense. The LLM occasionally hallucinates choice
-    // options for Student Produced Response questions. Strip them so the
-    // question is never stored with phantom choices.
-    if (q.question_type === "Student Produced Response" && Array.isArray(q.choices) && q.choices.length > 0) {
-      q.choices = [];
-    }
+      // SPR-with-choices defense. The LLM occasionally hallucinates choice
+      // options for Student Produced Response questions. Strip them so the
+      // question is never stored with phantom choices.
+      if (q.question_type === "Student Produced Response" && Array.isArray(q.choices) && q.choices.length > 0) {
+        q.choices = [];
+      }
 
-    // MCQ-without-choices defense. The parser occasionally drops the
-    // choices array on a Multiple Choice row (5 cases were caught
-    // 2026-05-30 in October 2024 SAT English Module 1). Once such a
-    // row reaches Draft the auto-promote sweep flips it to Approved
-    // and students see the stem with no options. Catch it at insert.
-    const choiceCount = Array.isArray(q.choices) ? q.choices.length : 0;
-    if (q.question_type === "Multiple Choice" && choiceCount < 4) {
-      parsingStatus = "Needs Review";
-      parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
-        `Multiple Choice with ${choiceCount} choices (expected 4) — re-run scripts/recover-missing-choices.ts or extract manually`;
-    }
-
-    // Duplicate check against existing questions
-    for (const ex of existing) {
-      const exEmbed = ex.question_text_embedding as { hash: string; excerpt: string } | null;
-      if (!exEmbed) continue;
-      const sim = cosineSimilarity(embedding, exEmbed);
-      if (sim > 0.92) {
+      // MCQ-without-choices defense. The parser occasionally drops the
+      // choices array on a Multiple Choice row (5 cases were caught
+      // 2026-05-30 in October 2024 SAT English Module 1). Once such a
+      // row reaches Draft the auto-promote sweep flips it to Approved
+      // and students see the stem with no options. Catch it at insert.
+      const choiceCount = Array.isArray(q.choices) ? q.choices.length : 0;
+      if (q.question_type === "Multiple Choice" && choiceCount < 4) {
         parsingStatus = "Needs Review";
         parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
-          `Possible duplicate of question ${ex.id} (similarity ${sim.toFixed(2)})`;
-        break;
+          `Multiple Choice with ${choiceCount} choices (expected 4) — re-run scripts/recover-missing-choices.ts or extract manually`;
+      }
+
+      // Reasons the parser itself found (unreadable crop, missing choices…),
+      // written in plain language for the review page's reviewer-flag banner.
+      if (q.review_reasons && q.review_reasons.length > 0) {
+        parsingStatus = "Needs Review";
+        parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + q.review_reasons.map((r) => `Needs review: ${r}`).join("; ");
+      }
+
+      const conflict = keyConflicts.get(q.original_question_number);
+      if (conflict) {
+        parsingStatus = "Needs Review";
+        parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + conflict;
+      }
+
+      // Choices bound to the wrong stem (see Step B2) → never auto-approve.
+      const misalign = misaligned.get(q.original_question_number);
+      if (misalign) {
+        parsingStatus = "Needs Review";
+        parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + misalign.note;
+      }
+
+      // Duplicate check against existing questions
+      for (const ex of existing) {
+        const exEmbed = ex.question_text_embedding as { hash: string; excerpt: string } | null;
+        if (!exEmbed) continue;
+        const sim = cosineSimilarity(embedding, exEmbed);
+        if (sim > 0.92) {
+          parsingStatus = "Needs Review";
+          parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
+            `Possible duplicate of question ${ex.id} (similarity ${sim.toFixed(2)})`;
+          break;
+        }
+      }
+
+      // Pending answer note — replaced by the background solver once it lands.
+      const needsSolver = !q.correct_answer || !q.explanation;
+      if (needsSolver) {
+        parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
+          "Pending AI answer";
+      }
+
+      const imagesForQ = imageMap.get(q.original_question_number);
+      const officialAns = answerKey?.[q.original_question_number] ?? null;
+
+      // Partial answer key: an answer key was uploaded BUT this specific
+      // question's official answer wasn't captured. The AI solver runs
+      // anyway, but the admin should treat the result as unverified.
+      // Flag for review so it sticks out in the question list.
+      if (answerKey && !officialAns) {
+        parsingStatus = "Needs Review";
+        parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
+          `No official answer in key for Q${q.original_question_number} — AI solver only, please verify`;
+      }
+
+      if (parsingStatus === "Needs Review") needsReviewCount++;
+      const { error: insertError } = await db.from("questions").insert({
+        module_id: id,
+        section: mod.section,
+        original_question_number: q.original_question_number,
+        question_text: q.question_text,
+        choices: q.choices,
+        // Solver fills these in async via the `after` callback below. Keep
+        // any answer/explanation that already came from the parser pass.
+        // If we have an official answer, seed correct_answer with it so
+        // students never see the AI's guess as authoritative.
+        correct_answer: officialAns ?? q.correct_answer ?? null,
+        explanation: q.explanation ?? null,
+        difficulty: q.difficulty,
+        domain: q.domain,
+        skill: q.skill,
+        concept: q.concept,
+        question_type: q.question_type,
+        has_image: q.has_image,
+        has_table: q.has_table,
+        has_formula: q.has_formula,
+        source_pdf_url: mod.pdf_url,
+        page_number: q.page_number,
+        parsing_status: parsingStatus,
+        parsing_notes: parsingNotes,
+        ai_confidence_score: q.ai_confidence_score,
+        question_text_embedding: embedding,
+        image_urls: imagesForQ?.urls ?? [],
+        image_alts: imagesForQ?.alts ?? [],
+        official_answer: officialAns,
+      });
+
+      if (insertError) {
+        console.error("[modules/parse] Insert question error:", insertError);
+      } else {
+        totalInserted++;
       }
     }
 
-    // Pending answer note — replaced by the background solver once it lands.
-    const needsSolver = !q.correct_answer || !q.explanation;
-    if (needsSolver) {
-      parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
-        "Pending AI answer";
+    // Mark module as parsed — questions are visible immediately, even though
+    // their answers/explanations are still being filled in by the background
+    // solver. The questions list/detail UI should poll while parsing_notes
+    // contains "Pending AI answer".
+    await db
+      .from("modules")
+      .update({
+        parsing_status: "parsed",
+        parsing_completed_at: new Date().toISOString(),
+        total_questions: totalInserted,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id);
+
+    // Step D2 — re-bind misaligned choices before the solver / explanation
+    // passes see them. The repair re-reads the stem's page plus the next one
+    // and is verified against the text layer, so it only writes choices that
+    // match the PDF; the row stays Needs Review (note above) for a human check.
+    // Runs after the module is marked parsed, 4 at a time, inside a time budget
+    // — anything left over is still flagged and recoverable from the review page.
+    const reboundIds = new Set<string>();
+    if (misaligned.size > 0) {
+      const { data: misRows } = await db
+        .from("questions")
+        .select("id, original_question_number")
+        .eq("module_id", id)
+        .in("original_question_number", [...misaligned.keys()]);
+      const queue = [...(misRows ?? [])];
+      const deadline = Date.now() + 120_000;
+      let rebound = 0;
+      const worker = async () => {
+        for (let r = queue.shift(); r; r = queue.shift()) {
+          if (Date.now() > deadline) break;
+          try {
+            const res = await repairChoicesForQuestion(r.id as string, { pdfBase64, pdfText });
+            reboundIds.add(r.id as string);
+            if (res.ok) {
+              rebound++;
+              const q = parsedQuestions.find((p) => p.original_question_number === r!.original_question_number);
+              if (q && res.choices) q.choices = res.choices;
+            }
+          } catch (err) {
+            console.error(`[modules/parse] choice re-bind q${r.original_question_number} failed:`, err);
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: 4 }, worker));
+      console.log(
+        `[modules/parse] choice re-bind module=${id} attempted=${reboundIds.size}/${misRows?.length ?? 0} rebound=${rebound}${queue.length ? ` (time budget hit, ${queue.length} left)` : ""}`,
+      );
     }
 
-    const imagesForQ = imageMap.get(q.original_question_number);
-    const officialAns = answerKey?.[q.original_question_number] ?? null;
-
-    // Partial answer key: an answer key was uploaded BUT this specific
-    // question's official answer wasn't captured. The AI solver runs
-    // anyway, but the admin should treat the result as unverified.
-    // Flag for review so it sticks out in the question list.
-    if (answerKey && !officialAns) {
-      parsingStatus = "Needs Review";
-      parsingNotes = (parsingNotes ? parsingNotes + "; " : "") +
-        `No official answer in key for Q${q.original_question_number} — AI solver only, please verify`;
+    // Phase 2 — solver inline. Vercel `after()` proved unreliable on Hobby
+    // (callback never executed in production for a 27-question R&W module).
+    // Solver in parallel chunks of 5 takes ~30-60s — fits inside the
+    // remaining 300s budget after extraction.
+    const imagesForSolver = new Map<number, { urls: string[] }>();
+    for (const [num, info] of imageMap) {
+      imagesForSolver.set(num, { urls: info.urls });
+    }
+    let solverStats = { solved: 0, failed: 0 };
+    try {
+      solverStats = await solveQuestionsAndPersist(
+        parsedQuestions,
+        imagesForSolver,
+        id,
+        db,
+        authResult.userId,
+      );
+    } catch (err) {
+      console.error("[modules/parse] solver crashed (questions saved without answers):", err);
     }
 
-    if (parsingStatus === "Needs Review") needsReviewCount++;
-    const { error: insertError } = await db.from("questions").insert({
-      module_id: id,
-      section: mod.section,
-      original_question_number: q.original_question_number,
-      question_text: q.question_text,
-      choices: q.choices,
-      // Solver fills these in async via the `after` callback below. Keep
-      // any answer/explanation that already came from the parser pass.
-      // If we have an official answer, seed correct_answer with it so
-      // students never see the AI's guess as authoritative.
-      correct_answer: officialAns ?? q.correct_answer ?? null,
-      explanation: q.explanation ?? null,
-      difficulty: q.difficulty,
-      domain: q.domain,
-      skill: q.skill,
-      concept: q.concept,
-      question_type: q.question_type,
-      has_image: q.has_image,
-      has_table: q.has_table,
-      has_formula: q.has_formula,
-      source_pdf_url: mod.pdf_url,
-      page_number: q.page_number,
-      parsing_status: parsingStatus,
-      parsing_notes: parsingNotes,
-      ai_confidence_score: q.ai_confidence_score,
-      question_text_embedding: embedding,
-      image_urls: imagesForQ?.urls ?? [],
-      image_alts: imagesForQ?.alts ?? [],
-      official_answer: officialAns,
-    });
+    // Phase 3 — official-answer reconciliation. Only runs when the upload
+    // included an answer key. Solver wrote correct_answer with its own
+    // best guess; for every question that has an official_answer we now
+    // compare the two, overwrite correct_answer with the official one,
+    // and flag mismatches for admin review.
+    let mismatchCount = 0;
+    if (answerKey) {
+      const { data: solvedRows } = await db
+        .from("questions")
+        .select("id, original_question_number, correct_answer, official_answer, parsing_notes, parsing_status")
+        .eq("module_id", id)
+        .not("official_answer", "is", null);
 
-    if (insertError) {
-      console.error("[modules/parse] Insert question error:", insertError);
-    } else {
-      totalInserted++;
-    }
-  }
+      for (const row of solvedRows ?? []) {
+        const aiAns = row.correct_answer as string | null;
+        const officialAns = row.official_answer as string;
+        // Solver may not have answered yet (timeout) — skip until next run.
+        if (!aiAns) continue;
 
-  // Mark module as parsed — questions are visible immediately, even though
-  // their answers/explanations are still being filled in by the background
-  // solver. The questions list/detail UI should poll while parsing_notes
-  // contains "Pending AI answer".
-  await db
-    .from("modules")
-    .update({
-      parsing_status: "parsed",
-      parsing_completed_at: new Date().toISOString(),
-      total_questions: totalInserted,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", id);
-
-  // Phase 2 — solver inline. Vercel `after()` proved unreliable on Hobby
-  // (callback never executed in production for a 27-question R&W module).
-  // Solver in parallel chunks of 5 takes ~30-60s — fits inside the
-  // remaining 300s budget after extraction.
-  const imagesForSolver = new Map<number, { urls: string[] }>();
-  for (const [num, info] of imageMap) {
-    imagesForSolver.set(num, { urls: info.urls });
-  }
-  let solverStats = { solved: 0, failed: 0 };
-  try {
-    solverStats = await solveQuestionsAndPersist(
-      parsedQuestions,
-      imagesForSolver,
-      id,
-      db,
-      authResult.userId,
-    );
-  } catch (err) {
-    console.error("[modules/parse] solver crashed (questions saved without answers):", err);
-  }
-
-  // Phase 3 — official-answer reconciliation. Only runs when the upload
-  // included an answer key. Solver wrote correct_answer with its own
-  // best guess; for every question that has an official_answer we now
-  // compare the two, overwrite correct_answer with the official one,
-  // and flag mismatches for admin review.
-  let mismatchCount = 0;
-  if (answerKey) {
-    const { data: solvedRows } = await db
-      .from("questions")
-      .select("id, original_question_number, correct_answer, official_answer, parsing_notes, parsing_status")
-      .eq("module_id", id)
-      .not("official_answer", "is", null);
-
-    for (const row of solvedRows ?? []) {
-      const aiAns = row.correct_answer as string | null;
-      const officialAns = row.official_answer as string;
-      // Solver may not have answered yet (timeout) — skip until next run.
-      if (!aiAns) continue;
-
-      if (!answersAgree(aiAns, officialAns)) {
-        mismatchCount++;
-        const hint = `Mismatch: AI answered ${aiAns}, official ${officialAns}`;
-        const existingNotes = (row.parsing_notes as string | null) ?? "";
-        const newNotes = existingNotes ? `${existingNotes}; ${hint}` : hint;
-        await db
-          .from("questions")
-          .update({
-            correct_answer: officialAns,
-            mismatch_with_official: true,
-            parsing_status: "Needs Review",
-            parsing_notes: newNotes,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", row.id);
-      } else {
-        // Already correct — clear the "Pending AI answer" placeholder
-        // note since we've now confirmed the answer matches official.
-        if (typeof row.parsing_notes === "string") {
-          const cleaned = row.parsing_notes
-            .split(";")
-            .map((s) => s.trim())
-            .filter((s) => s && s !== "Pending AI answer")
-            .join("; ");
-          if (cleaned !== row.parsing_notes) {
-            await db
-              .from("questions")
-              .update({ parsing_notes: cleaned || null })
-              .eq("id", row.id);
+        if (!answersAgree(aiAns, officialAns)) {
+          mismatchCount++;
+          const hint = `Mismatch: AI answered ${aiAns}, official ${officialAns}`;
+          const existingNotes = (row.parsing_notes as string | null) ?? "";
+          const newNotes = existingNotes ? `${existingNotes}; ${hint}` : hint;
+          await db
+            .from("questions")
+            .update({
+              correct_answer: officialAns,
+              mismatch_with_official: true,
+              parsing_status: "Needs Review",
+              parsing_notes: newNotes,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", row.id);
+        } else {
+          // Already correct — clear the "Pending AI answer" placeholder
+          // note since we've now confirmed the answer matches official.
+          if (typeof row.parsing_notes === "string") {
+            const cleaned = row.parsing_notes
+              .split(";")
+              .map((s) => s.trim())
+              .filter((s) => s && s !== "Pending AI answer")
+              .join("; ");
+            if (cleaned !== row.parsing_notes) {
+              await db
+                .from("questions")
+                .update({ parsing_notes: cleaned || null })
+                .eq("id", row.id);
+            }
           }
         }
       }
     }
-  }
 
-  // Phase 4 — self-check pass. Catches the recurring parser shapes
-  // (blank-word artifact, missing <u> on "underlined portion" rows,
-  // MCQ with empty choices) plus a 10-check structural audit, and
-  // demotes anomalies to Needs Review with a parsing_note that names
-  // the failed check. Failures here don't block the response — the
-  // parse already succeeded by this point and the cleanup is best
-  // effort.
-  let cleanup = {
-    blanksStripped: 0,
-    underlinesRepaired: 0,
-    choicesRecovered: 0,
-    hasTableFlagFixed: 0,
-    currencyDollarsEscaped: 0,
-    pureNumericMathUnwrapped: 0,
-    blindImagesResolved: 0,
-    anomaliesDemoted: 0,
-    errors: [] as string[],
-  };
-  try {
-    cleanup = await runPostParseCleanup(id, db);
-    console.log(
-      `[modules/parse] post-cleanup module=${id} blanks=${cleanup.blanksStripped} underlines=${cleanup.underlinesRepaired} choices=${cleanup.choicesRecovered} hasTable=${cleanup.hasTableFlagFixed} currency=${cleanup.currencyDollarsEscaped} numWrap=${cleanup.pureNumericMathUnwrapped} blindImg=${cleanup.blindImagesResolved} demoted=${cleanup.anomaliesDemoted} errors=${cleanup.errors.length}`,
-    );
-  } catch (err) {
-    console.error("[modules/parse] post-cleanup crashed:", err);
-  }
-
-  // Phase 4b — explain toward the official answer. For every question that has
-  // an official answer (from the auto-extracted key), the independent solver's
-  // guess is irrelevant: we overwrite the explanation with one that JUSTIFIES
-  // the official answer and set correct_answer to it. This is the single
-  // biggest reducer of false Needs-Review flags — without it the solver's
-  // weaker independent solve disagrees with the correct key on many R&W
-  // questions and every disagreement (plus its now-wrong explanation) gets
-  // flagged. Running it BEFORE the audit means the audit sees answer↔
-  // explanation pairs that already agree, so it only flags REAL defects.
-  let explained = { rewrote: 0, approved: 0, keptReview: 0, skipped: 0 };
-  if (answerKey) {
+    // Phase 4 — self-check pass. Catches the recurring parser shapes
+    // (blank-word artifact, missing <u> on "underlined portion" rows,
+    // MCQ with empty choices) plus a 10-check structural audit, and
+    // demotes anomalies to Needs Review with a parsing_note that names
+    // the failed check. Failures here don't block the response — the
+    // parse already succeeded by this point and the cleanup is best
+    // effort.
+    let cleanup = {
+      blanksStripped: 0,
+      underlinesRepaired: 0,
+      choicesRecovered: 0,
+      hasTableFlagFixed: 0,
+      currencyDollarsEscaped: 0,
+      pureNumericMathUnwrapped: 0,
+      blindImagesResolved: 0,
+      anomaliesDemoted: 0,
+      errors: [] as string[],
+    };
     try {
-      explained = await explainOfficialAndPersist(id, db, authResult.userId);
+      cleanup = await runPostParseCleanup(id, db);
       console.log(
-        `[modules/parse] explain-official module=${id} rewrote=${explained.rewrote} approved=${explained.approved} keptReview=${explained.keptReview} skipped=${explained.skipped}`,
+        `[modules/parse] post-cleanup module=${id} blanks=${cleanup.blanksStripped} underlines=${cleanup.underlinesRepaired} choices=${cleanup.choicesRecovered} hasTable=${cleanup.hasTableFlagFixed} currency=${cleanup.currencyDollarsEscaped} numWrap=${cleanup.pureNumericMathUnwrapped} blindImg=${cleanup.blindImagesResolved} demoted=${cleanup.anomaliesDemoted} errors=${cleanup.errors.length}`,
       );
     } catch (err) {
-      console.error("[modules/parse] explain-official crashed:", err);
+      console.error("[modules/parse] post-cleanup crashed:", err);
     }
-  }
 
-  // Phase 4c — truncated-explanation guard. Regenerate any explanation that got
-  // clipped mid-sentence (token cap / early stop) so students never see a
-  // cut-off solution.
-  try {
-    const trunc = await regenerateTruncatedExplanations(id, db, authResult.userId);
-    if (trunc.checked > 0) {
-      console.log(`[modules/parse] truncation-guard module=${id} checked=${trunc.checked} regenerated=${trunc.regenerated}`);
+    // Phase 4b — explain toward the official answer. For every question that has
+    // an official answer (from the auto-extracted key), the independent solver's
+    // guess is irrelevant: we overwrite the explanation with one that JUSTIFIES
+    // the official answer and set correct_answer to it. This is the single
+    // biggest reducer of false Needs-Review flags — without it the solver's
+    // weaker independent solve disagrees with the correct key on many R&W
+    // questions and every disagreement (plus its now-wrong explanation) gets
+    // flagged. Running it BEFORE the audit means the audit sees answer↔
+    // explanation pairs that already agree, so it only flags REAL defects.
+    let explained = { rewrote: 0, approved: 0, keptReview: 0, skipped: 0 };
+    if (answerKey) {
+      try {
+        explained = await explainOfficialAndPersist(id, db, authResult.userId);
+        console.log(
+          `[modules/parse] explain-official module=${id} rewrote=${explained.rewrote} approved=${explained.approved} keptReview=${explained.keptReview} skipped=${explained.skipped}`,
+        );
+      } catch (err) {
+        console.error("[modules/parse] explain-official crashed:", err);
+      }
     }
-  } catch (err) {
-    console.error("[modules/parse] truncation-guard crashed:", err);
-  }
 
-  // Phase 5 — semantic content audit. The structural cleanup above catches
-  // parser artifacts; this pass has Claude read each question as a student
-  // sees it and flag genuine content defects (corrupted LaTeX/math symbols,
-  // a stem that needs a figure but has none, an explanation that doesn't
-  // support the stored answer, or broken MCQ choices), demoting anything it
-  // flags to Needs Review. Runs BEFORE auto-promote so defective rows are
-  // never auto-approved. Best effort — failures don't block the response.
-  let audit = {
-    audited: 0,
-    flagged: 0,
-    latexIssues: 0,
-    figureIssues: 0,
-    explanationIssues: 0,
-    choiceIssues: 0,
-    errors: [] as string[],
-  };
-  try {
-    audit = await runSemanticAudit(id, db, authResult.userId);
-    console.log(
-      `[modules/parse] semantic-audit module=${id} audited=${audit.audited} flagged=${audit.flagged} latex=${audit.latexIssues} figure=${audit.figureIssues} explanation=${audit.explanationIssues} choices=${audit.choiceIssues} errors=${audit.errors.length}`,
-    );
-  } catch (err) {
-    console.error("[modules/parse] semantic-audit crashed:", err);
-  }
-
-  // Phase 5b — recover missing figures. For every question the audit flagged
-  // as "needs a figure but has none", re-read its PDF page and ask Claude
-  // vision to locate + crop the figure. Recovered figures clear the flag (and
-  // Approve when nothing else is wrong); genuinely absent ones stay in review.
-  // Catches both the R&W data-graph questions and any Math figure the parser
-  // under-flagged as has_image=false.
-  // Always run — it self-selects both audit-flagged figures AND "blind" rows
-  // (has_image=true but the bulk cropper produced no crop), so figures the
-  // audit didn't explicitly flag still get a focused single-page re-crop at
-  // parse time instead of waiting for a human to click "re-extract".
-  let figures = { attempted: 0, recovered: 0, approved: 0, stillMissing: 0 };
-  {
+    // Phase 4c — truncated-explanation guard. Regenerate any explanation that got
+    // clipped mid-sentence (token cap / early stop) so students never see a
+    // cut-off solution.
     try {
-      figures = await recoverMissingFigures(id, db);
+      const trunc = await regenerateTruncatedExplanations(id, db, authResult.userId);
+      if (trunc.checked > 0) {
+        console.log(`[modules/parse] truncation-guard module=${id} checked=${trunc.checked} regenerated=${trunc.regenerated}`);
+      }
+    } catch (err) {
+      console.error("[modules/parse] truncation-guard crashed:", err);
+    }
+
+    // Phase 5 — semantic content audit. The structural cleanup above catches
+    // parser artifacts; this pass has Claude read each question as a student
+    // sees it and flag genuine content defects (corrupted LaTeX/math symbols,
+    // a stem that needs a figure but has none, an explanation that doesn't
+    // support the stored answer, or broken MCQ choices), demoting anything it
+    // flags to Needs Review. Runs BEFORE auto-promote so defective rows are
+    // never auto-approved. Best effort — failures don't block the response.
+    let audit = {
+      audited: 0,
+      flagged: 0,
+      latexIssues: 0,
+      figureIssues: 0,
+      explanationIssues: 0,
+      choiceIssues: 0,
+      errors: [] as string[],
+    };
+    try {
+      audit = await runSemanticAudit(id, db, authResult.userId);
       console.log(
-        `[modules/parse] recover-figures module=${id} attempted=${figures.attempted} recovered=${figures.recovered} approved=${figures.approved} stillMissing=${figures.stillMissing}`,
+        `[modules/parse] semantic-audit module=${id} audited=${audit.audited} flagged=${audit.flagged} latex=${audit.latexIssues} figure=${audit.figureIssues} explanation=${audit.explanationIssues} choices=${audit.choiceIssues} errors=${audit.errors.length}`,
       );
     } catch (err) {
-      console.error("[modules/parse] recover-figures crashed:", err);
+      console.error("[modules/parse] semantic-audit crashed:", err);
     }
-  }
 
-  // Phase 5c — recover broken choices. For questions the audit flagged with a
-  // choice problem (or whose choices are empty/garbled/placeholder), re-extract
-  // the four A/B/C/D options verbatim from the PDF page. Fixed rows with no
-  // other defect are Approved. Complements the structural recoverMissingChoices
-  // (which only handles fully-empty choices).
-  let choicesRecovery = { attempted: 0, fixed: 0, approved: 0, stillBroken: 0 };
-  if (audit.choiceIssues > 0) {
+    // Phase 5b — recover missing figures. For every question the audit flagged
+    // as "needs a figure but has none", re-read its PDF page and ask Claude
+    // vision to locate + crop the figure. Recovered figures clear the flag (and
+    // Approve when nothing else is wrong); genuinely absent ones stay in review.
+    // Catches both the R&W data-graph questions and any Math figure the parser
+    // under-flagged as has_image=false.
+    // Always run — it self-selects both audit-flagged figures AND "blind" rows
+    // (has_image=true but the bulk cropper produced no crop), so figures the
+    // audit didn't explicitly flag still get a focused single-page re-crop at
+    // parse time instead of waiting for a human to click "re-extract".
+    let figures = { attempted: 0, recovered: 0, approved: 0, stillMissing: 0 };
+    {
+      try {
+        figures = await recoverMissingFigures(id, db);
+        console.log(
+          `[modules/parse] recover-figures module=${id} attempted=${figures.attempted} recovered=${figures.recovered} approved=${figures.approved} stillMissing=${figures.stillMissing}`,
+        );
+      } catch (err) {
+        console.error("[modules/parse] recover-figures crashed:", err);
+      }
+    }
+
+    // Phase 5c — recover broken choices. For questions the audit flagged with a
+    // choice problem (or whose choices are empty/garbled/placeholder), re-extract
+    // the four A/B/C/D options verbatim from the PDF page. Fixed rows with no
+    // other defect are Approved. Complements the structural recoverMissingChoices
+    // (which only handles fully-empty choices).
+    let choicesRecovery = { attempted: 0, fixed: 0, approved: 0, stillBroken: 0 };
+    if (audit.choiceIssues > 0 || misaligned.size > 0) {
+      try {
+        choicesRecovery = await recoverBrokenChoices(id, db, reboundIds);
+        console.log(
+          `[modules/parse] recover-choices module=${id} attempted=${choicesRecovery.attempted} fixed=${choicesRecovery.fixed} approved=${choicesRecovery.approved} stillBroken=${choicesRecovery.stillBroken}`,
+        );
+      } catch (err) {
+        console.error("[modules/parse] recover-choices crashed:", err);
+      }
+    }
+
+    // Phase 5d — completeness gate. Any question missing a real stem, four
+    // non-empty MCQ choices, or an answer is demoted to Needs Review here so it
+    // can never be auto-promoted to students in an incomplete state.
     try {
-      choicesRecovery = await recoverBrokenChoices(id, db);
+      const complete = await enforceCompleteness(id, db);
+      if (complete.demoted > 0) {
+        console.log(`[modules/parse] completeness-gate module=${id} demoted=${complete.demoted} reasons=${JSON.stringify(complete.reasons)}`);
+      }
+    } catch (err) {
+      console.error("[modules/parse] completeness-gate crashed:", err);
+    }
+
+    // Phase 5d' — choice-alignment gate: re-check every stored MCQ against the
+    // PDF text layer / its neighbour after all repair passes, so a choice set
+    // bound to the wrong stem can't be auto-promoted.
+    try {
+      await enforceChoiceAlignment(id, db, pdfText);
+    } catch (err) {
+      console.error("[modules/parse] choice-alignment gate crashed:", err);
+    }
+
+    // Phase 5e — question-number contiguity: log a warning if the parser dropped
+    // a numbered question (a gap), so a short/holed module is visible.
+    try {
+      const contig = await checkNumberContiguity(id, db);
+      if (contig.missing.length > 0) {
+        await db.from("modules").update({
+          parsing_error: `Missing question numbers after parse: ${contig.missing.join(", ")} — re-parse recommended.`,
+          updated_at: new Date().toISOString(),
+        }).eq("id", id);
+      }
+    } catch (err) {
+      console.error("[modules/parse] contiguity-check crashed:", err);
+    }
+
+    // Phase 6 — bulk-promote high-confidence Drafts to Approved so the
+    // admin doesn't have to discover days later that a new module
+    // landed in a test with 2 questions because nothing got
+    // explicitly approved. Threshold 0.9; rows with empty answers,
+    // blind images, or MCQ-with-no-choices are skipped.
+    try {
+      const promote = await autoPromoteModule(id, db, 0.9);
       console.log(
-        `[modules/parse] recover-choices module=${id} attempted=${choicesRecovery.attempted} fixed=${choicesRecovery.fixed} approved=${choicesRecovery.approved} stillBroken=${choicesRecovery.stillBroken}`,
+        `[modules/parse] auto-promote module=${id} candidates=${promote.candidates} promoted=${promote.promoted} skipped=${promote.skipped}`,
       );
     } catch (err) {
-      console.error("[modules/parse] recover-choices crashed:", err);
+      console.error("[modules/parse] auto-promote crashed:", err);
     }
-  }
 
-  // Phase 5d — completeness gate. Any question missing a real stem, four
-  // non-empty MCQ choices, or an answer is demoted to Needs Review here so it
-  // can never be auto-promoted to students in an incomplete state.
-  try {
-    const complete = await enforceCompleteness(id, db);
-    if (complete.demoted > 0) {
-      console.log(`[modules/parse] completeness-gate module=${id} demoted=${complete.demoted} reasons=${JSON.stringify(complete.reasons)}`);
-    }
+    return NextResponse.json({
+      success: true,
+      questionCount: totalInserted,
+      needsReview: needsReviewCount + mismatchCount + cleanup.anomaliesDemoted,
+      avgConfidence: Math.round(avgConfidence * 100) / 100,
+      solved: solverStats.solved,
+      solverFailed: solverStats.failed,
+      answerKeyUsed: answerKey ? Object.keys(answerKey).length : 0,
+      mismatches: mismatchCount,
+      cleanup,
+      explainedOfficial: explained,
+      semanticAudit: audit,
+      figureRecovery: figures,
+      choicesRecovery,
+    });
   } catch (err) {
-    console.error("[modules/parse] completeness-gate crashed:", err);
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.error("[modules/parse] pipeline crashed:", err);
+    await db
+      .from("modules")
+      .update({ parsing_status: "failed", parsing_error: errorMsg, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("parsing_status", "parsing");
+    await db
+      .from("modules")
+      .update({ parsing_error: `Post-parse step crashed: ${errorMsg}`, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .neq("parsing_status", "failed");
+    return NextResponse.json({ error: "Parse failed", detail: errorMsg }, { status: 500 });
   }
-
-  // Phase 5e — question-number contiguity: log a warning if the parser dropped
-  // a numbered question (a gap), so a short/holed module is visible.
-  try {
-    const contig = await checkNumberContiguity(id, db);
-    if (contig.missing.length > 0) {
-      await db.from("modules").update({
-        parsing_error: `Missing question numbers after parse: ${contig.missing.join(", ")} — re-parse recommended.`,
-        updated_at: new Date().toISOString(),
-      }).eq("id", id);
-    }
-  } catch (err) {
-    console.error("[modules/parse] contiguity-check crashed:", err);
-  }
-
-  // Phase 6 — bulk-promote high-confidence Drafts to Approved so the
-  // admin doesn't have to discover days later that a new module
-  // landed in a test with 2 questions because nothing got
-  // explicitly approved. Threshold 0.9; rows with empty answers,
-  // blind images, or MCQ-with-no-choices are skipped.
-  try {
-    const promote = await autoPromoteModule(id, db, 0.9);
-    console.log(
-      `[modules/parse] auto-promote module=${id} candidates=${promote.candidates} promoted=${promote.promoted} skipped=${promote.skipped}`,
-    );
-  } catch (err) {
-    console.error("[modules/parse] auto-promote crashed:", err);
-  }
-
-  return NextResponse.json({
-    success: true,
-    questionCount: totalInserted,
-    needsReview: needsReviewCount + mismatchCount + cleanup.anomaliesDemoted,
-    avgConfidence: Math.round(avgConfidence * 100) / 100,
-    solved: solverStats.solved,
-    solverFailed: solverStats.failed,
-    answerKeyUsed: answerKey ? Object.keys(answerKey).length : 0,
-    mismatches: mismatchCount,
-    cleanup,
-    explainedOfficial: explained,
-    semanticAudit: audit,
-    figureRecovery: figures,
-    choicesRecovery,
-  });
 }
 
 /**

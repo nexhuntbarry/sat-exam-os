@@ -19,6 +19,7 @@ import {
   lookupPdfTextQuestion,
   diffChoices,
   formatChoices,
+  isComparableChoice,
   type PdfTextChoices,
 } from "@/lib/pdf-text-choices";
 
@@ -628,7 +629,7 @@ export async function recoverMissingFigures(
   // signal that a figure is required, even if has_image wasn't set.
   const STEM_FIGURE = /\b(the (graph|figure|diagram|chart|scatterplot|table) (shown|above|below)|as shown|shown (in the|above|below)|uses data from the (graph|table|figure)|based on the (graph|figure|diagram|chart))\b/i;
   // A note that names a NON-figure defect we must not auto-clear.
-  const OTHER_NOTE = /LaTeX|math\/|choices|Multiple Choice with|garbled|answer\/explanation|self-contradict|official key=/i;
+  const OTHER_NOTE = /LaTeX|math\/|choices|Multiple Choice with|garbled|answer\/explanation|self-contradict|official key=|needs review:/i;
   const targets = (data ?? []).filter((q) => {
     const hasImg = Array.isArray(q.image_urls) && q.image_urls.length > 0;
     if (hasImg) return false;
@@ -696,6 +697,8 @@ const RepairChoicesSchema = z.object({
     .array(z.object({ label: z.enum(["A", "B", "C", "D"]), text: z.string() }))
     .describe("The four answer choices A,B,C,D copied verbatim from the page."),
 });
+const TEXT_LAYER_NOTE = "Needs review: choices copied from PDF text — check math/underline formatting";
+
 const REPAIR_CHOICES_SYSTEM = `You are extracting the four answer choices for one SAT multiple-choice question from a PDF. Copy each choice A/B/C/D character-for-character — no paraphrase. Wrap math in $…$. Return exactly four entries in order.
 
 PAGE BREAKS (CRITICAL): a question's stem is often at the BOTTOM of one page and its boxed A/B/C/D choices continue at the TOP of the NEXT page, after a URL footer and a date/title header. Choices always FOLLOW their own stem: the choices printed at the top of a page ABOVE a numbered stem belong to the PREVIOUS question — never take them for the stem below. Return the four choices that come directly AFTER the given stem in reading order, even when that means reading onto the next page, and stop at the next question's number.`;
@@ -723,7 +726,9 @@ async function slicePdfAroundPage(
     const src = await PDFDocument.load(Buffer.from(pdfBase64, "base64"), { ignoreEncryption: true });
     const n = src.getPageCount();
     if (n <= 3) return null;
-    const first = Math.max(1, page - 1);
+    // The stem page and the one after it: choices never precede their stem,
+    // and leaving out the previous page removes one source of mis-binding.
+    const first = page;
     const last = Math.min(n, page + 1);
     const out = await PDFDocument.create();
     const pages = await out.copyPages(src, Array.from({ length: last - first + 1 }, (_, i) => first - 1 + i));
@@ -747,7 +752,14 @@ async function slicePdfAroundPage(
 export async function repairChoicesForQuestion(
   questionId: string,
   opts: { dryRun?: boolean; pdfBase64?: string; pdfText?: PdfTextChoices | null } = {},
-): Promise<RepairResult & { choices?: { label: "A" | "B" | "C" | "D"; text: string }[]; textLayerChoices?: { label: string; text: string }[] }> {
+): Promise<
+  RepairResult & {
+    choices?: { label: "A" | "B" | "C" | "D"; text: string }[];
+    textLayerChoices?: { label: string; text: string }[];
+    /** Choices were copied from the plain PDF text (formatting may be lost) — never auto-approve. */
+    usedTextLayer?: boolean;
+  }
+> {
   const db = getServiceClient();
   const { data: row } = await db
     .from("questions")
@@ -760,9 +772,27 @@ export async function repairChoicesForQuestion(
 
   const pdfBase64 = opts.pdfBase64 ?? (await fetchPdfBase64(row.source_pdf_url as string));
   const page = (row.page_number as number | null) ?? null;
+
+  // The PDF text layer, read in order, binds the stem to the choices that
+  // FOLLOW it. Vision alone keeps grabbing the previous question's choices
+  // printed above the stem on the same page (verified on the Test #19
+  // printouts), so when the text layer knows the answer we hand it over as
+  // the content anchor and let the model only restore formatting.
+  let pdfText = opts.pdfText;
+  if (pdfText === undefined) {
+    try {
+      pdfText = await extractChoicesFromPdfText(pdfBase64);
+    } catch {
+      pdfText = null;
+    }
+  }
+  const textQ = pdfText ? lookupPdfTextQuestion(pdfText, row.original_question_number as number) : null;
+  const anchor = textQ
+    ? `\n\nThe PDF's text layer shows these choices directly after this stem (plain text, formatting lost):\n${formatChoices(textQ.choices)}\nReturn exactly these four choices, copied from the PDF with their formatting (math as $…$, underlines as <u>…</u>). Do not substitute choices from any other question.`
+    : "";
   const slice = await slicePdfAroundPage(pdfBase64, page);
   const where = slice
-    ? `This excerpt contains original pages ${slice.first}–${slice.last}; the question's stem starts on original page ${page} (excerpt page ${page! - slice.first + 1}). Its choices may continue onto the following page.`
+    ? `This excerpt contains original pages ${slice.first}–${slice.last}; the question's stem starts on excerpt page 1. IGNORE any A–D boxes printed ABOVE this stem on excerpt page 1 — they belong to the previous question. If no A–D boxes follow the stem on excerpt page 1, its choices are the FIRST A–D boxes at the top of excerpt page 2.`
     : `Question ${row.original_question_number ?? "?"} is on page ${page ?? "?"}; its choices may continue onto the following page.`;
   const result = await generateObject({
     model: anthropic("claude-sonnet-4-6"),
@@ -775,48 +805,63 @@ export async function repairChoicesForQuestion(
           { type: "file", data: slice?.base64 ?? pdfBase64, mediaType: "application/pdf" },
           {
             type: "text",
-            text: `Question ${row.original_question_number ?? "?"}. ${where}\n\nStem:\n${row.question_text ?? ""}\n\nReturn the four A/B/C/D answer choices that follow THIS stem, verbatim.`,
+            text: `Question ${row.original_question_number ?? "?"}. ${where}\n\nStem:\n${row.question_text ?? ""}\n\nReturn the four A/B/C/D answer choices that follow THIS stem, verbatim.${anchor}`,
           },
         ],
       },
     ],
   });
-  const choices = result.object.choices;
+  let choices = result.object.choices;
+  let usedTextLayer = false;
+
+  // Deterministic cross-check against the PDF text layer.
+  if (textQ) {
+    const { diffs } = diffChoices(choices, textQ.choices);
+    if (diffs.length > 0 || choicesLookBroken(choices)) {
+      // The model still bound the wrong choices. If every text-layer choice is
+      // plain prose (nothing lost in text extraction), take them verbatim from
+      // the PDF text instead; otherwise give up and leave it for a human.
+      // Math ("$", or "x2" — a superscript flattened by text extraction) never
+      // goes through this path: the plain text would lose its formatting.
+      const looksMath = (t: string) => /\$|[A-Za-z]\d/.test(t);
+      const plainProse =
+        textQ.choices.every((c) => isComparableChoice(c.text) && c.text.length < 400 && !looksMath(c.text)) &&
+        !choices.some((c) => looksMath(c.text) || /<u>/.test(c.text));
+      if (plainProse) {
+        choices = textQ.choices.map((c) => ({ label: c.label, text: c.text }));
+        usedTextLayer = true;
+      } else {
+        return {
+          ok: false,
+          message: `Re-extracted choices disagree with the PDF text (PDF: ${formatChoices(textQ.choices)})`,
+          choices,
+          textLayerChoices: textQ.choices,
+        };
+      }
+    }
+  }
   if (choicesLookBroken(choices)) {
     return { ok: false, message: "Re-extraction still produced incomplete/garbled choices", choices };
   }
 
-  // Deterministic cross-check against the PDF text layer.
-  let pdfText = opts.pdfText;
-  if (pdfText === undefined) {
-    try {
-      pdfText = await extractChoicesFromPdfText(pdfBase64);
-    } catch {
-      pdfText = null;
-    }
-  }
-  const textQ = pdfText ? lookupPdfTextQuestion(pdfText, row.original_question_number as number) : null;
-  if (textQ) {
-    const { diffs } = diffChoices(choices, textQ.choices);
-    if (diffs.length > 0) {
-      return {
-        ok: false,
-        message: `Re-extracted choices disagree with the PDF text (PDF: ${formatChoices(textQ.choices)})`,
-        choices,
-        textLayerChoices: textQ.choices,
-      };
-    }
-  }
-
   if (!opts.dryRun) {
-    await db
-      .from("questions")
-      .update({ choices, updated_at: new Date().toISOString() })
-      .eq("id", row.id);
+    const update: Record<string, unknown> = { choices, updated_at: new Date().toISOString() };
+    if (usedTextLayer) {
+      // Plain text can drop underlines / math formatting: a human must look.
+      const note = TEXT_LAYER_NOTE;
+      const { data: cur } = await db.from("questions").select("parsing_notes").eq("id", row.id).maybeSingle();
+      const base = ((cur?.parsing_notes as string | null) ?? "").trim();
+      update.parsing_status = "Needs Review";
+      update.parsing_notes = base && !base.toLowerCase().includes(note.toLowerCase()) ? `${base}; ${note}` : base || note;
+    }
+    await db.from("questions").update(update).eq("id", row.id);
   }
   return {
     ok: true,
-    message: `Choices re-extracted (${choices.length})${textQ ? ", verified against PDF text" : ""}.`,
+    usedTextLayer,
+    message: usedTextLayer
+      ? `Choices taken verbatim from the PDF text layer (AI re-extraction disagreed).`
+      : `Choices re-extracted (${choices.length})${textQ ? ", verified against PDF text" : ""}.`,
     choices,
     textLayerChoices: textQ?.choices,
   };
@@ -831,6 +876,8 @@ export async function repairChoicesForQuestion(
 export async function recoverBrokenChoices(
   moduleId: string,
   db: ReturnType<typeof getServiceClient>,
+  /** Question ids already re-extracted earlier in the same parse — don't pay twice. */
+  skipIds: Set<string> = new Set(),
 ): Promise<{ attempted: number; fixed: number; approved: number; stillBroken: number }> {
   const { data } = await db
     .from("questions")
@@ -841,9 +888,9 @@ export async function recoverBrokenChoices(
   // "misalign" rows had choices from a neighbouring question: their
   // explanation was written for the wrong options, so a human re-checks them
   // even after the choices are fixed.
-  const OTHER_NOTE = /figure|graph|LaTeX|math\/|self-contradict|official key=|answer\/explanation|misalign/i;
+  const OTHER_NOTE = /figure|graph|LaTeX|math\/|self-contradict|official key=|answer\/explanation|misalign|needs review:/i;
   const targets = (data ?? []).filter(
-    (q) => choicesLookBroken(q.choices) || /choice/i.test(q.parsing_notes || ""),
+    (q) => !skipIds.has(q.id as string) && (choicesLookBroken(q.choices) || /choice/i.test(q.parsing_notes || "")),
   );
 
   // One download + text-layer pass per source PDF, shared by every target.
@@ -860,6 +907,8 @@ export async function recoverBrokenChoices(
       const res = await repairChoicesForQuestion(q.id as string, url ? pdfCache.get(url) : {});
       if (res.ok) {
         fixed++;
+        // Text-layer copies are already demoted with a note by the repair.
+        if (res.usedTextLayer) continue;
         if (!OTHER_NOTE.test(q.parsing_notes || "")) {
           approved++;
           await db

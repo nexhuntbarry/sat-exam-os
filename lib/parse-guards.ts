@@ -47,12 +47,13 @@ export async function enforceCompleteness(
     demoted++;
     for (const p of problems) reasons[p] = (reasons[p] ?? 0) + 1;
     const base = (q.parsing_notes || "").trim();
-    const note = `Completeness gate: ${problems.join(", ")}`;
+    // Plain-language reason for the review page's reviewer-flag banner.
+    const note = `Needs review: incomplete question (completeness gate) — ${problems.join(", ")}`;
     await db
       .from("questions")
       .update({
         parsing_status: "Needs Review",
-        parsing_notes: base && !base.includes("Completeness gate") ? `${base}; ${note}` : note,
+        parsing_notes: base && !base.toLowerCase().includes("completeness gate") ? `${base}; ${note}` : note,
         updated_at: new Date().toISOString(),
       })
       .eq("id", q.id);
@@ -116,13 +117,13 @@ export async function enforceChoiceAlignment(
     const issue = issues.get(q.original_question_number);
     if (!issue) continue;
     const base = (q.parsing_notes || "").trim();
-    if (q.parsing_status === "Needs Review" && base.includes("Choice misalignment")) continue;
+    if (q.parsing_status === "Needs Review" && base.toLowerCase().includes("choice misalignment")) continue;
     demoted++;
     await db
       .from("questions")
       .update({
         parsing_status: "Needs Review",
-        parsing_notes: base && !base.includes("Choice misalignment") ? `${base}; ${issue.note}` : issue.note,
+        parsing_notes: base && !base.toLowerCase().includes("choice misalignment") ? `${base}; ${issue.note}` : issue.note,
         updated_at: new Date().toISOString(),
       })
       .eq("id", q.id);

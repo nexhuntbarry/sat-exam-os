@@ -41,9 +41,10 @@ export interface PdfTextChoices {
 
 const LABELS: ChoiceLabel[] = ["A", "B", "C", "D"];
 
-// FontAwesome check-circle (U+F058) as used by the "Survey: print page"
-// printouts, plus the common Unicode check marks.
-const CHECK_GLYPH = /[✓✔✅☑]/g;
+// FontAwesome check icons (check-circle U+F058 as used by the "Survey: print
+// page" printouts, check-circle-o, check, check-square[-o]) plus the common
+// Unicode check marks.
+const CHECK_GLYPH = /[\uf058\uf05d\uf00c\uf046\uf14a\u2713\u2714\u2705\u2611]/g;
 
 // Browser print header/footer: "10/24/26, 4:59 PM   Survey: print page | …"
 // and "https://… 1/36". These interrupt a question that spans a page break.
@@ -59,7 +60,9 @@ interface Line {
   checked: boolean;
 }
 
-async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasTextLayer: boolean }> {
+/** Open a PDF with pdfjs in-process (no worker), Node-safe. Shared with lib/printout-parser.ts. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function loadPdfDocument(pdfBase64: string): Promise<{ doc: any; pdfjs: any }> {
   if (typeof (globalThis as { DOMMatrix?: unknown }).DOMMatrix === "undefined") {
     try {
       const canvasModule = await import("@napi-rs/canvas");
@@ -80,6 +83,11 @@ async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasText
     useSystemFonts: true,
     disableWorker: true,
   } as unknown as Parameters<typeof pdfjs.getDocument>[0]).promise;
+  return { doc, pdfjs };
+}
+
+async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasTextLayer: boolean }> {
+  const { doc } = await loadPdfDocument(pdfBase64);
 
   const lines: Line[] = [];
   let textChars = 0;
@@ -131,6 +139,8 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
     choices: { label: ChoiceLabel; text: string }[];
     checked: ChoiceLabel | null;
     broken: boolean;
+    /** Started from a bare number box; the "N." stem line is still to come. */
+    awaitingStem: boolean;
   }
   let cur: Cur | null = null;
   let lastNum = 0;
@@ -159,10 +169,34 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
     // Question start: "N. text" where N continues the sequence.
     const qm = t.match(/^(\d{1,3})\.(?:\s+\S|$)/);
     if (qm) {
+      // The stem line of a question already opened by its number box. Trust
+      // the box: printouts occasionally carry a stale stem number
+      // (box "17", stem "20. …").
+      if (cur?.awaitingStem) {
+        cur.awaitingStem = false;
+        cur.stemPage = line.page;
+        continue;
+      }
       const n = Number(qm[1]);
       if (lastNum === 0 ? n >= 1 : n > lastNum && n <= lastNum + 2) {
         flush();
-        cur = { number: n, stemPage: line.page, choicesPage: line.page, choices: [], checked: null, broken: false };
+        cur = { number: n, stemPage: line.page, choicesPage: line.page, choices: [], checked: null, broken: false, awaitingStem: false };
+        lastNum = n;
+        questionsSeen++;
+        continue;
+      }
+    }
+
+    // Bare number box for the NEXT question ("5" above "5. Archaeologists…")
+    // — only once the current question's choices are complete, so a numeric
+    // choice ("D" → "5") is never mistaken for a box.
+    if (/^\d{1,3}$/.test(t) && Number(t) === lastNum + 1) {
+      const done = !cur || (cur.choices.length === 4 && !!cur.choices[3].text);
+      if (done) {
+        if (line.checked && cur && cur.choices.length > 0) cur.checked = cur.choices[cur.choices.length - 1].label;
+        flush();
+        const n = Number(t);
+        cur = { number: n, stemPage: line.page, choicesPage: line.page, choices: [], checked: null, broken: false, awaitingStem: true };
         lastNum = n;
         questionsSeen++;
         continue;
@@ -171,12 +205,6 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
     if (!cur) continue;
     const c: Cur = cur;
     const expected = LABELS[c.choices.length];
-
-    // Bare box number for the NEXT question ("5" above "5. Archaeologists…").
-    if (/^\d{1,3}$/.test(t) && Number(t) === lastNum + 1 && (c.choices.length === 0 || c.choices[c.choices.length - 1].text)) {
-      if (line.checked && c.choices.length > 0) c.checked = c.choices[c.choices.length - 1].label;
-      continue;
-    }
 
     // Label alone on its line: "A", "(A)", "A)", "A."
     const solo = t.match(/^\(?([A-D])\)?[.)]?$/);
@@ -202,6 +230,7 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
 
     if (c.choices.length === 0) {
       // Still in the stem. A checkmark here is meaningless.
+      c.awaitingStem = false;
       continue;
     }
     const last = c.choices[c.choices.length - 1];
@@ -263,6 +292,10 @@ export function choiceTextsAgree(stored: string, pdf: string): boolean {
   if (!a || !b) return false;
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
   if (long.includes(short) && short.length / long.length >= 0.8) return true;
+  // The text layer can run past the last choice into content with no "N."
+  // marker (a following table, an answer-key page). A long shared prefix
+  // means it's the same choice plus spill.
+  if (short.length >= 12 && long.startsWith(short)) return true;
   // Character-bigram Dice similarity — tolerant of hyphenation/ligatures.
   const grams = (s: string) => {
     const m = new Map<string, number>();
@@ -362,7 +395,7 @@ export function checkChoiceAlignment(
         out.set(n, {
           questionNumber: n,
           kind: "pdf-text-mismatch",
-          note: `Choice misalignment: ${diffs.length} of the stored choices differ from the PDF (choices may belong to a neighbouring question) — PDF shows ${formatChoices(tq.choices)}`,
+          note: `Needs review: Choice misalignment — ${diffs.length} of the stored answer choices don't match the PDF (they may belong to a neighbouring question). PDF shows ${formatChoices(tq.choices)}`,
           diffs,
           pdfChoices: tq.choices,
         });
@@ -374,7 +407,7 @@ export function checkChoiceAlignment(
       out.set(n, {
         questionNumber: n,
         kind: "duplicate-of-neighbour",
-        note: `Choice misalignment: identical choices to Q${n - 1} — choices likely taken from the neighbouring question; verify against the PDF`,
+        note: `Needs review: Choice misalignment — same four answer choices as Q${n - 1}, so the choices were likely taken from the neighbouring question. Check them against the PDF.`,
         neighbour: n - 1,
       });
     }

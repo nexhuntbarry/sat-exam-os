@@ -318,6 +318,17 @@ export function friendlyParsingNote(raw: string | null): FriendlyNote | null {
     };
   }
 
+  // ── Plain-language reasons written by the parser ("Needs review: …") ─
+  const needs = text.match(/Needs review:\s*([^;]+)/i);
+  if (needs) {
+    const all = [...text.matchAll(/Needs review:\s*([^;]+)/gi)].map((m) => m[1].trim());
+    return {
+      tone: "warning",
+      headline: `Needs review: ${all[0]}`,
+      detail: all.length > 1 ? all.slice(1).join(" · ") : undefined,
+    };
+  }
+
   // ── Fallback: keep the original message but mark it as a flag ────
   return {
     tone: "warning",
