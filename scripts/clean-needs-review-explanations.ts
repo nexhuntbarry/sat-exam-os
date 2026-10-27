@@ -3,6 +3,7 @@ import { readFileSync } from "fs";
 import { generateObject } from "ai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { z } from "zod";
+import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
 
 const envText = readFileSync(".env.local", "utf-8");
 for (const line of envText.split("\n")) {
@@ -26,7 +27,9 @@ Explain clearly why the given answer is correct and briefly why each other choic
 
 FORMATTING (Markdown + KaTeX, $…$ = math mode):
 - Never write a bare dollar amount like $170 (it opens math mode). Write "170 dollars" or "\\$170".
-- Use $…$ only for real algebra, and close every $ you open.`;
+- Use $…$ only for real algebra, and close every $ you open.
+
+${QUOTE_RULE}`;
 
 // Deterministic safety net: drop any leading sentence that is process
 // narration rather than explanation, in case the model still slips.
@@ -49,6 +52,16 @@ function stripMetaNarration(raw: string): string {
 }
 
 const Schema = z.object({ explanation: z.string().min(20) });
+const TRUNCATION_NOTE = "Needs review: the generated explanation looks cut off — regenerate or write it by hand.";
+function looksTruncated(ex: string | null): boolean {
+  if (!ex) return false;
+  const t = ex.trim();
+  if (t.length < 40) return true;
+  const openQ = (t.match(/“/g) ?? []).length;
+  const closeQ = (t.match(/”/g) ?? []).length;
+  if (openQ > closeQ) return true;
+  return !/[.!?)\]$%""'']$/.test(t) && !/\d$/.test(t);
+}
 const META_TEST = /\b(wait|let me|re-?examine|reconsider|re-?reading|as required|the instructions|answer key says)\b/i;
 
 async function main() {
@@ -88,16 +101,43 @@ async function main() {
       const ch = Array.isArray(q.choices)
         ? (q.choices as Array<{ label: string; text: string }>).map((c) => `${c.label}) ${c.text}`).join("\n")
         : "";
+      const regenParams = {
+        model: anthropic("claude-sonnet-4-6"),
+        schema: Schema,
+        system: SYSTEM,
+        maxOutputTokens: 2500,
+        maxRetries: 2,
+        messages: [{ role: "user" as const, content: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is ${q.correct_answer}. Write the explanation.` }],
+      };
       try {
-        const res = await generateObject({
-          model: anthropic("claude-sonnet-4-6"),
-          schema: Schema,
-          system: SYSTEM,
-          maxOutputTokens: 2500,
-          maxRetries: 2,
-          messages: [{ role: "user", content: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is ${q.correct_answer}. Write the explanation.` }],
-        });
-        finalExpl = stripMetaNarration(res.object.explanation);
+        const res = await generateObject(regenParams);
+        let candidate = stripMetaNarration(res.object.explanation);
+        // Truncation guard: retry once if the explanation looks cut off.
+        if (looksTruncated(candidate)) {
+          try {
+            const retry = await generateObject(regenParams);
+            const retried = stripMetaNarration(retry.object.explanation);
+            if (!looksTruncated(retried)) {
+              candidate = retried;
+            } else {
+              console.log(`  truncated after retry, skip ${q.id.slice(0, 8)}: ${candidate.slice(0, 80)}`);
+              if (APPLY) {
+                const base = ((q.parsing_notes as string | null) ?? "").trim();
+                await db.from("questions").update({
+                  parsing_notes: base && !base.includes(TRUNCATION_NOTE) ? `${base}; ${TRUNCATION_NOTE}` : (base || TRUNCATION_NOTE),
+                  updated_at: new Date().toISOString(),
+                }).eq("id", q.id);
+              }
+              skipped++;
+              continue;
+            }
+          } catch {
+            console.log(`  truncation retry FAILED ${q.id.slice(0, 8)}`);
+            skipped++;
+            continue;
+          }
+        }
+        finalExpl = candidate;
         regen++;
       } catch (e) {
         console.log(`  regen FAILED ${q.id.slice(0, 8)}:`, e instanceof Error ? e.message : e);

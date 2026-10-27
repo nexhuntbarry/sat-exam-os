@@ -20,7 +20,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { ParsedQuestion } from "./parse-pdf";
-import { logUsage } from "./parse-pdf";
+import { logUsage, QUOTE_RULE } from "./parse-pdf";
 import type { getServiceClient } from "@/lib/supabase";
 import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
 
@@ -64,6 +64,8 @@ MATH FORMATTING (CRITICAL):
 - Do not output ASCII pseudo-math like 1/7, x^2, sqrt(x) — always use LaTeX.
 - MONEY / CURRENCY: never write a bare dollar amount like $170 — a bare $ opens math mode and corrupts the line. Write "170 dollars" or escape the sign as "\\$170". Reserve $…$ for actual algebra only.
 
+${QUOTE_RULE}
+
 SELF-CONSISTENCY (MANDATORY):
 End the explanation with a final line of EXACTLY this form:
   Final answer: X
@@ -90,6 +92,8 @@ export type SolvedAnswer = {
   consistencyMismatch: boolean;
   /** Solver self-declared "I'd have to draw something to answer this." */
   needsDrawing: boolean;
+  /** True when the explanation still looks truncated after one retry. */
+  truncatedExplanation: boolean;
 };
 
 /**
@@ -312,6 +316,37 @@ async function solveOneQuestion(
         "\n\n(⚠️ Solver self-inconsistent — flagged for review.)";
     }
 
+    // Truncation guard: retry once if the explanation looks cut off.
+    let truncatedExplanation = false;
+    if (looksTruncated(explanationText)) {
+      try {
+        const retry = await generateObject({
+          model: anthropic("claude-sonnet-4-6"),
+          schema: SolverSchema,
+          system: SOLVER_SYSTEM_PROMPT,
+          messages: [
+            {
+              role: "user",
+              content: [
+                ...imageBlocks,
+                { type: "text", text: promptText },
+              ],
+            },
+          ],
+          maxOutputTokens: 3000,
+          maxRetries: 2,
+        });
+        if (!looksTruncated(retry.object.explanation)) {
+          explanationText = retry.object.explanation;
+        } else {
+          truncatedExplanation = true;
+          console.warn(`[solve-question] q${q.original_question_number}: explanation still truncated after retry`);
+        }
+      } catch {
+        truncatedExplanation = true;
+      }
+    }
+
     // Audit log: every solver call's outcome so we can spot patterns later.
     console.log(
       `[solve-question] q${q.original_question_number} section=${section} hadImages=${imageBlocks.length > 0} declared=${declared} explained=${inferredAnswer ?? "<none>"} mismatch=${consistencyMismatch} confidence=${result.object.confidence}`,
@@ -347,6 +382,7 @@ async function solveOneQuestion(
       explainedAnswer,
       consistencyMismatch,
       needsDrawing: Boolean(result.object.needs_drawing),
+      truncatedExplanation,
     };
   } catch (err) {
     console.error(
@@ -497,7 +533,7 @@ export async function solveQuestionsAndPersist(
         }
 
         const needsReview =
-          solved.consistencyMismatch || sprLetterAnswer || blindImage || needsDrawing;
+          solved.consistencyMismatch || sprLetterAnswer || blindImage || needsDrawing || solved.truncatedExplanation;
 
         const noteParts: string[] = [];
         if (needsDrawing) {
@@ -519,6 +555,9 @@ export async function solveQuestionsAndPersist(
           noteParts.push(
             `Solver self-contradicted (declared ${declared}, explained ${solved.explainedAnswer ?? "<unparsed>"}); stored the explained answer${savedAnswer !== declared ? ` "${savedAnswer}"` : ""}. Please verify.`,
           );
+        }
+        if (solved.truncatedExplanation) {
+          noteParts.push(TRUNCATION_NOTE);
         }
         const notes =
           noteParts.length > 0
@@ -580,7 +619,9 @@ Explain clearly why the given answer is correct and briefly why the other choice
 
 FORMATTING — this renders through a Markdown + KaTeX pipeline where $…$ means math mode:
 - MONEY / CURRENCY: never write a bare dollar amount like $170 — a bare $ opens math mode and corrupts the rest of the line. Write money as "170 dollars" or with an escaped sign "\\$170". This applies to every dollar amount.
-- Use $…$ ONLY for actual algebra/equations (e.g. $x \\leq 300$), and make sure every $ you open you also close.`;
+- Use $…$ ONLY for actual algebra/equations (e.g. $x \\leq 300$), and make sure every $ you open you also close.
+
+${QUOTE_RULE}`;
 
 // Deterministic safety net for answer explanations: strip any LEADING
 // sentences that are process narration ("Wait — let me re-examine…",
@@ -651,7 +692,7 @@ export async function explainOfficialAndPersist(
               .join("\n")
           : "";
         try {
-          const res = await generateObject({
+          const explainParams = {
             model: anthropic("claude-sonnet-4-6"),
             schema: ExplainOfficialSchema,
             system: EXPLAIN_OFFICIAL_SYSTEM,
@@ -659,20 +700,38 @@ export async function explainOfficialAndPersist(
             maxRetries: 3,
             messages: [
               {
-                role: "user",
+                role: "user" as const,
                 content: [
                   {
-                    type: "text",
+                    type: "text" as const,
                     text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nExplain why ${ans} is correct.`,
                   },
                 ],
               },
             ],
-          });
+          };
+          const res = await generateObject(explainParams);
+          let explainText = stripMetaNarration(res.object.explanation);
+          // Truncation guard: retry once if explanation looks cut off.
+          let truncatedOfficial = false;
+          if (looksTruncated(explainText)) {
+            try {
+              const retry = await generateObject(explainParams);
+              const retried = stripMetaNarration(retry.object.explanation);
+              if (!looksTruncated(retried)) {
+                explainText = retried;
+              } else {
+                truncatedOfficial = true;
+                console.warn(`[explain-official] q${q.original_question_number}: explanation still truncated after retry`);
+              }
+            } catch {
+              truncatedOfficial = true;
+            }
+          }
           rewrote++;
           const blindFigure = !!q.has_image && !(Array.isArray(q.image_urls) && q.image_urls.length > 0);
           const placeholder = findParsePlaceholder(q.question_text, q.choices);
-          const keep = EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") || blindFigure || placeholder !== null;
+          const keep = EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") || blindFigure || placeholder !== null || truncatedOfficial;
           if (keep) keptReview++; else approved++;
           const usage = res.usage;
           if (usage) {
@@ -688,16 +747,17 @@ export async function explainOfficialAndPersist(
               metadata: { question_number: q.original_question_number },
             });
           }
+          const truncNote = truncatedOfficial ? `${TRUNCATION_NOTE}; ` : "";
           await db
             .from("questions")
             .update({
               correct_answer: ans,
-              explanation: stripMetaNarration(res.object.explanation),
+              explanation: explainText,
               parsing_status: keep ? "Needs Review" : "Approved",
               // Keep the original defect note on rows staying in review — it
               // names WHAT to fix (e.g. the PDF's real choices).
               parsing_notes: keep
-                ? `${q.parsing_notes ? `${q.parsing_notes}; ` : ""}${placeholder && !(q.parsing_notes || "").includes("parser placeholder text") ? `${placeholderNote(placeholder)}; ` : ""}Explanation matches official answer; still needs review (figure/choices)`
+                ? `${q.parsing_notes ? `${q.parsing_notes}; ` : ""}${placeholder && !(q.parsing_notes || "").includes("parser placeholder text") ? `${placeholderNote(placeholder)}; ` : ""}${truncNote}Explanation matches official answer; still needs review (figure/choices)`
                 : "Answer = official key; explanation matches (verified)",
               updated_at: new Date().toISOString(),
             })
@@ -716,13 +776,24 @@ export async function explainOfficialAndPersist(
 }
 
 // ── Truncated-explanation guard ──────────────────────────────────────
-// A generated explanation occasionally gets clipped (token cap, model stop)
-// and ends mid-sentence. Detect that and regenerate it complete.
+// A generated explanation occasionally gets clipped (token cap, model stop,
+// or the structured-output straight-quote bug) and ends mid-sentence.
+// Detect that and allow regeneration.
+export const TRUNCATION_NOTE =
+  "Needs review: the generated explanation looks cut off — regenerate or write it by hand.";
+
 export function looksTruncated(ex: string | null): boolean {
   if (!ex) return false;
   const t = ex.trim();
-  if (t.length < 25) return false; // too-short is a different (empty) problem
+  // Placeholder-only text ("...") is not an explanation; a short but complete
+  // one-line math explanation ends in punctuation and passes below.
+  if (/^[.\s…]*$/.test(t)) return true;
   if (/Final answer\s*:\s*\S+$/i.test(t)) return false; // ends with the answer trailer
+  // Unbalanced opening typographic quote “ (U+201C) means the string was cut
+  // inside a quoted passage.
+  const openQuotes = (t.match(/“/g) ?? []).length;
+  const closeQuotes = (t.match(/”/g) ?? []).length;
+  if (openQuotes > closeQuotes) return true;
   // Clean endings: sentence punctuation, a closing bracket/quote, $ or %, or a
   // number (math answers often end on a value). Anything else = mid-sentence.
   return !/[.!?)\]$%”"'’]$/.test(t) && !/\d$/.test(t);
@@ -772,9 +843,17 @@ export async function regenerateTruncatedExplanations(
             maxRetries: 2,
             messages: [{ role: "user", content: [{ type: "text", text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nWrite a COMPLETE explanation of why ${ans} is correct — do not cut off.` }] }],
           });
-          if (!looksTruncated(res.object.explanation)) {
+          const expl = stripMetaNarration(res.object.explanation);
+          if (!looksTruncated(expl)) {
             regenerated++;
-            await db.from("questions").update({ correct_answer: ans, explanation: stripMetaNarration(res.object.explanation), updated_at: new Date().toISOString() }).eq("id", q.id);
+            await db.from("questions").update({ correct_answer: ans, explanation: expl, updated_at: new Date().toISOString() }).eq("id", q.id);
+          } else {
+            // Still truncated after the regen attempt — flag for human.
+            await db.from("questions").update({
+              parsing_status: "Needs Review",
+              parsing_notes: TRUNCATION_NOTE,
+              updated_at: new Date().toISOString(),
+            }).eq("id", q.id);
           }
         } catch (e) {
           console.error(`[truncation-guard] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
@@ -807,21 +886,45 @@ export async function explainOneAnswer(
   const ch = Array.isArray(q.choices)
     ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`)).join("\n")
     : "";
+  const explainOneParams = {
+    model: anthropic("claude-sonnet-4-6"),
+    schema: ExplainOfficialSchema,
+    system: EXPLAIN_OFFICIAL_SYSTEM,
+    maxOutputTokens: 3000,
+    maxRetries: 2,
+    messages: [{ role: "user" as const, content: [{ type: "text" as const, text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${answer}\n\nWrite a COMPLETE explanation of why ${answer} is correct.` }] }],
+  };
   try {
-    const res = await generateObject({
-      model: anthropic("claude-sonnet-4-6"),
-      schema: ExplainOfficialSchema,
-      system: EXPLAIN_OFFICIAL_SYSTEM,
-      maxOutputTokens: 3000,
-      maxRetries: 2,
-      messages: [{ role: "user", content: [{ type: "text", text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${answer}\n\nWrite a COMPLETE explanation of why ${answer} is correct.` }] }],
-    });
+    const res = await generateObject(explainOneParams);
     const usage = res.usage;
     if (usage) {
       const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
       await logUsage({ userId: callerUserId, route: "explain-one", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: questionId } });
     }
-    const cleaned = stripMetaNarration(res.object.explanation);
+    let cleaned = stripMetaNarration(res.object.explanation);
+    // Truncation guard: retry once if explanation looks cut off.
+    if (looksTruncated(cleaned)) {
+      try {
+        const retry = await generateObject(explainOneParams);
+        const retried = stripMetaNarration(retry.object.explanation);
+        if (!looksTruncated(retried)) {
+          cleaned = retried;
+        } else {
+          // Still truncated: persist as Needs Review with a note.
+          console.warn(`[explain-one] ${questionId}: explanation still truncated after retry`);
+          await db.from("questions").update({
+            correct_answer: answer,
+            explanation: cleaned,
+            parsing_status: "Needs Review",
+            parsing_notes: TRUNCATION_NOTE,
+            updated_at: new Date().toISOString(),
+          }).eq("id", questionId);
+          return cleaned;
+        }
+      } catch {
+        console.warn(`[explain-one] ${questionId}: truncation retry failed`);
+      }
+    }
     await db.from("questions").update({ correct_answer: answer, explanation: cleaned, updated_at: new Date().toISOString() }).eq("id", questionId);
     return cleaned;
   } catch (e) {

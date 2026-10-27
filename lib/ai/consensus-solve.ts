@@ -12,8 +12,9 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { getServiceClient } from "@/lib/supabase";
-import { fetchImageAsBase64 } from "@/lib/ai/solve-question";
+import { fetchImageAsBase64, looksTruncated, TRUNCATION_NOTE } from "@/lib/ai/solve-question";
 import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
+import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -28,8 +29,12 @@ const VerifySchema = z.object({
   reason: z.string(),
 });
 
-const SOLVE_SYS = `You are an expert SAT solver. Solve the question rigorously and independently. For MCQ give a single letter A/B/C/D; for student-produced response give the exact value. Show your work in the explanation.`;
-const VERIFY_SYS = `You are a strict SAT answer checker. You are given a question and a PROPOSED answer. Work the problem yourself from scratch, then judge whether the proposed answer is correct. Be skeptical — only say correct=true if you independently arrive at the same answer.`;
+const SOLVE_SYS = `You are an expert SAT solver. Solve the question rigorously and independently. For MCQ give a single letter A/B/C/D; for student-produced response give the exact value. Show your work in the explanation.
+
+${QUOTE_RULE}`;
+const VERIFY_SYS = `You are a strict SAT answer checker. You are given a question and a PROPOSED answer. Work the problem yourself from scratch, then judge whether the proposed answer is correct. Be skeptical — only say correct=true if you independently arrive at the same answer.
+
+${QUOTE_RULE}`;
 
 function norm(v: string): string { return String(v).trim().toUpperCase().replace(/\s+/g, ""); }
 function num(v: string): number | null {
@@ -165,14 +170,26 @@ export async function consensusResolve(
       }).eq("id", q.id);
       continue;
     }
-    const v = await verify(q, a1, images);
-    if (v && v.ok) {
+    let v = await verify(q, a1, images);
+    // Truncation guard: if verifier explanation looks cut off, retry once.
+    if (v && v.ok && looksTruncated(v.explanation)) {
+      const retry = await verify(q, a1, images);
+      if (retry) v = retry;
+    }
+    if (v && v.ok && !looksTruncated(v.explanation)) {
       settled++;
       await db.from("questions").update({
         correct_answer: a1,
         explanation: v.explanation,
         parsing_status: "Approved",
         parsing_notes: "Auto-settled: 3 independent solves agreed + verified (no answer key available)",
+        updated_at: new Date().toISOString(),
+      }).eq("id", q.id);
+    } else if (v && v.ok && looksTruncated(v.explanation)) {
+      // Verifier agreed but its explanation is still truncated after retry.
+      unresolved++;
+      await db.from("questions").update({
+        parsing_notes: `3 solves agreed on ${a1} and verifier confirmed, but ${TRUNCATION_NOTE}`,
         updated_at: new Date().toISOString(),
       }).eq("id", q.id);
     } else {
