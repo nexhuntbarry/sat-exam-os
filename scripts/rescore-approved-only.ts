@@ -36,6 +36,8 @@ for (const line of envText.split("\n")) {
 
 const APPLY = process.argv.includes("--apply");
 const REGRADE = process.argv.includes("--regrade-answers");
+// --only=<id,id> limits the run to those submission ids.
+const ONLY = process.argv.find((a) => a.startsWith("--only="))?.slice(7).split(",").filter(Boolean) ?? null;
 
 const db = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -61,7 +63,7 @@ type Test = {
   question_ids: string[] | null;
   is_adaptive: boolean | null;
 };
-type Question = { id: string; parsing_status: string; correct_answer: string | null };
+type Question = { id: string; parsing_status: string; correct_answer: string | null; question_type: string | null };
 type Rec = {
   id: string;
   submission_id: string;
@@ -113,7 +115,7 @@ async function main() {
   const questions = await fetchAll<Question & { module_id: string }>((a, b) =>
     db
       .from("questions")
-      .select("id, module_id, parsing_status, correct_answer")
+      .select("id, module_id, parsing_status, correct_answer, question_type")
       .in("module_id", moduleIds)
       .order("id")
       .range(a, b),
@@ -133,6 +135,7 @@ async function main() {
   const perTest = new Map<string, number>();
 
   for (const sub of subs) {
+    if (ONLY && !ONLY.includes(sub.id)) continue;
     const test = testById.get(sub.test_id);
     const moduleId = sub.module_id ?? test?.module_id ?? null;
     if (!test || !moduleId) continue;
@@ -165,7 +168,12 @@ async function main() {
     const keptSeen = records.filter((r) => !isApproved(r) && answered(r)).length;
     const regraded = keep.map((r) => {
       if (!REGRADE) return { rec: r, isCorrect: r.is_correct };
-      const key = questionById.get(r.question_id)?.correct_answer ?? r.correct_answer;
+      // M-02 is about SPR matching strictness only. Regrade grid-ins against
+      // the key they were graded with; never re-key multiple choice here
+      // (a later key edit can be wrong — see October 2024 ENG M2).
+      const q = questionById.get(r.question_id);
+      if (q?.question_type !== "Student Produced Response") return { rec: r, isCorrect: r.is_correct };
+      const key = r.correct_answer ?? q.correct_answer;
       return { rec: r, isCorrect: answersMatch(r.student_answer, key) };
     });
     const flips = regraded.filter((x) => x.isCorrect !== x.rec.is_correct);
