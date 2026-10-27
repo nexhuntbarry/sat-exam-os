@@ -144,7 +144,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
 const statusCls: Record<string, string> = {
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
 };
 
 export default async function TeacherDashboardPage() {
@@ -168,10 +168,10 @@ export default async function TeacherDashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="flex items-center gap-4 p-5 rounded-2xl border bg-warm-coral/10 border-warm-coral/20">
           <div className="p-3 rounded-xl bg-light-bg">
-            <ClipboardList size={20} className="text-warm-coral" />
+            <ClipboardList size={20} className="text-warm-coral-text" />
           </div>
           <div>
-            <div className="text-2xl font-bold text-warm-coral">{stats.assignedTests}</div>
+            <div className="text-2xl font-bold text-warm-coral-text">{stats.assignedTests}</div>
             <div className="text-mid-gray text-xs mt-0.5">Assigned Tests</div>
           </div>
         </div>
@@ -200,18 +200,18 @@ export default async function TeacherDashboardPage() {
         <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
           <div className="px-5 py-4 border-b border-divider flex items-center justify-between">
             <h2 className="text-charcoal font-semibold">Active Tests</h2>
-            <Link href="/teacher/tests" className="text-warm-coral text-xs hover:underline">View all</Link>
+            <Link href="/teacher/tests" className="text-warm-coral-text text-xs hover:underline">View all</Link>
           </div>
           {tests.length === 0 ? (
             <div className="py-10 px-6 text-center text-sm space-y-2">
               <p className="text-soft-mute">No active tests yet.</p>
               <p className="text-mid-gray">
                 Build a quick practice test in{" "}
-                <Link href="/teacher/teaching-mode" className="text-warm-coral hover:underline">
+                <Link href="/teacher/teaching-mode" className="text-warm-coral-text hover:underline">
                   Teaching Mode
                 </Link>
                 , or ask your admin to assign one. New here?{" "}
-                <Link href="/teacher/help" className="text-warm-coral hover:underline">
+                <Link href="/teacher/help" className="text-warm-coral-text hover:underline">
                   Read the Quick Start
                 </Link>
                 .
@@ -226,7 +226,7 @@ export default async function TeacherDashboardPage() {
                     <div className="flex-1 min-w-0">
                       <Link
                         href={`/teacher/tests/${t.id}/results`}
-                        className={clsx("text-sm font-medium hover:text-warm-coral transition-colors truncate block", sectionTitleClass(mod?.section))}
+                        className={clsx("text-sm font-medium hover:text-warm-coral-text transition-colors truncate block", sectionTitleClass(mod?.section))}
                       >
                         {t.test_name}
                       </Link>

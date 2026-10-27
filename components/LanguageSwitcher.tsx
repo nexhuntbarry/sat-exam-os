@@ -30,7 +30,7 @@ export default function LanguageSwitcher() {
         onClick={() => setLocale('zh')}
         disabled={pending}
         aria-pressed={locale === 'zh'}
-        className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
+        className={`min-h-8 min-w-10 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
           locale === 'zh'
             ? 'bg-warm-coral text-white shadow-sm'
             : 'text-mid-gray hover:text-charcoal hover:bg-light-bg'
@@ -43,7 +43,7 @@ export default function LanguageSwitcher() {
         onClick={() => setLocale('en')}
         disabled={pending}
         aria-pressed={locale === 'en'}
-        className={`px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
+        className={`min-h-8 min-w-10 px-3 py-1 rounded-md text-xs font-medium transition-all duration-150 ${
           locale === 'en'
             ? 'bg-warm-coral text-white shadow-sm'
             : 'text-mid-gray hover:text-charcoal hover:bg-light-bg'

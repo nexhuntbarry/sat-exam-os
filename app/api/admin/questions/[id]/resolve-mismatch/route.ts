@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
+import { findParsePlaceholder } from "@/lib/parse-guards";
 
 export const maxDuration = 60;
 
@@ -52,7 +53,7 @@ export async function POST(
   const { data: q, error: fetchErr } = await db
     .from("questions")
     .select(
-      "id, correct_answer, official_answer, parsing_notes, mismatch_with_official, explanation, question_type",
+      "id, correct_answer, official_answer, parsing_notes, mismatch_with_official, explanation, question_type, question_text, choices",
     )
     .eq("id", id)
     .single();
@@ -65,6 +66,14 @@ export async function POST(
     return NextResponse.json(
       { error: "This question is not flagged as mismatched" },
       { status: 409 },
+    );
+  }
+
+  const placeholder = findParsePlaceholder(q.question_text, q.choices);
+  if (placeholder) {
+    return NextResponse.json(
+      { error: `Can't approve: the stem or choices contain parser placeholder text ("${placeholder}"). Fix the text first.` },
+      { status: 400 },
     );
   }
 

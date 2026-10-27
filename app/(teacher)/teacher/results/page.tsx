@@ -226,7 +226,7 @@ export default async function TeacherResultsPage() {
       <div className="max-w-3xl mx-auto py-16 text-center space-y-6">
         <PageIntro tKey="teacher.results" />
         <div className="inline-flex p-5 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
-          <ClipboardList size={36} className="text-warm-coral" />
+          <ClipboardList size={36} className="text-warm-coral-text" />
         </div>
         <div className="space-y-2">
           <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>

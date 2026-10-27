@@ -16,7 +16,7 @@ export default function Module2Intro({ testId, testName, questionCount, timeLimi
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center overflow-y-auto bg-cream p-4">
       <div className="w-full max-w-md rounded-2xl border border-divider bg-surface p-6 sm:p-8 text-center shadow-sm">
-        <CheckCircle size={40} className="mx-auto text-warm-coral" aria-hidden="true" />
+        <CheckCircle size={40} className="mx-auto text-warm-coral-text" aria-hidden="true" />
         <h1 className="mt-4 text-xl font-semibold text-charcoal">Module 1 submitted</h1>
         <p className="mt-1 text-sm text-soft-mute truncate">{testName}</p>
         <p className="mt-5 text-charcoal">

@@ -11,6 +11,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import katex from "katex";
 import { getServiceClient } from "@/lib/supabase";
+import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
@@ -622,7 +623,7 @@ export async function recoverMissingFigures(
 ): Promise<{ attempted: number; recovered: number; approved: number; stillMissing: number }> {
   const { data } = await db
     .from("questions")
-    .select("id, original_question_number, parsing_notes, image_urls, has_image, parsing_status, question_text")
+    .select("id, original_question_number, parsing_notes, image_urls, has_image, parsing_status, question_text, choices")
     .eq("module_id", moduleId);
   const FIGURE_NOTE = /figure|graph|diagram|chart|scatter|\bplot\b|based on the (graph|table|figure)/i;
   // The stem itself asking the reader to look at a visual — the strongest
@@ -660,7 +661,8 @@ export async function recoverMissingFigures(
         // figure, it's now clean → Approve. Draft/Approved blind rows just gain
         // their image (already written by repairImageForQuestion); don't touch
         // their status. Rows with another defect stay in review.
-        const otherDefect = OTHER_NOTE.test(q.parsing_notes || "");
+        const otherDefect =
+          OTHER_NOTE.test(q.parsing_notes || "") || findParsePlaceholder(q.question_text, q.choices) !== null;
         if (q.parsing_status === "Needs Review" && !otherDefect) {
           approved++;
           await db
@@ -909,7 +911,20 @@ export async function recoverBrokenChoices(
         fixed++;
         // Text-layer copies are already demoted with a note by the repair.
         if (res.usedTextLayer) continue;
-        if (!OTHER_NOTE.test(q.parsing_notes || "")) {
+        // Re-read the repaired row: re-extracted choices can still carry
+        // parser placeholder text, which must never be auto-approved.
+        const { data: fresh } = await db
+          .from("questions")
+          .select("question_text, choices")
+          .eq("id", q.id)
+          .maybeSingle();
+        const placeholder = fresh ? findParsePlaceholder(fresh.question_text, fresh.choices) : null;
+        if (placeholder) {
+          await db
+            .from("questions")
+            .update({ parsing_notes: placeholderNote(placeholder), updated_at: new Date().toISOString() })
+            .eq("id", q.id);
+        } else if (!OTHER_NOTE.test(q.parsing_notes || "")) {
           approved++;
           await db
             .from("questions")

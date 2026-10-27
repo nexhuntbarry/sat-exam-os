@@ -22,7 +22,9 @@ async function getReviewData(testId: string, studentId: string) {
     )
     .eq("id", testId)
     .single();
-  if (!test || !test.review_unlocked) return null;
+  if (!test) return null;
+  // Assigned but not released yet → friendly locked screen, not a 404 (L-01).
+  if (!test.review_unlocked) return { locked: true as const, test };
 
   // Modules to show in the walkthrough:
   //  - adaptive: Module 1 + both Module 2 tracks (teacher can flip
@@ -120,6 +122,17 @@ export default async function StudentTestReviewPage({
   const { id } = await params;
   const data = await getReviewData(id, user.userId);
   if (!data) notFound();
+
+  if ("locked" in data) {
+    return (
+      <div className="max-w-3xl mx-auto py-16 text-center space-y-3">
+        <Eye size={24} className="text-soft-mute mx-auto" />
+        <p className="text-charcoal font-semibold">Review isn&rsquo;t available yet</p>
+        <p className="text-soft-mute text-sm">Your teacher hasn&rsquo;t released the class review for {data.test.test_name}.</p>
+        <Link href={`/student/tests/${data.test.id}`} className="text-warm-coral-text text-sm hover:underline">Back to test</Link>
+      </div>
+    );
+  }
 
   const { test, sections, myAnswers } = data;
   const tookTest = Object.keys(myAnswers).length > 0;

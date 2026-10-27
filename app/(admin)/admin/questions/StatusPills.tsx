@@ -49,7 +49,7 @@ export default async function StatusPills() {
       {autoApprovedCount > 0 && (
         <a
           href="/admin/questions?status=Approved&autoApproved=true"
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border font-medium transition-colors bg-warm-coral/10 text-warm-coral border-warm-coral/20 hover:bg-warm-coral/20"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border font-medium transition-colors bg-warm-coral/10 text-warm-coral-text border-warm-coral/20 hover:bg-warm-coral/20"
           title="Approved by the auto-promote-high-confidence script (reviewed_by IS NULL). Sample-audit before trusting."
         >
           <span>⚠ Auto-approved · audit me</span>

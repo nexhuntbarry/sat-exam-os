@@ -481,7 +481,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       <td className="px-4 py-3 max-w-xs">
                         <Link
                           href={`${detailBase}/${q.id}`}
-                          className="block text-charcoal hover:text-warm-coral transition-colors text-sm"
+                          className="block text-charcoal hover:text-warm-coral-text transition-colors text-sm"
                         >
                           <MathMarkdown className="prose prose-sm max-w-none [&_p]:my-0 [&_p]:line-clamp-2">
                             {q.question_text.length > 200

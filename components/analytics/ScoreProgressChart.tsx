@@ -45,7 +45,7 @@ export default function ScoreProgressChart({
     <div className="rounded-2xl border border-divider bg-surface p-5 md:p-6">
       <div className="flex items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
-          <TrendingUp size={18} className="text-warm-coral" />
+          <TrendingUp size={18} className="text-warm-coral-text" />
           <h2 className="text-base font-semibold text-charcoal">SAT Score Progression</h2>
         </div>
         <div className="flex items-center gap-3 text-xs">

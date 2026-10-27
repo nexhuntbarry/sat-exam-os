@@ -202,7 +202,7 @@ export default function QuestionRenderer({
               href={`/api/modules/${question.module_id}/page/${question.page_number ?? 1}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-warm-coral hover:underline"
+              className="inline-flex items-center gap-1 text-xs text-warm-coral-text hover:underline"
             >
               Open in new tab <ExternalLink size={12} />
             </a>
@@ -224,7 +224,7 @@ export default function QuestionRenderer({
               key={url}
               src={`/api/blob-image?u=${encodeURIComponent(url)}`}
               alt={
-                question.image_alts?.[i] ??
+                question.image_alts?.[i] ||
                 `Figure for question ${question.original_question_number}`
               }
               className="max-w-full rounded-xl border border-divider bg-white"
@@ -312,7 +312,7 @@ export default function QuestionRenderer({
                     className={clsx(
                       "px-3 shrink-0 flex items-center justify-center text-xs font-bold border-l transition-colors",
                       isCrossed
-                        ? "text-warm-coral border-warm-coral/30 bg-warm-coral/10 hover:bg-warm-coral/15"
+                        ? "text-warm-coral-text border-warm-coral/30 bg-warm-coral/10 hover:bg-warm-coral/15"
                         : "text-mid-gray border-divider hover:bg-light-bg hover:text-charcoal",
                     )}
                   >

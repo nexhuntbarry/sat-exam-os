@@ -95,13 +95,13 @@ export default async function TeacherTestReviewPage({
       </div>
 
       <div className="rounded-2xl border border-warm-coral/20 bg-warm-coral/5 px-4 py-3 flex items-start gap-3">
-        <Presentation size={18} className="text-warm-coral mt-0.5 shrink-0" />
+        <Presentation size={18} className="text-warm-coral-text mt-0.5 shrink-0" />
         <div>
           <h1 className="text-charcoal font-bold text-base">{test.test_name} — class review</h1>
           <p className="text-soft-mute text-xs mt-0.5">
             Projector walkthrough: every question with choices, figures, the correct answer,
             and the explanation. To see which students missed each question, use{" "}
-            <Link href={`/teacher/tests/${test.id}/analytics`} className="text-warm-coral hover:underline">
+            <Link href={`/teacher/tests/${test.id}/analytics`} className="text-warm-coral-text hover:underline">
               Question Analytics
             </Link>.
           </p>
@@ -118,7 +118,7 @@ export default async function TeacherTestReviewPage({
             <h2 className="text-charcoal font-semibold text-lg">{section.title}</h2>
             <div className="space-y-4">
               {section.questions.map((q) => (
-                <ReviewQuestionCard key={q.id} question={q as unknown as ReviewQuestion} />
+                <ReviewQuestionCard key={q.id} question={q as unknown as ReviewQuestion} showSourceFigure />
               ))}
             </div>
           </section>

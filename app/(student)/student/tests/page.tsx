@@ -238,7 +238,7 @@ async function getStudentTests(studentId: string) {
 
 const testStatusStyles: Record<string, string> = {
   "Not Started": "bg-light-bg text-mid-gray",
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
   Submitted: "bg-warm-amber/15 text-warm-amber",
 };
 
@@ -280,7 +280,7 @@ export default async function StudentTestsPage() {
                   return (
                     <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                       <td className="px-5 py-3">
-                        <Link href={`/student/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral transition-colors", sectionTitleClass(mod?.section))}>
+                        <Link href={`/student/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral-text transition-colors", sectionTitleClass(mod?.section))}>
                           {test.test_name}
                         </Link>
                         <div className="text-soft-mute text-xs mt-0.5">
@@ -303,7 +303,7 @@ export default async function StudentTestsPage() {
                           <>
                             <div>{test.attempt.percentage.toFixed(1)}%</div>
                             {test.attempt.scaledScore != null && (
-                              <div className="text-warm-coral text-xs font-medium">
+                              <div className="text-warm-coral-text text-xs font-medium">
                                 {test.attempt.scaledScore}/800
                               </div>
                             )}
@@ -338,7 +338,7 @@ export default async function StudentTestsPage() {
                         ) : test.needsModule2 ? (
                           <Link
                             href={`/student/tests/${test.id}`}
-                            className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 text-xs font-medium transition-colors"
+                            className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium transition-colors"
                           >
                             Continue to Module 2
                           </Link>
@@ -346,7 +346,7 @@ export default async function StudentTestsPage() {
                           <div className="flex items-center gap-2 flex-wrap">
                             <Link
                               href={`/student/tests/${test.id}/take`}
-                              className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 text-xs font-medium transition-colors"
+                              className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium transition-colors"
                             >
                               Resume
                             </Link>

@@ -86,7 +86,7 @@ export default function QuestionAnalyticsPage() {
       <div className="max-w-5xl mx-auto py-16 text-center space-y-3">
         <p className="text-charcoal font-semibold">You don&rsquo;t have access to this test&rsquo;s analytics.</p>
         <p className="text-soft-mute text-sm">It may belong to another class or a subject you don&rsquo;t teach.</p>
-        <Link href="/teacher/tests" className="text-warm-coral text-sm hover:underline">Back to My Tests</Link>
+        <Link href="/teacher/tests" className="text-warm-coral-text text-sm hover:underline">Back to My Tests</Link>
       </div>
     );
   }
@@ -95,7 +95,7 @@ export default function QuestionAnalyticsPage() {
     return (
       <div className="max-w-5xl mx-auto py-16 text-center space-y-3">
         <p className="text-status-error">Failed to load analytics.</p>
-        <Link href="/teacher/tests" className="text-warm-coral text-sm hover:underline">Back to My Tests</Link>
+        <Link href="/teacher/tests" className="text-warm-coral-text text-sm hover:underline">Back to My Tests</Link>
       </div>
     );
   }
@@ -188,13 +188,13 @@ export default function QuestionAnalyticsPage() {
       {/* To-Teach panel */}
       {toTeach.length > 0 && (
         <div className="bg-warm-coral/5 border border-warm-coral/20 rounded-2xl p-5">
-          <h2 className="text-warm-coral font-semibold mb-3">To Teach in Class ({toTeach.length})</h2>
+          <h2 className="text-warm-coral-text font-semibold mb-3">To Teach in Class ({toTeach.length})</h2>
           <div className="flex flex-wrap gap-2">
             {toTeach.map((q) => (
               <Link
                 key={q.questionId}
                 href={`/teacher/tests/${testId}/analytics/${q.questionId}`}
-                className="px-3 py-1.5 bg-warm-coral/15 border border-warm-coral/20 rounded-lg text-warm-coral text-sm hover:bg-warm-coral/25 transition-colors"
+                className="px-3 py-1.5 bg-warm-coral/15 border border-warm-coral/20 rounded-lg text-warm-coral-text text-sm hover:bg-warm-coral/25 transition-colors"
               >
                 Q{q.questionNumber}
               </Link>

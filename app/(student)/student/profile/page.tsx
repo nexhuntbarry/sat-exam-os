@@ -69,7 +69,7 @@ export default function StudentProfilePage() {
       <PageIntro tKey="student.profile" />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20">
-          <User size={20} className="text-warm-coral" />
+          <User size={20} className="text-warm-coral-text" />
         </div>
         <div>
           <h1 className="text-2xl font-bold text-charcoal">My Profile</h1>
@@ -80,18 +80,20 @@ export default function StudentProfilePage() {
       <form onSubmit={handleSave} className="bg-surface border border-divider rounded-2xl p-6 space-y-5">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
-            <label className="block text-mid-gray text-sm font-medium mb-1.5">Grade</label>
+            <label htmlFor="profile-grade" className="block text-mid-gray text-sm font-medium mb-1.5">Grade</label>
             <input
               className={inputCls}
+              id="profile-grade"
               placeholder="e.g. 11"
               value={profile.grade ?? ""}
               onChange={(e) => setProfile((p) => ({ ...p, grade: e.target.value }))}
             />
           </div>
           <div>
-            <label className="block text-mid-gray text-sm font-medium mb-1.5">School</label>
+            <label htmlFor="profile-school" className="block text-mid-gray text-sm font-medium mb-1.5">School</label>
             <input
               className={inputCls}
+              id="profile-school"
               placeholder="e.g. Taipei High School"
               value={profile.school ?? ""}
               onChange={(e) => setProfile((p) => ({ ...p, school: e.target.value }))}
@@ -101,13 +103,14 @@ export default function StudentProfilePage() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
-            <label className="block text-mid-gray text-sm font-medium mb-1.5">Target SAT Score</label>
+            <label htmlFor="profile-target-score" className="block text-mid-gray text-sm font-medium mb-1.5">Target SAT Score</label>
             <input
               type="number"
               min={400}
               max={1600}
               step={10}
               className={inputCls}
+              id="profile-target-score"
               placeholder="e.g. 1400"
               value={profile.target_score ?? ""}
               onChange={(e) =>
@@ -116,9 +119,10 @@ export default function StudentProfilePage() {
             />
           </div>
           <div>
-            <label className="block text-mid-gray text-sm font-medium mb-1.5">Class Group</label>
+            <label htmlFor="profile-class-group" className="block text-mid-gray text-sm font-medium mb-1.5">Class Group</label>
             <input
               className={inputCls}
+              id="profile-class-group"
               placeholder="e.g. Class A"
               value={profile.class_group ?? ""}
               onChange={(e) => setProfile((p) => ({ ...p, class_group: e.target.value }))}

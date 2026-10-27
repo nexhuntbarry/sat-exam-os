@@ -239,7 +239,7 @@ export default async function AdminTeacherDetailPage({
           <h2 className="text-charcoal font-semibold text-lg">Classes &amp; students</h2>
           <Link
             href="/admin/classes"
-            className="text-warm-coral text-xs hover:underline"
+            className="text-warm-coral-text text-xs hover:underline"
           >
             Manage classes →
           </Link>
@@ -253,7 +253,7 @@ export default async function AdminTeacherDetailPage({
             </p>
             <Link
               href="/admin/classes"
-              className="inline-block mt-3 px-4 py-2 rounded-xl bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral text-xs font-medium transition-colors"
+              className="inline-block mt-3 px-4 py-2 rounded-xl bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral-text text-xs font-medium transition-colors"
             >
               Assign in Classes
             </Link>
@@ -311,7 +311,7 @@ export default async function AdminTeacherDetailPage({
                           <td className="px-5 py-2.5">
                             <Link
                               href={`/admin/students/${s.id}`}
-                              className="text-warm-coral text-xs hover:underline"
+                              className="text-warm-coral-text text-xs hover:underline"
                             >
                               View student
                             </Link>
@@ -342,7 +342,7 @@ function StatCard({
   return (
     <div className="bg-surface border border-divider rounded-2xl p-4">
       <div className="flex items-center gap-2 text-soft-mute text-xs">
-        <span className="text-warm-coral">{icon}</span>
+        <span className="text-warm-coral-text">{icon}</span>
         {label}
       </div>
       <div className="text-2xl font-bold text-charcoal mt-1">{value}</div>

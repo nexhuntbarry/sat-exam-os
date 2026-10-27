@@ -55,7 +55,7 @@ export default function QuestionNavigator({
                   className={clsx(
                     "w-9 h-9 rounded-lg text-xs font-semibold transition-all",
                     isCurrent
-                      ? "ring-2 ring-warm-coral bg-warm-coral/20 text-warm-coral"
+                      ? "ring-2 ring-warm-coral bg-warm-coral/20 text-warm-coral-text"
                       : isFlagged
                       ? "bg-status-warning/15 text-status-warning hover:bg-status-warning/30"
                       : isAnswered

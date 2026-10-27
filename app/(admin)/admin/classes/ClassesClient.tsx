@@ -162,7 +162,7 @@ export default function ClassesClient({ classGroups }: { classGroups: ClassGroup
             >
               <div className="flex items-start justify-between mb-3">
                 <div>
-                  <h3 className="font-semibold text-charcoal group-hover:text-warm-coral transition-colors">
+                  <h3 className="font-semibold text-charcoal group-hover:text-warm-coral-text transition-colors">
                     {cg.name}
                   </h3>
                   {cg.campus && (
@@ -170,7 +170,7 @@ export default function ClassesClient({ classGroups }: { classGroups: ClassGroup
                   )}
                 </div>
                 {cg.grade && (
-                  <span className="px-2 py-1 rounded-full bg-warm-coral/15 text-warm-coral text-xs font-medium">
+                  <span className="px-2 py-1 rounded-full bg-warm-coral/15 text-warm-coral-text text-xs font-medium">
                     Grade {cg.grade}
                   </span>
                 )}

@@ -24,7 +24,7 @@ const statusStyles: Record<string, string> = {
   pending: "bg-light-bg text-mid-gray",
   uploaded: "bg-light-bg text-mid-gray",
   parsing: "bg-status-warning/15 text-status-warning",
-  parsed: "bg-warm-coral/15 text-warm-coral",
+  parsed: "bg-warm-coral/15 text-warm-coral-text",
   approved: "bg-warm-amber/15 text-warm-amber",
   failed: "bg-status-error/15 text-status-error",
   rejected_not_sat: "bg-status-error/15 text-status-error",
@@ -244,7 +244,7 @@ export default async function ModuleDetailPage({
           <p className="text-charcoal text-sm">{t.approved}</p>
           <Link
             href={`/admin/questions?moduleId=${id}`}
-            className="ml-auto text-xs text-warm-coral hover:underline shrink-0"
+            className="ml-auto text-xs text-warm-coral-text hover:underline shrink-0"
           >
             {t.previewQuestions}
           </Link>
@@ -259,7 +259,7 @@ export default async function ModuleDetailPage({
             <div className="flex gap-2">
               <Link
                 href={`/admin/modules/${id}/review`}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25 transition-colors"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 transition-colors"
               >
                 <ClipboardList size={12} />
                 {t.reviewQueue}

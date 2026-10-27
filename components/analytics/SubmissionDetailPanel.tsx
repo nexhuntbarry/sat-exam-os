@@ -193,7 +193,9 @@ export function SubmissionDetailPanel({
                       <img
                         key={url}
                         src={`/api/blob-image?u=${encodeURIComponent(url)}`}
-                        alt={a.imageAlts?.[i] ?? "Question figure"}
+                        alt={a.imageAlts?.[i] || "Question figure"}
+                        loading="lazy"
+                        decoding="async"
                         className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
                       />
                     ))}
@@ -296,8 +298,8 @@ export function SubmissionDetailPanel({
                     className={clsx(
                       "self-start flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
                       a.classReview
-                        ? "bg-warm-coral/20 text-warm-coral border border-warm-coral/30"
-                        : "bg-light-bg text-soft-mute border border-divider hover:border-warm-coral/20 hover:text-warm-coral"
+                        ? "bg-warm-coral/20 text-warm-coral-text border border-warm-coral/30"
+                        : "bg-light-bg text-soft-mute border border-divider hover:border-warm-coral/20 hover:text-warm-coral-text"
                     )}
                   >
                     <BookOpen size={14} />

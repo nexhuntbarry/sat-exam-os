@@ -192,7 +192,7 @@ export default function AddStudentsButton({ testId, alreadyAssigned }: Props) {
               </span>
               <div className="flex items-center gap-2">
                 {toast && (
-                  <span className="text-xs text-warm-coral font-medium">{toast}</span>
+                  <span className="text-xs text-warm-coral-text font-medium">{toast}</span>
                 )}
                 <button
                   onClick={() => {

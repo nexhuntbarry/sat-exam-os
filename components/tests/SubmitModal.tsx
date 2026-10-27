@@ -249,7 +249,7 @@ function Stat({
   const tone: Record<typeof color, string> = {
     amber: "text-warm-amber",
     warning: "text-status-warning",
-    coral: "text-warm-coral",
+    coral: "text-warm-coral-text",
     muted: "text-mid-gray",
   };
   return (

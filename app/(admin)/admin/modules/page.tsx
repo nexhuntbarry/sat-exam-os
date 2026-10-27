@@ -37,7 +37,7 @@ async function getModules(): Promise<ModuleRow[]> {
 const statusStyles: Record<string, string> = {
   pending: "bg-light-bg text-mid-gray",
   parsing: "bg-status-warning/15 text-status-warning",
-  parsed: "bg-warm-coral/15 text-warm-coral",
+  parsed: "bg-warm-coral/15 text-warm-coral-text",
   approved: "bg-warm-amber/15 text-warm-amber",
   failed: "bg-status-error/15 text-status-error",
 };
@@ -123,7 +123,7 @@ export default async function ModulesPage({
             <FileText size={40} className="text-charcoal/20 mx-auto" />
             <p className="text-soft-mute text-sm">
               No modules yet.{" "}
-              <Link href="/admin/modules/new" className="text-warm-coral hover:underline">
+              <Link href="/admin/modules/new" className="text-warm-coral-text hover:underline">
                 Upload your first module
               </Link>
             </p>

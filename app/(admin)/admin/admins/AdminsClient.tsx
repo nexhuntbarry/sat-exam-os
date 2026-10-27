@@ -322,7 +322,7 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
                     </td>
                     <td className="px-5 py-3">
                       {a.is_super_admin ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-warm-coral/15 text-warm-coral">
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-warm-coral/15 text-warm-coral-text">
                           <ShieldCheck size={11} />
                           Super
                         </span>
@@ -432,7 +432,7 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
             <div className="px-5 py-4 space-y-2">
               <label className="block text-charcoal text-sm font-medium">
                 Type the admin&rsquo;s email to confirm:{" "}
-                <span className="font-mono text-warm-coral">{deleteTarget.email}</span>
+                <span className="font-mono text-warm-coral-text">{deleteTarget.email}</span>
               </label>
               <input
                 value={deleteText}

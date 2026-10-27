@@ -71,7 +71,7 @@ export default function DeleteStudentButton({ studentId, studentName, email }: P
             <div className="px-5 py-4 space-y-2">
               <label className="block text-charcoal text-sm font-medium">
                 Type the student&rsquo;s email to confirm:{" "}
-                <span className="font-mono text-warm-coral">{email}</span>
+                <span className="font-mono text-warm-coral-text">{email}</span>
               </label>
               <input
                 value={text}

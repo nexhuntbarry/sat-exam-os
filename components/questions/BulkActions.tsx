@@ -31,7 +31,10 @@ export default function BulkActions({ selectedIds, onComplete }: BulkActionsProp
       });
       const json = await res.json();
       if (res.ok) {
-        showToast(`Approved ${json.approved} questions`);
+        showToast(
+          `Approved ${json.approved} questions` +
+            (json.blocked ? ` · ${json.blocked} kept in Needs Review (parser placeholder text)` : ""),
+        );
         onComplete();
       } else {
         showToast(json.error ?? "Approve failed");

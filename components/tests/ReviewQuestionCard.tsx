@@ -30,6 +30,9 @@ interface Props {
   showExplanation?: boolean;
   /** Teacher review: names of students who got this question wrong. */
   wrongStudents?: string[];
+  /** Show the raw source PDF page when no figure crop exists. Teachers only —
+   *  students never see the raw scan (M-20). */
+  showSourceFigure?: boolean;
 }
 
 export default function ReviewQuestionCard({
@@ -37,15 +40,16 @@ export default function ReviewQuestionCard({
   mine,
   showExplanation = true,
   wrongStudents,
+  showSourceFigure = false,
 }: Props) {
   const choices = Array.isArray(q.choices) ? q.choices : [];
   const hasCrops = Array.isArray(q.image_urls) && q.image_urls.length > 0;
-  const needsFigureFallback = (q.has_image || q.has_table) && !hasCrops;
+  const needsFigureFallback = showSourceFigure && (q.has_image || q.has_table) && !hasCrops;
 
   return (
     <div className="bg-surface border border-divider rounded-2xl p-5 space-y-3">
       <div className="flex items-center gap-2">
-        <span className="px-2 py-0.5 rounded-full bg-warm-coral/15 text-warm-coral text-xs font-semibold">
+        <span className="px-2 py-0.5 rounded-full bg-warm-coral/15 text-warm-coral-text text-xs font-semibold">
           Q{q.original_question_number}
         </span>
         {q.question_type === "Student Produced Response" && (
@@ -69,7 +73,7 @@ export default function ReviewQuestionCard({
         {q.question_text}
       </MathMarkdown>
 
-      {/* Figures: recovered crops first, else the source PDF page. */}
+      {/* Figures: recovered crops first, else (teachers only) the source PDF page. */}
       {hasCrops && (
         <div className="flex flex-wrap gap-3">
           {q.image_urls!.map((url, i) => (
@@ -77,7 +81,9 @@ export default function ReviewQuestionCard({
             <img
               key={url}
               src={`/api/blob-image?u=${encodeURIComponent(url)}`}
-              alt={q.image_alts?.[i] ?? "Question figure"}
+              alt={q.image_alts?.[i] || `Figure for question ${q.original_question_number}`}
+              loading="lazy"
+              decoding="async"
               className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
             />
           ))}
@@ -86,6 +92,7 @@ export default function ReviewQuestionCard({
       {needsFigureFallback && (
         <iframe
           src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
+          loading="lazy"
           className="w-full h-[420px] rounded-xl border border-divider bg-white"
           title={`Question figure (PDF page ${q.page_number ?? 1})`}
         />
@@ -153,7 +160,7 @@ export default function ReviewQuestionCard({
 
       {showExplanation && q.explanation && (
         <div className="rounded-lg border border-warm-coral/15 bg-warm-coral/5 p-3">
-          <div className="text-warm-coral text-xs font-medium mb-1">Explanation</div>
+          <div className="text-warm-coral-text text-xs font-medium mb-1">Explanation</div>
           <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1 [&_p]:leading-relaxed">
             {q.explanation}
           </MathMarkdown>

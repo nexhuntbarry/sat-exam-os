@@ -44,7 +44,7 @@ export default async function TeacherHelpPage() {
       <PageIntro tKey="teacher.help" />
 
       <div className="flex items-center gap-3">
-        <HelpCircle size={22} className="text-warm-coral" />
+        <HelpCircle size={22} className="text-warm-coral-text" />
         <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
       </div>
 
@@ -58,12 +58,12 @@ export default async function TeacherHelpPage() {
               key={idx}
               className="bg-surface border border-divider rounded-2xl p-5 flex gap-4 items-start"
             >
-              <div className="shrink-0 flex items-center justify-center w-10 h-10 rounded-xl bg-warm-coral/10 text-warm-coral font-semibold">
+              <div className="shrink-0 flex items-center justify-center w-10 h-10 rounded-xl bg-warm-coral/10 text-warm-coral-text font-semibold">
                 {idx + 1}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
-                  <Icon size={16} className="text-warm-coral" />
+                  <Icon size={16} className="text-warm-coral-text" />
                   <h2 className="text-charcoal font-semibold text-base">
                     {step.title}
                   </h2>
@@ -74,7 +74,7 @@ export default async function TeacherHelpPage() {
                 {step.cta && (
                   <Link
                     href={step.cta.href}
-                    className="inline-flex items-center gap-1 text-sm font-medium text-warm-coral hover:underline"
+                    className="inline-flex items-center gap-1 text-sm font-medium text-warm-coral-text hover:underline"
                   >
                     {step.cta.label} →
                   </Link>

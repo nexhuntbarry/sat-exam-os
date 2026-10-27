@@ -45,7 +45,7 @@ interface StudentResultsTableProps {
 const statusStyles: Record<string, string> = {
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
   "Not Started": "bg-light-bg text-soft-mute",
   Expired: "bg-status-error/15 text-status-error",
 };
@@ -118,8 +118,8 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
   function SortIcon({ k }: { k: SortKey }) {
     if (sortKey !== k) return <ArrowUpDown size={12} className="text-soft-mute" />;
     return sortAsc
-      ? <ChevronUp size={12} className="text-warm-coral" />
-      : <ChevronDown size={12} className="text-warm-coral" />;
+      ? <ChevronUp size={12} className="text-warm-coral-text" />
+      : <ChevronDown size={12} className="text-warm-coral-text" />;
   }
 
   const selectCls = "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
@@ -226,7 +226,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                             : null);
                         return eff != null ? (
                           <span
-                            className="ml-2 text-xs text-warm-coral"
+                            className="ml-2 text-xs text-warm-coral-text"
                             title="Estimated SAT scaled score (200-800)"
                           >
                             {eff}/800
@@ -274,7 +274,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                         {(row.status === "Submitted" || row.status === "Late") && (
                           <Link
                             href={`/teacher/tests/${testId}/results/${row.submissionId}`}
-                            className="text-warm-coral text-xs hover:underline"
+                            className="text-warm-coral-text text-xs hover:underline"
                           >
                             View
                           </Link>
@@ -292,7 +292,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                             <button
                               onClick={() => grantRetake(row.studentId, row.studentName)}
                               disabled={grantingFor === row.studentId}
-                              className="inline-flex items-center gap-1 text-warm-coral text-xs hover:underline disabled:opacity-50"
+                              className="inline-flex items-center gap-1 text-warm-coral-text text-xs hover:underline disabled:opacity-50"
                               title="Allow this student to take the test again"
                             >
                               <RotateCcw size={11} />

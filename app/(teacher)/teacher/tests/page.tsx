@@ -149,7 +149,7 @@ export default async function TeacherTestsPage() {
                   return (
                     <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
                       <td className="px-5 py-3">
-                        <Link href={`/teacher/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral transition-colors", sectionTitleClass(mod?.section))}>
+                        <Link href={`/teacher/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral-text transition-colors", sectionTitleClass(mod?.section))}>
                           {test.test_name}
                         </Link>
                       </td>
@@ -170,7 +170,7 @@ export default async function TeacherTestsPage() {
                         {test.due_date ? formatDate(test.due_date) : "—"}
                       </td>
                       <td className="px-5 py-3">
-                        <Link href={`/teacher/tests/${test.id}`} className="text-xs text-warm-coral hover:underline">
+                        <Link href={`/teacher/tests/${test.id}`} className="text-xs text-warm-coral-text hover:underline">
                           View
                         </Link>
                       </td>
@@ -194,11 +194,11 @@ export default async function TeacherTestsPage() {
             <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
             <p className="text-mid-gray text-xs">
               Build a Draft test in{" "}
-              <Link href="/teacher/teaching-mode" className="text-warm-coral hover:underline">
+              <Link href="/teacher/teaching-mode" className="text-warm-coral-text hover:underline">
                 Teaching Mode
               </Link>
               {" "}or ask your admin to assign one. The{" "}
-              <Link href="/teacher/help" className="text-warm-coral hover:underline">
+              <Link href="/teacher/help" className="text-warm-coral-text hover:underline">
                 Quick Start
               </Link>
               {" "}walks through the full flow.

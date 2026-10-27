@@ -297,7 +297,7 @@ export default function ClassDetailClient({
             <div className="px-5 py-4 space-y-2">
               <label className="block text-charcoal text-sm font-medium">
                 Type the class name to confirm:{" "}
-                <span className="font-mono text-warm-coral">{classGroup.name}</span>
+                <span className="font-mono text-warm-coral-text">{classGroup.name}</span>
               </label>
               <input
                 value={deleteText}
@@ -333,7 +333,7 @@ export default function ClassDetailClient({
       <div className="bg-surface border border-divider rounded-2xl p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-charcoal font-medium text-sm flex items-center gap-2">
-            <GraduationCap size={14} className="text-warm-coral" />
+            <GraduationCap size={14} className="text-warm-coral-text" />
             Assigned Teachers
             <span className="text-soft-mute font-normal">
               ({assignedTeachers.length})
@@ -379,7 +379,7 @@ export default function ClassDetailClient({
                 className="flex items-center gap-2 pl-3 pr-2 py-1.5 rounded-full bg-warm-coral/10 border border-warm-coral/20 text-sm"
               >
                 {t.can_review_questions && (
-                  <ShieldCheck size={11} className="text-warm-coral" />
+                  <ShieldCheck size={11} className="text-warm-coral-text" />
                 )}
                 <span className="text-charcoal">{t.display_name ?? t.email}</span>
                 <select

@@ -10,7 +10,7 @@ interface StatCardProps {
 }
 
 const colorMap: Record<string, string> = {
-  blue: "bg-warm-coral/10 border-warm-coral/20 text-warm-coral",
+  blue: "bg-warm-coral/10 border-warm-coral/20 text-warm-coral-text",
   lime: "bg-warm-amber/10 border-warm-amber/20 text-warm-amber",
   emerald: "bg-status-success/10 border-status-success/20 text-status-success",
   amber: "bg-status-warning/10 border-status-warning/20 text-status-warning",

@@ -41,7 +41,7 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
           <Logo size={80} />
         </div>
 
-        <h1 className="text-3xl md:text-5xl font-bold tracking-widest uppercase mb-12 text-warm-coral">
+        <h1 className="text-3xl md:text-5xl font-bold tracking-widest uppercase mb-12 text-warm-coral-text">
           {tBrand("name")}
         </h1>
 
@@ -63,7 +63,7 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
               </Link>
               <Link
                 href="/sign-in"
-                className="px-8 py-4 rounded-xl font-semibold text-warm-coral bg-surface border border-warm-coral/40 hover:border-warm-coral hover:bg-warm-coral/5 transition-all duration-200"
+                className="px-8 py-4 rounded-xl font-semibold text-warm-coral-text bg-surface border border-warm-coral/40 hover:border-warm-coral hover:bg-warm-coral/5 transition-all duration-200"
               >
                 {t("teacherCta")}
               </Link>
@@ -95,7 +95,7 @@ function FeaturesSection() {
       title: "Upload PDF",
       description:
         "Upload SAT module PDFs directly. Supports multi-section files for Math, Reading & Writing modules.",
-      color: "text-warm-coral",
+      color: "text-warm-coral-text",
       borderColor: "border-warm-coral/20",
     },
     {

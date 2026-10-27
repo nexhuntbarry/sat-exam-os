@@ -22,6 +22,7 @@ import { z } from "zod";
 import type { ParsedQuestion } from "./parse-pdf";
 import { logUsage } from "./parse-pdf";
 import type { getServiceClient } from "@/lib/supabase";
+import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -670,7 +671,8 @@ export async function explainOfficialAndPersist(
           });
           rewrote++;
           const blindFigure = !!q.has_image && !(Array.isArray(q.image_urls) && q.image_urls.length > 0);
-          const keep = EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") || blindFigure;
+          const placeholder = findParsePlaceholder(q.question_text, q.choices);
+          const keep = EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") || blindFigure || placeholder !== null;
           if (keep) keptReview++; else approved++;
           const usage = res.usage;
           if (usage) {
@@ -695,7 +697,7 @@ export async function explainOfficialAndPersist(
               // Keep the original defect note on rows staying in review — it
               // names WHAT to fix (e.g. the PDF's real choices).
               parsing_notes: keep
-                ? `${q.parsing_notes ? `${q.parsing_notes}; ` : ""}Explanation matches official answer; still needs review (figure/choices)`
+                ? `${q.parsing_notes ? `${q.parsing_notes}; ` : ""}${placeholder && !(q.parsing_notes || "").includes("parser placeholder text") ? `${placeholderNote(placeholder)}; ` : ""}Explanation matches official answer; still needs review (figure/choices)`
                 : "Answer = official key; explanation matches (verified)",
               updated_at: new Date().toISOString(),
             })

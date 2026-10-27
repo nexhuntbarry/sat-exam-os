@@ -96,7 +96,7 @@ export default function EditStudentButton({ student }: Props) {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral text-sm font-semibold hover:bg-warm-coral/20 transition-colors"
+        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral-text text-sm font-semibold hover:bg-warm-coral/20 transition-colors"
       >
         <Pencil size={14} />
         Edit profile
@@ -287,7 +287,7 @@ export default function EditStudentButton({ student }: Props) {
                     <span className="text-xs text-soft-mute">{c.label}</span>
                     <span className="text-charcoal">
                       <span className="text-status-error line-through mr-2">{c.from}</span>
-                      <span className="text-warm-coral font-semibold">→ {c.to}</span>
+                      <span className="text-warm-coral-text font-semibold">→ {c.to}</span>
                     </span>
                   </li>
                 ))}

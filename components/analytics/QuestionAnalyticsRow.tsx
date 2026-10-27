@@ -149,8 +149,8 @@ export function QuestionAnalyticsRow({ q, onToggleClassReview }: QuestionAnalyti
           className={clsx(
             "flex-shrink-0 px-2 py-1 rounded text-xs font-medium transition-colors",
             q.classReview
-              ? "bg-warm-coral/20 text-warm-coral border border-warm-coral/30"
-              : "bg-light-bg text-soft-mute border border-divider hover:border-warm-coral/30 hover:text-warm-coral"
+              ? "bg-warm-coral/20 text-warm-coral-text border border-warm-coral/30"
+              : "bg-light-bg text-soft-mute border border-divider hover:border-warm-coral/30 hover:text-warm-coral-text"
           )}
         >
           <BookOpen size={12} className="inline mr-1" />

@@ -44,7 +44,7 @@ export default function TeacherSidebar({ canReview = false }: Props) {
     <SidebarShell
       heading="Teacher"
       items={navItems}
-      activeClassName="bg-warm-coral/15 text-warm-coral"
+      activeClassName="bg-warm-coral/15 text-warm-coral-text"
     />
   );
 }

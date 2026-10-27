@@ -223,17 +223,17 @@ export default async function StudentTestLandingPage({
 
         <div className="grid grid-cols-3 gap-4">
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
-            <Clock size={20} className="text-warm-coral mb-2" />
+            <Clock size={20} className="text-warm-coral-text mb-2" />
             <div className="text-charcoal font-semibold">{timeLimitDisplay}</div>
             <div className="text-soft-mute text-xs">Time Limit</div>
           </div>
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
-            <BookOpen size={20} className="text-warm-coral mb-2" />
+            <BookOpen size={20} className="text-warm-coral-text mb-2" />
             <div className="text-charcoal font-semibold">{questionCount}</div>
             <div className="text-soft-mute text-xs">Questions</div>
           </div>
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
-            <Calendar size={20} className="text-warm-coral mb-2" />
+            <Calendar size={20} className="text-warm-coral-text mb-2" />
             <div className="text-charcoal font-semibold text-sm">
               {test.due_date ? formatDate(test.due_date) : "No deadline"}
             </div>

@@ -131,7 +131,7 @@ export function CrossTestQuestionTable({ rows, testOptions }: Props) {
                     <td className="px-5 py-3">
                       <Link
                         href={`/teacher/tests/${q.testIdForLink}/analytics/${q.questionId}`}
-                        className="text-warm-coral text-xs hover:underline whitespace-nowrap"
+                        className="text-warm-coral-text text-xs hover:underline whitespace-nowrap"
                       >
                         {t("view")}
                       </Link>

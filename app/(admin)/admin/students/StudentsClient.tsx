@@ -332,7 +332,7 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                       <td className="px-5 py-3">
                         <Link
                           href={`/admin/students/${student.id}`}
-                          className="block hover:text-warm-coral transition-colors"
+                          className="block hover:text-warm-coral-text transition-colors"
                         >
                           <div className="font-medium text-charcoal">
                             {student.display_name ?? "—"}

@@ -131,7 +131,7 @@ export default function TestDetailActions({ testId, testName, status, submission
             <div className="px-5 py-4 space-y-2">
               <label className="block text-charcoal text-sm font-medium">
                 Type the test name to confirm:{" "}
-                <span className="font-mono text-warm-coral">{testName}</span>
+                <span className="font-mono text-warm-coral-text">{testName}</span>
               </label>
               <input
                 value={deleteText}

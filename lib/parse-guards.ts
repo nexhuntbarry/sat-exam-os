@@ -3,6 +3,29 @@ import { checkChoiceAlignment, type PdfTextChoices } from "@/lib/pdf-text-choice
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
+// ── Parser-placeholder detector ──────────────────────────────────────
+// The AI parser sometimes writes placeholder text instead of real content
+// ("(not visible — page cut off)", "[Bar chart: …]"). Such a question must
+// never be Approved — every approve path (manual, bulk, auto-promote, repair)
+// checks this first. Returns the offending snippet, or null when clean.
+const PARSE_PLACEHOLDER = /not (fully )?visible|partially visible|page (is )?cut off|\[(bar chart|graph|table|figure|image)[:\]]/i;
+
+export function findParsePlaceholder(questionText: string | null | undefined, choices: unknown): string | null {
+  const texts = [questionText ?? ""];
+  if (Array.isArray(choices)) {
+    for (const c of choices) texts.push((typeof c === "string" ? c : (c as { text?: string } | null)?.text) || "");
+  }
+  for (const t of texts) {
+    const m = PARSE_PLACEHOLDER.exec(t);
+    if (m) return m[0];
+  }
+  return null;
+}
+
+export function placeholderNote(snippet: string): string {
+  return `Needs review: contains parser placeholder text (${snippet})`;
+}
+
 // ── Per-question completeness gate ───────────────────────────────────
 // A question is only fit to be Approved/live if it's actually complete:
 // a real stem, four non-empty choices for MCQ, and a stored answer. Anything
@@ -42,6 +65,8 @@ export async function enforceCompleteness(
       if (good.length < 4) problems.push(`${good.length}/4 choices`);
     }
     if (!q.correct_answer || !q.correct_answer.trim()) problems.push("no answer");
+    const placeholder = findParsePlaceholder(q.question_text, q.choices);
+    if (placeholder) problems.push(`parser placeholder text (${placeholder})`);
     if (problems.length === 0) continue;
 
     demoted++;

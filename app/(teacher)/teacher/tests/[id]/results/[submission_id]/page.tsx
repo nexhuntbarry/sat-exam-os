@@ -249,7 +249,7 @@ export default function SubmissionDetailPage() {
                 Est. SAT score
                 {submission.scaledSection ? ` · ${submission.scaledSection}` : ""}
               </div>
-              <div className="text-3xl font-bold text-warm-coral">
+              <div className="text-3xl font-bold text-warm-coral-text">
                 {effectiveScaled}
                 <span className="text-sm text-soft-mute font-normal">/800</span>
               </div>
@@ -346,7 +346,7 @@ export default function SubmissionDetailPage() {
                     </p>
                   </div>
                   {m.isCurrent && (
-                    <span className="text-warm-coral text-[11px] font-semibold uppercase tracking-wider">
+                    <span className="text-warm-coral-text text-[11px] font-semibold uppercase tracking-wider">
                       Current
                     </span>
                   )}

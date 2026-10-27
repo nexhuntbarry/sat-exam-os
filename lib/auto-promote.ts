@@ -8,6 +8,7 @@
 // has 2 questions" because nothing got approved.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
 
 export interface AutoPromoteSummary {
   candidates: number;
@@ -33,7 +34,7 @@ export async function autoPromoteModule(
   const { data: candidates, error } = await db
     .from("questions")
     .select(
-      "id, ai_confidence_score, correct_answer, has_image, image_urls, question_type, choices",
+      "id, ai_confidence_score, correct_answer, has_image, image_urls, question_type, choices, question_text, parsing_notes",
     )
     .eq("module_id", moduleId)
     .eq("parsing_status", "Draft")
@@ -41,7 +42,27 @@ export async function autoPromoteModule(
   if (error) {
     throw new Error(`autoPromote select: ${error.message}`);
   }
+  // Parser placeholder text ("not visible", "[Bar chart: …]") → never
+  // promote; move to Needs Review with a note so a human fixes the text.
+  const now = new Date().toISOString();
+  const placeholderIds = new Set<string>();
+  for (const row of candidates ?? []) {
+    const placeholder = findParsePlaceholder(row.question_text, row.choices);
+    if (!placeholder) continue;
+    placeholderIds.add(row.id as string);
+    const base = ((row.parsing_notes as string | null) || "").trim();
+    const note = placeholderNote(placeholder);
+    await db
+      .from("questions")
+      .update({
+        parsing_status: "Needs Review",
+        parsing_notes: base && !base.includes("parser placeholder text") ? `${base}; ${note}` : note,
+        updated_at: now,
+      })
+      .eq("id", row.id);
+  }
   const promotable = (candidates ?? []).filter((row) => {
+    if (placeholderIds.has(row.id as string)) return false;
     const hasAnswer =
       row.correct_answer != null && String(row.correct_answer).trim() !== "";
     if (!hasAnswer) return false;
@@ -64,7 +85,6 @@ export async function autoPromoteModule(
     };
   }
 
-  const now = new Date().toISOString();
   const CHUNK = 100;
   let promoted = 0;
   for (let i = 0; i < promotable.length; i += CHUNK) {

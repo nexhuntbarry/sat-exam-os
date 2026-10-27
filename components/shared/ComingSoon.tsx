@@ -19,7 +19,7 @@ export default async function ComingSoon({
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center space-y-6 max-w-md mx-auto">
       <div className="p-5 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
-        <Construction size={36} className="text-warm-coral" />
+        <Construction size={36} className="text-warm-coral-text" />
       </div>
       <div className="space-y-2">
         <h1 className="text-2xl font-bold text-charcoal">{title}</h1>

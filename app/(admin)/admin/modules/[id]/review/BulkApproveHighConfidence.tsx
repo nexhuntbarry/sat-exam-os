@@ -37,7 +37,10 @@ export default function BulkApproveHighConfidence({ moduleId }: BulkApproveHighC
       });
       const json = await res.json();
       if (res.ok) {
-        showToast(`Approved ${json.approved} high-confidence questions`);
+        showToast(
+          `Approved ${json.approved} high-confidence questions` +
+            (json.blocked ? ` · ${json.blocked} kept in Needs Review (parser placeholder text)` : ""),
+        );
         router.refresh();
       } else {
         showToast(json.error ?? "Failed");

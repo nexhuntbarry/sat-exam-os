@@ -76,7 +76,7 @@ export default function FormulaSheetSetting({ initialUrl, initialUpdatedAt }: Pr
   return (
     <section className="bg-surface border border-divider rounded-2xl p-6 space-y-4">
       <div className="flex items-start gap-3">
-        <ImageIcon size={18} className="text-warm-coral mt-0.5 shrink-0" />
+        <ImageIcon size={18} className="text-warm-coral-text mt-0.5 shrink-0" />
         <div className="flex-1">
           <h2 className="text-charcoal font-semibold">Math formula reference sheet</h2>
           <p className="text-soft-mute text-xs mt-1 leading-relaxed">

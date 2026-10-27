@@ -241,7 +241,7 @@ export default async function StudentResultsPage() {
             <p className="text-soft-mute text-sm">No completed tests yet.</p>
             <Link
               href="/student/tests"
-              className="inline-block mt-2 px-4 py-2 rounded-xl bg-warm-coral/15 text-warm-coral text-sm hover:bg-warm-coral/25 transition-colors"
+              className="inline-block mt-2 px-4 py-2 rounded-xl bg-warm-coral/15 text-warm-coral-text text-sm hover:bg-warm-coral/25 transition-colors"
             >
               Go to My Tests
             </Link>
@@ -280,7 +280,7 @@ export default async function StudentResultsPage() {
                               {pct.toFixed(1)}%
                             </div>
                             {r.scaledScore != null && (
-                              <div className="text-warm-coral text-xs font-medium">
+                              <div className="text-warm-coral-text text-xs font-medium">
                                 {r.scaledScore}/800
                               </div>
                             )}

@@ -213,7 +213,7 @@ export default async function TestDetailPage({
               {test.status}
             </span>
             {test.is_adaptive && (
-              <span className="px-2 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-warm-coral/15 text-warm-coral">
+              <span className="px-2 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-warm-coral/15 text-warm-coral-text">
                 Adaptive
               </span>
             )}
@@ -329,7 +329,7 @@ export default async function TestDetailPage({
       <div className="bg-surface border border-divider rounded-2xl p-5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-charcoal font-semibold">Submissions</h2>
-          <Link href={`/admin/tests/${test.id}/submissions`} className="text-warm-coral text-sm hover:underline">
+          <Link href={`/admin/tests/${test.id}/submissions`} className="text-warm-coral-text text-sm hover:underline">
             View all submissions →
           </Link>
         </div>

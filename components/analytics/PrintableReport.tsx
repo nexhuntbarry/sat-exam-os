@@ -25,7 +25,7 @@ export default function PrintableReport({
       {/* Header */}
       <div className="flex items-start justify-between gap-4 border-b border-divider pb-4">
         <div>
-          <div className="text-xs uppercase tracking-wide text-warm-coral font-semibold">SAT Score Report</div>
+          <div className="text-xs uppercase tracking-wide text-warm-coral-text font-semibold">SAT Score Report</div>
           <h1 className="text-2xl font-bold text-charcoal">{studentName}</h1>
           <p className="text-soft-mute text-sm">Generated {generatedOn}</p>
         </div>

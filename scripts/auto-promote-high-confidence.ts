@@ -32,6 +32,7 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { createClient } from "@supabase/supabase-js";
+import { findParsePlaceholder } from "../lib/parse-guards";
 
 function loadEnv(file: string, overwrite: boolean) {
   try {
@@ -93,7 +94,7 @@ async function main() {
   let q = sb
     .from("questions")
     .select(
-      "id, original_question_number, module_id, ai_confidence_score, correct_answer, has_image, image_urls, question_type, choices",
+      "id, original_question_number, module_id, ai_confidence_score, correct_answer, has_image, image_urls, question_type, choices, question_text",
     )
     .eq("parsing_status", "Draft")
     .gte("ai_confidence_score", threshold);
@@ -112,6 +113,8 @@ async function main() {
       row.has_image === true &&
       (!Array.isArray(row.image_urls) || row.image_urls.length === 0);
     if (blindImage) return false;
+    // Parser placeholder text ("not visible", "[Bar chart: …]") — never promote.
+    if (findParsePlaceholder(row.question_text, row.choices)) return false;
     // MCQ with no choices array is a parser drop — promoting it would
     // ship a question to students that renders the stem with no options
     // to pick from. Guard explicitly.

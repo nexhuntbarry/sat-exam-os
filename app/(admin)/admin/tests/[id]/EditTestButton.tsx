@@ -194,7 +194,7 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-2xl shadow-2xl max-h-[92vh] overflow-y-auto">
             <div className="px-5 py-4 border-b border-divider flex items-center justify-between sticky top-0 bg-surface z-10">
               <div className="flex items-center gap-2">
-                <Pencil size={16} className="text-warm-coral" />
+                <Pencil size={16} className="text-warm-coral-text" />
                 <h3 className="font-bold text-charcoal text-base">Edit test</h3>
               </div>
               <button

@@ -57,7 +57,7 @@ export default function GrantRetakeButton({
     <button
       onClick={grant}
       disabled={busy}
-      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral text-xs font-medium transition-colors disabled:opacity-40"
+      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral-text text-xs font-medium transition-colors disabled:opacity-40"
       title="Lets this student start one fresh attempt"
     >
       <RefreshCw size={11} />

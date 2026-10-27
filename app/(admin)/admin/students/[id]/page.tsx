@@ -235,7 +235,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
 const statusStyles: Record<string, string> = {
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
   "Not Started": "bg-light-bg text-mid-gray",
 };
 
@@ -374,7 +374,7 @@ export default async function AdminStudentDetailPage({
         </div>
         <div className="bg-surface border border-divider rounded-2xl p-5">
           <p className="text-soft-mute text-xs">Average %</p>
-          <p className="text-3xl font-bold text-warm-coral mt-1">
+          <p className="text-3xl font-bold text-warm-coral-text mt-1">
             {avgPct != null ? `${avgPct.toFixed(1)}%` : "—"}
           </p>
         </div>
@@ -465,7 +465,7 @@ export default async function AdminStudentDetailPage({
                         </div>
                       )}
                     </td>
-                    <td className="px-5 py-3 text-warm-coral text-sm font-medium">
+                    <td className="px-5 py-3 text-warm-coral-text text-sm font-medium">
                       <div>{g.scaledScore != null ? `${g.scaledScore}/800` : "—"}</div>
                       {g.isMultiModule && g.modules.length > 0 && (
                         <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
@@ -489,7 +489,7 @@ export default async function AdminStudentDetailPage({
                     <td className="px-5 py-3">
                       <Link
                         href={`/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`}
-                        className="inline-flex items-center gap-1 text-xs text-warm-coral hover:underline"
+                        className="inline-flex items-center gap-1 text-xs text-warm-coral-text hover:underline"
                       >
                         <ExternalLink size={11} />
                         Detail

@@ -121,7 +121,7 @@ export default async function StudentDashboardPage() {
       {/* Profile card */}
       <div className="bg-surface border border-divider rounded-2xl p-6 flex items-start gap-5">
         <div className="w-14 h-14 rounded-full bg-warm-coral/20 border border-warm-coral/30 flex items-center justify-center shrink-0">
-          <span className="text-xl font-bold text-warm-coral">
+          <span className="text-xl font-bold text-warm-coral-text">
             {user.displayName?.charAt(0)?.toUpperCase() ?? "S"}
           </span>
         </div>
@@ -145,10 +145,10 @@ export default async function StudentDashboardPage() {
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-divider flex items-center justify-between">
           <h2 className="font-semibold text-charcoal flex items-center gap-2">
-            <ClipboardList size={16} className="text-warm-coral" />
+            <ClipboardList size={16} className="text-warm-coral-text" />
             Upcoming Tests
           </h2>
-          <Link href="/student/tests" className="text-xs text-warm-coral hover:underline">
+          <Link href="/student/tests" className="text-xs text-warm-coral-text hover:underline">
             View all
           </Link>
         </div>
@@ -187,7 +187,7 @@ export default async function StudentDashboardPage() {
                       className={clsx(
                         "shrink-0 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
                         isInProgress
-                          ? "bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25"
+                          ? "bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25"
                           : "bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg"
                       )}
                     >

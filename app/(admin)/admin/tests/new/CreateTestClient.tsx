@@ -250,7 +250,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                 <>
                   {" "}
                   {hiddenCount} module{hiddenCount === 1 ? " is" : "s are"} hidden until review is finished in{" "}
-                  <a href="/admin/modules" className="text-warm-coral hover:underline">Modules</a>.
+                  <a href="/admin/modules" className="text-warm-coral-text hover:underline">Modules</a>.
                 </>
               )}
             </p>
@@ -424,7 +424,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                       onChange={(e) => setAdaptiveThreshold(Number(e.target.value))}
                       className="flex-1 accent-warm-coral"
                     />
-                    <span className="font-mono text-warm-coral w-12 text-right">
+                    <span className="font-mono text-warm-coral-text w-12 text-right">
                       {adaptiveThreshold}%
                     </span>
                   </div>
@@ -624,7 +624,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
             {isMathTest && (
               <div className="space-y-3 pt-2 border-t border-divider">
                 <div className="text-charcoal text-sm font-semibold flex items-center gap-2">
-                  <Calculator size={14} className="text-warm-coral" />
+                  <Calculator size={14} className="text-warm-coral-text" />
                   Math aids
                 </div>
 
@@ -651,13 +651,13 @@ export default function CreateTestClient({ modules, teachers, students, classGro
 
                 <div className="p-3 rounded-xl bg-surface border border-divider space-y-1.5">
                   <div className="text-charcoal text-sm font-medium flex items-center gap-1.5">
-                    <ImageIcon size={13} className="text-warm-coral" />
+                    <ImageIcon size={13} className="text-warm-coral-text" />
                     Formula reference sheet
                   </div>
                   <p className="text-soft-mute text-xs leading-relaxed">
                     Now a global setting — admin uploads once and every Math test uses
                     the same sheet.{" "}
-                    <a href="/admin/settings" className="text-warm-coral hover:underline">
+                    <a href="/admin/settings" className="text-warm-coral-text hover:underline">
                       Manage in Platform settings →
                     </a>
                   </p>

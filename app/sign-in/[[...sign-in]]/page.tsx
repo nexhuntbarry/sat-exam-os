@@ -46,7 +46,7 @@ export default function SignInPage() {
                 "bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold",
               footer: "bg-transparent",
               footerActionText: "text-mid-gray",
-              footerActionLink: "text-warm-coral hover:text-warm-coral-dark font-semibold",
+              footerActionLink: "text-warm-coral-text hover:text-warm-coral-dark font-semibold",
             },
           }}
         />

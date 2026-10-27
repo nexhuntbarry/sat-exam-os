@@ -109,7 +109,7 @@ export default function QuestionDetailPage() {
       <div className="max-w-4xl mx-auto py-16 text-center space-y-3">
         <p className="text-charcoal font-semibold">You don&rsquo;t have access to this test&rsquo;s analytics.</p>
         <p className="text-soft-mute text-sm">It may belong to another class or a subject you don&rsquo;t teach.</p>
-        <Link href="/teacher/tests" className="text-warm-coral text-sm hover:underline">Back to My Tests</Link>
+        <Link href="/teacher/tests" className="text-warm-coral-text text-sm hover:underline">Back to My Tests</Link>
       </div>
     );
   }
@@ -174,8 +174,8 @@ export default function QuestionDetailPage() {
             className={clsx(
               "flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
               classReview
-                ? "bg-warm-coral/20 text-warm-coral border border-warm-coral/30"
-                : "bg-light-bg text-soft-mute border border-divider hover:border-warm-coral/20 hover:text-warm-coral"
+                ? "bg-warm-coral/20 text-warm-coral-text border border-warm-coral/30"
+                : "bg-light-bg text-soft-mute border border-divider hover:border-warm-coral/20 hover:text-warm-coral-text"
             )}
           >
             <BookOpen size={14} />
@@ -298,7 +298,7 @@ export default function QuestionDetailPage() {
                     {subId && (
                       <Link
                         href={`/teacher/tests/${testId}/results/${subId}`}
-                        className="text-warm-coral text-xs hover:underline"
+                        className="text-warm-coral-text text-xs hover:underline"
                       >
                         View
                       </Link>

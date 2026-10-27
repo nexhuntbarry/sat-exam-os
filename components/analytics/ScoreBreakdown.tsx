@@ -11,13 +11,13 @@ const TIER_TEXT: Record<Tier, string> = {
   excellent: "text-status-success",
   solid: "text-status-info",
   developing: "text-status-warning",
-  "needs-work": "text-warm-coral",
+  "needs-work": "text-warm-coral-text",
 };
 const TIER_SOFT: Record<Tier, string> = {
   excellent: "bg-status-success/12 text-status-success",
   solid: "bg-status-info/12 text-status-info",
   developing: "bg-status-warning/12 text-status-warning",
-  "needs-work": "bg-warm-coral/12 text-warm-coral",
+  "needs-work": "bg-warm-coral/12 text-warm-coral-text",
 };
 
 function SkillRow({ s }: { s: SkillStat }) {
@@ -54,7 +54,7 @@ function DomainInner({ d, tag }: { d: DomainStat; tag?: "strength" | "focus" }) 
           <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-status-success/12 text-status-success">Strength</span>
         )}
         {tag === "focus" && (
-          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-warm-coral/12 text-warm-coral">Focus</span>
+          <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-warm-coral/12 text-warm-coral-text">Focus</span>
         )}
       </div>
     </>
@@ -110,7 +110,7 @@ export default function ScoreBreakdown({
   return (
     <section className="rounded-2xl border border-divider bg-surface p-5 md:p-6 space-y-5">
       <div className="flex items-center gap-2">
-        <Sparkles size={18} className="text-warm-coral" />
+        <Sparkles size={18} className="text-warm-coral-text" />
         <h2 className="text-base font-semibold text-charcoal">{title}</h2>
       </div>
 

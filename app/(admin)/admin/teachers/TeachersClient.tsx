@@ -288,9 +288,9 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                     <td className="px-5 py-3">
                       <Link
                         href={`/admin/teachers/${teacher.id}`}
-                        className="block hover:text-warm-coral transition-colors"
+                        className="block hover:text-warm-coral-text transition-colors"
                       >
-                        <div className="font-medium text-charcoal hover:text-warm-coral">
+                        <div className="font-medium text-charcoal hover:text-warm-coral-text">
                           {teacher.display_name ?? "—"}
                         </div>
                         <div className="flex items-center gap-1 text-soft-mute text-xs mt-0.5">
@@ -310,7 +310,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                         className={clsx(
                           "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
                           teacher.can_review_questions
-                            ? "bg-warm-coral/15 text-warm-coral hover:bg-warm-coral/25"
+                            ? "bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25"
                             : "bg-light-bg text-mid-gray hover:bg-divider",
                         )}
                         title={

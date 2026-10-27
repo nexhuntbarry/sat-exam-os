@@ -333,7 +333,7 @@ export default async function StudentResultPage({
             <span className="text-soft-mute text-xs uppercase tracking-wider">
               Estimated SAT score{submission.scaled_section ? ` · ${submission.scaled_section}` : ""}
             </span>
-            <span className="text-warm-coral text-3xl font-bold">
+            <span className="text-warm-coral-text text-3xl font-bold">
               {combined.scaled}
               <span className="text-base text-soft-mute font-normal">/800</span>
             </span>
@@ -355,7 +355,7 @@ export default async function StudentResultPage({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-charcoal font-semibold text-sm">{m.label}</span>
-                  <span className="text-warm-coral text-sm font-semibold">
+                  <span className="text-warm-coral-text text-sm font-semibold">
                     {m.percentage.toFixed(1)}%
                   </span>
                 </div>
@@ -383,7 +383,7 @@ export default async function StudentResultPage({
               <span className="text-soft-mute text-xs uppercase tracking-wider">
                 Estimated SAT score{submission.scaled_section ? ` · ${submission.scaled_section}` : ""}
               </span>
-              <span className="text-warm-coral text-3xl font-bold">
+              <span className="text-warm-coral-text text-3xl font-bold">
                 {submission.scaled_score}
                 <span className="text-base text-soft-mute font-normal">/800</span>
               </span>
@@ -420,14 +420,14 @@ export default async function StudentResultPage({
           <div className="text-soft-mute text-xs">Incorrect</div>
         </div>
         <div className="bg-surface border border-divider rounded-xl p-4 flex flex-col items-center gap-1">
-          <Clock size={20} className="text-warm-coral" />
+          <Clock size={20} className="text-warm-coral-text" />
           <div className="text-charcoal font-semibold text-sm">
             {formatDuration(combined ? combined.timeSeconds : submission.time_spent_seconds)}
           </div>
           <div className="text-soft-mute text-xs">Time Spent</div>
         </div>
         <div className="bg-surface border border-divider rounded-xl p-4 flex flex-col items-center gap-1">
-          <BarChart2 size={20} className="text-warm-coral" />
+          <BarChart2 size={20} className="text-warm-coral-text" />
           <div className="text-charcoal font-semibold">#{submission.attempt_number}</div>
           <div className="text-soft-mute text-xs">Attempt</div>
         </div>
@@ -504,26 +504,24 @@ export default async function StudentResultPage({
                       {q.question_text}
                     </MathMarkdown>
 
-                    {/* Question figure: recovered crop(s), else the source PDF page. */}
-                    {q.image_urls && q.image_urls.length > 0 ? (
+                    {/* Question figure: recovered crop(s) only — students never see the
+                        raw source scan page (M-20). Lazy so the review list doesn't
+                        download every figure up front (M-25). */}
+                    {q.image_urls && q.image_urls.length > 0 && (
                       <div className="flex flex-wrap gap-3">
                         {q.image_urls.map((url, i) => (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img
                             key={url}
                             src={`/api/blob-image?u=${encodeURIComponent(url)}`}
-                            alt={q.image_alts?.[i] ?? "Question figure"}
+                            alt={q.image_alts?.[i] || `Figure for question ${q.original_question_number}`}
+                            loading="lazy"
+                            decoding="async"
                             className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
                           />
                         ))}
                       </div>
-                    ) : (q.has_image || q.has_table) ? (
-                      <iframe
-                        src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
-                        className="w-full h-[420px] rounded-xl border border-divider bg-white"
-                        title={`Question figure (PDF page ${q.page_number ?? 1})`}
-                      />
-                    ) : null}
+                    )}
 
                     {q.question_type === "Multiple Choice" && (q.choices ?? []).length > 0 && (
                       <div className="space-y-1.5">
@@ -564,7 +562,7 @@ export default async function StudentResultPage({
 
                     {test.show_explanations_after_submission && q.explanation && (
                       <div className="p-3 bg-warm-coral/5 border border-warm-coral/15 rounded-lg">
-                        <div className="text-warm-coral text-xs font-medium mb-1">Explanation</div>
+                        <div className="text-warm-coral-text text-xs font-medium mb-1">Explanation</div>
                         <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1.5 [&_p]:leading-relaxed">
                           {q.explanation}
                         </MathMarkdown>

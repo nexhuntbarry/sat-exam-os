@@ -302,7 +302,7 @@ export default async function TestResultsPage({
           />
           <Link
             href={`/teacher/tests/${id}/analytics`}
-            className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral text-sm font-medium hover:bg-warm-coral/20 transition-colors"
+            className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral-text text-sm font-medium hover:bg-warm-coral/20 transition-colors"
           >
             Question Analytics
           </Link>

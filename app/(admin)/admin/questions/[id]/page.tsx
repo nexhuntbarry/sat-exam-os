@@ -76,7 +76,7 @@ export default async function QuestionDetailPage({
         {question.modules && (
           <Link
             href={`/admin/modules/${question.module_id}`}
-            className="text-xs text-warm-coral hover:underline"
+            className="text-xs text-warm-coral-text hover:underline"
           >
             {question.modules.module_name}
           </Link>

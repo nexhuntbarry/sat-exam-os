@@ -33,7 +33,7 @@ export default async function ReviewerQuestionDetailPage({
         </Link>
         <h1 className="text-xl font-bold text-charcoal">Review Question</h1>
         {question.modules && (
-          <span className="text-xs text-warm-coral">{question.modules.module_name}</span>
+          <span className="text-xs text-warm-coral-text">{question.modules.module_name}</span>
         )}
       </div>
       <QuestionReviewPanel question={question} />

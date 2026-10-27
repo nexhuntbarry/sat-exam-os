@@ -183,7 +183,7 @@ function TestReviewCard({
     <section className="bg-surface border border-divider rounded-2xl overflow-hidden flex flex-col">
       <header className="px-5 py-4 border-b border-divider flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <BarChart2 size={18} className="text-warm-coral" />
+          <BarChart2 size={18} className="text-warm-coral-text" />
           <h2 className="text-charcoal font-semibold">Test Review</h2>
         </div>
         {review && review.tests.length > 0 && (
@@ -256,7 +256,7 @@ function TestReviewCard({
                   {review.selectedTest && (
                     <Link
                       href={`/teacher/tests/${review.selectedTest.id}/analytics/${q.questionId}`}
-                      className="text-warm-coral text-xs hover:underline flex items-center gap-0.5"
+                      className="text-warm-coral-text text-xs hover:underline flex items-center gap-0.5"
                     >
                       Detail <ChevronRight size={12} />
                     </Link>
@@ -269,7 +269,7 @@ function TestReviewCard({
             <footer className="px-5 py-3 border-t border-divider text-right">
               <Link
                 href={`/teacher/tests/${review.selectedTest.id}/analytics`}
-                className="text-warm-coral text-sm font-medium hover:underline inline-flex items-center gap-1"
+                className="text-warm-coral-text text-sm font-medium hover:underline inline-flex items-center gap-1"
               >
                 Open full analytics <ChevronRight size={14} />
               </Link>
@@ -301,7 +301,7 @@ function SkillDrillCard({
   return (
     <section className="bg-surface border border-divider rounded-2xl overflow-hidden flex flex-col">
       <header className="px-5 py-4 border-b border-divider flex items-center gap-2">
-        <Target size={18} className="text-warm-coral" />
+        <Target size={18} className="text-warm-coral-text" />
         <h2 className="text-charcoal font-semibold">Skill Drill</h2>
       </header>
 
@@ -498,7 +498,7 @@ function PracticeSetModal({
         <header className="px-5 py-4 border-b border-divider flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-charcoal font-semibold truncate">
-              Build practice set: <span className="text-warm-coral">{skill}</span>
+              Build practice set: <span className="text-warm-coral-text">{skill}</span>
             </h3>
             <p className="text-soft-mute text-xs mt-0.5">
               Top {questions.length} candidates ranked by class error rate, then difficulty.

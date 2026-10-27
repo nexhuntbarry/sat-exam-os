@@ -234,7 +234,7 @@ export default async function TeacherClassDetailPage({
                     <td className="px-5 py-3">
                       <Link
                         href={`/teacher/classes/${group.id}/students/${s.id}`}
-                        className="font-medium text-charcoal hover:text-warm-coral transition-colors"
+                        className="font-medium text-charcoal hover:text-warm-coral-text transition-colors"
                       >
                         {s.display_name ?? s.email}
                       </Link>
@@ -283,7 +283,7 @@ export default async function TeacherClassDetailPage({
                     <td className="px-5 py-3">
                       <Link
                         href={`/teacher/classes/${group.id}/students/${s.id}`}
-                        className="text-warm-coral text-xs font-medium hover:underline"
+                        className="text-warm-coral-text text-xs font-medium hover:underline"
                       >
                         View tests
                       </Link>

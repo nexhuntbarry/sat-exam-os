@@ -52,7 +52,7 @@ interface Props {
 const statusStyles: Record<string, string> = {
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
   Expired: "bg-status-error/15 text-status-error",
 };
 
@@ -125,9 +125,9 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
   function SortIcon({ k }: { k: SortKey }) {
     if (sortKey !== k) return <ArrowUpDown size={12} className="text-soft-mute" />;
     return sortAsc ? (
-      <ChevronUp size={12} className="text-warm-coral" />
+      <ChevronUp size={12} className="text-warm-coral-text" />
     ) : (
-      <ChevronDown size={12} className="text-warm-coral" />
+      <ChevronDown size={12} className="text-warm-coral-text" />
     );
   }
 
@@ -271,7 +271,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                           const s = effectiveScaled(row);
                           return s != null ? (
                             <span
-                              className="text-warm-coral text-xs"
+                              className="text-warm-coral-text text-xs"
                               title="Estimated SAT scaled score (200-800)"
                             >
                               {s}/800
@@ -317,7 +317,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                       {(row.status === "Submitted" || row.status === "Late") && (
                         <Link
                           href={`/teacher/tests/${row.testId}/results/${row.submissionId}`}
-                          className="text-warm-coral text-xs hover:underline"
+                          className="text-warm-coral-text text-xs hover:underline"
                         >
                           {t("view")}
                         </Link>

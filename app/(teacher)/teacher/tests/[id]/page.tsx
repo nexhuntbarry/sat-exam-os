@@ -220,7 +220,7 @@ function buildSubmissionAttempts(rows: RawSubmission[]): SubmissionAttempt[] {
 }
 
 const statusStyles: Record<string, string> = {
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
 };
@@ -330,7 +330,7 @@ export default async function TeacherTestDetailPage({
         </Link>
         <Link
           href={`/teacher/tests/${id}/results`}
-          className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral text-sm font-medium hover:bg-warm-coral/20 transition-colors"
+          className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral-text text-sm font-medium hover:bg-warm-coral/20 transition-colors"
         >
           Full Results Dashboard
         </Link>
@@ -379,7 +379,7 @@ export default async function TeacherTestDetailPage({
                         {a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—"}
                       </div>
                       {a.scaledScore != null && (
-                        <div className="text-warm-coral text-xs font-medium">
+                        <div className="text-warm-coral-text text-xs font-medium">
                           {a.scaledScore}/800
                         </div>
                       )}

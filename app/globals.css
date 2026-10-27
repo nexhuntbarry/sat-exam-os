@@ -7,13 +7,15 @@
   --color-surface: #FFFFFF;
   --color-light-bg: #F6F6F6;
   --color-warm-coral: #F0523D;
+  /* L-09: darker coral for small text on white/light backgrounds (5.9:1 on white). */
+  --color-warm-coral-text: #B8341F;
   --color-warm-coral-dark: #D63F2A;
   --color-warm-coral-soft: #FFE9E4;
   --color-warm-amber: #E8893B;
   --color-charcoal: #1F1F1F;
   --color-graphite: #272727;
   --color-mid-gray: #3E3E3E;
-  --color-soft-mute: #9C9999;
+  --color-soft-mute: #6B6868; /* L-09: was #9C9999 (2.7:1); now ≥4.5:1 */
   --color-divider: #E4E4E4;
 
   /* Status colors (slightly muted for light bg) */
@@ -61,7 +63,7 @@ html {
   display: block;
   text-align: right;
   font-size: 0.7rem;
-  color: var(--color-soft-mute, #9C9999);
+  color: var(--color-soft-mute, #6B6868);
   padding: 0.15rem 0.5rem 0;
   pointer-events: none;
 }
@@ -164,7 +166,7 @@ body {
   background-color: #E4E4E4 !important;
 }
 .cl-dividerText {
-  color: #9C9999 !important;
+  color: #6B6868 !important;
 }
 .cl-formButtonPrimary {
   background-color: #F0523D !important;

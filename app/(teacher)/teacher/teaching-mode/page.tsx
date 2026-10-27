@@ -15,7 +15,7 @@ export default async function TeachingModePage() {
 
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-xl bg-warm-coral/15">
-          <Presentation size={20} className="text-warm-coral" />
+          <Presentation size={20} className="text-warm-coral-text" />
         </div>
         <div>
           <h1 className="text-2xl font-bold text-charcoal">Teaching Mode</h1>
@@ -27,7 +27,7 @@ export default async function TeachingModePage() {
         <div className="ml-auto">
           <Link
             href="/teacher/tests"
-            className="text-warm-coral text-sm hover:underline"
+            className="text-warm-coral-text text-sm hover:underline"
           >
             All tests
           </Link>

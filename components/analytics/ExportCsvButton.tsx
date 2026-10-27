@@ -50,7 +50,7 @@ export function ExportCsvButton({ testId, filename }: Props) {
         {loading ? "Exporting…" : "Export CSV"}
       </button>
       {error && (
-        <span role="alert" className="text-xs text-warm-coral">
+        <span role="alert" className="text-xs text-warm-coral-text">
           {error}
         </span>
       )}

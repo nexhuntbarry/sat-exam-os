@@ -93,10 +93,10 @@ export default async function TestsPage() {
                       className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
                     >
                       <td className="px-5 py-3">
-                        <Link href={`/admin/tests/${test.id}`} className="hover:text-warm-coral transition-colors">
+                        <Link href={`/admin/tests/${test.id}`} className="hover:text-warm-coral-text transition-colors">
                           <div className={clsx("font-medium", sectionTitleClass(mod?.section))}>{test.test_name}</div>
                           {test.is_adaptive && (
-                            <span className="text-[10px] uppercase tracking-wider text-warm-coral font-semibold">Adaptive</span>
+                            <span className="text-[10px] uppercase tracking-wider text-warm-coral-text font-semibold">Adaptive</span>
                           )}
                         </Link>
                       </td>
@@ -129,7 +129,7 @@ export default async function TestsPage() {
                       <td className="px-5 py-3">
                         <Link
                           href={`/admin/tests/${test.id}`}
-                          className="text-xs text-warm-coral hover:underline"
+                          className="text-xs text-warm-coral-text hover:underline"
                         >
                           View
                         </Link>
@@ -162,7 +162,7 @@ export default async function TestsPage() {
             <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
             <p className="text-soft-mute text-sm">
               No tests yet.{" "}
-              <Link href="/admin/tests/new" className="text-warm-coral hover:underline">
+              <Link href="/admin/tests/new" className="text-warm-coral-text hover:underline">
                 Create your first test
               </Link>
             </p>

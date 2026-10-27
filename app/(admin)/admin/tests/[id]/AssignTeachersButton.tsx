@@ -118,7 +118,7 @@ export default function AssignTeachersButton({ testId, allTeachers, currentTeach
             <div className="p-5 border-t border-divider flex items-center justify-between gap-3">
               <span className="text-xs text-soft-mute">{selected.size} selected</span>
               <div className="flex items-center gap-2">
-                {toast && <span className="text-xs text-warm-coral font-medium">{toast}</span>}
+                {toast && <span className="text-xs text-warm-coral-text font-medium">{toast}</span>}
                 <button
                   onClick={() => setOpen(false)}
                   className="px-4 py-2 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"

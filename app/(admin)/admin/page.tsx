@@ -47,7 +47,7 @@ export default async function AdminDashboardPage() {
       label: "Teachers",
       value: stats.teachers,
       icon: GraduationCap,
-      color: "text-warm-coral",
+      color: "text-warm-coral-text",
       bg: "bg-warm-coral/10 border-warm-coral/20",
       href: "/admin/teachers",
     },
@@ -101,7 +101,7 @@ export default async function AdminDashboardPage() {
             </h2>
             <a
               href="/admin/students"
-              className="text-xs text-warm-coral hover:text-warm-coral transition-colors"
+              className="text-xs text-warm-coral-text hover:text-warm-coral-text transition-colors"
             >
               View all →
             </a>
@@ -119,7 +119,7 @@ export default async function AdminDashboardPage() {
         {/* Quick Actions */}
         <div className="bg-surface border border-divider rounded-2xl p-6">
           <h2 className="font-semibold text-charcoal flex items-center gap-2 mb-4">
-            <ClipboardList size={16} className="text-warm-coral" />
+            <ClipboardList size={16} className="text-warm-coral-text" />
             Quick Actions
           </h2>
           <div className="space-y-2">

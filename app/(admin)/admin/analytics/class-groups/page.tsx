@@ -334,7 +334,7 @@ export default async function ClassGroupAnalyticsPage() {
                               ? `${t.avgPercentage.toFixed(1)}%`
                               : "—"}
                           </td>
-                          <td className="px-5 py-3 text-right text-warm-coral font-medium tabular-nums">
+                          <td className="px-5 py-3 text-right text-warm-coral-text font-medium tabular-nums">
                             {t.avgScaledScore != null ? `${t.avgScaledScore}/800` : "—"}
                           </td>
                         </tr>

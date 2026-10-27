@@ -848,7 +848,7 @@ export default function TestTakingClient({
         <div className="col-span-2 md:col-span-1 flex items-center gap-2 min-w-0">
           <div className="font-semibold text-charcoal truncate text-sm md:text-base">{test.name}</div>
           {test.moduleLabel && (
-            <span className="shrink-0 px-2 py-0.5 rounded-full bg-warm-coral/10 text-warm-coral text-xs font-medium">
+            <span className="shrink-0 px-2 py-0.5 rounded-full bg-warm-coral/10 text-warm-coral-text text-xs font-medium">
               {test.moduleLabel}
             </span>
           )}
@@ -900,7 +900,7 @@ export default function TestTakingClient({
                 />
                 <button
                   onClick={() => setTimerHidden(true)}
-                  className="text-soft-mute hover:text-charcoal p-1"
+                  className="text-soft-mute hover:text-charcoal min-w-8 min-h-8 inline-flex items-center justify-center rounded-md"
                   aria-label="Hide timer"
                   title="Hide timer"
                 >
@@ -928,7 +928,7 @@ export default function TestTakingClient({
                 "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors",
                 activeAid === "desmos"
                   ? "bg-warm-coral text-white"
-                  : "bg-warm-coral/10 text-warm-coral hover:bg-warm-coral/15",
+                  : "bg-warm-coral/10 text-warm-coral-text hover:bg-warm-coral/15",
               )}
               title="Desmos calculator"
               aria-label="Calculator"
@@ -944,7 +944,7 @@ export default function TestTakingClient({
                 "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors",
                 activeAid === "formula"
                   ? "bg-warm-coral text-white"
-                  : "bg-warm-coral/10 text-warm-coral hover:bg-warm-coral/15",
+                  : "bg-warm-coral/10 text-warm-coral-text hover:bg-warm-coral/15",
               )}
               title="Formula reference sheet"
               aria-label="Reference"
@@ -988,7 +988,7 @@ export default function TestTakingClient({
                     "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
                     flagged.has(currentQuestion.id)
                       ? "bg-status-warning/15 text-status-warning hover:bg-status-warning/25"
-                      : "text-mid-gray hover:text-warm-coral hover:bg-warm-coral/10",
+                      : "text-mid-gray hover:text-warm-coral-text hover:bg-warm-coral/10",
                   )}
                   aria-pressed={flagged.has(currentQuestion.id)}
                 >
@@ -1041,9 +1041,9 @@ export default function TestTakingClient({
             <div className="shrink-0 flex items-center justify-between border-b border-divider px-3 py-2">
               <div className="flex items-center gap-1.5 text-charcoal text-sm font-semibold">
                 {activeAid === "desmos" ? (
-                  <><Calculator size={14} className="text-warm-coral" /> Desmos calculator</>
+                  <><Calculator size={14} className="text-warm-coral-text" /> Desmos calculator</>
                 ) : (
-                  <><BookOpen size={14} className="text-warm-coral" /> Formula reference</>
+                  <><BookOpen size={14} className="text-warm-coral-text" /> Formula reference</>
                 )}
               </div>
               <button

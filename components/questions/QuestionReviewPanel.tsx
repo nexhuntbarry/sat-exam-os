@@ -104,7 +104,8 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       if (res.ok) {
         goNext();
       } else {
-        showToast("Action failed", false);
+        const json = await res.json().catch(() => ({}));
+        showToast(json.error ?? "Action failed", false);
         setActionLoading(null);
       }
     } catch {
@@ -166,7 +167,8 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
         showToast(`Marked as ${action === "needs-review" ? "Needs Review" : action}`);
         router.refresh();
       } else {
-        showToast("Action failed", false);
+        const json = await res.json().catch(() => ({}));
+        showToast(json.error ?? "Action failed", false);
       }
     } finally {
       setActionLoading(null);
@@ -405,10 +407,10 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="bg-surface border border-divider rounded-xl p-3 space-y-2">
               <p className="text-xs uppercase tracking-wider text-soft-mute font-semibold flex items-center gap-1.5">
-                <Sparkles size={12} className="text-warm-coral" />
+                <Sparkles size={12} className="text-warm-coral-text" />
                 AI answered
               </p>
-              <p className="text-2xl font-bold text-warm-coral">
+              <p className="text-2xl font-bold text-warm-coral-text">
                 {aiAnswer ?? "?"}
               </p>
               {q.explanation && (

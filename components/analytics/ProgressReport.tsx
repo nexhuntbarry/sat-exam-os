@@ -35,7 +35,7 @@ function TrendBadge({ delta }: { delta: number }) {
     );
   if (delta <= -5)
     return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-warm-coral">
+      <span className="inline-flex items-center gap-1 text-xs font-semibold text-warm-coral-text">
         <TrendingDown size={13} /> {delta}%
       </span>
     );
@@ -87,7 +87,7 @@ export default function ProgressReport({
     return (
       <section className="rounded-2xl border border-divider bg-surface p-5 md:p-6">
         <div className="flex items-center gap-2 mb-2">
-          <LineChart size={18} className="text-warm-coral" />
+          <LineChart size={18} className="text-warm-coral-text" />
           <h2 className="text-base font-semibold text-charcoal">{title}</h2>
         </div>
         <p className="text-sm text-soft-mute">Complete at least two tests to see how each area is trending over time.</p>
@@ -103,7 +103,7 @@ export default function ProgressReport({
     <section className="rounded-2xl border border-divider bg-surface p-5 md:p-6 space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <LineChart size={18} className="text-warm-coral" />
+          <LineChart size={18} className="text-warm-coral-text" />
           <div>
             <h2 className="text-base font-semibold text-charcoal">{title}</h2>
             <p className="text-xs text-soft-mute">{subtitle ?? `Across ${p.occasions} tests`}</p>

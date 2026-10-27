@@ -13,6 +13,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import type { getServiceClient } from "@/lib/supabase";
 import { fetchImageAsBase64 } from "@/lib/ai/solve-question";
+import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -130,6 +131,19 @@ export async function consensusResolve(
 
   let settled = 0, unresolved = 0, skippedBlind = 0;
   for (const q of targets) {
+    // Placeholder text in the stem/choices means the question itself is
+    // incomplete — no amount of solving makes it safe to approve.
+    const placeholder = findParsePlaceholder(q.question_text as string | null, q.choices);
+    if (placeholder) {
+      unresolved++;
+      const base = ((q.parsing_notes as string | null) || "").trim();
+      const note = placeholderNote(placeholder);
+      await db.from("questions").update({
+        parsing_notes: base && !base.includes("parser placeholder text") ? `${base}; ${note}` : note,
+        updated_at: new Date().toISOString(),
+      }).eq("id", q.id);
+      continue;
+    }
     const images = await loadImages(q);
     // A question that needs a figure but has none can only be guessed blind —
     // never auto-settle those, no matter how "confident" a text-only solve is.

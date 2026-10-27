@@ -23,7 +23,7 @@ export const dynamic = "force-dynamic";
 const statusCls: Record<string, string> = {
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
   Expired: "bg-light-bg text-mid-gray",
 };
 
@@ -318,7 +318,7 @@ export default async function TeacherStudentResultsPage({
                       {isDone ? (
                         <Link
                           href={`/teacher/tests/${s.testId}/results/${s.id}`}
-                          className="text-warm-coral text-xs font-medium hover:underline"
+                          className="text-warm-coral-text text-xs font-medium hover:underline"
                         >
                           View detail
                         </Link>

@@ -52,7 +52,7 @@ const TRACK_LABEL: Record<string, string> = {
 
 
 const statusStyles: Record<string, string> = {
-  "In Progress": "bg-warm-coral/15 text-warm-coral",
+  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
   Expired: "bg-status-error/15 text-status-error",
@@ -320,7 +320,7 @@ export default async function TestSubmissionsPage({
                         {a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—"}
                       </div>
                       {a.scaledScore != null && (
-                        <div className="text-warm-coral text-xs font-medium">
+                        <div className="text-warm-coral-text text-xs font-medium">
                           {a.scaledScore}/800
                         </div>
                       )}
@@ -366,7 +366,7 @@ export default async function TestSubmissionsPage({
                         {(a.status === "Submitted" || a.status === "Late") && (
                           <Link
                             href={`/teacher/tests/${test.id}/results/${a.detailSubmissionId}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral text-xs font-medium transition-colors"
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral-text text-xs font-medium transition-colors"
                             title="Open per-question detail (highlights, tutor notes, answer review)"
                           >
                             View detail

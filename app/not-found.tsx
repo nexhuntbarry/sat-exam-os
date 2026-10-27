@@ -28,11 +28,11 @@ export default async function NotFound() {
     <div className="min-h-screen bg-cream text-charcoal flex items-center justify-center px-4">
       <div className="max-w-md w-full text-center space-y-6">
         <div className="inline-flex items-center justify-center p-5 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
-          <Construction size={36} className="text-warm-coral" />
+          <Construction size={36} className="text-warm-coral-text" />
         </div>
 
         <div className="space-y-2">
-          <p className="text-warm-coral text-sm font-semibold tracking-widest uppercase">
+          <p className="text-warm-coral-text text-sm font-semibold tracking-widest uppercase">
             {tNotFound("code")}
           </p>
           <h1 className="text-3xl font-bold text-charcoal">{tNotFound("title")}</h1>

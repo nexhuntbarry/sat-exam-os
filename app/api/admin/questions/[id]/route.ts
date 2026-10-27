@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
+import { findParsePlaceholder } from "@/lib/parse-guards";
 
 // Answer-key edits may regenerate the explanation (AI) — allow headroom.
 export const maxDuration = 60;
@@ -76,9 +77,24 @@ export async function PATCH(
   // Capture the prior answer so we can tell whether the key actually changed.
   const { data: prior } = await db
     .from("questions")
-    .select("correct_answer")
+    .select("correct_answer, question_text, choices")
     .eq("id", id)
     .maybeSingle();
+
+  // Never let an edit flip a question to Approved while it still carries
+  // parser placeholder text (checked against the post-edit stem/choices).
+  if (update.parsing_status === "Approved") {
+    const placeholder = findParsePlaceholder(
+      "question_text" in update ? (update.question_text as string | null) : prior?.question_text,
+      "choices" in update ? update.choices : prior?.choices,
+    );
+    if (placeholder) {
+      return NextResponse.json(
+        { error: `Can't approve: the stem or choices contain parser placeholder text ("${placeholder}"). Fix the text first.` },
+        { status: 400 },
+      );
+    }
+  }
 
   const { data, error } = await db
     .from("questions")
