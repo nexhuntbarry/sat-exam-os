@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play, RotateCcw } from "lucide-react";
 
@@ -16,6 +16,11 @@ export default function StartTestButton({ testId, submissionId, isResume, label 
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  // On a slow connection the server-rendered button shows seconds before
+  // React hydrates, and a click in that window did nothing — students had
+  // to guess they should press again. Keep it visibly disabled until ready.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
 
   async function handleStart() {
     setLoading(true);
@@ -50,11 +55,11 @@ export default function StartTestButton({ testId, submissionId, isResume, label 
       {error && <p className="text-status-error text-sm text-center">{error}</p>}
       <button
         onClick={handleStart}
-        disabled={loading}
+        disabled={loading || !hydrated}
         className="w-full py-4 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-bold text-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
       >
         {isResume ? <RotateCcw size={20} /> : <Play size={20} />}
-        {loading ? "Loading..." : label ?? (isResume ? "Resume Test" : "Start Test")}
+        {loading || !hydrated ? "Loading..." : label ?? (isResume ? "Resume Test" : "Start Test")}
       </button>
     </div>
   );
