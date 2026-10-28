@@ -21,6 +21,8 @@ const MINUS_LOOKALIKES = /[\u2012\u2013\u2014\u2212\uFE63\uFF0D]/g;
 function canonical(answer: string | null | undefined): string {
   if (answer == null) return "";
   return String(answer)
+    // Full-width forms from CJK input methods: ３５ → 35, ６５／２ → 65/2.
+    .normalize("NFKC")
     .trim()
     .toLowerCase()
     .replace(MINUS_LOOKALIKES, "-")
