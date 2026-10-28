@@ -222,7 +222,33 @@ export async function finalizeSubmission(
     Math.floor((now.getTime() - startedAt.getTime()) / 1000),
   );
 
-  const isPastDue = Boolean(test.due_date && new Date(test.due_date) < now);
+  // Past due only counts when the exam was STARTED after the due date. A
+  // student who began on time and finishes within the module time limit is
+  // not Late, even if an admin moves the due date earlier mid-exam (Barry,
+  // 2026-10-28). The exam start is the earliest module of the session, so
+  // Module 2 inherits Module 1's start. Untimed modules have no limit to
+  // bound "on time", so they keep the plain due-date rule.
+  let isPastDue = Boolean(test.due_date && new Date(test.due_date) < now);
+  if (isPastDue && moduleDeadlineMs(submission, test, now.getTime()) != null) {
+    const due = new Date(test.due_date as string).getTime();
+    const { data: row } = await db
+      .from("submissions")
+      .select("session_id")
+      .eq("id", submissionId)
+      .maybeSingle();
+    let examStart = new Date(submission.started_at).getTime();
+    if (row?.session_id) {
+      const { data: first } = await db
+        .from("submissions")
+        .select("started_at")
+        .eq("session_id", row.session_id)
+        .order("started_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      if (first?.started_at) examStart = Math.min(examStart, new Date(first.started_at).getTime());
+    }
+    isPastDue = examStart >= due;
+  }
   let isOverTime = false;
   if (input.enforceTimeLimit) {
     const deadline = moduleDeadlineMs(submission, test, now.getTime());
