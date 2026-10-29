@@ -3,8 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle, Crop, Trash2 } from "lucide-react";
 import PDFViewer from "./PDFViewer";
+import ImageCropDialog from "./ImageCropDialog";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
 import { formatDate, formatDateTime } from "@/lib/datetime";
@@ -121,6 +122,54 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+
+  const [cropIndex, setCropIndex] = useState<number | null>(null);
+  const [imageBusy, setImageBusy] = useState(false);
+
+  // Delete or replace one extracted image (reviewer cleanup of bad crops).
+  async function editImage(index: number, action: "delete" | "replace", png?: Blob) {
+    const url = q.image_urls?.[index];
+    if (!url) return false;
+    const form = new FormData();
+    form.set("action", action);
+    form.set("index", String(index));
+    form.set("url", url);
+    if (png) form.set("file", new File([png], "crop.png", { type: "image/png" }));
+    setImageBusy(true);
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/images`, { method: "POST", body: form });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast(json.error ?? "Image update failed", false);
+        return false;
+      }
+      setQ((prev) => ({
+        ...prev,
+        image_urls: json.image_urls,
+        image_alts: json.image_alts,
+        ...(json.has_image === false ? { has_image: false } : {}),
+      }));
+      showToast(action === "delete" ? "Image deleted" : "Image cropped");
+      return true;
+    } catch {
+      showToast("Image update failed", false);
+      return false;
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  function deleteImage(index: number) {
+    const last = (q.image_urls?.length ?? 0) === 1;
+    const msg = last
+      ? "Delete this image? It's the only image, so this question will show no figure."
+      : "Delete this image?";
+    if (window.confirm(msg)) void editImage(index, "delete");
+  }
+
+  async function saveCrop(index: number, png: Blob) {
+    if (await editImage(index, "replace", png)) setCropIndex(null);
+  }
 
   function showToast(msg: string, ok = true) {
     setToast({ msg, ok });
@@ -527,15 +576,40 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
               </label>
               <div className="flex flex-wrap gap-3">
                 {q.image_urls.map((url, i) => (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    key={url}
-                    src={`/api/blob-image?u=${encodeURIComponent(url)}`}
-                    alt={q.image_alts?.[i] ?? "Question image"}
-                    className="max-w-full md:max-w-md rounded-xl border border-divider bg-white"
-                  />
+                  <div key={url} className="space-y-1">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={`/api/blob-image?u=${encodeURIComponent(url)}`}
+                      alt={q.image_alts?.[i] ?? "Question image"}
+                      className="max-w-full md:max-w-md rounded-xl border border-divider bg-white"
+                    />
+                    <div className="flex gap-3 text-xs">
+                      <button
+                        onClick={() => setCropIndex(i)}
+                        disabled={imageBusy}
+                        className="inline-flex items-center gap-1 text-mid-gray hover:text-charcoal disabled:opacity-40"
+                      >
+                        <Crop size={13} /> Crop
+                      </button>
+                      <button
+                        onClick={() => deleteImage(i)}
+                        disabled={imageBusy}
+                        className="inline-flex items-center gap-1 text-status-error hover:underline disabled:opacity-40"
+                      >
+                        <Trash2 size={13} /> Delete
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
+              {cropIndex !== null && q.image_urls[cropIndex] && (
+                <ImageCropDialog
+                  src={`/api/blob-image?u=${encodeURIComponent(q.image_urls[cropIndex])}`}
+                  saving={imageBusy}
+                  onCancel={() => setCropIndex(null)}
+                  onSave={(png) => saveCrop(cropIndex, png)}
+                />
+              )}
             </div>
           )}
 
