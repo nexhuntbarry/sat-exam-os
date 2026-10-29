@@ -1,0 +1,17 @@
+--- a/.omc/qa/harness/nightly/report.mjs
++++ b/.omc/qa/harness/nightly/report.mjs
+@@ -255,6 +255,14 @@
+   console.log(`=== Message length: ${fullMessage.length} chars ===`);
+   console.log(`=== JSON file: ${todayFile} ===`);
+   process.exit(0);
++}
++
++// Log tonight's run on /admin/reports (.omc/devlog). Never fails the report.
++try {
++  const { enabled, qaRunFromNightly, writeQaRun } = await import("../../../devlog/lib.mjs");
++  if (enabled()) console.log(`Dev log qa_run: ${await writeQaRun({ ...qaRunFromNightly(today), date: today.date ?? NY_DATE })}`);
++} catch (e) {
++  console.error(`Dev log write failed: ${e.message}`);
+ }
+ 
+ // Send

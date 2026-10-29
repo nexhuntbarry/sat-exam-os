@@ -530,8 +530,8 @@
         "body": "Create and maintain class groups (by campus / grade), then add students into them. Class groups make it fast to assign a test to an entire class at once."
       },
       "reports": {
-        "title": "Platform Reports",
-        "body": "Cross-center reporting — test completion rates, student performance trends, and module effectiveness. Used by admins for planning and resourcing (coming soon)."
+        "title": "Reports — testing stage log",
+        "body": "For now this page is the running log of the QA / fix stage: nightly QA results, every fix and feature with the date it went live, question bank and score changes, and items still waiting on a decision. Platform analytics comes later."
       },
       "settings": {
         "title": "Platform Settings",
