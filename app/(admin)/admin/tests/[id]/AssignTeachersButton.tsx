@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Users, X, CheckCircle2 } from "lucide-react";
 
@@ -14,14 +14,28 @@ interface Props {
   testId: string;
   allTeachers: Teacher[];
   currentTeacherIds: string[];
+  /** Controlled by AssignDialog: no trigger button, `tabs` shown above the header. */
+  open?: boolean;
+  onClose?: () => void;
+  tabs?: ReactNode;
 }
 
 // Add or remove teachers on an existing test (method A — direct assignment
 // via test_assignments.teacher_ids). PATCHes the FULL desired set, so
 // toggling a teacher off removes them.
-export default function AssignTeachersButton({ testId, allTeachers, currentTeacherIds }: Props) {
+export default function AssignTeachersButton({
+  testId,
+  allTeachers,
+  currentTeacherIds,
+  open: openProp,
+  onClose,
+  tabs,
+}: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean) => (controlled ? !v && onClose?.() : setOpenState(v));
   const [selected, setSelected] = useState<Set<string>>(new Set(currentTeacherIds));
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -61,17 +75,20 @@ export default function AssignTeachersButton({ testId, allTeachers, currentTeach
 
   return (
     <>
-      <button
-        onClick={() => { setSelected(new Set(currentTeacherIds)); setOpen(true); }}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal hover:border-warm-coral/40 text-sm font-medium transition-colors"
-      >
-        <Users size={14} />
-        Assign teachers
-      </button>
+      {!controlled && (
+        <button
+          onClick={() => { setSelected(new Set(currentTeacherIds)); setOpen(true); }}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal hover:border-warm-coral/40 text-sm font-medium transition-colors"
+        >
+          <Users size={14} />
+          Assign teachers
+        </button>
+      )}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
+            {tabs}
             <div className="flex items-center justify-between p-5 border-b border-divider">
               <div>
                 <h2 className="font-bold text-charcoal text-lg">Assign teachers</h2>

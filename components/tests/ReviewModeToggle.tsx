@@ -4,17 +4,20 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff } from "lucide-react";
 import { clsx } from "clsx";
+import HelpTip from "@/components/shared/HelpTip";
 
 interface Props {
   testId: string;
   initialUnlocked: boolean;
+  /** One-line layout for embedding in a card; the full explanation moves into a "?" tip. */
+  compact?: boolean;
 }
 
 // Toggle that flips tests.review_unlocked. When ON, every assigned
 // student can open the answer-key review for this test, regardless of
 // whether they took it. Used by teachers in class to walk through
 // questions live; flip back off after the lesson.
-export default function ReviewModeToggle({ testId, initialUnlocked }: Props) {
+export default function ReviewModeToggle({ testId, initialUnlocked, compact = false }: Props) {
   const router = useRouter();
   const [unlocked, setUnlocked] = useState(initialUnlocked);
   const [busy, setBusy] = useState(false);
@@ -41,6 +44,58 @@ export default function ReviewModeToggle({ testId, initialUnlocked }: Props) {
     } finally {
       setBusy(false);
     }
+  }
+
+  const button = (
+    <button
+      onClick={flip}
+      disabled={busy}
+      className={clsx(
+        "shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50",
+        unlocked
+          ? "bg-status-error/15 text-status-error hover:bg-status-error/25"
+          : "bg-warm-coral text-white hover:bg-warm-coral-dark",
+      )}
+    >
+      {busy ? "…" : unlocked ? "Lock again" : "Unlock for class"}
+    </button>
+  );
+
+  if (compact) {
+    // Embedded in the admin "Answers & review" card: one line, full text in "?".
+    return (
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-charcoal font-semibold text-sm">
+            {unlocked ? (
+              <Eye size={15} className="text-warm-amber shrink-0" />
+            ) : (
+              <EyeOff size={15} className="text-soft-mute shrink-0" />
+            )}
+            Class review: {unlocked ? "Unlocked" : "Locked"}
+            <HelpTip label="About class review">
+              <span className="block">
+                {unlocked
+                  ? "Students assigned to this test can now see all questions, correct answers, explanations, and their own right/wrong answers. Use during in-class walkthroughs, then lock again to hide it all."
+                  : "Students only see results for tests they themselves submitted. Flip on to open the full answer key + their own answers for class review."}
+              </span>
+              <span className="block mt-1.5">
+                Note: locking here hides the review page. If the test&rsquo;s &ldquo;Show answers after
+                submission&rdquo; option is on, students can still see their answers on their own results
+                page independently of this lock. For &ldquo;only during review, then hidden,&rdquo; keep
+                that option off.
+              </span>
+            </HelpTip>
+          </div>
+          <p className="text-soft-mute text-xs mt-0.5">
+            {unlocked
+              ? "Assigned students can see the full answer key now."
+              : "Unlock to open the answer key for an in-class walkthrough."}
+          </p>
+        </div>
+        {button}
+      </div>
+    );
   }
 
   return (
@@ -75,18 +130,7 @@ export default function ReviewModeToggle({ testId, initialUnlocked }: Props) {
           </p>
         </div>
       </div>
-      <button
-        onClick={flip}
-        disabled={busy}
-        className={clsx(
-          "shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50",
-          unlocked
-            ? "bg-status-error/15 text-status-error hover:bg-status-error/25"
-            : "bg-warm-coral text-white hover:bg-warm-coral-dark",
-        )}
-      >
-        {busy ? "…" : unlocked ? "Lock again" : "Unlock for class"}
-      </button>
+      {button}
     </div>
   );
 }

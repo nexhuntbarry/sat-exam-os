@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { UserPlus, X, Search, CheckCircle2 } from "lucide-react";
 
@@ -24,11 +24,18 @@ function getProfileGrade(s: Student): string | null {
 interface Props {
   testId: string;
   alreadyAssigned: string[];
+  /** Controlled by AssignDialog: no trigger button, `tabs` shown above the header. */
+  open?: boolean;
+  onClose?: () => void;
+  tabs?: ReactNode;
 }
 
-export default function AddStudentsButton({ testId, alreadyAssigned }: Props) {
+export default function AddStudentsButton({ testId, alreadyAssigned, open: openProp, onClose, tabs }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean) => (controlled ? !v && onClose?.() : setOpenState(v));
   const [search, setSearch] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -92,17 +99,20 @@ export default function AddStudentsButton({ testId, alreadyAssigned }: Props) {
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
-      >
-        <UserPlus size={14} />
-        Add Students
-      </button>
+      {!controlled && (
+        <button
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors"
+        >
+          <UserPlus size={14} />
+          Add Students
+        </button>
+      )}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
+            {tabs}
             <div className="flex items-center justify-between p-5 border-b border-divider">
               <div>
                 <h2 className="font-bold text-charcoal text-lg">Add students to this test</h2>

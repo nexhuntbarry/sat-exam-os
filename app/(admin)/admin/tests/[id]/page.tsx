@@ -1,15 +1,14 @@
 import { getServiceClient } from "@/lib/supabase";
-import { summarizeTestProgress } from "@/lib/test-progress";
+import { studentTestProgress, summarizeTestProgress } from "@/lib/test-progress";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
+import { ChevronLeft, ChevronDown } from "lucide-react";
 import TestDetailActions from "./TestDetailActions";
 import EditTestButton from "./EditTestButton";
-import AddStudentsButton from "./AddStudentsButton";
 import RemoveStudentButton from "./RemoveStudentButton";
-import AssignTeachersButton from "./AssignTeachersButton";
-import AssignClassGroupsButton from "./AssignClassGroupsButton";
+import AssignDialog from "./AssignDialog";
 import { approvalCounts, isFullyApproved } from "../module-approval";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
@@ -54,13 +53,12 @@ async function getTest(id: string, viewerIsQa: boolean) {
     db.from("submissions").select("id, status, score, percentage, student_id, submitted_at, session_id, adaptive_track, started_at, correct_count, total_questions").eq("test_id", id),
   ]);
 
-  // Get teacher names
   const teacherIds: string[] = assignment?.teacher_ids ?? [];
   const studentIds: string[] = assignment?.student_ids ?? [];
   const classGroupIds: string[] = assignment?.class_group_ids ?? [];
 
   const qaGroups = await getQaClassGroupIds();
-  const [{ data: teachers }, { data: classGroups }, { data: allTeachers }, { data: studentRows }, { data: allClassGroups }] = await Promise.all([
+  const [{ data: teachers }, { data: classGroups }, { data: allTeachers }, { data: allClassGroups }, { data: classMembers }] = await Promise.all([
     teacherIds.length > 0
       ? db.from("users").select("id, display_name, email").in("id", teacherIds)
       : Promise.resolve({ data: [] }),
@@ -68,36 +66,46 @@ async function getTest(id: string, viewerIsQa: boolean) {
       ? db.from("class_groups").select("id, name").in("id", classGroupIds)
       : Promise.resolve({ data: [] }),
     scopeUsers(db.from("users").select("id, display_name, email").eq("role", "teacher"), viewerIsQa).order("display_name"),
-    studentIds.length > 0
-      ? db.from("users").select("id, display_name, email").in("id", studentIds)
-      : Promise.resolve({ data: [] }),
     scopeIds(db.from("class_groups").select("id, name, campus, grade"), "id", qaGroups, viewerIsQa).order("name"),
+    classGroupIds.length > 0
+      ? db.from("class_group_members").select("class_group_id, student_id").in("class_group_id", classGroupIds)
+      : Promise.resolve({ data: [] as { class_group_id: string; student_id: string }[] }),
   ]);
 
-  // Individually assigned students who are also in an assigned class group
-  // keep seeing the test after Remove (M-17).
-  const { data: groupMembers } =
-    classGroupIds.length > 0 && studentIds.length > 0
-      ? await db
-          .from("class_group_members")
-          .select("student_id")
-          .in("class_group_id", classGroupIds)
-          .in("student_id", studentIds)
-      : { data: [] as { student_id: string }[] };
-  const viaGroup = new Set((groupMembers ?? []).map((m) => m.student_id as string));
+  const twoModules = Boolean(test.module_2_id || test.is_adaptive);
+  const members = (classMembers ?? []) as { class_group_id: string; student_id: string }[];
+  const groupName = new Map(((classGroups ?? []) as { id: string; name: string }[]).map((g) => [g.id, g.name]));
 
-  // Individually assigned students + their submissions on this test, so
-  // each row can offer Remove (and say whether there's work to delete).
+  // Everyone assigned (individually or through a class), plus anyone who
+  // still has work on the test after being unassigned.
+  const individual = new Set(studentIds);
+  const groupsByStudent = new Map<string, string[]>();
+  for (const m of members) {
+    groupsByStudent.set(m.student_id, [...(groupsByStudent.get(m.student_id) ?? []), m.class_group_id]);
+  }
+  const allStudentIds = [
+    ...new Set([...studentIds, ...groupsByStudent.keys(), ...(submissions ?? []).map((s) => s.student_id as string)]),
+  ];
+  const { data: studentRows } = allStudentIds.length > 0
+    ? await db.from("users").select("id, display_name, email").in("id", allStudentIds)
+    : { data: [] as { id: string; display_name: string | null; email: string }[] };
+
   const students = ((studentRows ?? []) as { id: string; display_name: string | null; email: string }[])
     .map((u) => {
       const subs = (submissions ?? []).filter((s) => s.student_id === u.id);
+      const groups = groupsByStudent.get(u.id) ?? [];
       return {
         id: u.id,
         name: u.display_name || u.email,
         email: u.email,
+        individual: individual.has(u.id),
+        groups: groups.map((g) => groupName.get(g) ?? "Class"),
+        progress: studentTestProgress(subs, twoModules),
         submissionCount: subs.length,
         hasGradedSubmission: subs.some((s) => s.status === "Submitted" || s.status === "Late"),
-        visibleViaGroup: viaGroup.has(u.id),
+        // Individually assigned students who are also in an assigned class
+        // group keep seeing the test after Remove (M-17).
+        visibleViaGroup: groups.length > 0,
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -106,14 +114,10 @@ async function getTest(id: string, viewerIsQa: boolean) {
 
   // Students assigned through a class count too; every student is counted
   // once even though each module is its own submission row.
-  const { data: classMembers } =
-    classGroupIds.length > 0
-      ? await db.from("class_group_members").select("student_id").in("class_group_id", classGroupIds)
-      : { data: [] as { student_id: string }[] };
   const progress = summarizeTestProgress(
     submissions ?? [],
-    [...studentIds, ...(classMembers ?? []).map((m) => m.student_id as string)],
-    Boolean(test.module_2_id || test.is_adaptive),
+    [...studentIds, ...members.map((m) => m.student_id)],
+    twoModules,
   );
 
   return {
@@ -124,8 +128,8 @@ async function getTest(id: string, viewerIsQa: boolean) {
       studentIds,
       classGroupIds,
       students,
-      teachers: teachers ?? [],
-      classGroups: classGroups ?? [],
+      teachers: (teachers ?? []) as { id: string; display_name: string | null; email: string }[],
+      classGroups: (classGroups ?? []) as { id: string; name: string }[],
       allTeachers: allTeachers ?? [],
       allClassGroups: allClassGroups ?? [],
     },
@@ -137,10 +141,16 @@ async function getTest(id: string, viewerIsQa: boolean) {
   };
 }
 
-const statusStyles: Record<string, string> = {
-  Draft: "bg-light-bg text-mid-gray",
-  Published: "bg-warm-amber/15 text-warm-amber",
-  Closed: "bg-status-error/15 text-status-error",
+const statusText: Record<string, string> = {
+  Draft: "text-mid-gray",
+  Published: "text-warm-amber",
+  Closed: "text-status-error",
+};
+
+const progressStyles: Record<string, string> = {
+  Submitted: "bg-warm-amber/15 text-warm-amber",
+  "In progress": "bg-warm-coral/15 text-warm-coral-text",
+  "Not started": "bg-light-bg text-mid-gray",
 };
 
 export default async function TestDetailPage({
@@ -206,57 +216,84 @@ export default async function TestDetailPage({
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null; source_name: string | null }
     | null;
+  const m2 = test.module2Meta;
+
+  const modLabel = (m: { section: string; module_number: number | null }) =>
+    `${m.section}${m.module_number ? ` M${m.module_number}` : ""}`;
+  const modulesShort = !mod
+    ? "Adaptive · M1 + M2 (easy/hard)"
+    : !m2
+      ? modLabel(mod)
+      : m2.section === mod.section
+        ? `${mod.section} M${mod.module_number ?? 1} + M${m2.module_number ?? 2}`
+        : `${modLabel(mod)} + ${modLabel(m2)}`;
+
+  // Two-module test (non-adaptive with module_2_id, or any adaptive test)
+  // shows both modules' limits as "M1 + M2". Module 2 falls back to
+  // Module 1's limit when the admin didn't set a separate one.
+  const timeLimit = (() => {
+    const t1 = test.time_limit_minutes;
+    const t2 = test.time_limit_minutes_module_2 ?? t1;
+    if (!t1) return "—";
+    if (test.is_adaptive || Boolean(test.module_2_id)) return `${t1} + ${t2} min`;
+    return `${t1} min`;
+  })();
+
+  const { assignment, progress } = test;
+  const submissionsHref = `/admin/tests/${test.id}/submissions`;
+
+  const settings: { label: string; value: string }[] = [
+    {
+      label: "Modules",
+      value: mod
+        ? [
+            `${mod.module_name} · ${modLabel(mod)}${mod.source_name ? ` · ${mod.source_name}` : ""}`,
+            m2 ? `${m2.module_name} · ${modLabel(m2)}` : null,
+          ]
+            .filter(Boolean)
+            .join("  +  ")
+        : "Adaptive · Module 1 + Module 2 (easy/hard)",
+    },
+    { label: "Time limit", value: timeLimit },
+    { label: "Open date", value: test.open_date ? formatDateTime(test.open_date) : "—" },
+    { label: "Due date", value: test.due_date ? formatDateTime(test.due_date) : "—" },
+    { label: "Allow retake", value: test.allow_retake ? "Yes" : "No" },
+    { label: "Desmos calculator", value: test.desmos_enabled ? "On" : "Off" },
+    ...(test.is_adaptive
+      ? [{ label: "Adaptive threshold", value: `${test.adaptive_threshold ?? 60}%` }]
+      : []),
+  ];
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-2 text-soft-mute text-sm">
-        <Link href="/admin/tests" className="hover:text-charcoal transition-colors">Tests</Link>
-        <span>/</span>
-        <span className="text-charcoal">{test.test_name}</span>
-      </div>
+      <Link
+        href="/admin/tests"
+        className="inline-flex items-center gap-1 text-soft-mute text-sm hover:text-charcoal transition-colors"
+      >
+        <ChevronLeft size={14} />
+        Tests
+      </Link>
 
+      {/* 1. Header */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="flex items-center gap-3 mb-1 flex-wrap">
-            <h1 className="text-2xl font-bold text-charcoal">{test.test_name}</h1>
-            <span className={clsx("px-2.5 py-1 rounded-full text-xs font-semibold", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
+          <h1 className="text-2xl font-bold text-charcoal break-words">{test.test_name}</h1>
+          <p className="text-soft-mute text-sm mt-1">
+            {modulesShort} · {timeLimit} ·{" "}
+            <span className={clsx("font-semibold", statusText[test.status] ?? "text-mid-gray")}>
               {test.status}
             </span>
-            {test.is_adaptive && (
-              <span className="px-2 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider bg-warm-coral/15 text-warm-coral-text">
-                Adaptive
-              </span>
-            )}
-          </div>
-          <p className="text-soft-mute text-sm">
-            {mod ? (
-              <>
-                {mod.module_name} · {mod.section}
-                {mod.module_number ? ` M${mod.module_number}` : ""}
-                {mod.source_name ? ` · ${mod.source_name}` : ""}
-                {test.module2Meta && (
-                  <>
-                    {" "}
-                    <span className="text-charcoal/40">+</span>{" "}
-                    {test.module2Meta.module_name} · {test.module2Meta.section}
-                    {test.module2Meta.module_number ? ` M${test.module2Meta.module_number}` : ""}
-                  </>
-                )}
-              </>
-            ) : (
-              <span className="italic">Adaptive · Module 1 + Module 2 (easy/hard)</span>
-            )}
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0 flex-wrap">
-          <Link
-            href={`/admin/tests/${test.id}/manage-submissions`}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl bg-light-bg hover:bg-divider text-charcoal font-semibold text-sm transition-colors"
-            title="Reset / force-submit / delete student submissions"
-          >
-            Manage submissions
-          </Link>
-          <AddStudentsButton testId={test.id} alreadyAssigned={test.assignment.studentIds} />
+          <AssignDialog
+            testId={test.id}
+            studentIds={assignment.studentIds}
+            classGroupIds={assignment.classGroupIds}
+            teacherIds={assignment.teacherIds}
+            allClassGroups={assignment.allClassGroups}
+            allTeachers={assignment.allTeachers}
+          />
           <EditTestButton
             test={{
               id: test.id,
@@ -289,135 +326,170 @@ export default async function TestDetailPage({
         </div>
       </div>
 
-      <ReviewModeToggle
-        testId={test.id}
-        initialUnlocked={Boolean(test.review_unlocked)}
-      />
-
-      <AnswerVisibilityToggle
-        testId={test.id}
-        initialShowAnswers={Boolean(test.show_answers_after_submission)}
-        initialShowExplanations={
-          (test as { show_explanations_after_submission?: boolean }).show_explanations_after_submission ?? true
-        }
-      />
-
-      {/* Config summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          {
-            label: "Time Limit",
-            value: (() => {
-              // Two-module test (non-adaptive with module_2_id, or any
-              // adaptive test) → show both modules' limits as "M1 + M2".
-              // Module 2 falls back to Module 1's limit when the admin
-              // didn't set a separate one. Single-module → just "X min".
-              const m1 = test.time_limit_minutes;
-              const m2 = test.time_limit_minutes_module_2 ?? m1;
-              const isTwoModule = test.is_adaptive || Boolean(test.module_2_id);
-              if (!m1) return "—";
-              if (isTwoModule) return `${m1} + ${m2} min`;
-              return `${m1} min`;
-            })(),
-          },
-          { label: "Open Date", value: test.open_date ? formatDateTime(test.open_date) : "—" },
-          { label: "Due Date", value: test.due_date ? formatDateTime(test.due_date) : "—" },
-          { label: "Allow Retake", value: test.allow_retake ? "Yes" : "No" },
-          { label: "Show Answers", value: test.show_answers_after_submission ? "Yes" : "No" },
-          { label: "Teachers", value: String(test.assignment.teacherIds.length) },
-          { label: "Students", value: String(test.assignment.studentIds.length) },
-          { label: "Class Groups", value: String(test.assignment.classGroups.length) },
-        ].map(({ label, value }) => (
-          <div key={label} className="bg-surface border border-divider rounded-xl p-4">
-            <div className="text-soft-mute text-xs mb-1">{label}</div>
-            <div className="text-charcoal font-semibold text-sm">{value}</div>
+      {/* 2. Summary row */}
+      <div className="bg-surface border border-divider rounded-2xl px-5 py-4 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
+        <div>
+          <div className="text-soft-mute text-xs">Students</div>
+          <div className="text-charcoal font-semibold">{progress.students}</div>
+        </div>
+        <div>
+          <div className="text-soft-mute text-xs">Submitted</div>
+          <div className="text-charcoal font-semibold">
+            {progress.finished}/{progress.students}
           </div>
-        ))}
+        </div>
+        <div>
+          <div className="text-soft-mute text-xs">Avg score</div>
+          <div className="text-warm-amber font-semibold">
+            {progress.avgScore !== null ? `${progress.avgScore.toFixed(1)}%` : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-soft-mute text-xs">Open / Due</div>
+          <div className="text-charcoal font-semibold">
+            {test.open_date ? formatDate(test.open_date) : "—"} / {test.due_date ? formatDate(test.due_date) : "—"}
+          </div>
+        </div>
+        <div>
+          <div className="text-soft-mute text-xs">Retake</div>
+          <div className="text-charcoal font-semibold">{test.allow_retake ? "Allowed" : "No"}</div>
+        </div>
+        <Link href={submissionsHref} className="ml-auto text-warm-coral-text text-sm hover:underline">
+          View all submissions →
+        </Link>
       </div>
 
-      {/* Submission stats */}
-      <div className="bg-surface border border-divider rounded-2xl p-5 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-charcoal font-semibold">Submissions</h2>
-          <Link href={`/admin/tests/${test.id}/submissions`} className="text-warm-coral-text text-sm hover:underline">
-            View all submissions →
-          </Link>
+      {/* 3. Students */}
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+        <div className="px-5 pt-4 pb-3 space-y-1 border-b border-divider">
+          <h2 className="text-charcoal font-semibold">Students</h2>
+          <p className="text-soft-mute text-xs">
+            <span className="text-mid-gray font-medium">Teachers:</span>{" "}
+            {assignment.teachers.length === 0
+              ? "None assigned"
+              : assignment.teachers.map((t) => t.display_name || t.email).join(", ")}
+            <span className="mx-2">·</span>
+            <span className="text-mid-gray font-medium">Classes:</span>{" "}
+            {assignment.classGroups.length === 0
+              ? "None"
+              : assignment.classGroups.map((cg) => cg.name).join(", ")}
+          </p>
         </div>
-        <div className="flex gap-6">
-          <div>
-            <div className="text-2xl font-bold text-charcoal">{test.progress.finished}</div>
-            <div className="text-soft-mute text-xs">Students finished</div>
+        {assignment.students.length === 0 ? (
+          <p className="px-5 py-8 text-center text-soft-mute text-sm">
+            No students yet. Use Assign to add students or classes.
+          </p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="border-b border-divider text-soft-mute">
+                  <th className="text-left px-5 py-3 font-medium">Student</th>
+                  <th className="text-left px-5 py-3 font-medium">Assigned via</th>
+                  <th className="text-left px-5 py-3 font-medium">Status</th>
+                  <th className="text-left px-5 py-3 font-medium">Score</th>
+                  <th className="text-right px-5 py-3 font-medium">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignment.students.map((st) => (
+                  <tr key={st.id} className="border-b border-divider last:border-0">
+                    <td className="px-5 py-3">
+                      <div className="text-charcoal font-medium">{st.name}</div>
+                      {st.email !== st.name && <div className="text-soft-mute text-xs">{st.email}</div>}
+                    </td>
+                    <td className="px-5 py-3 text-mid-gray text-xs">
+                      {[st.individual ? "Individual" : null, ...st.groups].filter(Boolean).join(" · ") || (
+                        <span className="italic text-soft-mute">Not assigned (has work)</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3">
+                      <span
+                        className={clsx(
+                          "px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap",
+                          progressStyles[st.progress.status],
+                        )}
+                      >
+                        {st.progress.status}
+                      </span>
+                    </td>
+                    <td className="px-5 py-3 text-charcoal">
+                      {st.progress.score !== null ? `${st.progress.score.toFixed(1)}%` : "—"}
+                    </td>
+                    <td className="px-5 py-3">
+                      <div className="flex items-center justify-end gap-3">
+                        {st.progress.detailSubmissionId ? (
+                          <Link
+                            href={`/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}`}
+                            className="text-xs text-warm-coral-text hover:underline whitespace-nowrap"
+                          >
+                            View
+                          </Link>
+                        ) : st.submissionCount > 0 ? (
+                          <Link href={submissionsHref} className="text-xs text-soft-mute hover:text-charcoal whitespace-nowrap">
+                            Submissions
+                          </Link>
+                        ) : null}
+                        {st.individual && (
+                          <RemoveStudentButton
+                            testId={test.id}
+                            studentId={st.id}
+                            studentName={st.name}
+                            submissionCount={st.submissionCount}
+                            hasGradedSubmission={st.hasGradedSubmission}
+                            visibleViaGroup={st.visibleViaGroup}
+                          />
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <div>
-            <div className="text-2xl font-bold text-charcoal">{test.progress.students}</div>
-            <div className="text-soft-mute text-xs">Students</div>
-          </div>
-          {test.progress.avgScore !== null && (
-            <div>
-              <div className="text-2xl font-bold text-warm-amber">{test.progress.avgScore.toFixed(1)}%</div>
-              <div className="text-soft-mute text-xs">Avg Score</div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
-      {/* Assignment details */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Teachers</h3>
-            <AssignTeachersButton
+      {/* 4. Answers & review */}
+      <div className="bg-surface border border-divider rounded-2xl p-5 space-y-4">
+        <h2 className="text-charcoal font-semibold">Answers &amp; review</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-0 md:divide-x divide-divider">
+          <div className="md:pr-5">
+            <AnswerVisibilityToggle
+              compact
               testId={test.id}
-              allTeachers={test.assignment.allTeachers}
-              currentTeacherIds={test.assignment.teacherIds}
+              initialShowAnswers={Boolean(test.show_answers_after_submission)}
+              initialShowExplanations={
+                (test as { show_explanations_after_submission?: boolean }).show_explanations_after_submission ?? true
+              }
             />
           </div>
-          {test.assignment.teachers.length === 0 ? (
-            <p className="text-soft-mute text-sm">None assigned</p>
-          ) : test.assignment.teachers.map((t: { id: string; display_name: string; email: string }) => (
-            <div key={t.id} className="text-charcoal text-sm">{t.display_name}</div>
-          ))}
-        </div>
-        <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Class Groups</h3>
-            <AssignClassGroupsButton
-              testId={test.id}
-              allClassGroups={test.assignment.allClassGroups}
-              currentClassGroupIds={test.assignment.classGroups.map((cg: { id: string }) => cg.id)}
-            />
+          <div className="md:pl-5 border-t border-divider pt-4 md:border-t-0 md:pt-0">
+            <ReviewModeToggle compact testId={test.id} initialUnlocked={Boolean(test.review_unlocked)} />
           </div>
-          {test.assignment.classGroups.length === 0 ? (
-            <p className="text-soft-mute text-sm">None assigned</p>
-          ) : test.assignment.classGroups.map((cg: { id: string; name: string }) => (
-            <div key={cg.id} className="text-charcoal text-sm">{cg.name}</div>
-          ))}
-        </div>
-        <div className="bg-surface border border-divider rounded-xl p-4 space-y-2">
-          <h3 className="text-soft-mute text-xs font-medium uppercase tracking-wider">Individual Students</h3>
-          <p className="text-soft-mute text-sm">{test.assignment.studentIds.length} student(s)</p>
-          {test.assignment.students.map((st) => (
-            <div key={st.id} className="flex items-center justify-between gap-2 text-sm">
-              <div className="min-w-0">
-                <div className="text-charcoal truncate">{st.name}</div>
-                {st.submissionCount > 0 && (
-                  <div className="text-soft-mute text-xs">
-                    {st.hasGradedSubmission ? "Submitted" : "In progress"}
-                  </div>
-                )}
-              </div>
-              <RemoveStudentButton
-                testId={test.id}
-                studentId={st.id}
-                studentName={st.name}
-                submissionCount={st.submissionCount}
-                hasGradedSubmission={st.hasGradedSubmission}
-                visibleViaGroup={st.visibleViaGroup}
-              />
-            </div>
-          ))}
         </div>
       </div>
+
+      {/* 5. Test settings */}
+      <details className="group bg-surface border border-divider rounded-2xl">
+        <summary className="flex items-center justify-between gap-3 px-5 py-4 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+          <span className="text-charcoal font-semibold">Test settings</span>
+          <span className="flex items-center gap-1 text-soft-mute text-xs">
+            Use Edit to change
+            <ChevronDown size={14} className="transition-transform group-open:rotate-180" />
+          </span>
+        </summary>
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 px-5 pb-5 text-sm">
+          {settings.map(({ label, value }) => (
+            <div key={label} className={clsx(label === "Modules" && "sm:col-span-2")}>
+              <dt className="text-soft-mute text-xs">{label}</dt>
+              <dd className="text-charcoal font-medium break-words">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </details>
     </div>
   );
 }

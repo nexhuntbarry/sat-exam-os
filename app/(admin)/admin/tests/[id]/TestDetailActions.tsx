@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Send, Lock, Trash2, AlertTriangle, RotateCcw } from "lucide-react";
+import { Send, Lock, Trash2, AlertTriangle, RotateCcw, MoreHorizontal, ClipboardList } from "lucide-react";
 
 interface Props {
   testId: string;
@@ -12,14 +13,33 @@ interface Props {
   gradedCount: number;
 }
 
+// Publish stays a visible button on drafts; Manage submissions, Close /
+// Reopen and Delete live in a "More" menu. Close and Delete confirm first.
 export default function TestDetailActions({ testId, testName, status, submissionCount, gradedCount }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [closeOpen, setCloseOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteText, setDeleteText] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen]);
 
   async function handleAction(action: "publish" | "close" | "reopen") {
     setLoading(action);
@@ -27,6 +47,7 @@ export default function TestDetailActions({ testId, testName, status, submission
     try {
       const res = await fetch(`/api/admin/tests/${testId}/${action}`, { method: "POST" });
       if (res.ok) {
+        setCloseOpen(false);
         router.refresh();
       } else {
         const j = await res.json().catch(() => ({}));
@@ -58,6 +79,9 @@ export default function TestDetailActions({ testId, testName, status, submission
     }
   }
 
+  const itemClass =
+    "w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-light-bg transition-colors disabled:opacity-50";
+
   return (
     <>
       <div className="flex items-center gap-2 shrink-0 flex-wrap">
@@ -71,42 +95,113 @@ export default function TestDetailActions({ testId, testName, status, submission
             {loading === "publish" ? "Publishing..." : "Publish"}
           </button>
         )}
-        {status === "Published" && (
+        <div className="relative" ref={menuRef}>
           <button
-            disabled={loading === "close"}
-            onClick={() => handleAction("close")}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-status-error/15 hover:bg-status-error/30 text-status-error font-semibold text-sm transition-colors disabled:opacity-50"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-light-bg hover:bg-divider text-charcoal font-semibold text-sm transition-colors"
           >
-            <Lock size={14} />
-            {loading === "close" ? "Closing..." : "Close Test"}
+            <MoreHorizontal size={16} />
+            More
           </button>
-        )}
-        {status === "Closed" && (
-          <button
-            disabled={loading === "reopen"}
-            onClick={() => handleAction("reopen")}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-amber hover:bg-warm-amber/90 text-charcoal font-semibold text-sm transition-colors disabled:opacity-50"
-          >
-            <RotateCcw size={14} />
-            {loading === "reopen" ? "Reopening..." : "Reopen"}
-          </button>
-        )}
-        <button
-          onClick={() => {
-            setDeleteOpen(true);
-            setDeleteText("");
-            setDeleteError(null);
-          }}
-          className="flex items-center gap-2 px-3 py-2 rounded-xl bg-status-error/10 hover:bg-status-error/20 text-status-error font-semibold text-sm transition-colors"
-          title="Permanently delete this test"
-        >
-          <Trash2 size={14} />
-          Delete
-        </button>
-        {actionError && (
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full mt-1 z-40 w-56 bg-surface border border-divider rounded-xl shadow-lg py-1"
+            >
+              <Link
+                href={`/admin/tests/${testId}/manage-submissions`}
+                role="menuitem"
+                className={`${itemClass} text-charcoal`}
+                title="Reset / force-submit / delete student submissions"
+              >
+                <ClipboardList size={14} />
+                Manage submissions
+              </Link>
+              {status === "Published" && (
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setActionError(null);
+                    setCloseOpen(true);
+                  }}
+                  className={`${itemClass} text-status-error`}
+                >
+                  <Lock size={14} />
+                  Close Test
+                </button>
+              )}
+              {status === "Closed" && (
+                <button
+                  role="menuitem"
+                  disabled={loading === "reopen"}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    handleAction("reopen");
+                  }}
+                  className={`${itemClass} text-charcoal`}
+                >
+                  <RotateCcw size={14} />
+                  {loading === "reopen" ? "Reopening..." : "Reopen"}
+                </button>
+              )}
+              <div className="my-1 border-t border-divider" />
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  setDeleteOpen(true);
+                  setDeleteText("");
+                  setDeleteError(null);
+                }}
+                className={`${itemClass} text-status-error`}
+                title="Permanently delete this test"
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+        {actionError && !closeOpen && (
           <p className="basis-full text-status-error text-xs max-w-sm">{actionError}</p>
         )}
       </div>
+
+      {closeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+          <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
+            <div className="p-5 border-b border-divider flex items-start gap-3">
+              <Lock size={20} className="text-status-error shrink-0 mt-0.5" />
+              <div>
+                <h3 className="font-bold text-charcoal text-base">Close this test?</h3>
+                <p className="text-mid-gray text-xs mt-0.5 leading-relaxed">
+                  Students can no longer start <strong>{testName}</strong>. Submissions and results are
+                  kept, and you can reopen it later from More.
+                </p>
+              </div>
+            </div>
+            {actionError && <p className="px-5 pt-4 text-status-error text-sm">{actionError}</p>}
+            <div className="p-5 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setCloseOpen(false)}
+                className="px-4 py-2 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleAction("close")}
+                disabled={loading === "close"}
+                className="px-4 py-2 rounded-xl bg-status-error hover:bg-status-error/90 text-white font-semibold text-sm transition-colors disabled:opacity-40"
+              >
+                {loading === "close" ? "Closing..." : "Close Test"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
