@@ -136,6 +136,12 @@ const CHECK_LABELS: Record<string, CheckMeta> = {
     action:
       "Add the missing A/B/C/D entry or remove the extra one.",
   },
+  "mcq-partial-graph-choices": {
+    headline: "Some answer choices are graphs, but not all of them",
+    action:
+      "Tap Re-extract figure to crop every choice's graph, or edit the choices by hand.",
+    actions: [IMAGE_REPAIR_ACTION],
+  },
   "spr-with-letter-answer": {
     headline: "Grid-in question has a letter answer",
     action:

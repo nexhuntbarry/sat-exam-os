@@ -11,7 +11,16 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import katex from "katex";
 import { getServiceClient } from "@/lib/supabase";
-import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
+import {
+  applyChoiceImages,
+  choiceHasContent,
+  choiceImageUrls,
+  findParsePlaceholder,
+  incompleteGraphChoices,
+  normalizeChoiceRegions,
+  placeholderNote,
+  stemFigureMissing,
+} from "@/lib/parse-guards";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
 import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -152,6 +161,16 @@ function isMathClean(text: string): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
+// A text re-extraction never sees choice images: keep every stored graph
+// choice (image_url + its empty text) as-is instead of the model's version.
+function keepImageChoices<T extends { label: string }>(next: T[], prior: unknown): T[] {
+  const old = Array.isArray(prior) ? (prior as { label?: string; image_url?: string | null }[]) : [];
+  return next.map((c) => {
+    const p = old.find((o) => o?.label === c.label);
+    return p?.image_url ? (p as unknown as T) : c;
+  });
+}
+
 async function fetchPdfBase64(url: string): Promise<string> {
   const headers: Record<string, string> = {};
   const token = process.env.BLOB_READ_WRITE_TOKEN;
@@ -165,6 +184,8 @@ async function fetchPdfBase64(url: string): Promise<string> {
 export interface RepairResult {
   ok: boolean;
   message: string;
+  /** The repair itself left the row in Needs Review — don't auto-approve it. */
+  needsReview?: boolean;
 }
 
 /**
@@ -246,7 +267,7 @@ export async function repairMathForQuestion(
       updated_at: new Date().toISOString(),
     };
     if (q.explanation) update.explanation = q.explanation;
-    if (q.choices && q.choices.length > 0) update.choices = q.choices;
+    if (q.choices && q.choices.length > 0) update.choices = keepImageChoices(q.choices, row.choices);
     const { error: upErr } = await db
       .from("questions")
       .update(update)
@@ -383,7 +404,7 @@ export async function repairTableForQuestion(
       updated_at: new Date().toISOString(),
     };
     if (q.explanation) update.explanation = q.explanation;
-    if (q.choices && q.choices.length > 0) update.choices = q.choices;
+    if (q.choices && q.choices.length > 0) update.choices = keepImageChoices(q.choices, row.choices);
     const { error: upErr } = await db
       .from("questions")
       .update(update)
@@ -411,6 +432,7 @@ const BBoxSchema = z.object({
       x1: z.number(),
       y1: z.number(),
       alt: z.string().optional().default(""),
+      choice_label: z.enum(["A", "B", "C", "D"]).nullable().optional().default(null),
     }),
   ),
 });
@@ -419,14 +441,16 @@ const BBOX_SYSTEM = `Return a bounding box around the figure that belongs to ONE
 
 ADMIN INVOKED THIS BUTTON because they SAW a figure they want extracted. Bias hard toward FINDING the figure. Return an empty regions array ONLY when no figure exists on the page anywhere — never just because the question "can be solved" from the text alone. A "Note: Figure not drawn to scale" caption MEANS THERE IS A FIGURE — find it and return its bbox.
 
-Before writing coordinates, answer what_is_above_y0 (should be a Question-N banner or earlier-question answer choice — never the chart title itself) and what_is_below_y1 (should be prose / answer choices — never the legend, x-axis labels, or last table row).
+Before writing coordinates, answer what_is_above_y0 (the thing printed just ABOVE the box, OUTSIDE it — e.g. the Question-N banner or the previous question's last answer choice; never the chart title itself) and what_is_below_y1 (the thing just BELOW the box, outside it — prose / answer choices; never the legend, x-axis labels, or last table row). Those neighbours must NOT be inside the box.
 
 For TABLES include caption + header + every body row + source line.
 For GRAPHS include title, both axis labels, every plotted series, legend.
 For GEOMETRIC FIGURES include angle markings, side-length annotations, point labels (S, R, Q, P, etc.), and any "Note: Figure not drawn to scale" caption.
-For MULTIPLE-CHOICE questions whose A/B/C/D choices are themselves figures (small graphs / diagrams as the options), return ONE region that wraps all four choice diagrams together so the student sees the labeled set.
+For MULTIPLE-CHOICE questions whose A/B/C/D choices are themselves figures (small graphs / diagrams as the options), return ONE region PER CHOICE with choice_label set to its letter, tight to that choice's graph and EXCLUDING its letter box. The question's own figure (if any) has choice_label null.
 
-Do NOT extend the box into prose describing the figure ("The following 3 lines are shown:") or into other questions' answer choices or banners.`;
+Draw the box tight to the figure — the cropper adds its own small margin. It must NEVER include: the question-number banner/bar, prose, answer choices or their letter boxes, the ✓ / check-circle that marks the correct answer, a Student-Produced-Response answer box, another question's content, or the page header/footer ("Survey: print page | Premier Plus Education", dates, URLs, page numbers).
+
+alt is shown to students: describe the figure neutrally and never say which choice is correct.`;
 
 /**
  * Re-crop and re-upload the figure for one question whose
@@ -440,7 +464,7 @@ export async function repairImageForQuestion(
   const { data: row, error: rowErr } = await db
     .from("questions")
     .select(
-      "id, module_id, original_question_number, source_pdf_url, question_text, page_number, has_image, image_urls, section",
+      "id, module_id, original_question_number, source_pdf_url, question_text, page_number, has_image, image_urls, section, choices",
     )
     .eq("id", questionId)
     .maybeSingle();
@@ -498,19 +522,21 @@ export async function repairImageForQuestion(
     };
   }
 
-  const PAD_TOP = 0.015;
-  const PAD_LEFT = 0.015;
-  const PAD_RIGHT = 0.015;
-  const PAD_BOTTOM = 0;
+  // No extra padding here: the cropper adds its own margin and clamps the
+  // box to the question's own area (the old +1.5% on top of the cropper's
+  // 2.5% pulled in the previous question's last choice and the page header).
+  // A choice tag counts only for a real set of graph choices (≥2 choices
+  // with no real text); a lone tag is a mislabelled stem figure.
+  const tagged = normalizeChoiceRegions(regions, row.choices);
   const synthetic = [
     {
       original_question_number: row.original_question_number ?? 0,
       page_number: row.page_number ?? regions[0].page,
-      image_regions: regions.map((r) => {
-        const x0 = Math.max(0, Math.min(1, r.x0 - PAD_LEFT));
-        const y0 = Math.max(0, Math.min(1, r.y0 - PAD_TOP));
-        const x1 = Math.max(0, Math.min(1, r.x1 + PAD_RIGHT));
-        const y1 = Math.max(0, Math.min(1, r.y1 + PAD_BOTTOM));
+      image_regions: tagged.map((r) => {
+        const x0 = Math.max(0, Math.min(1, r.x0));
+        const y0 = Math.max(0, Math.min(1, r.y0));
+        const x1 = Math.max(0, Math.min(1, r.x1));
+        const y1 = Math.max(0, Math.min(1, r.y1));
         return {
           page: r.page,
           x_pct: x0,
@@ -518,6 +544,7 @@ export async function repairImageForQuestion(
           w_pct: Math.max(0, x1 - x0),
           h_pct: Math.max(0, y1 - y0),
           alt: r.alt ?? "",
+          choice_label: r.choice_label ?? null,
         };
       }),
     },
@@ -530,24 +557,43 @@ export async function repairImageForQuestion(
   const slot = res.byQuestion.get(row.original_question_number ?? 0);
   const urls = slot?.urls ?? [];
   const alts = slot?.alts ?? [];
-  if (urls.length === 0) {
+  const choiceUrls = slot?.choiceUrls ?? {};
+  const nChoiceImgs = Object.keys(choiceUrls).length;
+  if (urls.length === 0 && nChoiceImgs === 0) {
     return {
       ok: false,
       message: `Cropper produced 0 URLs (${res.errors[0] ?? "unknown"})`,
     };
   }
-  await db
-    .from("questions")
-    .update({
-      image_urls: urls,
-      image_alts: alts,
-      parsing_notes: `Image re-extracted by admin self-repair (${urls.length} region${urls.length === 1 ? "" : "s"}).`,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", row.id);
+  const notes = [`Image re-extracted by admin self-repair (${urls.length} region${urls.length === 1 ? "" : "s"}${nChoiceImgs ? `, ${nChoiceImgs} choice graph${nChoiceImgs === 1 ? "" : "s"}` : ""}).`];
+  const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  // Only replace the stem figure when a new one was cropped — a re-crop that
+  // found only choice graphs must not wipe an existing stem figure.
+  if (urls.length > 0) {
+    update.image_urls = urls;
+    update.image_alts = alts;
+  }
+  if (nChoiceImgs > 0 && Array.isArray(row.choices)) {
+    // Each graph choice gets its own crop; a prose description of the graph
+    // ("Graph A: shaded region above…") is not the real choice — drop it.
+    const nextChoices = applyChoiceImages(
+      row.choices as { label: "A" | "B" | "C" | "D"; text: string; image_url?: string | null }[],
+      choiceUrls,
+    );
+    update.choices = nextChoices;
+    const partial = incompleteGraphChoices(nextChoices);
+    if (partial.length > 0) notes.push(`Needs review: graph choice ${partial.join(", ")} has no image (other choices are graphs)`);
+  }
+  if (res.checkMarkLeaks.has(row.original_question_number ?? 0)) {
+    notes.push("Needs review: a figure crop may include the ✓ answer mark — check the image");
+  }
+  update.parsing_notes = notes.join("; ");
+  if (notes.length > 1) update.parsing_status = "Needs Review";
+  await db.from("questions").update(update).eq("id", row.id);
   return {
     ok: true,
-    message: `Figure re-cropped (${urls.length} region${urls.length === 1 ? "" : "s"}).`,
+    message: `Figure re-cropped (${urls.length} region${urls.length === 1 ? "" : "s"}${nChoiceImgs ? `, ${nChoiceImgs} choice graph${nChoiceImgs === 1 ? "" : "s"}` : ""}).${notes.length > 1 ? ` ${notes.slice(1).join("; ")}` : ""}`,
+    needsReview: notes.length > 1,
   };
 }
 
@@ -635,8 +681,9 @@ export async function recoverMissingFigures(
   // A note that names a NON-figure defect we must not auto-clear.
   const OTHER_NOTE = /LaTeX|math\/|choices|Multiple Choice with|garbled|answer\/explanation|self-contradict|official key=|needs review:/i;
   const targets = (data ?? []).filter((q) => {
-    const hasImg = Array.isArray(q.image_urls) && q.image_urls.length > 0;
-    if (hasImg) return false;
+    if (Array.isArray(q.image_urls) && q.image_urls.length > 0) return false;
+    // Graph choices don't stand in for a figure the stem itself refers to.
+    if (choiceImageUrls(q.choices).length > 0) return stemFigureMissing({ ...q, has_image: true });
     // Blind image (flagged has_image but nothing cropped) → always try.
     if (q.has_image === true) return true;
     // A table the parser already rebuilt as Markdown in the stem is not a
@@ -666,7 +713,7 @@ export async function recoverMissingFigures(
         // their status. Rows with another defect stay in review.
         const otherDefect =
           OTHER_NOTE.test(q.parsing_notes || "") || findParsePlaceholder(q.question_text, q.choices) !== null;
-        if (q.parsing_status === "Needs Review" && !otherDefect) {
+        if (q.parsing_status === "Needs Review" && !otherDefect && !res.needsReview) {
           approved++;
           await db
             .from("questions")
@@ -712,7 +759,8 @@ function choicesLookBroken(choices: unknown): boolean {
   if (!Array.isArray(choices) || choices.length < 4) return true;
   return (choices as unknown[]).some((c) => {
     const t = (typeof c === "string" ? c : (c as { text?: string })?.text) || "";
-    return !t.trim() || /partially visible|no text|placeholder|not visible|garbled|table partially/i.test(t);
+    // A graph choice (image_url, empty text) is complete, not broken.
+    return !choiceHasContent(c) || /partially visible|no text|placeholder|not visible|garbled|table partially/i.test(t);
   });
 }
 
@@ -768,11 +816,15 @@ export async function repairChoicesForQuestion(
   const db = getServiceClient();
   const { data: row } = await db
     .from("questions")
-    .select("id, module_id, original_question_number, source_pdf_url, question_text, page_number, question_type")
+    .select("id, module_id, original_question_number, source_pdf_url, question_text, page_number, question_type, choices")
     .eq("id", questionId)
     .maybeSingle();
   if (!row) return { ok: false, message: "Question not found" };
   if (row.question_type !== "Multiple Choice") return { ok: false, message: "Not a multiple-choice question" };
+  // Text re-extraction would replace graph choices with prose descriptions.
+  if (choiceImageUrls(row.choices).length > 0) {
+    return { ok: false, message: "The answer choices are graphs (images) — re-parse the module or edit them by hand." };
+  }
   if (!row.source_pdf_url) return { ok: false, message: "No source PDF" };
 
   const pdfBase64 = opts.pdfBase64 ?? (await fetchPdfBase64(row.source_pdf_url as string));
@@ -895,7 +947,10 @@ export async function recoverBrokenChoices(
   // even after the choices are fixed.
   const OTHER_NOTE = /figure|graph|LaTeX|math\/|self-contradict|official key=|answer\/explanation|misalign|needs review:/i;
   const targets = (data ?? []).filter(
-    (q) => !skipIds.has(q.id as string) && (choicesLookBroken(q.choices) || /choice/i.test(q.parsing_notes || "")),
+    (q) =>
+      !skipIds.has(q.id as string) &&
+      choiceImageUrls(q.choices).length === 0 &&
+      (choicesLookBroken(q.choices) || /choice/i.test(q.parsing_notes || "")),
   );
 
   // One download + text-layer pass per source PDF, shared by every target.

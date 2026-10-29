@@ -27,7 +27,7 @@ interface Question {
   module_id: string;
   original_question_number: number;
   question_text: string;
-  choices: { label: string; text: string }[];
+  choices: { label: string; text: string; image_url?: string | null }[];
   question_type: "Multiple Choice" | "Student Produced Response";
   has_image: boolean;
   has_table: boolean;

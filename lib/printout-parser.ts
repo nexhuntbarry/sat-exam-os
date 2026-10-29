@@ -38,6 +38,7 @@ import { readPrintoutLayout, type LayoutElement, type LayoutLine, type PrintoutL
 import { renderPdfPages } from "@/lib/ai/extract-images";
 import { MATH_FORMAT_RULES, QUOTE_RULE, logUsage, type ModuleMetadata, type ParsedQuestion, type ParsedImageRegion } from "@/lib/ai/parse-pdf";
 import { normalizeChoiceText } from "@/lib/pdf-text-choices";
+import { FIGURE_DESCRIPTION } from "@/lib/parse-guards";
 
 type Label = "A" | "B" | "C" | "D";
 const LABELS: Label[] = ["A", "B", "C", "D"];
@@ -84,6 +85,13 @@ function inside(el: LayoutElement, layout: PrintoutLayout): boolean {
   );
 }
 
+/** The line sits in a thin bar box — the "N" question-number bar. */
+function inNumberBar(el: LayoutLine, layout: PrintoutLayout): boolean {
+  const cx = (el.x0 + el.x1) / 2;
+  const cy = (el.y0 + el.y1) / 2;
+  return layout.boxes.some((b) => b.page === el.page && b.y1 - b.y0 <= 28 && cx > b.x0 && cx < b.x1 && cy > b.y0 && cy < b.y1);
+}
+
 export function segmentPrintout(layout: PrintoutLayout): PrintoutQuestion[] {
   const els = layout.elements.filter(
     (e) => !(e.kind === "text" && !e.checked && HEADER_FOOTER.some((re) => re.test(e.plain))),
@@ -103,15 +111,26 @@ export function segmentPrintout(layout: PrintoutLayout): PrintoutQuestion[] {
     if (el.kind === "text") {
       const t = el.plain;
       // Number box: "N" alone, followed by a "M." stem line. Trust the box
-      // number (printouts occasionally carry a stale stem number).
+      // number (printouts occasionally carry a stale stem number). Some
+      // printouts render the whole stem as ONE image (figure + prose, no
+      // "N." text line): then the number bar is followed directly by that
+      // image. Without this those PDFs fell back to the whole-PDF AI parse,
+      // whose page-fraction figure boxes leaked into neighbouring questions.
       if (/^\d{1,3}$/.test(t) && !el.checked) {
         const n = Number(t);
         const nt = nextText(i);
-        if (n > lastNum && n <= lastNum + 3 && nt && /^\d{1,3}\.(\s|$)/.test(nt.plain)) {
+        const textStem = !!nt && /^\d{1,3}\.(\s|$)/.test(nt.plain);
+        const ne = els[i + 1];
+        // (A bar at the foot of a page continues on the next page.)
+        const imageStem =
+          ne?.kind === "image" &&
+          (ne.page === el.page ? ne.y0 >= el.y0 && ne.y0 - el.y1 < 40 : ne.page === el.page + 1) &&
+          inNumberBar(el, layout);
+        if (n > lastNum && n <= lastNum + 3 && (textStem || imageStem)) {
           cur = { number: n, stemPage: el.page, stem: [], choices: [], checked: null, sprAnswer: [], sprChecked: false };
           out.push(cur);
           lastNum = n;
-          awaitingStem = true;
+          awaitingStem = textStem;
           continue;
         }
       }
@@ -240,7 +259,7 @@ const TranscribeSchema = z.object({
       figures: z
         .array(
           z.object({
-            alt: z.string().describe("One-line description of the figure"),
+            alt: z.string().describe("One-line neutral description of the figure. Never say which choice is correct (no \"correct answer\", no ✓)."),
             x0: z.number().describe("Left edge as a fraction (0..1) of THIS piece's width"),
             y0: z.number().describe("Top edge as a fraction (0..1) of THIS piece's height"),
             x1: z.number().describe("Right edge as a fraction (0..1) of THIS piece's width"),
@@ -256,7 +275,9 @@ const TRANSCRIBE_SYSTEM = `You transcribe small pieces of ONE SAT question. Each
 
 For each IMAGE piece:
 - text: every word, number and expression in the image, verbatim and in reading order (a stem image often holds a figure AND the question sentence — transcribe the sentence). Data tables you can read → a GitHub-Flavored Markdown table (header row, | --- | separator, one row per line) placed where the table sits relative to the prose; a table's title/caption goes on its own line directly above the table. Ignore watermarks.
-- figures: every graph, chart, diagram, geometric figure, number line or picture — anything that cannot be faithfully written as text — with a tight bounding box (fractions of THIS piece) that includes its axis labels, tick labels, titles, legends and captions but NOT the question prose. A chart's title, axis labels, legend and any "Note: Figure not drawn to scale" caption belong to the FIGURE (inside its box), never to text. The figure is cropped and shown to the student as an image. NEVER write a figure out as prose such as "[Bar chart: …]", and do not repeat its labels in text.
+- figures: every graph, chart, diagram, geometric figure, number line or picture — anything that cannot be faithfully written as text — with a tight bounding box (fractions of THIS piece) that includes its axis labels, tick labels, titles, legends and captions but NOT the question prose. A chart's title, axis labels, legend and any "Note: Figure not drawn to scale" caption belong to the FIGURE (inside its box), never to text. The box must exclude answer-choice letter boxes (A/B/C/D), check marks (✓), answer boxes and page headers. The figure is cropped and shown to the student as an image. NEVER write a figure out as prose such as "[Bar chart: …]", and do not repeat its labels in text.
+- A choice piece (A/B/C/D) that is a graph or figure: text is "" (empty) and the graph goes in figures — never describe the graph in text ("Graph A: shaded region…" is WRONG).
+- alt is shown to students: describe the figure neutrally and never hint at the answer.
 This applies equally to Math and to Reading & Writing pieces.
 
 For each TEXT piece (plain text already extracted from the PDF): return the SAME words and numbers in text, only adding the math formatting below (wrap expressions in $…$, LaTeX for fractions/exponents/roots), and figures=[]. Do not reword, add, or drop anything.
@@ -472,10 +493,13 @@ export async function parsePrintoutPdf(
     }
     if (x1 <= x0) return r;
     const m = 3; // pt margin
+    // Wider sideways: light-grey tick labels ("−10" at the left of an axis)
+    // fall under the ink threshold and were clipped by a 3pt margin.
+    const mx = 8;
     return {
-      x0: Math.max(r.x0, r.x0 + x0 / sx - m),
+      x0: Math.max(r.x0, r.x0 + x0 / sx - mx),
       y0: Math.max(r.y0, r.y0 + y0 / sy - m),
-      x1: Math.min(r.x1, r.x0 + x1 / sx + m),
+      x1: Math.min(r.x1, r.x0 + x1 / sx + mx),
       y1: Math.min(r.y1, r.y0 + y1 / sy + m),
     };
   };
@@ -488,7 +512,7 @@ export async function parsePrintoutPdf(
       w_pct: (r.x1 - r.x0) / d.width,
       h_pct: (r.y1 - r.y0) / d.height,
       alt,
-      pad: 0.004,
+      pad: 0, // exact (snapFigure already adds a 3pt margin inside the source image)
     };
   };
 
@@ -561,12 +585,33 @@ export async function parsePrintoutPdf(
         return "";
       }
       const isChoice = where.startsWith("choice");
-      for (const f of figureRects.get(s.id) ?? []) {
-        regions.push(regionOf(s.page!, f.rect, isChoice ? `Answer ${where}: ${f.alt}` : f.alt));
+      // A choice gets ONE image (choices[i].image_url): several figures in
+      // one choice piece are merged into the box that spans them all, so
+      // nothing is dropped. The stem keeps every figure separately.
+      let rects = figureRects.get(s.id) ?? [];
+      if (isChoice && rects.length > 1) {
+        rects = [
+          {
+            alt: rects.map((f) => f.alt).join("; "),
+            rect: {
+              x0: Math.min(...rects.map((f) => f.rect.x0)),
+              y0: Math.min(...rects.map((f) => f.rect.y0)),
+              x1: Math.max(...rects.map((f) => f.rect.x1)),
+              y1: Math.max(...rects.map((f) => f.rect.y1)),
+            },
+          },
+        ];
+      }
+      for (const f of rects) {
+        const region = regionOf(s.page!, f.rect, f.alt);
+        if (isChoice) region.choice_label = s.id as Label;
+        regions.push(region);
         stats.figures++;
       }
       const text = t.text.trim();
-      return text || (isChoice && figs.length > 0 ? `Figure ${where.slice(-1)}` : "");
+      // Graph choice: the image IS the choice — never a prose description.
+      if (isChoice && rects.length > 0 && FIGURE_DESCRIPTION.test(text)) return "";
+      return text;
     };
 
     // Stem
@@ -588,7 +633,9 @@ export async function parsePrintoutPdf(
       choices.push({ label: c.label, text: cleanText(slotText(slot, raw, `choice ${c.label}`)) });
     }
     if (isMC) {
-      const missing = LABELS.filter((l) => !choices.find((c) => c.label === l && c.text));
+      const missing = LABELS.filter(
+        (l) => !choices.find((c) => c.label === l && (c.text || regions.some((r) => r.choice_label === l))),
+      );
       if (missing.length > 0) {
         reasons.push(
           `source PDF shows ${4 - missing.length} of 4 answer choices — choice${missing.length > 1 ? "s" : ""} ${missing.join(" and ")} ${missing.length > 1 ? "are" : "is"} missing or not readable`,

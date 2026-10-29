@@ -8,7 +8,7 @@
 // has 2 questions" because nothing got approved.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
+import { findParsePlaceholder, placeholderNote, stemFigureMissing } from "@/lib/parse-guards";
 
 export interface AutoPromoteSummary {
   candidates: number;
@@ -66,9 +66,7 @@ export async function autoPromoteModule(
     const hasAnswer =
       row.correct_answer != null && String(row.correct_answer).trim() !== "";
     if (!hasAnswer) return false;
-    const blindImage =
-      row.has_image === true &&
-      (!Array.isArray(row.image_urls) || row.image_urls.length === 0);
+    const blindImage = stemFigureMissing(row);
     if (blindImage) return false;
     if (row.question_type === "Multiple Choice") {
       const choices = Array.isArray(row.choices) ? row.choices : [];

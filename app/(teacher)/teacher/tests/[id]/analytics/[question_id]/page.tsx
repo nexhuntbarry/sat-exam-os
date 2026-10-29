@@ -12,7 +12,7 @@ interface QuestionDetail {
   id: string;
   questionNumber: number;
   questionText: string;
-  choices: Array<{ letter: string; text: string }>;
+  choices: Array<{ letter: string; text: string; image_url?: string | null }>;
   correctAnswer: string;
   explanation: string | null;
   difficulty: string | null;
@@ -72,6 +72,14 @@ export default function QuestionDetailPage() {
         if (r.status === 403) throw new Error("forbidden");
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const json = await r.json();
+        // The API returns DB choices ({ label, text }); this page reads
+        // `letter`. Accept both so the correct choice and the answer
+        // distribution line up.
+        if (json?.question && Array.isArray(json.question.choices)) {
+          json.question.choices = (json.question.choices as { letter?: string; label?: string; text?: string; image_url?: string | null }[]).map(
+            (c) => ({ letter: c.letter ?? c.label ?? "", text: c.text ?? "", image_url: c.image_url ?? null }),
+          );
+        }
         setData(json);
         setNote(json.privateNote ?? "");
       })
@@ -217,6 +225,15 @@ export default function QuestionDetailPage() {
                   )}>
                     {ch.text}
                   </MathMarkdown>
+                  {ch.image_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={`/api/blob-image?u=${encodeURIComponent(ch.image_url)}`}
+                      alt={`Choice ${ch.letter} graph`}
+                      loading="lazy"
+                      className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
+                    />
+                  )}
                   <div className="mt-1.5 flex items-center gap-2">
                     <div className="flex-1 bg-light-bg rounded-full h-1.5 max-w-48 overflow-hidden">
                       <div

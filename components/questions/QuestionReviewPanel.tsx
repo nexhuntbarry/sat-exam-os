@@ -24,6 +24,8 @@ const SAT_DOMAINS = [
 interface Choice {
   label: "A" | "B" | "C" | "D";
   text: string;
+  /** Graph / figure choice — the cropped image is the choice itself. */
+  image_url?: string | null;
 }
 
 interface Question {
@@ -562,9 +564,19 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                           {c.label}
                         </span>
                         <div className="flex-1 flex flex-col gap-1">
-                          <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 [&_p]:my-0">
-                            {c.text}
-                          </MathMarkdown>
+                          {(c.text || !c.image_url) && (
+                            <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 [&_p]:my-0">
+                              {c.text}
+                            </MathMarkdown>
+                          )}
+                          {c.image_url && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={`/api/blob-image?u=${encodeURIComponent(c.image_url)}`}
+                              alt={`Choice ${c.label} graph`}
+                              className="max-w-full md:max-w-xs rounded-lg border border-divider bg-white"
+                            />
+                          )}
                           <details className="text-[11px] text-soft-mute">
                             <summary className="cursor-pointer">Edit raw</summary>
                             <input

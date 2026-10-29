@@ -18,7 +18,8 @@ import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
-type ImageBlock = { type: "image"; image: string; mediaType: string };
+// Figures for the model; a graph choice's image is preceded by a "Choice X:" label.
+type ImageBlock = { type: "image"; image: string; mediaType: string } | { type: "text"; text: string };
 
 const SolveSchema = z.object({
   answer: z.string().describe("The final answer. MCQ: single letter A/B/C/D. SPR: the numeric/text value."),
@@ -64,7 +65,13 @@ interface QRow {
 
 function choicesText(q: QRow): string {
   return Array.isArray(q.choices)
-    ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`)).join("\n")
+    ? (q.choices as unknown[])
+        .map((c) => {
+          if (typeof c === "string") return c;
+          const cc = c as { label?: string; text?: string; image_url?: string | null };
+          return `${cc.label}) ${cc.text || (cc.image_url ? `(graph — see the attached image labelled "Choice ${cc.label}")` : "")}`;
+        })
+        .join("\n")
     : "";
 }
 
@@ -111,6 +118,12 @@ async function loadImages(q: QRow): Promise<ImageBlock[]> {
   for (const url of urls) {
     const f = await fetchImageAsBase64(url);
     if (f) blocks.push({ type: "image", image: f.base64, mediaType: f.mediaType });
+  }
+  // Graph answer choices: each choice's image, labelled with its letter.
+  for (const c of Array.isArray(q.choices) ? (q.choices as { label?: string; image_url?: string | null }[]) : []) {
+    if (!c?.image_url) continue;
+    const f = await fetchImageAsBase64(c.image_url);
+    if (f) blocks.push({ type: "text", text: `Choice ${c.label}:` }, { type: "image", image: f.base64, mediaType: f.mediaType });
   }
   return blocks;
 }

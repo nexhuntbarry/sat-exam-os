@@ -10,7 +10,7 @@ export interface ReviewQuestion {
   module_id: string;
   original_question_number: number;
   question_text: string;
-  choices: { label: string; text: string }[] | null;
+  choices: { label: string; text: string; image_url?: string | null }[] | null;
   question_type: "Multiple Choice" | "Student Produced Response" | string;
   correct_answer: string | null;
   explanation: string | null;
@@ -44,7 +44,9 @@ export default function ReviewQuestionCard({
 }: Props) {
   const choices = Array.isArray(q.choices) ? q.choices : [];
   const hasCrops = Array.isArray(q.image_urls) && q.image_urls.length > 0;
-  const needsFigureFallback = showSourceFigure && (q.has_image || q.has_table) && !hasCrops;
+  // Graph-choice crops count too: the raw page would show the ✓ answer mark.
+  const hasChoiceCrops = choices.some((c) => !!c.image_url);
+  const needsFigureFallback = showSourceFigure && (q.has_image || q.has_table) && !hasCrops && !hasChoiceCrops;
 
   return (
     <div className="bg-surface border border-divider rounded-2xl p-5 space-y-3">
@@ -117,9 +119,23 @@ export default function ReviewQuestionCard({
                 )}
               >
                 <span className="font-semibold shrink-0">{c.label}.</span>
-                <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">
-                  {c.text}
-                </MathMarkdown>
+                <div className="min-w-0">
+                  {c.text && (
+                    <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">
+                      {c.text}
+                    </MathMarkdown>
+                  )}
+                  {c.image_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={`/api/blob-image?u=${encodeURIComponent(c.image_url)}`}
+                      alt={`Choice ${c.label} graph`}
+                      loading="lazy"
+                      decoding="async"
+                      className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
+                    />
+                  )}
+                </div>
                 <span className="ml-auto flex items-center gap-2 shrink-0">
                   {isMine && (
                     <span className="text-mid-gray text-xs font-medium">Your answer</span>

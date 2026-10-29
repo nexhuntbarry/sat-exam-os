@@ -86,7 +86,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     questions: {
       original_question_number: number;
       question_text: string;
-      choices: { label: string; text: string }[];
+      choices: { label: string; text: string; image_url?: string | null }[];
       question_type: string;
       explanation: string | null;
       difficulty: string | null;
@@ -525,7 +525,7 @@ export default async function StudentResultPage({
 
                     {q.question_type === "Multiple Choice" && (q.choices ?? []).length > 0 && (
                       <div className="space-y-1.5">
-                        {(q.choices as { label: string; text: string }[]).map((c) => (
+                        {(q.choices as { label: string; text: string; image_url?: string | null }[]).map((c) => (
                           <div
                             key={c.label}
                             className={clsx(
@@ -538,7 +538,19 @@ export default async function StudentResultPage({
                             )}
                           >
                             <span className="font-semibold shrink-0">{c.label}.</span>
-                            <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">{c.text}</MathMarkdown>
+                            <div className="min-w-0">
+                              {c.text && <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">{c.text}</MathMarkdown>}
+                              {c.image_url && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={`/api/blob-image?u=${encodeURIComponent(c.image_url)}`}
+                                  alt={`Choice ${c.label} graph`}
+                                  loading="lazy"
+                                  decoding="async"
+                                  className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
+                                />
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>

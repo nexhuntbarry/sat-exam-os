@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { summarizeTestProgress } from "@/lib/test-progress";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -50,7 +51,7 @@ async function getTest(id: string, viewerIsQa: boolean) {
 
   const [{ data: assignment }, { data: submissions }] = await Promise.all([
     db.from("test_assignments").select("teacher_ids, student_ids, class_group_ids").eq("test_id", id).single(),
-    db.from("submissions").select("id, status, score, percentage, student_id, submitted_at").eq("test_id", id),
+    db.from("submissions").select("id, status, score, percentage, student_id, submitted_at, session_id, adaptive_track, started_at, correct_count, total_questions").eq("test_id", id),
   ]);
 
   // Get teacher names
@@ -102,9 +103,18 @@ async function getTest(id: string, viewerIsQa: boolean) {
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const submittedSubs = (submissions ?? []).filter((s) => s.status === "Submitted" || s.status === "Late");
-  const avgScore = submittedSubs.length > 0
-    ? submittedSubs.reduce((sum, s) => sum + (Number(s.percentage) || 0), 0) / submittedSubs.length
-    : null;
+
+  // Students assigned through a class count too; every student is counted
+  // once even though each module is its own submission row.
+  const { data: classMembers } =
+    classGroupIds.length > 0
+      ? await db.from("class_group_members").select("student_id").in("class_group_id", classGroupIds)
+      : { data: [] as { student_id: string }[] };
+  const progress = summarizeTestProgress(
+    submissions ?? [],
+    [...studentIds, ...(classMembers ?? []).map((m) => m.student_id as string)],
+    Boolean(test.module_2_id || test.is_adaptive),
+  );
 
   return {
     ...test,
@@ -122,8 +132,8 @@ async function getTest(id: string, viewerIsQa: boolean) {
     stats: {
       total: (submissions ?? []).length,
       submitted: submittedSubs.length,
-      avgScore,
     },
+    progress,
   };
 }
 
@@ -335,16 +345,16 @@ export default async function TestDetailPage({
         </div>
         <div className="flex gap-6">
           <div>
-            <div className="text-2xl font-bold text-charcoal">{test.stats.submitted}</div>
-            <div className="text-soft-mute text-xs">Submitted</div>
+            <div className="text-2xl font-bold text-charcoal">{test.progress.finished}</div>
+            <div className="text-soft-mute text-xs">Students finished</div>
           </div>
           <div>
-            <div className="text-2xl font-bold text-charcoal">{test.stats.total}</div>
-            <div className="text-soft-mute text-xs">Total</div>
+            <div className="text-2xl font-bold text-charcoal">{test.progress.students}</div>
+            <div className="text-soft-mute text-xs">Students</div>
           </div>
-          {test.stats.avgScore !== null && (
+          {test.progress.avgScore !== null && (
             <div>
-              <div className="text-2xl font-bold text-warm-amber">{test.stats.avgScore.toFixed(1)}%</div>
+              <div className="text-2xl font-bold text-warm-amber">{test.progress.avgScore.toFixed(1)}%</div>
               <div className="text-soft-mute text-xs">Avg Score</div>
             </div>
           )}

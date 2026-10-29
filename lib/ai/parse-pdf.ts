@@ -21,14 +21,21 @@ export interface ParsedImageRegion {
   w_pct: number;
   h_pct: number;
   alt: string;
-  /** Crop padding as a page fraction; omitted → cropper default (2.5%). */
+  /** Crop padding as a page fraction; omitted → cropper default (1.5%). */
   pad?: number;
+  /**
+   * Set when this region is one answer choice's graph/figure (the choices
+   * themselves are graphs). The crop becomes that choice's image_url instead
+   * of a question figure.
+   */
+  choice_label?: "A" | "B" | "C" | "D" | null;
 }
 
 export interface ParsedQuestion {
   original_question_number: number;
   question_text: string;
-  choices: { label: "A" | "B" | "C" | "D"; text: string }[];
+  /** image_url: graph/figure choice (text is then "" — never a description). */
+  choices: { label: "A" | "B" | "C" | "D"; text: string; image_url?: string }[];
   correct_answer: string | null;
   explanation: string | null;
   difficulty: "Easy" | "Medium" | "Hard";
@@ -96,7 +103,17 @@ const ParsedQuestionSchema = z.object({
         h_pct: z
           .number()
           .describe("Height of bounding box as fraction of page height, between 0 and 1"),
-        alt: z.string().describe("Brief description of what the image/graph/table contains"),
+        alt: z
+          .string()
+          .describe(
+            "Neutral description of what the image shows. NEVER say which choice is correct or name the answer (no \"correct answer\", no \"✓\").",
+          ),
+        choice_label: z
+          .enum(["A", "B", "C", "D"])
+          .nullable()
+          .describe(
+            "Only when this region is ONE answer choice's graph/figure (the A–D choices are themselves graphs): that choice's letter. null for the question's own figure.",
+          ),
       }),
     )
     .describe(
@@ -183,8 +200,10 @@ EXTRACTION RULES:
 13. **REQUIRED — IMAGE_REGIONS BOUNDING BOXES**: For EVERY image, graph, diagram, chart, scatter plot, geometric figure, or non-text table (see rule 8 — a data table you reproduced as Markdown gets NO region) that belongs to a question, you MUST populate image_regions with a tight bounding box around it. THIS IS NOT OPTIONAL. The downstream system literally crops these rectangles out of the PDF — without bounding boxes, students see questions like "Refer to the figure" with no figure. Coordinates are fractions of the page dimensions, where (0, 0) is the top-left corner and (1, 1) is the bottom-right corner of the rendered page.
     - **HARD RULE**: If has_image=true OR has_table=true, image_regions MUST contain at least one entry. An empty array when has_image=true is a BUG — do not emit it.
     - **CONCRETE EXAMPLE** of a valid region for a graph occupying the upper-middle of page 3: { "page": 3, "x_pct": 0.12, "y_pct": 0.18, "w_pct": 0.55, "h_pct": 0.32, "alt": "Scatter plot of mass vs. time with line of best fit" }. Numbers are fractions in [0, 1], NOT pixels and NOT percentages out of 100.
-    - Include the FULL visual element with a small 1–3% padding on every side so axis labels, captions, and units are not clipped.
-    - Do NOT include the question stem text or answer choices in the bounding box.
+    - Include the FULL visual element — axis labels, tick labels, title, legend, units and any "Note: Figure not drawn to scale" caption — but nothing else. Draw the box tight to the figure itself; the cropper adds its own small margin, so do NOT add padding.
+    - The box must NEVER include: the question stem prose, answer choices (text or letter boxes), the green ✓ / check-circle that marks the correct answer, a Student-Produced-Response answer box, the question-number bar/banner ("9", "Question 9"), another question's content, or the page header/footer ("Survey: print page | Premier Plus Education", dates, URLs, page numbers). If a figure sits right below a question-number bar or right after the previous question's last choice, start the box BELOW them.
+    - GRAPH / FIGURE ANSWER CHOICES: when the A/B/C/D choices are themselves graphs or figures (e.g. "Which graph shows…", "Which shaded region represents…"), emit ONE region PER CHOICE with choice_label set to that letter — tight to that choice's graph only, EXCLUDING its letter box/label. Set that choice's text to "" (empty string). NEVER describe a graph in choice text ("Graph A: shaded region above the line…" is WRONG — the student must see the graph itself). Choice regions are separate from the question's own figure (choice_label=null).
+    - alt is shown to students: describe the figure neutrally and NEVER reveal or hint at the answer (no "correct answer", no "✓", no "this is the right graph").
     - If a single question has multiple visuals (e.g., two side-by-side graphs), emit one entry per visual.
     - If a question has no visual element AT ALL (pure text/algebra problem), image_regions must be an empty array [] AND has_image must be false AND has_table must be false.
     - The page field on each region is 1-indexed and may differ from page_number if the visual sits on a facing page.
@@ -217,6 +236,7 @@ MULTIPLE CHOICE QUESTIONS (CRITICAL — never drop the choices):
 Every SAT question marked Multiple Choice in this PDF has exactly four labelled options A, B, C, D. The downstream system stores them in a JSON array and uses that array to render the choice buttons; if the array is empty or missing the student sees the stem with no options to pick from.
 - For every question you classify as question_type="Multiple Choice", the choices array MUST contain exactly 4 entries.
 - Each entry's label is "A", "B", "C", or "D" (uppercase, single character) and text is the choice prose copied verbatim from the PDF.
+- Exception — GRAPH / FIGURE CHOICES: when a choice IS a graph or figure, its text is "" and the graph goes in image_regions with choice_label set to that letter (rule 13). Still emit all 4 entries.
 - If you can see the question stem clearly but cannot read one or more of the A/B/C/D options (cut off, blurry, glued to the next page), DO NOT silently classify it as "Student Produced Response". Keep question_type="Multiple Choice", include the choices you can read, lower ai_confidence_score below 0.7, and put a short note in question_text or skip the row — but never emit MCQ with an empty choices array.
 - "Student Produced Response" is reserved for SAT Math grid-in questions where there are genuinely no A/B/C/D options on the page. R&W never has SPR — every R&W question is Multiple Choice.
 

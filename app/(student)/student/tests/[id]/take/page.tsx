@@ -69,7 +69,7 @@ async function getActiveSubmission(testId: string, studentId: string, startModul
   const questionQuery = scopeToStudentQuestionSet(
     db
       .from("questions")
-      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, image_alts")
+      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls")
       .eq("module_id", activeModuleId),
     test,
   ).order("original_question_number", { ascending: true });

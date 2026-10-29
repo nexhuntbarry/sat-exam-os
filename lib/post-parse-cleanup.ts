@@ -23,6 +23,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { stripRedundantEquationFiguresForModule } from "@/lib/repair-ops";
+import { incompleteGraphChoices, stemFigureMissing } from "@/lib/parse-guards";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -925,16 +926,14 @@ async function resolveBlindImages(
   const { data, error } = await db
     .from("questions")
     .select(
-      "id, original_question_number, question_text, source_pdf_url, has_image, image_urls",
+      "id, original_question_number, question_text, source_pdf_url, has_image, image_urls, choices",
     )
     .eq("module_id", moduleId)
     .eq("has_image", true)
     .or("image_urls.is.null,image_urls.eq.{}");
   if (error) throw new Error(`resolveBlindImages select: ${error.message}`);
-  const candidates = (data ?? []).filter((q) => {
-    const urls = q.image_urls as string[] | null;
-    return q.source_pdf_url && (!Array.isArray(urls) || urls.length === 0);
-  });
+  // Graph-choice questions whose stem needs no figure of its own aren't blind.
+  const candidates = (data ?? []).filter((q) => q.source_pdf_url && stemFigureMissing(q));
   let resolved = 0;
   for (const q of candidates) {
     try {
@@ -1019,7 +1018,7 @@ export interface AuditRow {
   section: string | null;
   question_type: string | null;
   question_text: string | null;
-  choices: Array<{ label: string; text: string }> | null;
+  choices: Array<{ label: string; text: string; image_url?: string | null }> | null;
   correct_answer: string | null;
   explanation: string | null;
   has_image: boolean | null;
@@ -1164,6 +1163,12 @@ export const CHECKS: Array<{
       (!Array.isArray(r.choices) || r.choices.length !== 4),
   },
   {
+    // Graph choices are all-or-nothing: one choice is an image but another
+    // is empty / still a "Graph B: …" description instead of its graph.
+    id: "mcq-partial-graph-choices",
+    failed: (r) => r.question_type === "Multiple Choice" && incompleteGraphChoices(r.choices).length > 0,
+  },
+  {
     id: "mcq-answer-not-in-choices",
     failed: (r) => {
       if (r.question_type !== "Multiple Choice") return false;
@@ -1199,9 +1204,7 @@ export const CHECKS: Array<{
   },
   {
     id: "blind-image",
-    failed: (r) =>
-      r.has_image === true &&
-      (!Array.isArray(r.image_urls) || r.image_urls.length === 0),
+    failed: (r) => stemFigureMissing(r),
   },
   {
     id: "blank-artifact",

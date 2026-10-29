@@ -47,6 +47,127 @@ export interface PrintoutLayout {
 // check-square[-o]) + common Unicode check marks.
 export const CHECK_GLYPH = /[\uf058\uf05d\uf00c\uf046\uf14a\u2713\u2714\u2705\u2611]/g;
 
+// Browser-print page chrome: the "date, time   Survey: print page | …" header
+// and the URL + "n/m" footer.
+const PAGE_CHROME = [
+  /^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*(AM|PM)?\b/i,
+  /^https?:\/\/\S+(\s+\d+\s*\/\s*\d+)?$/i,
+  /survey:\s*print page/i,
+];
+
+export interface ExclusionZone extends Rect {
+  page: number;
+  /**
+   * line = header/footer; check = ✓ line; label = a choice's A–D letter box;
+   * bar = question-number bar; answer = frame holding a ✓ (correct choice /
+   * answer box); choice = any other choice frame (has an A–D letter box).
+   */
+  kind: "line" | "check" | "label" | "bar" | "answer" | "choice";
+}
+
+/**
+ * Areas on each page that never belong to a question's figure: page
+ * header/footer lines, question-number bars, check-mark (answer) lines, and
+ * the choice / answer frames that carry a check mark. Used to clamp an
+ * approximate (model-drawn) figure box to its own question so the crop can't
+ * leak the neighbouring question's choices, the ✓ that marks the answer, the
+ * Student-Produced-Response answer box or the page header.
+ */
+const grow = (r: Rect, d: number): Rect => ({ x0: r.x0 - d, y0: r.y0 - d, x1: r.x1 + d, y1: r.y1 + d });
+
+export function figureExclusionZones(layout: PrintoutLayout): ExclusionZone[] {
+  const zones: ExclusionZone[] = [];
+  const lines = layout.elements.filter((e): e is LayoutLine => e.kind === "text");
+  const chrome = (l: LayoutLine) => PAGE_CHROME.some((re) => re.test(l.plain));
+  for (const l of lines) {
+    // (Glyph boxes are tight to the text; the drawn badge is a bit bigger.)
+    if (l.checked) zones.push({ ...grow(l, 3), page: l.page, kind: "check" });
+    else if (chrome(l)) zones.push({ ...l, kind: "line" });
+  }
+  // A question number = a lone "N" whose next element (page chrome skipped)
+  // is the question's stem: a "N." line or the stem image. Same rule the
+  // printout segmenter uses — a number in a table row or a bar-chart bar is
+  // followed by more data, not by a stem.
+  const numberLines = new Set<LayoutLine>();
+  const els = layout.elements.filter((e) => !(e.kind === "text" && !e.checked && chrome(e)));
+  els.forEach((e, i) => {
+    if (e.kind !== "text" || e.checked || !/^\d{1,3}$/.test(e.plain)) return;
+    const next = els[i + 1];
+    if (next && (next.kind === "image" || /^\d{1,3}\.(\s|$)/.test(next.plain))) numberLines.add(e);
+  });
+  for (const b of layout.boxes) {
+    const pageW = layout.pages[b.page - 1]?.width ?? 612;
+    if (b.x1 - b.x0 >= pageW * 0.8) continue; // page border
+    const inBox = (l: LayoutLine) => {
+      const cx = (l.x0 + l.x1) / 2;
+      const cy = (l.y0 + l.y1) / 2;
+      return l.page === b.page && cx > b.x0 && cx < b.x1 && cy > b.y0 && cy < b.y1;
+    };
+    const held = lines.filter(inBox);
+    // Thin wide bar holding exactly one line, a question number.
+    if (b.y1 - b.y0 <= 28 && b.x1 - b.x0 >= pageW * 0.4 && held.length === 1 && numberLines.has(held[0])) {
+      zones.push({ ...b, kind: "bar" });
+      continue;
+    }
+    // The choice's letter box sits in the frame's top-left corner — a lone
+    // A–D there is the label, not a point label of the figure.
+    const labels = held.filter((l) => /^[A-D]$/.test(l.plain) && l.x0 - b.x0 < 30 && l.y0 - b.y0 < 25);
+    for (const l of labels) zones.push({ ...grow(l, 5), page: l.page, kind: "label" });
+    // A frame holding a check mark = the correct choice / the answer box;
+    // every other lettered frame is a plain choice frame. Both are treated
+    // alike so the correct choice's crop never looks different.
+    if (held.some((l) => l.checked)) zones.push({ ...b, kind: "answer" });
+    else if (labels.length > 0) zones.push({ ...b, kind: "choice" });
+  }
+  return zones;
+}
+
+/**
+ * Shrink `r` (PDF points, top-left origin) so it no longer overlaps any
+ * exclusion zone. Each overlapping zone is cut away from whichever side
+ * keeps more of the box (a header or bar → top/bottom, a ✓ at the frame's
+ * right edge → right). A choice/answer frame that CONTAINS the box centre is
+ * the graph choice's own frame: the box is clamped to its interior (border
+ * inset) instead, so nothing outside the frame leaks in. Returns the original box
+ * when clamping would leave too little of it — a wrong clamp must never eat
+ * the figure.
+ */
+export function clampToZones(r: Rect, zones: (Rect & { kind?: ExclusionZone["kind"] })[]): Rect {
+  const cx = (r.x0 + r.x1) / 2;
+  const cy = (r.y0 + r.y1) / 2;
+  const out = { ...r };
+  const INSET = 2;
+  for (const z of zones) {
+    if ((z.kind !== "answer" && z.kind !== "choice") || !(cx > z.x0 && cx < z.x1 && cy > z.y0 && cy < z.y1)) continue;
+    out.x0 = Math.max(out.x0, z.x0 + INSET);
+    out.y0 = Math.max(out.y0, z.y0 + INSET);
+    out.x1 = Math.min(out.x1, z.x1 - INSET);
+    out.y1 = Math.min(out.y1, z.y1 - INSET);
+  }
+  // Biggest zones first: once a frame or bar is cut away, the small ✓ /
+  // header lines inside or beyond it no longer overlap and cost nothing.
+  const bySize = [...zones].sort((a, b) => (b.x1 - b.x0) * (b.y1 - b.y0) - (a.x1 - a.x0) * (a.y1 - a.y0));
+  for (const z of bySize) {
+    if (z.x1 <= out.x0 || z.x0 >= out.x1 || z.y1 <= out.y0 || z.y0 >= out.y1) continue;
+    if (cx > z.x0 && cx < z.x1 && cy > z.y0 && cy < z.y1) continue;
+    const w = out.x1 - out.x0;
+    const h = out.y1 - out.y0;
+    // Remaining area for each way of cutting the zone off.
+    const vert = (z.y0 + z.y1) / 2 < cy ? { y0: Math.max(out.y0, z.y1 + 1) } : { y1: Math.min(out.y1, z.y0 - 1) };
+    const horz = (z.x0 + z.x1) / 2 < cx ? { x0: Math.max(out.x0, z.x1 + 1) } : { x1: Math.min(out.x1, z.x0 - 1) };
+    const vArea = w * (("y0" in vert ? out.y1 - vert.y0! : vert.y1! - out.y0));
+    const hArea = h * (("x0" in horz ? out.x1 - horz.x0! : horz.x1! - out.x0));
+    Object.assign(out, vArea >= hArea ? vert : horz);
+  }
+  if (out.y1 - out.y0 < Math.max(20, (r.y1 - r.y0) * 0.25) || out.x1 - out.x0 < Math.max(20, (r.x1 - r.x0) * 0.25)) return r;
+  return out;
+}
+
+/** The box overlaps a ✓ (answer check-mark) line. */
+export function overlapsCheckMark(r: Rect, zones: (Rect & { kind?: ExclusionZone["kind"] })[]): boolean {
+  return zones.some((z) => z.kind === "check" && z.x0 < r.x1 && z.x1 > r.x0 && z.y0 < r.y1 && z.y1 > r.y0);
+}
+
 type M = [number, number, number, number, number, number];
 const mul = (m: M, c: M): M => [
   m[0] * c[0] + m[1] * c[2],

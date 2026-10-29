@@ -22,7 +22,7 @@ import { z } from "zod";
 import type { ParsedQuestion } from "./parse-pdf";
 import { logUsage, QUOTE_RULE } from "./parse-pdf";
 import type { getServiceClient } from "@/lib/supabase";
-import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
+import { findParsePlaceholder, placeholderNote, stemFigureMissing } from "@/lib/parse-guards";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -205,7 +205,7 @@ export async function fetchImageAsBase64(
 function buildPromptText(q: ParsedQuestion, section: string): string {
   const choicesText =
     q.choices.length > 0
-      ? `\n\nChoices:\n${q.choices.map((c) => `${c.label}. ${c.text}`).join("\n")}`
+      ? `\n\nChoices:\n${q.choices.map((c) => `${c.label}. ${c.text || (c.image_url ? `(graph — see the attached image labelled "Choice ${c.label}")` : "")}`).join("\n")}`
       : "";
   const typeText =
     q.question_type === "Student Produced Response"
@@ -253,11 +253,10 @@ async function solveOneQuestion(
     section === "Reading & Writing"
       ? undefined
       : imagesByQuestion.get(q.original_question_number);
-  const imageBlocks: Array<{
-    type: "image";
-    image: string;
-    mediaType: string;
-  }> = [];
+  const imageBlocks: Array<
+    | { type: "image"; image: string; mediaType: string }
+    | { type: "text"; text: string }
+  > = [];
   if (imageRefs && imageRefs.urls.length > 0) {
     for (const url of imageRefs.urls) {
       const fetched = await fetchImageAsBase64(url);
@@ -268,6 +267,16 @@ async function solveOneQuestion(
           mediaType: fetched.mediaType,
         });
       }
+    }
+  }
+  // Graph answer choices (any section): the image IS the choice, so the
+  // solver always gets them, each labelled with its letter.
+  for (const c of q.choices ?? []) {
+    if (!c.image_url) continue;
+    const fetched = await fetchImageAsBase64(c.image_url);
+    if (fetched) {
+      imageBlocks.push({ type: "text", text: `Choice ${c.label}:` });
+      imageBlocks.push({ type: "image", image: fetched.base64, mediaType: fetched.mediaType });
     }
   }
 
@@ -464,11 +473,10 @@ export async function solveQuestionsAndPersist(
   // hallucination doesn't get treated as authoritative.
   const blindOnImage = new Set<number>();
   for (const q of pending) {
-    if (q.has_image) {
-      const imgs = imagesByQuestion.get(q.original_question_number);
-      if (!imgs || imgs.urls.length === 0) {
-        blindOnImage.add(q.original_question_number);
-      }
+    // Choice graphs don't stand in for a figure the stem itself refers to.
+    const imgs = imagesByQuestion.get(q.original_question_number);
+    if (stemFigureMissing({ ...q, image_urls: imgs?.urls ?? [] })) {
+      blindOnImage.add(q.original_question_number);
     }
   }
 
@@ -688,7 +696,7 @@ export async function explainOfficialAndPersist(
         if (!ans) { skipped++; return; }
         const ch = Array.isArray(q.choices)
           ? (q.choices as unknown[])
-              .map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`))
+              .map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`))
               .join("\n")
           : "";
         try {
@@ -729,7 +737,7 @@ export async function explainOfficialAndPersist(
             }
           }
           rewrote++;
-          const blindFigure = !!q.has_image && !(Array.isArray(q.image_urls) && q.image_urls.length > 0);
+          const blindFigure = stemFigureMissing(q);
           const placeholder = findParsePlaceholder(q.question_text, q.choices);
           const keep = EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") || blindFigure || placeholder !== null || truncatedOfficial;
           if (keep) keptReview++; else approved++;
@@ -832,7 +840,7 @@ export async function regenerateTruncatedExplanations(
         const ans = q.official_answer || q.correct_answer;
         if (!ans) return;
         const ch = Array.isArray(q.choices)
-          ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`)).join("\n")
+          ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`)).join("\n")
           : "";
         try {
           const res = await generateObject({
@@ -884,7 +892,7 @@ export async function explainOneAnswer(
     .maybeSingle();
   if (!q) return null;
   const ch = Array.isArray(q.choices)
-    ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text}`)).join("\n")
+    ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`)).join("\n")
     : "";
   const explainOneParams = {
     model: anthropic("claude-sonnet-4-6"),

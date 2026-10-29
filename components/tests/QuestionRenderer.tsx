@@ -8,6 +8,8 @@ import HighlightableBlock, { type Annotation } from "@/components/tests/Highligh
 interface Choice {
   label: string;
   text: string;
+  /** Graph / figure choice — the cropped image IS the choice (text may be ""). */
+  image_url?: string | null;
 }
 
 interface Question {
@@ -192,7 +194,8 @@ export default function QuestionRenderer({
           clean extracted crop; rendering both duplicated the chart. */}
       {showSourceFigure &&
         (question.has_image || question.has_table) &&
-        !(question.image_urls && question.image_urls.length > 0) && (
+        !(question.image_urls && question.image_urls.length > 0) &&
+        !(question.choices ?? []).some((c) => c.image_url) && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-soft-mute text-xs uppercase tracking-wide font-medium">
@@ -223,10 +226,10 @@ export default function QuestionRenderer({
             <img
               key={url}
               src={`/api/blob-image?u=${encodeURIComponent(url)}`}
-              alt={
-                question.image_alts?.[i] ||
-                `Figure for question ${question.original_question_number}`
-              }
+              // Never the stored image_alts: a parser-written alt can name the
+              // correct answer ("Graph C … (correct answer)") and alt text is
+              // readable by students (screen readers, broken image, devtools).
+              alt={`Figure ${i + 1} for question ${question.original_question_number}`}
               className="max-w-full rounded-xl border border-divider bg-white"
             />
           ))}
@@ -295,9 +298,23 @@ export default function QuestionRenderer({
                     enabled={annotationsEnabled}
                     className="flex-1"
                   >
-                    <MathMarkdown className="prose prose-sm max-w-none text-inherit leading-relaxed pt-1 [&_p]:my-0">
-                      {choice.text}
-                    </MathMarkdown>
+                    {choice.text && (
+                      <MathMarkdown className="prose prose-sm max-w-none text-inherit leading-relaxed pt-1 [&_p]:my-0">
+                        {choice.text}
+                      </MathMarkdown>
+                    )}
+                    {choice.image_url && (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      // Not draggable / selectable / long-pressable, and no pointer
+                      // target of its own: a tap anywhere on the graph selects
+                      // the choice via the surrounding button.
+                      <img
+                        src={`/api/blob-image?u=${encodeURIComponent(choice.image_url)}`}
+                        alt={`Choice ${choice.label} graph`}
+                        draggable={false}
+                        className="max-w-full max-h-72 rounded-lg border border-divider bg-white mt-1 select-none pointer-events-none [-webkit-touch-callout:none]"
+                      />
+                    )}
                   </HighlightableBlock>
                 </button>
 

@@ -15,6 +15,7 @@
 import { put } from "@vercel/blob";
 import sharp from "sharp";
 import type { ParsedQuestion } from "./parse-pdf";
+import { clampToZones, figureExclusionZones, overlapsCheckMark, readPrintoutLayout, type Rect } from "@/lib/printout-layout";
 
 // Render each PDF page at this DPI before cropping. 200 DPI gives crisp
 // graphs/tables without bloating cold-start memory.
@@ -28,8 +29,17 @@ export interface ExtractedImage {
   alt: string;
 }
 
+type ChoiceLabel = "A" | "B" | "C" | "D";
+
 export interface ExtractImagesResult {
-  byQuestion: Map<number, { urls: string[]; alts: string[] }>;
+  /**
+   * urls/alts = the question's own figures (→ questions.image_urls). Regions
+   * tagged with a choice_label (graph answer choices) land in choiceUrls
+   * instead, one crop per choice (→ choices[i].image_url).
+   */
+  byQuestion: Map<number, { urls: string[]; alts: string[]; choiceUrls: Partial<Record<ChoiceLabel, string>> }>;
+  /** Questions with a crop that still overlaps a ✓ answer mark → Needs Review. */
+  checkMarkLeaks: Set<number>;
   totalUploaded: number;
   errors: string[];
 }
@@ -145,18 +155,22 @@ export async function renderPdfPages(
  * Crop a single bounding box (fractions of page) out of the rendered page
  * PNG using sharp. Returns null if the bbox is invalid or zero-area.
  */
+const DEFAULT_PAD = 0.015;
+
 async function cropRegion(
   pagePng: Buffer,
   widthPx: number,
   heightPx: number,
   region: { x_pct: number; y_pct: number; w_pct: number; h_pct: number; pad?: number },
 ): Promise<Buffer | null> {
-  // Pad the AI's bbox by ~2.5% of the page on every side, clamped to the
+  // Pad the AI's bbox by ~1.5% of the page on every side, clamped to the
   // page, so a slightly-tight box doesn't clip the figure (e.g. the bottom
-  // of a graph). The model tends to draw boxes a hair too small. Regions
-  // measured from the PDF itself (lib/printout-parser.ts) are exact and
-  // carry their own small pad.
-  const PAD_PCT = region.pad ?? 0.025;
+  // of a graph). Was 2.5% — on top of the model's own slack that pulled in
+  // the previous question's last choice (with its ✓ answer mark) and the
+  // page header; boxes are now also clamped to the question's own region
+  // from the PDF text layer (see clampRegions). Regions measured from the
+  // PDF itself (lib/printout-parser.ts) are exact and carry their own pad.
+  const PAD_PCT = region.pad ?? DEFAULT_PAD;
   const padX = PAD_PCT * widthPx;
   const padY = PAD_PCT * heightPx;
   const left = Math.max(0, Math.floor(region.x_pct * widthPx - padX));
@@ -196,6 +210,68 @@ export function hasMarkdownTable(text: string | null | undefined): boolean {
   return false;
 }
 
+// Alt text is shown to students; never let it carry an answer hint
+// ("Graph C … (correct answer)", "✓").
+export function sanitizeFigureAlt(alt: string | null | undefined): string {
+  return (alt ?? "")
+    .replace(/\(?\s*\b(the\s+)?(correct|right|wrong|incorrect)\s+(answer|choice|option)\b\s*\)?/gi, "")
+    .replace(/\(?\s*\b(marked|checked)\s+(as\s+)?(correct|the answer)\b\s*\)?/gi, "")
+    .replace(/[\u2713\u2714\u2705\u2611]/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+}
+
+/**
+ * Model-drawn regions (no explicit `pad`) are approximate. When the PDF has a
+ * text layer, clamp each one to its question's own area: never across a
+ * question-number bar, a ✓ answer line / answered frame, or the page
+ * header/footer. Exact regions measured from the PDF are left alone. Then
+ * check EVERY region's final crop box: one that still overlaps a ✓ answer
+ * mark is reported (question numbers) so the caller can send it to review.
+ */
+async function clampRegions(pdfBase64: string, questions: ParsedQuestion[]): Promise<Set<number>> {
+  const leaks = new Set<number>();
+  let layout;
+  try {
+    layout = await readPrintoutLayout(pdfBase64);
+  } catch (err) {
+    console.warn("[extract-images] text layer unreadable, regions not clamped:", err);
+    return leaks;
+  }
+  if (layout.pages.length === 0) return leaks; // scanned PDF — no text layer
+  const zones = figureExclusionZones(layout);
+  for (const q of questions) {
+    for (const r of q.image_regions ?? []) {
+      const page = Math.floor(r.page);
+      const dims = layout.pages[page - 1];
+      if (!dims) continue;
+      const zonesHere = zones.filter((z) => z.page === page);
+      // The box the cropper will actually cut (region + its pad).
+      const pad = r.pad ?? DEFAULT_PAD;
+      const box: Rect = {
+        x0: Math.max(0, r.x_pct - pad) * dims.width,
+        y0: Math.max(0, r.y_pct - pad) * dims.height,
+        x1: Math.min(1, r.x_pct + r.w_pct + pad) * dims.width,
+        y1: Math.min(1, r.y_pct + r.h_pct + pad) * dims.height,
+      };
+      let final = box;
+      if (r.pad == null) {
+        final = clampToZones(box, zonesHere);
+        if (final !== box) {
+          r.x_pct = final.x0 / dims.width;
+          r.w_pct = (final.x1 - final.x0) / dims.width;
+          r.y_pct = final.y0 / dims.height;
+          r.h_pct = (final.y1 - final.y0) / dims.height;
+          r.pad = 0;
+        }
+      }
+      if (overlapsCheckMark(final, zonesHere)) leaks.add(q.original_question_number);
+    }
+  }
+  return leaks;
+}
+
 const TABLE_ALT = /\btable\b/i;
 const NON_TABLE_FIGURE_ALT = /\b(graph|plot|scatter|diagram|figure|chart|number line|triangle|circle|rectangle|polygon|geometr|coordinate|histogram|bar|curve|parabola|map|drawing|photo|image of)/i;
 const FULL_PAGE_FALLBACK_ALT = /full-page fallback/i;
@@ -228,12 +304,13 @@ export async function extractAndUploadQuestionImages(
   moduleId: string,
 ): Promise<ExtractImagesResult> {
   const errors: string[] = [];
-  const byQuestion = new Map<number, { urls: string[]; alts: string[] }>();
+  const byQuestion: ExtractImagesResult["byQuestion"] = new Map();
 
   // Drop regions that only re-screenshot a table already in the stem as
   // Markdown, then collect every unique page referenced by any image_region.
+  // (A graph-choice crop is never a stem table screenshot.)
   const regionsFor = (q: ParsedQuestion) =>
-    (q.image_regions ?? []).filter((r) => !isRedundantTableRegion(q, r));
+    (q.image_regions ?? []).filter((r) => r.choice_label || !isRedundantTableRegion(q, r));
   const pageSet = new Set<number>();
   for (const q of questions) {
     for (const r of regionsFor(q)) {
@@ -241,8 +318,9 @@ export async function extractAndUploadQuestionImages(
     }
   }
   if (pageSet.size === 0) {
-    return { byQuestion, totalUploaded: 0, errors };
+    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks: new Set() };
   }
+  const checkMarkLeaks = await clampRegions(pdfBase64, questions);
 
   // Public store for question images. Falls back to the same token used for
   // the private PDF store if the dedicated public token isn't configured —
@@ -254,7 +332,7 @@ export async function extractAndUploadQuestionImages(
     process.env.BLOB_READ_WRITE_TOKEN;
   if (!publicToken) {
     errors.push("No Vercel Blob token configured for image uploads");
-    return { byQuestion, totalUploaded: 0, errors };
+    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks };
   }
 
   let renderedPages: Map<number, { png: Buffer; widthPx: number; heightPx: number }>;
@@ -264,7 +342,7 @@ export async function extractAndUploadQuestionImages(
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[extract-images] PDF render failed:", err);
     errors.push(`PDF render failed: ${msg}`);
-    return { byQuestion, totalUploaded: 0, errors };
+    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks };
   }
 
   let totalUploaded = 0;
@@ -273,6 +351,7 @@ export async function extractAndUploadQuestionImages(
     if (regions.length === 0) continue;
     const urls: string[] = [];
     const alts: string[] = [];
+    const choiceUrls: Partial<Record<ChoiceLabel, string>> = {};
     for (let i = 0; i < regions.length; i++) {
       const region = regions[i];
       const rendered = renderedPages.get(Math.floor(region.page));
@@ -290,7 +369,10 @@ export async function extractAndUploadQuestionImages(
       // to access:"private" so the upload still succeeds. The solver passes
       // the bearer token when fetching, and a server-side proxy route can
       // sign URLs for the student renderer.
-      const blobKey = `images/${moduleId}/${q.original_question_number}-${i}.png`;
+      const choiceLabel = region.choice_label ?? null;
+      const blobKey = choiceLabel
+        ? `images/${moduleId}/${q.original_question_number}-choice-${choiceLabel}.png`
+        : `images/${moduleId}/${q.original_question_number}-${i}.png`;
       let uploadedUrl: string | null = null;
       let lastErr: unknown = null;
       for (const access of ["public", "private"] as const) {
@@ -312,8 +394,13 @@ export async function extractAndUploadQuestionImages(
         }
       }
       if (uploadedUrl) {
-        urls.push(uploadedUrl);
-        alts.push(region.alt ?? "");
+        if (choiceLabel) {
+          // One crop per choice; a duplicate box for the same choice is dropped.
+          choiceUrls[choiceLabel] ??= uploadedUrl;
+        } else {
+          urls.push(uploadedUrl);
+          alts.push(sanitizeFigureAlt(region.alt));
+        }
         totalUploaded++;
       } else {
         const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
@@ -323,8 +410,8 @@ export async function extractAndUploadQuestionImages(
         errors.push(`q${q.original_question_number}#${i}: ${msg}`);
       }
     }
-    if (urls.length > 0) {
-      byQuestion.set(q.original_question_number, { urls, alts });
+    if (urls.length > 0 || Object.keys(choiceUrls).length > 0) {
+      byQuestion.set(q.original_question_number, { urls, alts, choiceUrls });
     }
   }
 
@@ -341,5 +428,5 @@ export async function extractAndUploadQuestionImages(
     );
   }
 
-  return { byQuestion, totalUploaded, errors };
+  return { byQuestion, totalUploaded, errors, checkMarkLeaks };
 }

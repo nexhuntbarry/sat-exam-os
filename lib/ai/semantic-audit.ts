@@ -80,7 +80,7 @@ For EACH question return a verdict on four dimensions. Be strict but fair — on
 
 3. answer_explanation_ok — The explanation must be present, coherent, and actually justify correct_answer. Flag (false) if the explanation is empty/blank, is an obvious placeholder ("Pending AI answer", "TODO"), is cut off mid-sentence, self-contradicts, or reasons to a different final answer than correct_answer.
 
-4. choices_ok — Only meaningful for Multiple Choice. Flag (false) if there are fewer than four options, options are duplicated, or an option is empty/garbled. For Student Produced Response / non-MCQ, choices_ok=true.
+4. choices_ok — Only meaningful for Multiple Choice. Flag (false) if there are fewer than four options, options are duplicated, or an option is empty/garbled. A choice with graph_image_attached=true IS a graph shown to the student as an image — its empty text is correct, not an empty option. For Student Produced Response / non-MCQ, choices_ok=true.
 
 Put a concise note in issues[] for every dimension you flag. If a question is completely fine, all four booleans are true and issues is [].
 
@@ -110,6 +110,8 @@ interface QuestionRow {
   parsing_notes: string | null;
 }
 
+// The question's OWN figure — graph choices are reported per choice
+// (graph_image_attached) and never stand in for it.
 function hasAttachedImage(r: QuestionRow): boolean {
   return Array.isArray(r.image_urls) && r.image_urls.length > 0;
 }
@@ -168,7 +170,15 @@ export async function runSemanticAudit(
       question_type: r.question_type ?? "Multiple Choice",
       has_image_attached: hasAttachedImage(r),
       stem: r.question_text ?? "",
-      choices: Array.isArray(r.choices) ? r.choices : [],
+      // Graph choices: the image itself is the choice — tell the auditor it
+      // exists rather than sending a URL next to an empty text.
+      choices: Array.isArray(r.choices)
+        ? (r.choices as { label?: string; text?: string; image_url?: string | null }[]).map((c) =>
+            c && typeof c === "object" && c.image_url
+              ? { label: c.label, text: c.text ?? "", graph_image_attached: true }
+              : c,
+          )
+        : [],
       correct_answer: r.correct_answer ?? "(none)",
       explanation: r.explanation ?? "(none)",
     }));

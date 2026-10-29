@@ -11,7 +11,7 @@ import {
   fetchPdfAsBase64,
   extractAnswerKey,
 } from "@/lib/ai/parse-pdf";
-import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
+import { extractAndUploadQuestionImages, isRedundantTableRegion } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
@@ -24,6 +24,9 @@ import {
   keyDisagreementNote,
   flagQuestionsForReview,
   enforceStemIntegrity,
+  normalizeChoiceRegions,
+  applyChoiceImages,
+  incompleteGraphChoices,
 } from "@/lib/parse-guards";
 import {
   extractChoicesFromPdfText,
@@ -455,7 +458,14 @@ export async function POST(
     // tables and figures too, and must get the same figure extraction as Math —
     // never skip the cropper for R&W, and never stand in a text description
     // ("[Bar chart: …]") for a figure.
-    let imageMap: Map<number, { urls: string[]; alts: string[] }> = new Map();
+    // A choice-tagged region is a graph CHOICE only when it's really a set of
+    // graph choices (≥2 choices, no real text) — a lone tag is a mislabelled
+    // stem figure and stays one.
+    for (const q of parsedQuestions) {
+      q.image_regions = normalizeChoiceRegions(q.image_regions ?? [], q.choices);
+    }
+    let imageMap: Awaited<ReturnType<typeof extractAndUploadQuestionImages>>["byQuestion"] = new Map();
+    let checkMarkLeaks = new Set<number>();
     try {
       const result = await extractAndUploadQuestionImages(
         pdfBase64,
@@ -463,8 +473,18 @@ export async function POST(
         id,
       );
       imageMap = result.byQuestion;
+      checkMarkLeaks = result.checkMarkLeaks;
     } catch (err) {
       console.error("[modules/parse] image extraction failed (non-fatal):", err);
+    }
+    // Graph answer choices: each choice's crop becomes that choice's image
+    // (choices[i].image_url, a "Graph A: …" description dropped), not a stem
+    // figure. Done before the insert so the stored choices, the solver and
+    // every check see them.
+    for (const q of parsedQuestions) {
+      const choiceUrls = imageMap.get(q.original_question_number)?.choiceUrls ?? {};
+      if (Object.keys(choiceUrls).length === 0 || !Array.isArray(q.choices)) continue;
+      q.choices = applyChoiceImages(q.choices, choiceUrls);
     }
 
     // Fetch existing questions in same section for duplicate detection
@@ -521,6 +541,26 @@ export async function POST(
       if (q.review_reasons && q.review_reasons.length > 0) {
         parsingStatus = "Needs Review";
         parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + q.review_reasons.map((r) => `Needs review: ${r}`).join("; ");
+      }
+
+      // Figure problems the cropper can see: the question's OWN figure didn't
+      // crop (choice graphs don't stand in for it), a crop still overlaps the
+      // ✓ answer mark, or only some choices came out as graphs.
+      const figureNotes: string[] = [];
+      const stemRegion = (q.image_regions ?? []).some((r) => !r.choice_label && !isRedundantTableRegion(q, r));
+      if (stemRegion && !(imageMap.get(q.original_question_number)?.urls.length)) {
+        figureNotes.push("Needs review: the question's own figure could not be cropped — re-extract it");
+      }
+      if (checkMarkLeaks.has(q.original_question_number)) {
+        figureNotes.push("Needs review: a figure crop may include the ✓ answer mark — check the image");
+      }
+      const partialGraphs = incompleteGraphChoices(q.choices);
+      if (partialGraphs.length > 0) {
+        figureNotes.push(`Needs review: graph choice ${partialGraphs.join(", ")} has no image (other choices are graphs)`);
+      }
+      if (figureNotes.length > 0) {
+        parsingStatus = "Needs Review";
+        parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + figureNotes.join("; ");
       }
 
       const conflict = keyConflicts.get(q.original_question_number);

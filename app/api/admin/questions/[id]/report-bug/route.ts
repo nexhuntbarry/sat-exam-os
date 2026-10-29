@@ -9,6 +9,7 @@ import {
   hasMarkdownTable,
 } from "@/lib/repair-ops";
 import { CHECKS, type AuditRow } from "@/lib/post-parse-cleanup";
+import { stemFigureMissing } from "@/lib/parse-guards";
 import { notifyBugReportResolved } from "@/lib/notifications";
 
 const AUDIT_COLS =
@@ -193,9 +194,7 @@ async function autoResolveBugReport(
 
   const tableFlagButFlat =
     q.has_table === true && !hasMarkdownTable((q.question_text as string) ?? "");
-  const blindImage =
-    q.has_image === true &&
-    (!Array.isArray(q.image_urls) || q.image_urls.length === 0);
+  const blindImage = stemFigureMissing(q);
 
   const ops: Array<{ label: string; run: () => Promise<{ ok: boolean; message: string }> }> = [];
   if (tableComplaint || tableFlagButFlat)

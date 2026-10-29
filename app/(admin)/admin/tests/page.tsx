@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { summarizeTestProgress } from "@/lib/test-progress";
 import Link from "next/link";
 import { Plus, ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
@@ -14,7 +15,7 @@ async function getTests(viewerIsQa: boolean) {
     .from("tests")
     .select(`
       id, test_name, status, open_date, due_date, created_at,
-      is_adaptive,
+      is_adaptive, module_2_id,
       modules!module_id(module_name, section, module_number)
     `), "id", await getQaTestIds(), viewerIsQa)
     .order("created_at", { ascending: false });
@@ -25,7 +26,7 @@ async function getTests(viewerIsQa: boolean) {
 
   const [{ data: assignments }, { data: submissions }] = await Promise.all([
     db.from("test_assignments").select("test_id, teacher_ids, student_ids, class_group_ids").in("test_id", testIds),
-    db.from("submissions").select("test_id, status").in("test_id", testIds),
+    db.from("submissions").select("test_id, student_id, status, session_id, adaptive_track, started_at").in("test_id", testIds),
   ]);
 
   const assignMap: Record<string, { teachers: number; students: number; classes: number }> = {};
@@ -37,11 +38,26 @@ async function getTests(viewerIsQa: boolean) {
     };
   }
 
+  // Count students, not module rows: a Module 1 + Module 2 test has two
+  // submission rows per student, and class-assigned students count too.
+  const groupIds = [...new Set((assignments ?? []).flatMap((a) => (a.class_group_ids ?? []) as string[]))];
+  const { data: members } = groupIds.length > 0
+    ? await db.from("class_group_members").select("class_group_id, student_id").in("class_group_id", groupIds)
+    : { data: [] as { class_group_id: string; student_id: string }[] };
   const subMap: Record<string, { done: number; total: number }> = {};
-  for (const s of submissions ?? []) {
-    if (!subMap[s.test_id]) subMap[s.test_id] = { done: 0, total: 0 };
-    subMap[s.test_id].total++;
-    if (s.status === "Submitted" || s.status === "Late") subMap[s.test_id].done++;
+  for (const t of tests) {
+    const a = (assignments ?? []).find((x) => x.test_id === t.id);
+    const groups = new Set((a?.class_group_ids ?? []) as string[]);
+    const assigned = [
+      ...((a?.student_ids ?? []) as string[]),
+      ...(members ?? []).filter((m) => groups.has(m.class_group_id)).map((m) => m.student_id),
+    ];
+    const p = summarizeTestProgress(
+      (submissions ?? []).filter((s) => s.test_id === t.id),
+      assigned,
+      Boolean((t as { module_2_id?: string | null }).module_2_id || t.is_adaptive),
+    );
+    subMap[t.id] = { done: p.finished, total: p.students };
   }
 
   return tests.map((t) => ({
@@ -73,7 +89,7 @@ export default async function TestsPage() {
                   <th className="text-left px-5 py-3 font-medium">Module</th>
                   <th className="text-left px-5 py-3 font-medium">Status</th>
                   <th className="text-left px-5 py-3 font-medium">Assignments</th>
-                  <th className="text-left px-5 py-3 font-medium">Submissions</th>
+                  <th className="text-left px-5 py-3 font-medium">Finished</th>
                   <th className="text-left px-5 py-3 font-medium">Due Date</th>
                   <th className="text-left px-5 py-3 font-medium">Actions</th>
                 </tr>

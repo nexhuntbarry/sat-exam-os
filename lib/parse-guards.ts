@@ -22,6 +22,100 @@ export function findParsePlaceholder(questionText: string | null | undefined, ch
   return null;
 }
 
+// ── Image choices ────────────────────────────────────────────────────
+// A choice can be a graph/figure: { label, text: "", image_url }. The image IS
+// the choice, so an empty text with an image_url is a complete choice. Choice
+// graphs never stand in for the question's OWN figure, though (see
+// stemFigureMissing).
+
+/** Choice text that only describes a figure ("Graph A: …", "[Graph B]", "Figure C"). */
+export const FIGURE_DESCRIPTION = /^\s*\[?\s*(graph|figure|diagram|image|picture|chart|plot|number line)\b/i;
+
+/** True when the choice has readable text OR a cropped image. */
+export function choiceHasContent(c: unknown): boolean {
+  if (typeof c === "string") return c.trim().length > 0;
+  const cc = c as { text?: string | null; image_url?: string | null } | null;
+  return ((cc?.text ?? "").trim().length > 0) || !!cc?.image_url;
+}
+
+/** image_url of every image choice, in label order. */
+export function choiceImageUrls(choices: unknown): string[] {
+  if (!Array.isArray(choices)) return [];
+  return choices
+    .map((c) => (c && typeof c === "object" ? (c as { image_url?: unknown }).image_url : null))
+    .filter((u): u is string => typeof u === "string" && u.length > 0);
+}
+
+// The stem points at a figure of its own ("the figure shown", "the graph
+// above"). "the graph of y = f(x)" is how graph-CHOICE questions are worded,
+// so it doesn't count.
+const STEM_OWN_FIGURE =
+  /\b(shown|above|below)\b|\bthe (figure|diagram|graph(?! of\b)|table|scatterplot|chart|number line|histogram|dot plot|box plot)\b/i;
+
+/**
+ * has_image is set but the question's OWN figure is missing. Choice graphs only
+ * clear this when the stem doesn't refer to a figure of its own — a "Which
+ * graph…" question needs nothing else, a "the figure shown" one still does.
+ */
+export function stemFigureMissing(r: {
+  has_image?: boolean | null;
+  image_urls?: unknown;
+  choices?: unknown;
+  question_text?: string | null;
+}): boolean {
+  if (r.has_image !== true) return false;
+  if (Array.isArray(r.image_urls) && r.image_urls.length > 0) return false;
+  if (choiceImageUrls(r.choices).length === 0) return true;
+  return STEM_OWN_FIGURE.test(r.question_text ?? "");
+}
+
+/**
+ * Graph choices are all-or-nothing: once one choice is an image, every other
+ * choice must be an image too or carry real text (not "Graph B: …" prose or
+ * an empty string). Returns the offending labels.
+ */
+export function incompleteGraphChoices(choices: unknown): string[] {
+  if (!Array.isArray(choices) || choiceImageUrls(choices).length === 0) return [];
+  return (choices as { label?: string; text?: string | null; image_url?: string | null }[])
+    .filter((c) => {
+      if (!c || typeof c !== "object" || c.image_url) return false;
+      const t = (c.text ?? "").trim();
+      return !t || FIGURE_DESCRIPTION.test(t);
+    })
+    .map((c) => c.label ?? "?");
+}
+
+/**
+ * Decide which choice-tagged figure regions really are graph choices. A lone
+ * tagged region is far more likely a stem figure the model mislabelled, so
+ * choice crops are accepted only when at least two choices get one AND each
+ * of those choices has no real text (empty or a figure description). Every
+ * other region is returned with choice_label = null (→ a question figure).
+ */
+export function normalizeChoiceRegions<R extends { choice_label?: string | null }>(regions: R[], choices: unknown): R[] {
+  const arr = Array.isArray(choices) ? (choices as { label?: string; text?: string | null }[]) : [];
+  const ok = new Set<string>();
+  for (const r of regions) {
+    const c = r.choice_label ? arr.find((x) => x?.label === r.choice_label) : null;
+    const t = (c?.text ?? "").trim();
+    if (c && (!t || FIGURE_DESCRIPTION.test(t))) ok.add(r.choice_label!);
+  }
+  const accepted = ok.size >= 2 ? ok : new Set<string>();
+  return regions.map((r) => (r.choice_label && !accepted.has(r.choice_label) ? { ...r, choice_label: null } : r));
+}
+
+/** Attach each choice's crop; a figure-description text next to it is dropped. */
+export function applyChoiceImages<C extends { label: string; text: string; image_url?: string | null }>(
+  choices: C[],
+  choiceUrls: Partial<Record<string, string>>,
+): C[] {
+  return choices.map((c) => {
+    const url = choiceUrls[c.label];
+    if (!url) return c;
+    return { ...c, image_url: url, text: FIGURE_DESCRIPTION.test(c.text ?? "") ? "" : c.text };
+  });
+}
+
 export function placeholderNote(snippet: string): string {
   return `Needs review: contains parser placeholder text (${snippet})`;
 }
@@ -60,9 +154,11 @@ export async function enforceCompleteness(
       const ch = Array.isArray(q.choices) ? q.choices : [];
       const good = ch.filter((c) => {
         const t = (typeof c === "string" ? c : (c as { text?: string })?.text) || "";
-        return t.trim().length > 0 && !/partially visible|no text|placeholder|not visible/i.test(t);
+        return choiceHasContent(c) && !/partially visible|no text|placeholder|not visible/i.test(t);
       });
       if (good.length < 4) problems.push(`${good.length}/4 choices`);
+      const partial = incompleteGraphChoices(q.choices);
+      if (partial.length > 0) problems.push(`graph choice${partial.length > 1 ? "s" : ""} ${partial.join(", ")} missing (other choices are graphs)`);
       // A key stored as the choice TEXT ("84") instead of its letter grades every student wrong.
       const labels = new Set(ch.map((c) => (c as { label?: string } | null)?.label));
       const key = (q.correct_answer ?? "").trim();

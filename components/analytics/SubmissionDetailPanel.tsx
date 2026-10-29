@@ -10,7 +10,7 @@ export interface AnswerDetail {
   questionId: string;
   questionNumber: number;
   questionText: string;
-  choices: Array<{ letter: string; text: string }>;
+  choices: Array<{ letter: string; text: string; image_url?: string | null }>;
   studentAnswer: string | null;
   correctAnswer: string | null;
   isCorrect: boolean | null;
@@ -200,7 +200,7 @@ export function SubmissionDetailPanel({
                       />
                     ))}
                   </div>
-                ) : (a.hasImage || a.hasTable) && a.moduleId ? (
+                ) : (a.hasImage || a.hasTable) && a.moduleId && !a.choices.some((ch) => ch.image_url) ? (
                   <iframe
                     src={`/api/modules/${a.moduleId}/page/${a.pageNumber ?? 1}`}
                     className="w-full h-[420px] rounded-xl border border-divider bg-white"
@@ -245,6 +245,15 @@ export function SubmissionDetailPanel({
                             )}>
                               {ch.text}
                             </MathMarkdown>
+                            {ch.image_url && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={`/api/blob-image?u=${encodeURIComponent(ch.image_url)}`}
+                                alt={`Choice ${ch.letter} graph`}
+                                loading="lazy"
+                                className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
+                              />
+                            )}
                           </HighlightableBlock>
                           {isCorrect && (
                             <Check size={14} className="text-status-success ml-auto flex-shrink-0 mt-0.5" />
