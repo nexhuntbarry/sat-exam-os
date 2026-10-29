@@ -30,6 +30,7 @@ interface Student {
   clerk_user_id: string | null;
   last_sign_in_at: number | null;
   student_profiles: StudentProfile | StudentProfile[] | null;
+  classes: string[];
 }
 
 interface ClassGroup {
@@ -42,8 +43,9 @@ interface ClassGroup {
 interface Props {
   students: Student[];
   classGroups: ClassGroup[];
-  tab: string;
 }
+
+type Filter = "all" | "pending" | "approved" | "suspended";
 
 function getProfile(s: Student): StudentProfile | null {
   if (!s.student_profiles) return null;
@@ -213,30 +215,36 @@ function ApproveModal({
   );
 }
 
-export default function StudentsClient({ students, classGroups, tab }: Props) {
+export default function StudentsClient({ students, classGroups }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<Filter>("all");
   const [approveTarget, setApproveTarget] = useState<Student | null>(null);
   const [, startTransition] = useTransition();
 
-  function switchTab(t: string) {
-    router.push(`/admin/students?tab=${t}`);
-  }
-
   async function handleSuspend(studentId: string) {
-    const reason = prompt("Reason for suspension (optional):");
+    const reason = prompt("Reject this student? They will not get access.\n\nReason (optional):");
+    if (reason === null) return;
     const res = await fetch(`/api/admin/students/${studentId}/suspend`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason: reason ?? "" }),
+      body: JSON.stringify({ reason }),
     });
     if (res.ok) {
       startTransition(() => router.refresh());
     }
   }
 
-  const filtered = students.filter((s) => {
-    const q = search.toLowerCase();
+  const counts = {
+    all: students.length,
+    pending: students.filter((s) => s.account_status === "pending").length,
+    approved: students.filter((s) => s.account_status === "approved").length,
+    suspended: students.filter((s) => s.account_status === "suspended").length,
+  };
+
+  const q = search.trim().toLowerCase();
+  const matches = students.filter((s) => {
+    if (filter !== "all" && s.account_status !== filter) return false;
     if (!q) return true;
     const profile = getProfile(s);
     return (
@@ -247,8 +255,14 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
       (profile?.campus ?? "").toLowerCase().includes(q)
     );
   });
+  // Pending always first; otherwise keep the server order (newest first).
+  const filtered = [
+    ...matches.filter((s) => s.account_status === "pending"),
+    ...matches.filter((s) => s.account_status !== "pending"),
+  ];
 
-  const tabs = [
+  const chips: { key: Filter; label: string }[] = [
+    { key: "all", label: "All" },
     { key: "pending", label: "Pending" },
     { key: "approved", label: "Approved" },
     { key: "suspended", label: "Suspended" },
@@ -272,20 +286,28 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
         <h1 className="text-2xl font-bold text-charcoal">Students</h1>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-surface rounded-xl w-fit border border-divider">
-        {tabs.map((t) => (
+      {counts.pending > 0 && (
+        <div className="bg-status-warning/10 border border-status-warning/20 rounded-xl px-4 py-3 text-sm text-charcoal">
+          <span className="font-semibold">
+            {counts.pending} {counts.pending === 1 ? "student" : "students"} waiting for approval
+          </span>
+        </div>
+      )}
+
+      {/* Filter chips */}
+      <div className="flex flex-wrap gap-2">
+        {chips.map((t) => (
           <button
             key={t.key}
-            onClick={() => switchTab(t.key)}
+            onClick={() => setFilter(t.key)}
             className={clsx(
-              "px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-              tab === t.key
-                ? "bg-warm-coral text-white"
-                : "text-mid-gray hover:text-charcoal"
+              "px-3.5 py-1.5 rounded-full text-sm font-medium border transition-colors",
+              filter === t.key
+                ? "bg-warm-coral text-white border-warm-coral"
+                : "bg-surface border-divider text-mid-gray hover:text-charcoal"
             )}
           >
-            {t.label}
+            {t.label} ({counts[t.key]})
           </button>
         ))}
       </div>
@@ -305,14 +327,16 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {filtered.length === 0 ? (
           <div className="py-16 text-center text-soft-mute text-sm">
-            No {tab} students found.
+            No {filter === "all" ? "" : `${filter} `}students found.
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[960px] text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Name</th>
+                  <th className="text-left px-5 py-3 font-medium">Status</th>
+                  <th className="text-left px-5 py-3 font-medium">Class</th>
                   <th className="text-left px-5 py-3 font-medium">Grade</th>
                   <th className="text-left px-5 py-3 font-medium">School</th>
                   <th className="text-left px-5 py-3 font-medium">Parent</th>
@@ -327,7 +351,10 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                   return (
                     <tr
                       key={student.id}
-                      className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
+                      className={clsx(
+                        "border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors",
+                        student.account_status === "pending" && "bg-status-warning/10"
+                      )}
                     >
                       <td className="px-5 py-3">
                         <Link
@@ -339,6 +366,23 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                           </div>
                           <div className="text-soft-mute text-xs">{student.email}</div>
                         </Link>
+                      </td>
+                      <td className="px-5 py-3">
+                        <span
+                          className={clsx(
+                            "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
+                            student.account_status === "approved"
+                              ? "bg-warm-amber/15 text-warm-amber"
+                              : student.account_status === "pending"
+                              ? "bg-status-warning/15 text-status-warning"
+                              : "bg-status-error/15 text-status-error"
+                          )}
+                        >
+                          {student.account_status}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-mid-gray">
+                        {student.classes.length > 0 ? student.classes.join(", ") : "—"}
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
                         {profile?.grade ? `Grade ${profile.grade}` : "—"}
@@ -361,7 +405,7 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                             ? "—"
                             : <span className="text-status-warning">never (pending)</span>}
                       </td>
-                      {tab === "pending" && (
+                      {student.account_status === "pending" && (
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2">
                             <button
@@ -381,12 +425,12 @@ export default function StudentsClient({ students, classGroups, tab }: Props) {
                           </div>
                         </td>
                       )}
-                      {tab !== "pending" && (
+                      {student.account_status !== "pending" && (
                         <td className="px-5 py-3">
                           <StudentStatusButton
                             studentId={student.id}
                             studentName={student.display_name ?? student.email}
-                            status={tab}
+                            status={student.account_status}
                           />
                         </td>
                       )}
