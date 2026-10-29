@@ -41,7 +41,7 @@ export default async function AdminDashboardPage() {
       icon: Users,
       color: "text-warm-amber",
       bg: "bg-warm-amber/10 border-warm-amber/20",
-      href: "/admin/students?tab=approved",
+      href: "/admin/students",
     },
     {
       label: "Teachers",
