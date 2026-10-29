@@ -93,8 +93,12 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
   const sourceFilter = (sp.source && sp.source in SOURCE_KIND_LABEL ? sp.source : "") as SourceKind | "";
 
   const db = getServiceClient();
+  let loadError: string | null = null;
   const [rows, needsReview, draft] = await Promise.all([
-    listDevLog(),
+    listDevLog().catch((e: unknown) => {
+      loadError = e instanceof Error ? e.message : String(e);
+      return [] as Awaited<ReturnType<typeof listDevLog>>;
+    }),
     db.from("questions").select("id", { count: "exact", head: true }).eq("parsing_status", "Needs Review"),
     db.from("questions").select("id", { count: "exact", head: true }).eq("parsing_status", "Draft"),
   ]);
@@ -143,6 +147,11 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
           live, anything that touched the question bank or students&apos; scores, and what is still waiting on a decision.
         </p>
       </div>
+      {loadError && (
+        <div className="rounded-xl border border-status-error/30 bg-status-error/10 px-4 py-2 text-sm text-status-error">
+          Couldn&apos;t load the log right now ({loadError}). Refresh to try again.
+        </div>
+      )}
 
       {/* Weekly summary */}
       <section className={`${card} p-4 space-y-3`}>

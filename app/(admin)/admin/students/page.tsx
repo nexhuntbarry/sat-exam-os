@@ -63,7 +63,7 @@ export default async function StudentsPage() {
     const { data: members } = await getServiceClient()
       .from("class_group_members")
       .select("student_id, class_group_id")
-      .in("student_id", students.map((s) => s.id as string));
+      .in("class_group_id", [...nameById.keys()]);
     for (const m of members ?? []) {
       const name = nameById.get(m.class_group_id as string);
       if (!name) continue;

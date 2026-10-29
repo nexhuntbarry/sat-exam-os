@@ -1018,7 +1018,7 @@ export default function TestTakingClient({
                 <button
                   onClick={() => toggleFlag(currentQuestion.id)}
                   className={clsx(
-                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors",
                     flagged.has(currentQuestion.id)
                       ? "bg-status-warning/15 text-status-warning hover:bg-status-warning/25"
                       : "text-mid-gray hover:text-warm-coral-text hover:bg-warm-coral/10",

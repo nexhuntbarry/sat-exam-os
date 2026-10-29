@@ -166,8 +166,12 @@ export default function ReportProblemButton({
           "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-soft-mute hover:text-charcoal hover:bg-light-bg transition-colors"
         }
         aria-haspopup="dialog"
+        aria-label="Report a problem"
+        title="Report a problem"
       >
-        <MessageSquareWarning size={13} aria-hidden="true" /> Report a problem
+        <MessageSquareWarning size={13} aria-hidden="true" />
+        {/* Icon-only on phones so the exam header doesn't crowd. */}
+        <span className="hidden sm:inline whitespace-nowrap">Report a problem</span>
       </button>
 
       {open && (
