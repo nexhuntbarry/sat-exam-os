@@ -50,7 +50,7 @@ export async function POST(
 
   const { data: test } = await db
     .from("tests")
-    .select("id, module_id, due_date, question_ids, is_adaptive")
+    .select("id, module_id, due_date, question_ids, is_adaptive, time_limit_minutes, time_limit_minutes_module_2, is_untimed")
     .eq("id", submission.test_id)
     .maybeSingle();
   if (!test) {
@@ -83,6 +83,11 @@ export async function POST(
         question_ids: (test.question_ids as string[] | null) ?? null,
         is_adaptive: test.is_adaptive,
         due_date: test.due_date,
+        // Needed for the "started on time" rule (an admin moving the due
+        // date earlier mustn't make an on-time student Late).
+        time_limit_minutes: test.time_limit_minutes,
+        time_limit_minutes_module_2: test.time_limit_minutes_module_2,
+        is_untimed: test.is_untimed,
       },
       db,
     });

@@ -81,6 +81,8 @@ interface LocalBackup {
   answeredAt: Record<string, number>;
   flagged: string[];
   crossedOut: Record<string, string[]>;
+  /** Highlights/notes per question; restored like flags when newer than the server copy. */
+  annotations?: Record<string, Record<string, { start: number; end: number; note?: string }[]>>;
   currentIndex: number;
   metaChangedAt: number;
   /** Build time of the newest payload the server confirmed. Changes after it never reached the server. */
@@ -248,6 +250,7 @@ export default function TestTakingClient({
       answeredAt: answeredAtRef.current,
       flagged: meta.flagged as string[],
       crossedOut: meta.crossed_out as Record<string, string[]>,
+      annotations: annotationsRef.current,
       currentIndex: currentIndexRef.current,
       metaChangedAt: metaChangedAtRef.current,
       syncedAt: syncedAtRef.current,
@@ -448,6 +451,17 @@ export default function TestTakingClient({
           if (validIds.has(qid) && Array.isArray(labels)) restored[qid] = new Set(labels);
         }
         setCrossedOut(restored);
+      }
+      // A highlight made just before a refresh may only have reached the
+      // server via the old page's keepalive, after this page was rendered
+      // from the older copy. The device copy is newer, so it wins.
+      if (local.annotations && typeof local.annotations === "object") {
+        const restoredAnnos: QuestionAnnos = {};
+        for (const [qid, a] of Object.entries(local.annotations)) {
+          if (validIds.has(qid) && a && typeof a === "object") restoredAnnos[qid] = a as QuestionAnnos[string];
+        }
+        annotationsRef.current = restoredAnnos;
+        setAnnotations(restoredAnnos);
       }
       if (
         typeof local.currentIndex === "number" &&
