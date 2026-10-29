@@ -3,11 +3,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
+import HelpTip from "@/components/shared/HelpTip";
 
 interface Props {
   testId: string;
   initialShowAnswers: boolean;
   initialShowExplanations: boolean;
+  /** One-line layout for embedding in a card; the full explanation moves into a "?" tip. */
+  compact?: boolean;
 }
 
 // Live toggle for post-submission answer/explanation visibility on an
@@ -19,6 +22,7 @@ export default function AnswerVisibilityToggle({
   testId,
   initialShowAnswers,
   initialShowExplanations,
+  compact = false,
 }: Props) {
   const router = useRouter();
   const [showAnswers, setShowAnswers] = useState(initialShowAnswers);
@@ -76,6 +80,53 @@ export default function AnswerVisibilityToggle({
       />
     </div>
   );
+
+  if (compact) {
+    // Embedded in the admin "Answers & review" card: one line each, full text in "?".
+    return (
+      <div className="space-y-2.5">
+        <div className="flex items-center gap-1.5 text-charcoal font-semibold text-sm">
+          After submission
+          <HelpTip label="About answer visibility">
+            <span className="block">
+              Show answers: students see correct answers on their own results page anytime.
+            </span>
+            <span className="block mt-1">
+              Show explanations: include the worked explanation for each question.
+            </span>
+            <span className="block mt-1.5">
+              For &ldquo;only during class review, then hidden,&rdquo; keep Show answers off here and use
+              the Class review unlock instead.
+            </span>
+          </HelpTip>
+        </div>
+        <button
+          onClick={toggleAnswers}
+          disabled={busy}
+          className="w-full flex items-center justify-between gap-3 text-left"
+        >
+          <div className="min-w-0">
+            <div className="text-charcoal text-sm font-medium">Show answers</div>
+            <div className="text-soft-mute text-xs">On each student&rsquo;s own results page.</div>
+          </div>
+          <Switch on={showAnswers} />
+        </button>
+        {showAnswers && (
+          <button
+            onClick={toggleExplanations}
+            disabled={busy}
+            className="w-full flex items-center justify-between gap-3 text-left pl-4 border-l-2 border-divider"
+          >
+            <div className="min-w-0">
+              <div className="text-charcoal text-sm font-medium">Show explanations</div>
+              <div className="text-soft-mute text-xs">Worked explanation per question.</div>
+            </div>
+            <Switch on={showExplanations} />
+          </button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl border border-divider bg-surface p-4 space-y-3">

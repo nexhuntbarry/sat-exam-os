@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { FolderKanban, X, CheckCircle2 } from "lucide-react";
 
@@ -15,14 +15,28 @@ interface Props {
   testId: string;
   allClassGroups: ClassGroup[];
   currentClassGroupIds: string[];
+  /** Controlled by AssignDialog: no trigger button, `tabs` shown above the header. */
+  open?: boolean;
+  onClose?: () => void;
+  tabs?: ReactNode;
 }
 
 // Add or remove class groups on an existing test (test_assignments.class_group_ids).
 // PATCHes the FULL desired set, so toggling a class off removes it. Mirrors
 // AssignTeachersButton.
-export default function AssignClassGroupsButton({ testId, allClassGroups, currentClassGroupIds }: Props) {
+export default function AssignClassGroupsButton({
+  testId,
+  allClassGroups,
+  currentClassGroupIds,
+  open: openProp,
+  onClose,
+  tabs,
+}: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [openState, setOpenState] = useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean) => (controlled ? !v && onClose?.() : setOpenState(v));
   const [selected, setSelected] = useState<Set<string>>(new Set(currentClassGroupIds));
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -62,17 +76,20 @@ export default function AssignClassGroupsButton({ testId, allClassGroups, curren
 
   return (
     <>
-      <button
-        onClick={() => { setSelected(new Set(currentClassGroupIds)); setOpen(true); }}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal hover:border-warm-coral/40 text-sm font-medium transition-colors"
-      >
-        <FolderKanban size={14} />
-        Assign classes
-      </button>
+      {!controlled && (
+        <button
+          onClick={() => { setSelected(new Set(currentClassGroupIds)); setOpen(true); }}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal hover:border-warm-coral/40 text-sm font-medium transition-colors"
+        >
+          <FolderKanban size={14} />
+          Assign classes
+        </button>
+      )}
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
+            {tabs}
             <div className="flex items-center justify-between p-5 border-b border-divider">
               <div>
                 <h2 className="font-bold text-charcoal text-lg">Assign class groups</h2>

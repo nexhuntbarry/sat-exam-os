@@ -7,7 +7,8 @@ import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaTestIds, scopeIds } from "@/lib/qa";
+import { getQaClassGroupIds, getQaTestIds, scopeIds, scopeUsers } from "@/lib/qa";
+import AssignDialog from "./[id]/AssignDialog";
 
 async function getTests(viewerIsQa: boolean) {
   const db = getServiceClient();
@@ -29,12 +30,12 @@ async function getTests(viewerIsQa: boolean) {
     db.from("submissions").select("test_id, student_id, status, session_id, adaptive_track, started_at").in("test_id", testIds),
   ]);
 
-  const assignMap: Record<string, { teachers: number; students: number; classes: number }> = {};
+  const assignMap: Record<string, { teacherIds: string[]; studentIds: string[]; classGroupIds: string[] }> = {};
   for (const a of assignments ?? []) {
     assignMap[a.test_id] = {
-      teachers: (a.teacher_ids ?? []).length,
-      students: (a.student_ids ?? []).length,
-      classes: (a.class_group_ids ?? []).length,
+      teacherIds: (a.teacher_ids ?? []) as string[],
+      studentIds: (a.student_ids ?? []) as string[],
+      classGroupIds: (a.class_group_ids ?? []) as string[],
     };
   }
 
@@ -62,7 +63,7 @@ async function getTests(viewerIsQa: boolean) {
 
   return tests.map((t) => ({
     ...t,
-    assignment: assignMap[t.id] ?? { teachers: 0, students: 0, classes: 0 },
+    assignment: assignMap[t.id] ?? { teacherIds: [], studentIds: [], classGroupIds: [] },
     submissions: subMap[t.id] ?? { done: 0, total: 0 },
   }));
 }
@@ -73,8 +74,21 @@ const statusStyles: Record<string, string> = {
   Closed: "bg-status-error/15 text-status-error",
 };
 
+// Teachers and class groups the Assign dialogs can pick from — same
+// QA-scoped lists as the test detail page.
+async function getAssignOptions(viewerIsQa: boolean) {
+  const db = getServiceClient();
+  const qaGroups = await getQaClassGroupIds();
+  const [{ data: allTeachers }, { data: allClassGroups }] = await Promise.all([
+    scopeUsers(db.from("users").select("id, display_name, email").eq("role", "teacher"), viewerIsQa).order("display_name"),
+    scopeIds(db.from("class_groups").select("id, name, campus, grade"), "id", qaGroups, viewerIsQa).order("name"),
+  ]);
+  return { allTeachers: allTeachers ?? [], allClassGroups: allClassGroups ?? [] };
+}
+
 export default async function TestsPage() {
-  const tests = await getTests((await getCurrentUser())?.isQa ?? false);
+  const viewerIsQa = (await getCurrentUser())?.isQa ?? false;
+  const [tests, assignOptions] = await Promise.all([getTests(viewerIsQa), getAssignOptions(viewerIsQa)]);
 
   // Closed tests sink into a collapsed section at the bottom so the
   // list shows what's live by default.
@@ -134,7 +148,7 @@ export default async function TestsPage() {
                         </span>
                       </td>
                       <td className="px-5 py-3 text-mid-gray whitespace-nowrap" title="Teachers · Students · Class groups">
-                        {test.assignment.teachers}T · {test.assignment.students}S · {test.assignment.classes}C
+                        {test.assignment.teacherIds.length}T · {test.assignment.studentIds.length}S · {test.assignment.classGroupIds.length}C
                       </td>
                       <td className="px-5 py-3 text-mid-gray">
                         {test.submissions.done} / {test.submissions.total}
@@ -143,12 +157,15 @@ export default async function TestsPage() {
                         {test.due_date ? formatDate(test.due_date) : "—"}
                       </td>
                       <td className="px-5 py-3">
-                        <Link
-                          href={`/admin/tests/${test.id}`}
-                          className="text-xs text-warm-coral-text hover:underline"
-                        >
-                          View
-                        </Link>
+                        <AssignDialog
+                          variant="menu"
+                          testId={test.id}
+                          studentIds={test.assignment.studentIds}
+                          classGroupIds={test.assignment.classGroupIds}
+                          teacherIds={test.assignment.teacherIds}
+                          allClassGroups={assignOptions.allClassGroups}
+                          allTeachers={assignOptions.allTeachers}
+                        />
                       </td>
                     </tr>
                   );

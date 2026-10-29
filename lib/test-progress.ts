@@ -1,6 +1,7 @@
 import { isModule2Track } from "@/lib/student-exam";
 
 export interface ProgressSubmission {
+  id?: string;
   test_id?: string;
   student_id: string;
   status: string;
@@ -20,7 +21,50 @@ export interface TestProgress {
   avgScore: number | null;
 }
 
+export interface StudentTestProgress {
+  status: "Not started" | "In progress" | "Submitted";
+  /** Percent correct across the graded modules of a finished attempt. */
+  score: number | null;
+  /** Row to open for a finished attempt's detail (the Module 2 row when there is one). */
+  detailSubmissionId: string | null;
+}
+
 const graded = (s: string) => s === "Submitted" || s === "Late";
+
+/**
+ * One student's progress on one test, from that student's submission rows.
+ * Submitted when their latest attempt has every module graded; In progress
+ * when that attempt has a module open (or Module 1 is in but Module 2 isn't).
+ */
+export function studentTestProgress(
+  subs: ProgressSubmission[],
+  twoModules: boolean,
+): StudentTestProgress {
+  if (subs.length === 0) return { status: "Not started", score: null, detailSubmissionId: null };
+  // Latest attempt = the session of the most recently started row.
+  const latest = [...subs].sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""))[0];
+  const attempt = latest.session_id ? subs.filter((s) => s.session_id === latest.session_id) : [latest];
+  // Rows from before the test had a Module 2 carry no track: that attempt
+  // was a single module, so one graded row finishes it.
+  const legacy = attempt.every((s) => !s.adaptive_track);
+  const done = twoModules && !legacy
+    ? attempt.some((s) => isModule2Track(s.adaptive_track) && graded(s.status)) &&
+      attempt.some((s) => !isModule2Track(s.adaptive_track) && graded(s.status))
+    : attempt.some((s) => graded(s.status));
+  const gradedRows = attempt.filter((s) => graded(s.status));
+  if (!done) {
+    const started = attempt.some((s) => s.status === "In Progress") || gradedRows.length > 0;
+    return { status: started ? "In progress" : "Not started", score: null, detailSubmissionId: null };
+  }
+  const correct = gradedRows.reduce((n, s) => n + (s.correct_count ?? 0), 0);
+  const total = gradedRows.reduce((n, s) => n + (s.total_questions ?? 0), 0);
+  const detail = gradedRows.find((s) => isModule2Track(s.adaptive_track)) ?? gradedRows[0];
+  return {
+    status: "Submitted",
+    score: total > 0 ? (correct / total) * 100 : null,
+    detailSubmissionId: detail.id ?? null,
+  };
+}
 
 /**
  * Per-student progress for one test. Submissions rows are per module
@@ -43,22 +87,10 @@ export function summarizeTestProgress(
   let finished = 0;
   const scores: number[] = [];
   for (const subs of byStudent.values()) {
-    // Latest attempt = the session of the most recently started row.
-    const latest = [...subs].sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""))[0];
-    const attempt = latest.session_id ? subs.filter((s) => s.session_id === latest.session_id) : [latest];
-    // Rows from before the test had a Module 2 carry no track: that attempt
-    // was a single module, so one graded row finishes it.
-    const legacy = attempt.every((s) => !s.adaptive_track);
-    const done = twoModules && !legacy
-      ? attempt.some((s) => isModule2Track(s.adaptive_track) && graded(s.status)) &&
-        attempt.some((s) => !isModule2Track(s.adaptive_track) && graded(s.status))
-      : attempt.some((s) => graded(s.status));
-    if (!done) continue;
+    const p = studentTestProgress(subs, twoModules);
+    if (p.status !== "Submitted") continue;
     finished++;
-    const gradedRows = attempt.filter((s) => graded(s.status));
-    const correct = gradedRows.reduce((n, s) => n + (s.correct_count ?? 0), 0);
-    const total = gradedRows.reduce((n, s) => n + (s.total_questions ?? 0), 0);
-    if (total > 0) scores.push((correct / total) * 100);
+    if (p.score !== null) scores.push(p.score);
   }
 
   return {
