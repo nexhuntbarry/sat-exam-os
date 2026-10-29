@@ -45,7 +45,34 @@ async function getReviewNav(
   }
   // pendingCount excludes the current question (it's about to be resolved).
   const pendingCount = pending.filter((r) => r.id !== currentId).length;
-  return { nextId, prevId, pendingCount, moduleId };
+
+  // Nothing left after this one in the module → carry on to the next module
+  // that still has pending questions (by module name, wrapping around), so
+  // Next / Approve & Next keep going through the whole bank instead of
+  // dropping the reviewer back at the module page.
+  let nextModuleName: string | null = null;
+  if (nextId === null) {
+    const { data: all } = await db
+      .from("questions")
+      .select("id, module_id, original_question_number, modules(module_name)")
+      .in("parsing_status", ["Draft", "Needs Review"])
+      .neq("module_id", moduleId);
+    const name = (r: { modules: unknown }) =>
+      ((r.modules as { module_name?: string } | null)?.module_name ?? "");
+    const others = (all ?? []).sort(
+      (a, b) =>
+        name(a).localeCompare(name(b)) ||
+        (a.original_question_number ?? 0) - (b.original_question_number ?? 0),
+    );
+    if (others.length > 0) {
+      const { data: cur } = await db.from("modules").select("module_name").eq("id", moduleId).maybeSingle();
+      const curName = cur?.module_name ?? "";
+      const pick = others.find((r) => name(r).localeCompare(curName) > 0) ?? others[0];
+      nextId = pick.id;
+      nextModuleName = name(pick);
+    }
+  }
+  return { nextId, prevId, pendingCount, moduleId, nextModuleName };
 }
 
 export default async function QuestionDetailPage({

@@ -70,6 +70,8 @@ interface ReviewNav {
   /** How many questions in this module still need review. */
   pendingCount: number;
   moduleId: string;
+  /** Set when nextId is in another module (this module has none left after this one). */
+  nextModuleName?: string | null;
 }
 
 interface QuestionReviewPanelProps {
@@ -257,13 +259,15 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           <span className="text-soft-mute text-xs">
             {nav.pendingCount > 0
               ? `${nav.pendingCount} left to review in this module`
-              : "All questions in this module reviewed"}
+              : nav.nextModuleName
+                ? `This module is done · next: ${nav.nextModuleName}`
+                : "All questions reviewed"}
           </span>
           <button
             onClick={() => nav.nextId ? router.push(`/admin/questions/${nav.nextId}`) : router.push(`/admin/modules/${nav.moduleId}/review`)}
             className="inline-flex items-center gap-1 text-mid-gray hover:text-charcoal transition-colors"
           >
-            {nav.nextId ? "Next" : "Back to module"} <ChevronRight size={16} />
+            {nav.nextId ? (nav.nextModuleName ? "Next module to review" : "Next") : "Back to module"} <ChevronRight size={16} />
           </button>
         </div>
       )}
