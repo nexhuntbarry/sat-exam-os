@@ -4,6 +4,7 @@ import { redirect, notFound } from "next/navigation";
 import TestTakingClient from "./TestTakingClient";
 import Module2Intro from "./Module2Intro";
 import { isModule2Track, scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { studentReportsEnabledFor } from "@/lib/student-reports";
 
 async function getActiveSubmission(testId: string, studentId: string, startModule2: boolean) {
   const db = getServiceClient();
@@ -206,6 +207,8 @@ export default async function TestTakingPage({
   if (!data) {
     redirect(`/student/tests/${id}`);
   }
+  // Never throws (off on any error), so it can't keep the test from loading.
+  const reportsEnabled = await studentReportsEnabledFor(getServiceClient(), user);
 
   if (data.awaitingModuleStart) {
     return (
@@ -232,6 +235,7 @@ export default async function TestTakingPage({
       test={data.test}
       questions={data.questions}
       timeRemainingSeconds={data.timeRemainingSeconds}
+      reportsEnabled={reportsEnabled}
     />
   );
 }

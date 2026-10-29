@@ -5,6 +5,8 @@ import Link from "next/link";
 import { Eye } from "lucide-react";
 import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/ReviewQuestionCard";
 import { isTestAssignedToStudent, scopeToStudentQuestionSet } from "@/lib/student-exam";
+import ReportProblemButton from "@/components/tests/ReportProblemButton";
+import { studentReportsEnabledFor } from "@/lib/student-reports";
 
 // Class-walkthrough review of a test. Shows every question + correct
 // answer + explanation regardless of whether the student took the
@@ -38,7 +40,12 @@ async function getReviewData(testId: string, studentId: string) {
     : [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x));
 
   if (moduleIds.length === 0) {
-    return { test, sections: [], myAnswers: {} as Record<string, { answer: string | null; isCorrect: boolean }> };
+    return {
+      test,
+      sections: [],
+      myAnswers: {} as Record<string, { answer: string | null; isCorrect: boolean }>,
+      mySubmissionByQuestion: {} as Record<string, string>,
+    };
   }
 
   // Same Approved-only set students were shown and graded on.
@@ -59,6 +66,8 @@ async function getReviewData(testId: string, studentId: string) {
   // Use their latest attempt (highest attempt_number); an adaptive
   // attempt spans two submissions sharing that attempt_number.
   const myAnswers: Record<string, { answer: string | null; isCorrect: boolean }> = {};
+  // Which of the student's submissions covered each question (for reports).
+  const mySubmissionByQuestion: Record<string, string> = {};
   const { data: subs } = await db
     .from("submissions")
     .select("id, attempt_number")
@@ -73,10 +82,11 @@ async function getReviewData(testId: string, studentId: string) {
       .map((s) => s.id);
     const { data: records } = await db
       .from("answer_records")
-      .select("question_id, student_answer, is_correct")
+      .select("submission_id, question_id, student_answer, is_correct")
       .in("submission_id", latestSubIds);
     for (const r of records ?? []) {
       myAnswers[r.question_id] = { answer: r.student_answer, isCorrect: r.is_correct };
+      mySubmissionByQuestion[r.question_id] = r.submission_id;
     }
   }
 
@@ -108,7 +118,7 @@ async function getReviewData(testId: string, studentId: string) {
     groups.get(key)!.questions.push(q);
   }
 
-  return { test, sections: Array.from(groups.values()), myAnswers };
+  return { test, sections: Array.from(groups.values()), myAnswers, mySubmissionByQuestion };
 }
 
 export default async function StudentTestReviewPage({
@@ -134,7 +144,8 @@ export default async function StudentTestReviewPage({
     );
   }
 
-  const { test, sections, myAnswers } = data;
+  const { test, sections, myAnswers, mySubmissionByQuestion } = data;
+  const reportsEnabled = await studentReportsEnabledFor(getServiceClient(), user);
   const tookTest = Object.keys(myAnswers).length > 0;
 
   return (
@@ -175,6 +186,16 @@ export default async function StudentTestReviewPage({
                   key={q.id}
                   question={q as unknown as ReviewQuestion}
                   mine={myAnswers[q.id] ?? null}
+                  action={
+                    reportsEnabled ? (
+                      <ReportProblemButton
+                        testId={test.id}
+                        submissionId={mySubmissionByQuestion[q.id] ?? null}
+                        questionId={q.id}
+                        context="review"
+                      />
+                    ) : undefined
+                  }
                 />
               ))}
             </div>
