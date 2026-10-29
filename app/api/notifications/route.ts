@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { SUPPORT_TYPE } from "@/lib/support";
 import { DEVLOG_TYPE } from "@/lib/devlog";
+import { STUDENT_REPORT_TYPE } from "@/lib/student-reports-shared";
 
 // GET /api/notifications — the current user's recent notifications + unread count.
 export async function GET() {
@@ -15,8 +16,9 @@ export async function GET() {
     .select("id, type, payload, read_at, created_at")
     .eq("user_id", user.userId)
     // A support request row is the thread itself, and a dev log row is a
-    // /admin/reports entry; neither is a notification.
-    .not("type", "in", `(${SUPPORT_TYPE},${DEVLOG_TYPE})`)
+    // /admin/reports entry, and a student report is an admin-queue item;
+    // none of them is a notification for its owner.
+    .not("type", "in", `(${SUPPORT_TYPE},${DEVLOG_TYPE},${STUDENT_REPORT_TYPE})`)
     .order("created_at", { ascending: false })
     .limit(30);
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { SUPPORT_TYPE } from "@/lib/support";
 import { DEVLOG_TYPE } from "@/lib/devlog";
+import { STUDENT_REPORT_TYPE } from "@/lib/student-reports-shared";
 
 // POST /api/notifications/read — mark notifications read.
 // Body: { id?: string }  — one id, or omit to mark ALL of the user's read.
@@ -24,7 +25,7 @@ export async function POST(req: Request) {
     .update({ read_at: new Date().toISOString() })
     .eq("user_id", user.userId)
     .is("read_at", null)
-    .not("type", "in", `(${SUPPORT_TYPE},${DEVLOG_TYPE})`);
+    .not("type", "in", `(${SUPPORT_TYPE},${DEVLOG_TYPE},${STUDENT_REPORT_TYPE})`);
   if (id) q = q.eq("id", id);
   const { error } = await q;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

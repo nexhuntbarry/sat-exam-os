@@ -7,6 +7,8 @@ import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
 import { scaleSectionScore } from "@/lib/scoring";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
+import ReportProblemButton from "@/components/tests/ReportProblemButton";
+import { studentReportsEnabledFor } from "@/lib/student-reports";
 
 const TRACK_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -190,6 +192,7 @@ export default async function StudentResultPage({
 
   const data = await getResult(id, user.userId, submissionId);
   if (!data) notFound();
+  const reportsEnabled = await studentReportsEnabledFor(getServiceClient(), user);
 
   const { submission, test, answerDetails, sessionRows, breakdownRows } = data;
   const pct = Number(submission.percentage ?? 0);
@@ -578,6 +581,17 @@ export default async function StudentResultPage({
                         <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1.5 [&_p]:leading-relaxed">
                           {q.explanation}
                         </MathMarkdown>
+                      </div>
+                    )}
+
+                    {reportsEnabled && (
+                      <div className="flex justify-end">
+                        <ReportProblemButton
+                          testId={id}
+                          submissionId={record.submission_id}
+                          questionId={record.question_id}
+                          context="results"
+                        />
                       </div>
                     )}
                   </div>

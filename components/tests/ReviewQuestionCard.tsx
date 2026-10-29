@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
 
@@ -33,6 +34,8 @@ interface Props {
   /** Show the raw source PDF page when no figure crop exists. Teachers only —
    *  students never see the raw scan (M-20). */
   showSourceFigure?: boolean;
+  /** Extra control rendered at the end of the card (student "Report a problem"). */
+  action?: ReactNode;
 }
 
 export default function ReviewQuestionCard({
@@ -41,6 +44,7 @@ export default function ReviewQuestionCard({
   showExplanation = true,
   wrongStudents,
   showSourceFigure = false,
+  action,
 }: Props) {
   const choices = Array.isArray(q.choices) ? q.choices : [];
   const hasCrops = Array.isArray(q.image_urls) && q.image_urls.length > 0;
@@ -201,6 +205,8 @@ export default function ReviewQuestionCard({
       {wrongStudents && wrongStudents.length === 0 && (
         <div className="text-status-success text-xs font-medium">Everyone got this right</div>
       )}
+
+      {action && <div className="flex justify-end">{action}</div>}
     </div>
   );
 }

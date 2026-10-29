@@ -21,6 +21,7 @@ import QuestionRenderer from "@/components/tests/QuestionRenderer";
 import QuestionErrorBoundary from "@/components/tests/QuestionErrorBoundary";
 import QuestionNavigator from "@/components/tests/QuestionNavigator";
 import SubmitModal from "@/components/tests/SubmitModal";
+import ReportProblemButton from "@/components/tests/ReportProblemButton";
 
 interface Question {
   id: string;
@@ -58,6 +59,8 @@ interface Props {
   };
   questions: Question[];
   timeRemainingSeconds: number;
+  /** Admin setting: show the per-question "Report a problem" button. */
+  reportsEnabled?: boolean;
 }
 
 // Multiple-choice picks save immediately; SPR typing and flag / cross-out /
@@ -127,6 +130,7 @@ export default function TestTakingClient({
   test,
   questions,
   timeRemainingSeconds,
+  reportsEnabled = false,
 }: Props) {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -153,6 +157,8 @@ export default function TestTakingClient({
   // question crossed-out choices ("eliminate" tool).
   const [timerHidden, setTimerHidden] = useState(false);
   const [showNavigator, setShowNavigator] = useState(false);
+  // "Report a problem" dialog open: exam shortcuts are paused meanwhile.
+  const [reportOpen, setReportOpen] = useState(false);
   const [crossedOut, setCrossedOut] = useState<Record<string, Set<string>>>(() => {
     const raw = initialMetadata.crossed_out;
     const restored: Record<string, Set<string>> = {};
@@ -564,6 +570,7 @@ export default function TestTakingClient({
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (showSubmitModal) return;
+      if (reportOpen || target?.closest("[data-report-dialog]")) return;
       if (showNavigator) {
         if (e.key === "Escape") setShowNavigator(false);
         return;
@@ -614,7 +621,7 @@ export default function TestTakingClient({
     // latest closure value through state is sufficient for shortcut
     // intent — the answer is committed via setAnswers anyway.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIndex, questions, showNavigator, showSubmitModal]);
+  }, [currentIndex, questions, showNavigator, showSubmitModal, reportOpen]);
 
   function handleAnswer(questionId: string, answer: string) {
     const next = { ...answersRef.current, [questionId]: answer };
@@ -996,6 +1003,18 @@ export default function TestTakingClient({
                   </span>
                   <span className="text-soft-mute text-sm">of {questions.length}</span>
                 </div>
+                <div className="flex items-center gap-1">
+                {reportsEnabled && (
+                  <ReportProblemButton
+                    key={currentQuestion.id}
+                    testId={testId}
+                    submissionId={submissionId}
+                    questionId={currentQuestion.id}
+                    displayNumber={currentIndex + 1}
+                    context="taking"
+                    onOpenChange={setReportOpen}
+                  />
+                )}
                 <button
                   onClick={() => toggleFlag(currentQuestion.id)}
                   className={clsx(
@@ -1012,6 +1031,7 @@ export default function TestTakingClient({
                   />
                   {flagged.has(currentQuestion.id) ? "Marked for Review" : "Mark for Review"}
                 </button>
+                </div>
               </div>
 
               <QuestionErrorBoundary
