@@ -108,8 +108,20 @@ export default function ReportProblemButton({
         first.focus();
       }
     }
+    // Esc must work even when focus has left the dialog (e.g. the Send
+    // button was disabled while sending and focus fell back to <body>).
+    function onDocKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" || dialog?.contains(e.target as Node)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
     dialog.addEventListener("keydown", onKeyDown);
-    return () => dialog.removeEventListener("keydown", onKeyDown);
+    document.addEventListener("keydown", onDocKeyDown, true);
+    return () => {
+      dialog.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onDocKeyDown, true);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -152,6 +164,13 @@ export default function ReportProblemButton({
     } finally {
       clearTimeout(timer);
       setBusy(false);
+      // Keep focus inside the dialog (the disabled Send button dropped it).
+      requestAnimationFrame(() => {
+        const d = dialogRef.current;
+        if (d && !d.contains(document.activeElement)) {
+          d.querySelector<HTMLElement>("[data-report-done], textarea, button:not([disabled])")?.focus();
+        }
+      });
     }
   }
 
