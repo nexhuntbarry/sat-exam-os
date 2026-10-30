@@ -15,7 +15,8 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     .select(`
       id, test_name, status, open_date, due_date, created_at,
       is_adaptive, module_2_id,
-      modules!module_id(module_name, section, module_number)
+      modules!module_id(module_name, section, module_number),
+      module_2:modules!module_2_id(module_name, module_number)
     `), "id", await getQaTestIds(), viewerIsQa)
     .order("created_at", { ascending: false });
 
@@ -67,6 +68,7 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     created_at: t.created_at,
     is_adaptive: t.is_adaptive,
     modules: t.modules,
+    module_2: (t as { module_2?: unknown }).module_2 ?? null,
     assignment: assignMap[t.id] ?? { teacherIds: [], studentIds: [], classGroupIds: [] },
     submissions: subMap[t.id] ?? { done: 0, total: 0 },
   }));

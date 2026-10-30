@@ -30,6 +30,8 @@ export interface TestRow {
   created_at: string;
   is_adaptive: boolean;
   modules: unknown;
+  /** Linear two-module tests: the Module 2 (tests.module_2_id). */
+  module_2?: unknown;
   assignment: { teacherIds: string[]; studentIds: string[]; classGroupIds: string[] };
   submissions: { done: number; total: number };
 }
@@ -177,6 +179,7 @@ function TestsTable({
         <tbody>
           {sorted.map((test) => {
             const mod = test.modules as TestMod | null;
+            const mod2 = (test.module_2 ?? null) as Pick<TestMod, "module_name" | "module_number"> | null;
             return (
               <tr
                 key={test.id}
@@ -191,7 +194,13 @@ function TestsTable({
                   </Link>
                 </td>
                 <td className="px-5 py-3 text-mid-gray">
-                  {mod ? (
+                  {mod && mod2 ? (
+                    <>
+                      <div>{mod.module_name}</div>
+                      <div className="mt-1">{mod2.module_name}</div>
+                      <div className="text-xs text-soft-mute">{mod.section} · M1 + M2</div>
+                    </>
+                  ) : mod ? (
                     <>
                       {mod.module_name}
                       <div className="text-xs text-soft-mute">
