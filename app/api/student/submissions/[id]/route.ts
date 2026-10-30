@@ -14,7 +14,7 @@ import {
 
 // GET /api/student/submissions/[id] — get submission state for resume
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const authResult = await requireRole("student");
@@ -23,6 +23,36 @@ export async function GET(
 
   const { id } = await params;
   const db = getServiceClient();
+
+  // ?status=1 — cheap "did my submit land?" probe the take page polls
+  // while a submit is in flight, so a lost submit response can't strand
+  // the student on "Submitting…".
+  if (new URL(req.url).searchParams.get("status") === "1") {
+    const { data: row } = await db
+      .from("submissions")
+      .select("status, submitted_at, adaptive_track, session_id")
+      .eq("id", id)
+      .eq("student_id", user.userId)
+      .maybeSingle();
+    if (!row) return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    // "ready" = safe to leave the page. Module 1 is claimed (status flips)
+    // before grading and the Module 2 insert, so also wait for the Module 2
+    // row — leaving earlier would land on the test page instead of Module 2.
+    // No Module 2 after 15 s means this test has none (or the handoff
+    // failed and the test page takes over).
+    let ready = row.status !== "In Progress";
+    if (ready && row.adaptive_track === "module_1" && row.session_id) {
+      const { count } = await db
+        .from("submissions")
+        .select("id", { count: "exact", head: true })
+        .eq("session_id", row.session_id)
+        .eq("student_id", user.userId)
+        .neq("adaptive_track", "module_1");
+      const ageMs = row.submitted_at ? Date.now() - new Date(row.submitted_at).getTime() : Infinity;
+      ready = (count ?? 0) > 0 || ageMs > 15_000;
+    }
+    return NextResponse.json({ data: { status: row.status, ready } });
+  }
 
   const { data: submission, error } = await db
     .from("submissions")

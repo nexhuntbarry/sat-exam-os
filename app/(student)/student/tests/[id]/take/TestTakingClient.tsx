@@ -69,12 +69,18 @@ const AUTO_SAVE_DEBOUNCE_MS = 800;
 const SAVE_RETRY_MAX_MS = 30000;
 const SUBMIT_TIMEOUT_MS = 20000;
 const SUBMIT_MAX_ATTEMPTS = 3;
+// While a submit is pending, ask the server every few seconds whether it
+// already landed; after SUBMIT_STUCK_MS also show a "Continue" escape hatch.
+const SUBMIT_POLL_MS = 5000;
+const SUBMIT_STUCK_MS = 15000;
 // Browsers cap the total body of in-flight keepalive requests at 64KB.
 const KEEPALIVE_MAX_BYTES = 60000;
 
 // "closed": the server won't take autosaves any more (time is up or the
 // module was already finalized), so only Submit can still deliver answers.
 type SaveStatus = "saved" | "saving" | "error" | "closed";
+
+type SubmitPayload = { data?: { id?: string; nextSubmissionId?: string | null } };
 
 // Device-side mirror of the attempt, so a refresh / crash / expired session
 // never loses work the server didn't receive.
@@ -647,12 +653,16 @@ export default function TestTakingClient({
 
   // One submit attempt with a hard timeout. A fetch with no timeout can
   // hang forever on a flaky connection, leaving the student staring at
-  // "Submitting…" with no way forward.
-  async function postSubmit(): Promise<Response> {
+  // "Submitting…" with no way forward. The body is read inside the same
+  // timeout: a connection that stalls after the headers used to hang
+  // res.json() for minutes although the submit had already landed.
+  const submitControllerRef = useRef<AbortController | null>(null);
+  async function postSubmit(): Promise<{ res: Response; payload: SubmitPayload | null }> {
     const controller = new AbortController();
+    submitControllerRef.current = controller;
     const timer = setTimeout(() => controller.abort(), SUBMIT_TIMEOUT_MS);
     try {
-      return await fetchWithAuthRetry(`/api/student/submissions/${submissionId}/submit`, {
+      const res = await fetchWithAuthRetry(`/api/student/submissions/${submissionId}/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -662,9 +672,102 @@ export default function TestTakingClient({
         }),
         signal: controller.signal,
       });
+      const payload =
+        isJsonOk(res) || res.status === 400
+          ? await res.json().catch((e) => {
+              if (controller.signal.aborted) throw e; // stalled → retry
+              return null;
+            })
+          : null;
+      return { res, payload };
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  // Where to go once this module is submitted: Module 1 → the take page
+  // (it opens Module 2), otherwise the result page.
+  function leaveAfterSubmit() {
+    window.location.assign(
+      test.moduleLabel === "Module 1"
+        ? `/student/tests/${testId}/take`
+        : `/student/tests/${testId}/result?submission=${submissionId}`,
+    );
+  }
+
+  // Did the submit land server-side (and, for Module 1, is Module 2 ready)?
+  // null = couldn't tell (offline / signed out).
+  async function checkSubmitLanded(): Promise<boolean | null> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const res = await fetchWithAuthRetry(`${saveUrl}?status=1`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!isJsonOk(res)) return null;
+      const body = (await res.json()) as { data?: { ready?: boolean } };
+      return Boolean(body?.data?.ready);
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // Submit watchdog. Whatever stalls — a lost response, a navigation that
+  // never starts — once the server has the submit, the student moves on.
+  // isSubmitting stays true after a successful submit (the page is
+  // navigating away), so this also retries a navigation that didn't happen.
+  const [submitStuck, setSubmitStuck] = useState(false);
+  const [stuckNote, setStuckNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!isSubmitting) {
+      setSubmitStuck(false);
+      setStuckNote(null);
+      return;
+    }
+    const startedAt = Date.now();
+    let stopped = false;
+    let checking = false;
+    const tick = async () => {
+      if (stopped || checking) return;
+      if (Date.now() - startedAt >= SUBMIT_STUCK_MS) setSubmitStuck(true);
+      checking = true;
+      const landed = await checkSubmitLanded();
+      checking = false;
+      if (!stopped && landed) {
+        submittedRef.current = true;
+        leaveAfterSubmit();
+      }
+    };
+    const id = setInterval(tick, SUBMIT_POLL_MS);
+    // Back online: check right away instead of waiting for the next tick.
+    window.addEventListener("online", tick);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+      window.removeEventListener("online", tick);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSubmitting]);
+
+  // "Continue" on the stuck banner: go on if the submit landed; if the
+  // server says it didn't, cut the hung attempt short so a retry goes out.
+  async function handleStuckContinue() {
+    setStuckNote("Checking…");
+    const landed = await checkSubmitLanded();
+    if (landed) {
+      submittedRef.current = true;
+      leaveAfterSubmit();
+      return;
+    }
+    if (landed === null) {
+      setStuckNote("Can't reach the server — check your Wi-Fi. Your answers are kept on this device.");
+      return;
+    }
+    setStuckNote("Not submitted yet — trying again…");
+    submitControllerRef.current?.abort();
   }
 
   async function handleSubmit() {
@@ -682,12 +785,14 @@ export default function TestTakingClient({
     // ~1-minute submit lag students reported.
     try {
       let res: Response | null = null;
+      let payload: SubmitPayload | null = null;
       for (let attempt = 0; attempt < SUBMIT_MAX_ATTEMPTS; attempt++) {
         try {
-          res = await postSubmit();
+          ({ res, payload } = await postSubmit());
           if (res.ok || res.status < 500) break;
         } catch {
           res = null; // network error / timeout → retry
+          payload = null;
         }
         await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
       }
@@ -711,7 +816,6 @@ export default function TestTakingClient({
         setSubmitError("Your test has not been submitted yet. Sign in again, then press Submit.");
         return;
       }
-      const payload = isJsonOk(res) || res.status === 400 ? await res.json().catch(() => null) : null;
       if (res.status === 400 && payload) {
         // "Submission already submitted" — an earlier request landed but
         // its response never reached us. Reload the take page: it opens
@@ -735,7 +839,7 @@ export default function TestTakingClient({
         // Module 2 (DB showed Module 2 rows with 44 answers = 22+22).
         // A real navigation guarantees a fresh React tree, fresh
         // state, fresh server fetch, and a fresh timer.
-        const nextId = payload?.data?.nextSubmissionId as string | undefined;
+        const nextId = payload?.data?.nextSubmissionId;
         if (nextId) {
           window.location.assign(`/student/tests/${testId}/take`);
         } else {
@@ -832,6 +936,23 @@ export default function TestTakingClient({
           className="shrink-0 bg-status-warning text-white text-sm px-4 py-2 text-center font-medium"
         >
           ⏱ Time&rsquo;s up — submitting your test automatically. Please wait…
+        </div>
+      )}
+      {isSubmitting && submitStuck && (
+        // Above the submit modal (z-[80]) so it's reachable while the
+        // modal's "Submitting…" button is showing.
+        <div
+          role="alert"
+          className="fixed inset-x-0 top-0 z-[80] bg-warm-coral-dark text-white text-sm px-4 py-3 flex flex-wrap items-center justify-center gap-3 shadow-lg"
+        >
+          <span>{stuckNote ?? "Still submitting — this is taking longer than usual."}</span>
+          <button
+            type="button"
+            onClick={handleStuckContinue}
+            className="whitespace-nowrap rounded-md bg-white text-warm-coral-dark px-3 py-1.5 font-semibold hover:bg-white/90"
+          >
+            {test.moduleLabel === "Module 1" ? "Continue to Module 2" : "Continue"}
+          </button>
         </div>
       )}
       {tabSwitchBannerVisible && (
