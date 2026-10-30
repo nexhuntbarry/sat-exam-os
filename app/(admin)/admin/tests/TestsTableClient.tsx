@@ -182,7 +182,7 @@ function TestsTable({
                 key={test.id}
                 className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
               >
-                <td className="px-5 py-3">
+                <td className="px-5 py-3 max-w-xs [overflow-wrap:anywhere]">
                   <Link href={`/admin/tests/${test.id}`} className="hover:text-warm-coral-text transition-colors">
                     <div className={clsx("font-medium", sectionTitleClass(mod?.section))}>{test.test_name}</div>
                     {test.is_adaptive && (
