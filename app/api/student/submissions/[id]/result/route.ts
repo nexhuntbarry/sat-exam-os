@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { getAnswerVisibility } from "@/lib/answer-visibility";
 
 // GET /api/student/submissions/[id]/result
 export async function GET(
@@ -20,7 +21,7 @@ export async function GET(
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, attempt_number,
       tests!inner(
-        test_name, show_answers_after_submission,
+        test_name,
         modules!module_id(module_name, section)
       )
     `)
@@ -36,10 +37,12 @@ export async function GET(
     return NextResponse.json({ error: "Submission not yet submitted" }, { status: 400 });
   }
 
-  const test = submission.tests as unknown as { show_answers_after_submission: boolean };
+  // Answer/explanation reveal goes through the shared decision (test
+  // setting, class lock, per-student override, retake safety).
+  const visibility = await getAnswerVisibility(db, submission.test_id, user.userId, "results");
   let answerDetails = null;
 
-  if (test.show_answers_after_submission) {
+  if (visibility.answers) {
     const { data: records } = await db
       .from("answer_records")
       .select(`
@@ -52,13 +55,18 @@ export async function GET(
       .eq("submission_id", id)
       .order("questions(original_question_number)", { ascending: true });
 
-    answerDetails = records ?? [];
+    answerDetails = (records ?? []).map((r) => {
+      if (visibility.explanations) return r;
+      const q = r.questions as unknown as Record<string, unknown>;
+      return { ...r, questions: { ...q, explanation: null } };
+    });
   }
 
   return NextResponse.json({
     data: {
       ...submission,
       answerDetails,
+      showExplanations: visibility.explanations,
     },
   });
 }

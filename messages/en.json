@@ -770,5 +770,27 @@
     "resultsTab": "Student view (results)",
     "testBanner": "Student view · Test-taking — read only, reflects current saved content",
     "resultsBanner": "Student view · Results & review — read only, reflects current saved content"
+  },
+  "answerVisibility": {
+    "column": "Answers",
+    "modeFollow": "Follow test setting",
+    "modeShow": "Show for this student",
+    "modeHide": "Hide for this student",
+    "alsoExplanations": "Also show explanations",
+    "visible": "Visible",
+    "hidden": "Hidden",
+    "withExplanations": "Visible, with explanations",
+    "effective": "{state} ({source})",
+    "source": {
+      "test": "test setting",
+      "class_review": "class review",
+      "student": "student override",
+      "not_submitted": "not submitted yet",
+      "retake_pending": "retake in progress"
+    },
+    "changedBy": "Changed by {name} · {date}",
+    "saveFailed": "Couldn't save that change. Please try again.",
+    "networkError": "Couldn't reach the server. Check your connection and try again.",
+    "saving": "Saving…"
   }
 }

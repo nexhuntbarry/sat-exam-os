@@ -7,10 +7,13 @@ import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/Revi
 import { isTestAssignedToStudent, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import ReportProblemButton from "@/components/tests/ReportProblemButton";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
+import { getAnswerVisibility } from "@/lib/answer-visibility";
 
 // Class-walkthrough review of a test. Shows every question + correct
 // answer + explanation regardless of whether the student took the
-// test. Gated on tests.review_unlocked, so the teacher controls access.
+// test. Gated by the shared answer-visibility decision (class_review
+// context): tests.review_unlocked, overridden per student by an admin's
+// Show/Hide setting, and always closed while a retake is pending.
 async function getReviewData(testId: string, studentId: string) {
   const db = getServiceClient();
 
@@ -20,13 +23,15 @@ async function getReviewData(testId: string, studentId: string) {
   const { data: test } = await db
     .from("tests")
     .select(
-      "id, test_name, status, review_unlocked, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids",
+      "id, test_name, status, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids",
     )
     .eq("id", testId)
     .single();
   if (!test) return null;
-  // Assigned but not released yet → friendly locked screen, not a 404 (L-01).
-  if (!test.review_unlocked) return { locked: true as const, test };
+  // Assigned but not released (or hidden for this student) → friendly
+  // locked screen, not a 404 (L-01).
+  const visibility = await getAnswerVisibility(db, testId, studentId, "class_review");
+  if (!visibility.answers) return { locked: true as const, test };
 
   // Modules to show in the walkthrough:
   //  - adaptive: Module 1 + both Module 2 tracks (teacher can flip
@@ -42,6 +47,7 @@ async function getReviewData(testId: string, studentId: string) {
   if (moduleIds.length === 0) {
     return {
       test,
+      showExplanations: visibility.explanations,
       sections: [],
       myAnswers: {} as Record<string, { answer: string | null; isCorrect: boolean }>,
       mySubmissionByQuestion: {} as Record<string, string>,
@@ -59,7 +65,11 @@ async function getReviewData(testId: string, studentId: string) {
     test,
   ).order("original_question_number", { ascending: true });
 
-  const { data: questions } = await qquery;
+  const { data: rawQuestions } = await qquery;
+  // Strip explanations server-side when this student isn't allowed them.
+  const questions = visibility.explanations
+    ? rawQuestions
+    : (rawQuestions ?? []).map((q) => ({ ...q, explanation: null }));
 
   // The student's own answers, so the unlocked review also shows what
   // they picked and whether it was right — not just the answer key.
@@ -118,7 +128,7 @@ async function getReviewData(testId: string, studentId: string) {
     groups.get(key)!.questions.push(q);
   }
 
-  return { test, sections: Array.from(groups.values()), myAnswers, mySubmissionByQuestion };
+  return { test, showExplanations: visibility.explanations, sections: Array.from(groups.values()), myAnswers, mySubmissionByQuestion };
 }
 
 export default async function StudentTestReviewPage({
@@ -144,7 +154,7 @@ export default async function StudentTestReviewPage({
     );
   }
 
-  const { test, sections, myAnswers, mySubmissionByQuestion } = data;
+  const { test, showExplanations, sections, myAnswers, mySubmissionByQuestion } = data;
   const reportsEnabled = await studentReportsEnabledFor(getServiceClient(), user);
   const tookTest = Object.keys(myAnswers).length > 0;
 
@@ -186,6 +196,7 @@ export default async function StudentTestReviewPage({
                   key={q.id}
                   question={q as unknown as ReviewQuestion}
                   mine={myAnswers[q.id] ?? null}
+                  showExplanation={showExplanations}
                   action={
                     reportsEnabled ? (
                       <ReportProblemButton

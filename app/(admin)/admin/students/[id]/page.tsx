@@ -15,6 +15,14 @@ import ProgressReport from "@/components/analytics/ProgressReport";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import { getTranslations } from "next-intl/server";
+import {
+  loadAnswerVisibilityInputs,
+  summarizeAnswerVisibility,
+  visibilityKey,
+} from "@/lib/answer-visibility";
+import StudentAnswerVisibilityControl from "@/components/tests/StudentAnswerVisibilityControl";
+import { answerVisibilityLabel } from "@/components/tests/answer-visibility-label";
 
 interface StudentRow {
   id: string;
@@ -261,6 +269,33 @@ export default async function AdminStudentDetailPage({
     : student.student_profiles ?? null;
 
   const groups = buildSessionGroups(submissions);
+
+  // Per-test answer visibility for this student (same server-side decision
+  // the student's pages enforce) + who last changed the override.
+  const db = getServiceClient();
+  const testIds = Array.from(new Set(groups.map((g) => g.testId)));
+  const [visibilityInputs, tv] = await Promise.all([
+    loadAnswerVisibilityInputs(db, testIds, [id]),
+    getTranslations("answerVisibility"),
+  ]);
+  const updaterIds = Array.from(
+    new Set(
+      Array.from(visibilityInputs.values())
+        .map((v) => v.override?.updated_by)
+        .filter((x): x is string => Boolean(x)),
+    ),
+  );
+  const { data: updaters } =
+    updaterIds.length > 0
+      ? await db.from("users").select("id, display_name, email").in("id", updaterIds)
+      : { data: [] as { id: string; display_name: string | null; email: string }[] };
+  const updaterName = new Map(
+    (updaters ?? []).map((u) => [u.id as string, (u.display_name || u.email) as string]),
+  );
+  // The picker sits on the newest row per test; older attempts of the same
+  // test just show the effective state.
+  const controlRowKey = new Map<string, string>();
+  for (const g of groups) if (!controlRowKey.has(g.testId)) controlRowKey.set(g.testId, g.key);
   const breakdownRows = await getStudentBreakdownRows(id);
   const occasions = await getStudentProgressOccasions(id);
   const submittedCount = groups.filter(
@@ -380,18 +415,6 @@ export default async function AdminStudentDetailPage({
         </div>
       </div>
 
-      {/* Strengths/weaknesses + progress for this student. */}
-      {breakdownRows.length > 0 && (
-        <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
-      )}
-      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
-      {occasions.length > 0 && (
-        <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
-      )}
-      {occasions.length > 0 && (
-        <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
-      )}
-
       {/* Submissions table */}
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-divider">
@@ -403,7 +426,7 @@ export default async function AdminStudentDetailPage({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[820px] text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Test</th>
@@ -415,6 +438,7 @@ export default async function AdminStudentDetailPage({
                   <th className="text-left px-5 py-3 font-medium">Time</th>
                   <th className="text-left px-5 py-3 font-medium">Submitted</th>
                   <th className="text-left px-5 py-3 font-medium">Attempt</th>
+                  <th className="text-left px-5 py-3 font-medium">{tv("column")}</th>
                   <th className="text-left px-5 py-3 font-medium">Open</th>
                 </tr>
               </thead>
@@ -486,6 +510,43 @@ export default async function AdminStudentDetailPage({
                     <td className="px-5 py-3 text-mid-gray text-xs">
                       {g.attemptNumber ?? 1}
                     </td>
+                    <td className="px-5 py-3 align-top">
+                      {(() => {
+                        const input = visibilityInputs.get(visibilityKey(g.testId, id));
+                        if (!input) return <span className="text-soft-mute text-xs">—</span>;
+                        const effective = summarizeAnswerVisibility(input);
+                        const ov = input.override;
+                        const isControlRow = controlRowKey.get(g.testId) === g.key;
+                        return (
+                          <div className="space-y-1 min-w-[170px]">
+                            {isControlRow && (
+                              <StudentAnswerVisibilityControl
+                                testId={g.testId}
+                                studentId={id}
+                                initialMode={ov?.mode ?? "follow"}
+                                initialShowExplanations={ov?.show_explanations ?? true}
+                              />
+                            )}
+                            <div
+                              className={clsx(
+                                "text-[11px] font-medium",
+                                effective.answers ? "text-status-success" : "text-soft-mute",
+                              )}
+                            >
+                              {answerVisibilityLabel(tv, effective)}
+                            </div>
+                            {isControlRow && ov?.updated_at && (
+                              <div className="text-soft-mute text-[10px] leading-snug">
+                                {tv("changedBy", {
+                                  name: (ov.updated_by && updaterName.get(ov.updated_by)) || "—",
+                                  date: formatDateTime(ov.updated_at),
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="px-5 py-3">
                       <Link
                         href={`/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`}
@@ -502,6 +563,18 @@ export default async function AdminStudentDetailPage({
           </div>
         )}
       </div>
+
+      {/* Strengths/weaknesses + progress for this student. */}
+      {breakdownRows.length > 0 && (
+        <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
+      )}
+      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
+      {occasions.length > 0 && (
+        <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
+      )}
+      {occasions.length > 0 && (
+        <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
+      )}
     </div>
   );
 }
