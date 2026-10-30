@@ -453,7 +453,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                   className="accent-warm-coral"
                 />
               </Th>
-              <Th kind="short">Q# · Module</Th>
+              <Th kind="long" className="w-[16%]">Q# · Module</Th>
               <Th kind="main">Text</Th>
               <Th priority="md">Difficulty</Th>
               <Th kind="long" priority="lg">Domain</Th>
@@ -515,7 +515,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       className="accent-warm-coral"
                     />
                   </Td>
-                  <Td kind="short">
+                  <Td kind="long" className="w-[16%]">
                     <TwoLineCell
                       main={String(qNum)}
                       detail={moduleName}
