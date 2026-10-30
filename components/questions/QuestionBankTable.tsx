@@ -459,7 +459,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
               <Th kind="long" priority="lg">Domain</Th>
               <Th>Status</Th>
               <Th kind="long" priority="lg">Issue</Th>
-              <Th priority="xl">Conf.</Th>
+              <Th priority="2xl">Conf.</Th>
               <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
             </HeadRow>
           </thead>
@@ -492,7 +492,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                 <DataRow
                   key={q.id}
                   tone={selectedIds.has(q.id) ? "warning" : "default"}
-                  expandBelow="lg"
+                  expandBelow="2xl"
                   colSpan={COL_COUNT}
                   details={
                     <>
@@ -501,7 +501,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       <DetailItem label="Issue" priority="lg">
                         {issue ? issue.label : showNoKey ? "no answer key" : "—"}
                       </DetailItem>
-                      <DetailItem label="Confidence" priority="xl">
+                      <DetailItem label="Confidence" priority="2xl">
                         <ConfidenceBadge score={q.ai_confidence_score} />
                       </DetailItem>
                     </>
@@ -574,7 +574,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       </div>
                     )}
                   </Td>
-                  <Td priority="xl">
+                  <Td priority="2xl">
                     <ConfidenceBadge score={q.ai_confidence_score} />
                   </Td>
                   <Td kind="actions" sticky="right">

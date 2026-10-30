@@ -356,9 +356,9 @@ export default async function TestSubmissionsPage({
               <Th>Status</Th>
               <Th>Score</Th>
               <Th priority="md">Correct</Th>
-              <Th priority="md">Time</Th>
+              <Th priority="2xl">Time</Th>
               <Th priority="lg">Submitted</Th>
-              <Th priority="xl">Attempt</Th>
+              <Th priority="2xl">Attempt</Th>
               <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
             </HeadRow>
           </thead>
@@ -389,15 +389,15 @@ export default async function TestSubmissionsPage({
               return (
                 <DataRow
                   key={a.key}
-                  expandBelow="xl"
+                  expandBelow="2xl"
                   colSpan={COL_SPAN}
                   details={
                     <>
                       <DetailItem label="Module" priority="md">{a.moduleHeadline}</DetailItem>
                       <DetailItem label="Correct" priority="md">{correctMain}{correctBreakdown ? ` (${correctBreakdown})` : ""}</DetailItem>
-                      <DetailItem label="Time" priority="md">{formatDuration(a.timeSpentSeconds)}</DetailItem>
+                      <DetailItem label="Time" priority="2xl">{formatDuration(a.timeSpentSeconds)}</DetailItem>
                       <DetailItem label="Submitted" priority="lg">{submittedLabel}</DetailItem>
-                      <DetailItem label="Attempt" priority="xl">#{a.attemptNumber}</DetailItem>
+                      <DetailItem label="Attempt" priority="2xl">#{a.attemptNumber}</DetailItem>
                     </>
                   }
                 >
@@ -434,13 +434,13 @@ export default async function TestSubmissionsPage({
                       mainClassName="text-mid-gray"
                     />
                   </Td>
-                  <Td priority="md" className="text-mid-gray">
+                  <Td priority="2xl" className="text-mid-gray">
                     {formatDuration(a.timeSpentSeconds)}
                   </Td>
                   <Td priority="lg" className="text-soft-mute" title={submittedTitle}>
                     {submittedLabel}
                   </Td>
-                  <Td priority="xl" className="text-mid-gray">
+                  <Td priority="2xl" className="text-mid-gray">
                     #{a.attemptNumber}
                   </Td>
                   <Td kind="actions" sticky="right">

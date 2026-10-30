@@ -27,10 +27,10 @@ import {
 import { ChevronDown } from "lucide-react";
 import { cn } from "./cn";
 
-/** Column priority: "always" is never hidden; "md" | "lg" | "xl" columns only
+/** Column priority: "always" is never hidden; "md" | "lg" | "xl" | "2xl" columns only
  *  show from that Tailwind breakpoint up (below it they move into the
  *  expandable details row). */
-export type Priority = "always" | "md" | "lg" | "xl";
+export type Priority = "always" | "md" | "lg" | "xl" | "2xl";
 
 /** Column kind, which sets the width behaviour:
  *  - main:    names/titles. Wide and flexible, content truncates.
@@ -40,7 +40,7 @@ export type Priority = "always" | "md" | "lg" | "xl";
 export type Kind = "main" | "short" | "long" | "actions";
 
 /** Breakpoint from which every column of a table is visible. */
-export type Breakpoint = "md" | "lg" | "xl";
+export type Breakpoint = "md" | "lg" | "xl" | "2xl";
 
 // Literal class strings so Tailwind's scanner picks them up.
 const PRIORITY_CELL: Record<Priority, string> = {
@@ -48,6 +48,7 @@ const PRIORITY_CELL: Record<Priority, string> = {
   md: "hidden md:table-cell",
   lg: "hidden lg:table-cell",
   xl: "hidden xl:table-cell",
+  "2xl": "hidden 2xl:table-cell",
 };
 
 /** Inverse of PRIORITY_CELL: visible only while the column is hidden. */
@@ -56,18 +57,21 @@ const PRIORITY_DETAIL: Record<Priority, string> = {
   md: "md:hidden",
   lg: "lg:hidden",
   xl: "xl:hidden",
+  "2xl": "2xl:hidden",
 };
 
 const BELOW: Record<Breakpoint, string> = {
   md: "md:hidden",
   lg: "lg:hidden",
   xl: "xl:hidden",
+  "2xl": "2xl:hidden",
 };
 
 const ROW_CLICKABLE_BELOW: Record<Breakpoint, string> = {
   md: "cursor-pointer md:cursor-auto",
   lg: "cursor-pointer lg:cursor-auto",
   xl: "cursor-pointer xl:cursor-auto",
+  "2xl": "cursor-pointer 2xl:cursor-auto",
 };
 
 // max-w-0 stops the cell's content from forcing the table wider; the
