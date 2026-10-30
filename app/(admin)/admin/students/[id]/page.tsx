@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, Mail } from "lucide-react";
+import { ArrowLeft, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
@@ -9,20 +9,20 @@ import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
 import DeleteStudentButton from "./DeleteStudentButton";
 import StudentStatusButton from "./StudentStatusButton";
-import { formatDate, formatDateTime } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
-import { getTranslations } from "next-intl/server";
 import {
   loadAnswerVisibilityInputs,
   summarizeAnswerVisibility,
   visibilityKey,
 } from "@/lib/answer-visibility";
-import StudentAnswerVisibilityControl from "@/components/tests/StudentAnswerVisibilityControl";
-import { answerVisibilityLabel } from "@/components/tests/answer-visibility-label";
+import TestsTable, {
+  type TestRow,
+  type VisibilityRowData,
+} from "@/components/tests/TestsTable";
 
 interface StudentRow {
   id: string;
@@ -240,19 +240,6 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
   return groups;
 }
 
-const statusStyles: Record<string, string> = {
-  Submitted: "bg-warm-amber/15 text-warm-amber",
-  Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
-  "Not Started": "bg-light-bg text-mid-gray",
-};
-
-function formatDuration(seconds: number | null) {
-  if (!seconds || !Number.isFinite(seconds)) return "—";
-  const m = Math.floor(seconds / 60);
-  const s = Math.round(seconds % 60);
-  return `${m}m ${s}s`;
-}
 
 export default async function AdminStudentDetailPage({
   params,
@@ -274,10 +261,7 @@ export default async function AdminStudentDetailPage({
   // the student's pages enforce) + who last changed the override.
   const db = getServiceClient();
   const testIds = Array.from(new Set(groups.map((g) => g.testId)));
-  const [visibilityInputs, tv] = await Promise.all([
-    loadAnswerVisibilityInputs(db, testIds, [id]),
-    getTranslations("answerVisibility"),
-  ]);
+  const visibilityInputs = await loadAnswerVisibilityInputs(db, testIds, [id]);
   const updaterIds = Array.from(
     new Set(
       Array.from(visibilityInputs.values())
@@ -301,12 +285,66 @@ export default async function AdminStudentDetailPage({
   const submittedCount = groups.filter(
     (g) => g.status === "Submitted" || g.status === "Late",
   ).length;
-  const avgPct =
-    submittedCount > 0
-      ? groups
-          .filter((g) => g.status === "Submitted" || g.status === "Late")
-          .reduce((sum, g) => sum + (g.percentage ?? 0), 0) / submittedCount
+
+  // Latest section scores (groups are already sorted by submittedAt desc)
+  const latestMathScore =
+    groups.find((g) => g.section === "Math" && g.scaledScore != null)
+      ?.scaledScore ?? null;
+  const latestRWScore =
+    groups.find(
+      (g) => g.section === "Reading & Writing" && g.scaledScore != null,
+    )?.scaledScore ?? null;
+  const estimatedTotal =
+    latestMathScore != null && latestRWScore != null
+      ? latestMathScore + latestRWScore
       : null;
+
+  // Build serializable rows for TestsTable
+  const testRows: TestRow[] = groups.map((g) => {
+    const input = visibilityInputs.get(visibilityKey(g.testId, id));
+    const isControlRow = controlRowKey.get(g.testId) === g.key;
+    let visibility: VisibilityRowData | null = null;
+    if (input) {
+      const effective = summarizeAnswerVisibility(input);
+      const ov = input.override;
+      visibility = {
+        isControlRow,
+        initialMode: ov?.mode ?? "follow",
+        initialShowExplanations: ov?.show_explanations ?? true,
+        effectiveAnswers: effective.answers,
+        effectiveExplanations: effective.explanations,
+        effectiveSource: effective.source,
+        updatedBy: ov?.updated_by ?? null,
+        updatedAt: ov?.updated_at ?? null,
+        updaterName:
+          (ov?.updated_by && updaterName.get(ov.updated_by)) || null,
+      };
+    }
+    return {
+      key: g.key,
+      testId: g.testId,
+      testName: g.testName,
+      section: g.section,
+      status: g.status,
+      correct: g.correct,
+      total: g.total,
+      percentage: g.percentage,
+      scaledScore: g.scaledScore,
+      timeSeconds: g.timeSeconds,
+      submittedAt: g.submittedAt,
+      attemptNumber: g.attemptNumber,
+      detailSubmissionId: g.detailSubmissionId,
+      isMultiModule: g.isMultiModule,
+      modules: g.modules.map((m) => ({
+        label: m.label,
+        submissionId: m.submissionId,
+        correct: m.correct,
+        total: m.total,
+        percentage: m.percentage,
+      })),
+      visibility,
+    };
+  });
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -397,21 +435,29 @@ export default async function AdminStudentDetailPage({
         </div>
       )}
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Summary stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Tests taken</p>
-          <p className="text-3xl font-bold text-charcoal mt-1">{groups.length}</p>
-        </div>
-        <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Submitted</p>
-          <p className="text-3xl font-bold text-charcoal mt-1">{submittedCount}</p>
-        </div>
-        <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Average %</p>
-          <p className="text-3xl font-bold text-warm-coral-text mt-1">
-            {avgPct != null ? `${avgPct.toFixed(1)}%` : "—"}
+          <p className="text-soft-mute text-xs">Latest Math</p>
+          <p className="text-3xl font-bold text-charcoal mt-1">
+            {latestMathScore ?? "—"}
           </p>
+        </div>
+        <div className="bg-surface border border-divider rounded-2xl p-5">
+          <p className="text-soft-mute text-xs">Latest R&amp;W</p>
+          <p className="text-3xl font-bold text-charcoal mt-1">
+            {latestRWScore ?? "—"}
+          </p>
+        </div>
+        <div className="bg-surface border border-divider rounded-2xl p-5">
+          <p className="text-soft-mute text-xs">Estimated Total</p>
+          <p className="text-3xl font-bold text-charcoal mt-1">
+            {estimatedTotal ?? "—"}
+          </p>
+        </div>
+        <div className="bg-surface border border-divider rounded-2xl p-5">
+          <p className="text-soft-mute text-xs">Tests completed</p>
+          <p className="text-3xl font-bold text-charcoal mt-1">{submittedCount}</p>
         </div>
       </div>
 
@@ -420,148 +466,7 @@ export default async function AdminStudentDetailPage({
         <div className="px-5 py-4 border-b border-divider">
           <h2 className="text-charcoal font-semibold">Tests taken</h2>
         </div>
-        {groups.length === 0 ? (
-          <p className="py-12 text-center text-soft-mute text-sm">
-            This student hasn&rsquo;t taken any tests yet.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Test</th>
-                  <th className="text-left px-5 py-3 font-medium">Section</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Score</th>
-                  <th className="text-left px-5 py-3 font-medium">%</th>
-                  <th className="text-left px-5 py-3 font-medium">Est. SAT</th>
-                  <th className="text-left px-5 py-3 font-medium">Time</th>
-                  <th className="text-left px-5 py-3 font-medium">Submitted</th>
-                  <th className="text-left px-5 py-3 font-medium">Attempt</th>
-                  <th className="text-left px-5 py-3 font-medium">{tv("column")}</th>
-                  <th className="text-left px-5 py-3 font-medium">Open</th>
-                </tr>
-              </thead>
-              <tbody>
-                {groups.map((g) => (
-                  <tr
-                    key={g.key}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-charcoal">{g.testName}</div>
-                      <div className="text-soft-mute text-xs">
-                        {g.isMultiModule ? "Module 1 + Module 2" : "Single module"}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">{g.section ?? "—"}</td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={clsx(
-                          "px-2 py-0.5 rounded-full text-xs font-medium",
-                          statusStyles[g.status] ?? "bg-light-bg text-soft-mute",
-                        )}
-                      >
-                        {g.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      <div>{g.total > 0 ? `${g.correct}/${g.total}` : "—"}</div>
-                      {g.isMultiModule && g.modules.length > 0 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                          {g.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}: {m.correct}/{m.total}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      <div>{g.percentage != null ? `${g.percentage.toFixed(1)}%` : "—"}</div>
-                      {g.isMultiModule && g.modules.length > 0 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                          {g.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-warm-coral-text text-sm font-medium">
-                      <div>{g.scaledScore != null ? `${g.scaledScore}/800` : "—"}</div>
-                      {g.isMultiModule && g.modules.length > 0 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
-                          {g.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.scaledScore != null ? `${m.scaledScore}/800` : "—"}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {formatDuration(g.timeSeconds)}
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {g.submittedAt ? formatDateTime(g.submittedAt) : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">
-                      {g.attemptNumber ?? 1}
-                    </td>
-                    <td className="px-5 py-3 align-top">
-                      {(() => {
-                        const input = visibilityInputs.get(visibilityKey(g.testId, id));
-                        if (!input) return <span className="text-soft-mute text-xs">—</span>;
-                        const effective = summarizeAnswerVisibility(input);
-                        const ov = input.override;
-                        const isControlRow = controlRowKey.get(g.testId) === g.key;
-                        return (
-                          <div className="space-y-1 min-w-[170px]">
-                            {isControlRow && (
-                              <StudentAnswerVisibilityControl
-                                testId={g.testId}
-                                studentId={id}
-                                initialMode={ov?.mode ?? "follow"}
-                                initialShowExplanations={ov?.show_explanations ?? true}
-                              />
-                            )}
-                            <div
-                              className={clsx(
-                                "text-[11px] font-medium",
-                                effective.answers ? "text-status-success" : "text-soft-mute",
-                              )}
-                            >
-                              {answerVisibilityLabel(tv, effective)}
-                            </div>
-                            {isControlRow && ov?.updated_at && (
-                              <div className="text-soft-mute text-[10px] leading-snug">
-                                {tv("changedBy", {
-                                  name: (ov.updated_by && updaterName.get(ov.updated_by)) || "—",
-                                  date: formatDateTime(ov.updated_at),
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-5 py-3">
-                      <Link
-                        href={`/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`}
-                        className="inline-flex items-center gap-1 text-xs text-warm-coral-text hover:underline"
-                      >
-                        <ExternalLink size={11} />
-                        Detail
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <TestsTable rows={testRows} studentId={id} />
       </div>
 
       {/* Strengths/weaknesses + progress for this student. */}

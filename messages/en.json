@@ -772,5 +772,18 @@
     "saveFailed": "Couldn't save that change. Please try again.",
     "networkError": "Couldn't reach the server. Check your connection and try again.",
     "saving": "Saving…"
+  },
+  "studentDetail": {
+    "colTest": "Test",
+    "colSection": "Section",
+    "colStatus": "Status",
+    "colResult": "Result",
+    "colSubmitted": "Submitted",
+    "twoModules": "2 modules",
+    "attemptN": "Attempt {n}",
+    "expandModules": "Show module breakdown",
+    "collapseModules": "Hide module breakdown",
+    "viewDetail": "View detail",
+    "noTests": "This student hasn't taken any tests yet."
   }
 }
