@@ -4,10 +4,23 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { clsx } from "clsx";
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Eye, Filter, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Eye, Filter } from "lucide-react";
 import ConfidenceBadge from "./ConfidenceBadge";
 import BulkActions from "./BulkActions";
 import MathMarkdown from "@/components/MathMarkdown";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  RowActionsMenu,
+  TwoLineCell,
+  TruncatedText,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 // ────────────────────────────────────────────
 // Types
@@ -259,6 +272,9 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
   const total = result?.total ?? 0;
   const pages = result?.pages ?? 1;
 
+  // 9 visible columns (checkbox + 7 data + actions)
+  const COL_COUNT = 9;
+
   return (
     <div className="flex gap-6 min-h-0">
       {/* Filter panel */}
@@ -403,7 +419,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
         </div>
       </aside>
 
-      {/* Table */}
+      {/* Table area */}
       <div className="flex-1 min-w-0 space-y-3">
         {/* Toolbar */}
         <div className="flex items-center gap-3">
@@ -426,154 +442,149 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
           />
         </div>
 
-        <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-          {questions.length === 0 && !loading ? (
-            <div className="py-16 text-center">
-              <p className="text-soft-mute text-sm">No questions found.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-divider text-soft-mute">
-                    <th className="px-4 py-3 w-8">
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.size === questions.length && questions.length > 0}
-                        onChange={toggleAll}
-                        className="accent-warm-coral"
-                      />
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium">Q#</th>
-                    <th className="text-left px-4 py-3 font-medium">Module</th>
-                    <th className="text-left px-4 py-3 font-medium max-w-xs">Text</th>
-                    <th className="text-left px-4 py-3 font-medium">Difficulty</th>
-                    <th className="text-left px-4 py-3 font-medium">Domain</th>
-                    <th className="text-left px-4 py-3 font-medium">Status</th>
-                    <th className="text-left px-4 py-3 font-medium">Why</th>
-                    <th className="text-left px-4 py-3 font-medium">Conf.</th>
-                    <th className="text-left px-4 py-3 font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {questions.map((q) => (
-                    <tr
-                      key={q.id}
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th className="w-8">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.size === questions.length && questions.length > 0}
+                  onChange={toggleAll}
+                  className="accent-warm-coral"
+                />
+              </Th>
+              <Th kind="short">Q# · Module</Th>
+              <Th kind="main">Text</Th>
+              <Th priority="md">Difficulty</Th>
+              <Th kind="long" priority="lg">Domain</Th>
+              <Th>Status</Th>
+              <Th kind="long" priority="lg">Issue</Th>
+              <Th priority="xl">Conf.</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {questions.length === 0 && !loading && (
+              <EmptyRow colSpan={COL_COUNT}>No questions found.</EmptyRow>
+            )}
+            {questions.map((q) => {
+              const issue = issueSummary(q.parsing_notes, undefined, q.question_type, undefined, q.official_answer);
+              const showNoKey = q.parsing_status === "Needs Review" && !q.official_answer && !issue?.noKey;
+              const qNum = q.original_question_number ?? "—";
+              const moduleName = q.modules?.module_name ?? "—";
+
+              const actions: (RowAction | false)[] = [
+                { label: "View / Edit", icon: Eye, href: `${detailBase}/${q.id}` },
+                q.parsing_status !== "Approved" && {
+                  label: "Approve",
+                  icon: CheckCircle2,
+                  onSelect: () => handleStatusChange(q.id, "approve"),
+                },
+                q.parsing_status !== "Rejected" && {
+                  label: "Reject",
+                  icon: XCircle,
+                  tone: "danger",
+                  onSelect: () => handleStatusChange(q.id, "reject"),
+                },
+              ];
+
+              return (
+                <DataRow
+                  key={q.id}
+                  tone={selectedIds.has(q.id) ? "warning" : "default"}
+                  expandBelow="lg"
+                  colSpan={COL_COUNT}
+                  details={
+                    <>
+                      <DetailItem label="Difficulty" priority="md">{q.difficulty ?? "—"}</DetailItem>
+                      <DetailItem label="Domain" priority="lg">{q.domain ?? "—"}</DetailItem>
+                      <DetailItem label="Issue" priority="lg">
+                        {issue ? issue.label : showNoKey ? "no answer key" : "—"}
+                      </DetailItem>
+                      <DetailItem label="Confidence" priority="xl">
+                        <ConfidenceBadge score={q.ai_confidence_score} />
+                      </DetailItem>
+                    </>
+                  }
+                >
+                  <Td className="w-8">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(q.id)}
+                      onChange={() => toggleSelected(q.id)}
+                      className="accent-warm-coral"
+                    />
+                  </Td>
+                  <Td kind="short">
+                    <TwoLineCell
+                      main={String(qNum)}
+                      detail={moduleName}
+                    />
+                  </Td>
+                  <Td kind="main">
+                    <Link
+                      href={`${detailBase}/${q.id}`}
+                      className="block text-charcoal hover:text-warm-coral-text transition-colors"
+                    >
+                      <MathMarkdown className="prose prose-sm max-w-none [&_p]:my-0 [&_p]:line-clamp-2">
+                        {q.question_text.length > 200
+                          ? q.question_text.slice(0, 200) + "…"
+                          : q.question_text}
+                      </MathMarkdown>
+                    </Link>
+                  </Td>
+                  <Td priority="md" className="text-mid-gray">{q.difficulty ?? "—"}</Td>
+                  <Td kind="long" priority="lg">
+                    <TruncatedText title={q.domain ?? undefined}>{q.domain ?? "—"}</TruncatedText>
+                  </Td>
+                  <Td>
+                    <span
                       className={clsx(
-                        "border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors",
-                        selectedIds.has(q.id) && "bg-warm-coral/5"
+                        "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
+                        statusStyles[q.parsing_status] ?? "bg-light-bg text-soft-mute"
                       )}
                     >
-                      <td className="px-4 py-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedIds.has(q.id)}
-                          onChange={() => toggleSelected(q.id)}
-                          className="accent-warm-coral"
-                        />
-                      </td>
-                      <td className="px-4 py-3 text-soft-mute text-xs">
-                        {q.original_question_number ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 text-mid-gray text-xs max-w-[120px] truncate">
-                        {q.modules?.module_name ?? "—"}
-                      </td>
-                      <td className="px-4 py-3 max-w-xs">
-                        <Link
-                          href={`${detailBase}/${q.id}`}
-                          className="block text-charcoal hover:text-warm-coral-text transition-colors text-sm"
-                        >
-                          <MathMarkdown className="prose prose-sm max-w-none [&_p]:my-0 [&_p]:line-clamp-2">
-                            {q.question_text.length > 200
-                              ? q.question_text.slice(0, 200) + "…"
-                              : q.question_text}
-                          </MathMarkdown>
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-mid-gray text-xs">{q.difficulty ?? "—"}</td>
-                      <td className="px-4 py-3 text-mid-gray text-xs max-w-[140px] truncate" title={q.domain ?? ""}>
-                        {q.domain ?? "—"}
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={clsx(
-                            "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
-                            statusStyles[q.parsing_status] ?? "bg-light-bg text-soft-mute"
-                          )}
-                        >
-                          {q.parsing_status}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 max-w-[220px]">
-                        {(() => {
-                          const issue = issueSummary(q.parsing_notes, undefined, q.question_type, undefined, q.official_answer);
-                          const showNoKey =
-                            q.parsing_status === "Needs Review" && !q.official_answer && !issue?.noKey;
-                          if (!issue && !showNoKey) return <span className="text-soft-mute text-xs">—</span>;
-                          return (
-                            <div className="flex flex-wrap items-center gap-1">
-                              {issue && (
-                                <span
-                                  title={q.parsing_notes ?? ""}
-                                  className={clsx(
-                                    "inline-block px-2 py-0.5 rounded-md text-xs font-medium leading-snug",
-                                    issueToneStyles[issue.tone]
-                                  )}
-                                >
-                                  {issue.label}
-                                </span>
-                              )}
-                              {showNoKey && (
-                                <span
-                                  title="The source module has no answer key — the AI answer is unverified."
-                                  className="inline-block px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-light-bg text-soft-mute whitespace-nowrap"
-                                >
-                                  no answer key
-                                </span>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="px-4 py-3">
-                        <ConfidenceBadge score={q.ai_confidence_score} />
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1">
-                          <Link
-                            href={`${detailBase}/${q.id}`}
-                            className="p-1 rounded hover:bg-surface text-soft-mute hover:text-charcoal transition-colors"
-                            title="View / Edit"
+                      {q.parsing_status}
+                    </span>
+                  </Td>
+                  <Td kind="long" priority="lg">
+                    {(!issue && !showNoKey) ? (
+                      <span className="text-soft-mute text-xs">—</span>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-1">
+                        {issue && (
+                          <span
+                            title={q.parsing_notes ?? ""}
+                            className={clsx(
+                              "inline-block px-2 py-0.5 rounded-md text-xs font-medium leading-snug",
+                              issueToneStyles[issue.tone]
+                            )}
                           >
-                            <Eye size={14} />
-                          </Link>
-                          {q.parsing_status !== "Approved" && (
-                            <button
-                              onClick={() => handleStatusChange(q.id, "approve")}
-                              className="p-1 rounded hover:bg-warm-amber/15 text-soft-mute hover:text-warm-amber transition-colors"
-                              title="Approve"
-                            >
-                              <CheckCircle2 size={14} />
-                            </button>
-                          )}
-                          {q.parsing_status !== "Rejected" && (
-                            <button
-                              onClick={() => handleStatusChange(q.id, "reject")}
-                              className="p-1 rounded hover:bg-status-error/15 text-soft-mute hover:text-status-error transition-colors"
-                              title="Reject"
-                            >
-                              <XCircle size={14} />
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+                            {issue.label}
+                          </span>
+                        )}
+                        {showNoKey && (
+                          <span
+                            title="The source module has no answer key — the AI answer is unverified."
+                            className="inline-block px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-light-bg text-soft-mute whitespace-nowrap"
+                          >
+                            no answer key
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </Td>
+                  <Td priority="xl">
+                    <ConfidenceBadge score={q.ai_confidence_score} />
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    <RowActionsMenu label={`Actions for Q${qNum}`} items={actions} />
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
 
         {/* Pagination */}
         {pages > 1 && (

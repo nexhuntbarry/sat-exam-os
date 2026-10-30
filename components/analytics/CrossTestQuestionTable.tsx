@@ -5,6 +5,15 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
 import MathMarkdown from "@/components/MathMarkdown";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+} from "@/components/ui/data-table";
 
 export interface CrossTestQuestionRow {
   questionId: string;
@@ -51,6 +60,9 @@ export function CrossTestQuestionTable({ rows, testOptions }: Props) {
   const selectCls =
     "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
+  // 7 columns: rank + question + domain + attempts + error% + top wrong + action
+  const COL_COUNT = 7;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-center">
@@ -67,82 +79,82 @@ export function CrossTestQuestionTable({ rows, testOptions }: Props) {
         </div>
       </div>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {top.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">
-            {t("noQuestionAttempts")}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium w-12">#</th>
-                  <th className="text-left px-5 py-3 font-medium">{t("columns.question")}</th>
-                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">{t("columns.domain")}</th>
-                  <th className="text-right px-5 py-3 font-medium">{t("columns.attempts")}</th>
-                  <th className="text-right px-5 py-3 font-medium">{t("columns.errorPct")}</th>
-                  <th className="text-center px-5 py-3 font-medium hidden sm:table-cell">
-                    {t("columns.topWrong")}
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium">{t("columns.action")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {top.map((q, idx) => (
-                  <tr
-                    key={q.questionId}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors align-top"
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th sticky="left" className="w-8">#</Th>
+            <Th kind="main">{t("columns.question")}</Th>
+            <Th kind="long" priority="md">{t("columns.domain")}</Th>
+            <Th>{t("columns.attempts")}</Th>
+            <Th>{t("columns.errorPct")}</Th>
+            <Th priority="md">{t("columns.topWrong")}</Th>
+            <Th kind="actions" sticky="right"><span className="sr-only">{t("columns.action")}</span></Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {top.length === 0 && (
+            <EmptyRow colSpan={COL_COUNT}>{t("noQuestionAttempts")}</EmptyRow>
+          )}
+          {top.map((q, idx) => {
+            const subDetail = [
+              q.questionNumber != null ? `Q${q.questionNumber}` : null,
+              q.difficulty,
+              q.testsAppearingIn.length > 1 ? t("inMultipleTests", { count: q.testsAppearingIn.length }) : null,
+            ].filter(Boolean).join(" · ");
+
+            return (
+              <DataRow
+                key={q.questionId}
+                expandBelow="md"
+                colSpan={COL_COUNT}
+                details={
+                  <>
+                    <DetailItem label={t("columns.domain")} priority="md">{q.domain ?? "—"}</DetailItem>
+                    <DetailItem label={t("columns.topWrong")} priority="md">{q.mostSelectedWrong ?? "—"}</DetailItem>
+                  </>
+                }
+              >
+                <Td sticky="left" className="text-soft-mute tabular-nums">{idx + 1}</Td>
+                <Td kind="main">
+                  <div className="text-charcoal text-sm line-clamp-2">
+                    <MathMarkdown>{q.textPreview}</MathMarkdown>
+                  </div>
+                  {subDetail && (
+                    <div className="text-soft-mute text-xs mt-1 whitespace-nowrap">{subDetail}</div>
+                  )}
+                </Td>
+                <Td kind="long" priority="md" className="text-mid-gray whitespace-nowrap">
+                  {q.domain ?? "—"}
+                </Td>
+                <Td className="text-mid-gray tabular-nums">{q.totalAttempts}</Td>
+                <Td>
+                  <span
+                    className={clsx(
+                      "font-semibold tabular-nums",
+                      q.errorRatePct >= 70
+                        ? "text-status-error"
+                        : q.errorRatePct >= 40
+                          ? "text-status-warning"
+                          : "text-warm-amber"
+                    )}
                   >
-                    <td className="px-5 py-3 text-soft-mute">{idx + 1}</td>
-                    <td className="px-5 py-3 max-w-[420px]">
-                      <div className="text-charcoal text-sm line-clamp-2">
-                        <MathMarkdown>{q.textPreview}</MathMarkdown>
-                      </div>
-                      <div className="text-soft-mute text-xs mt-1">
-                        {q.questionNumber != null && <span>Q{q.questionNumber}</span>}
-                        {q.difficulty && <span> · {q.difficulty}</span>}
-                        {q.testsAppearingIn.length > 1 && (
-                          <span> · {t("inMultipleTests", { count: q.testsAppearingIn.length })}</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray hidden md:table-cell">
-                      {q.domain ?? "—"}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray text-right">{q.totalAttempts}</td>
-                    <td className="px-5 py-3 text-right">
-                      <span
-                        className={clsx(
-                          "font-semibold",
-                          q.errorRatePct >= 70
-                            ? "text-status-error"
-                            : q.errorRatePct >= 40
-                              ? "text-status-warning"
-                              : "text-warm-amber"
-                        )}
-                      >
-                        {q.errorRatePct.toFixed(0)}%
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-center text-mid-gray hidden sm:table-cell">
-                      {q.mostSelectedWrong ?? "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <Link
-                        href={`/teacher/tests/${q.testIdForLink}/analytics/${q.questionId}`}
-                        className="text-warm-coral-text text-xs hover:underline whitespace-nowrap"
-                      >
-                        {t("view")}
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                    {q.errorRatePct.toFixed(0)}%
+                  </span>
+                </Td>
+                <Td priority="md" className="text-mid-gray text-center">{q.mostSelectedWrong ?? "—"}</Td>
+                <Td kind="actions" sticky="right">
+                  <Link
+                    href={`/teacher/tests/${q.testIdForLink}/analytics/${q.questionId}`}
+                    className="text-warm-coral-text text-xs hover:underline whitespace-nowrap"
+                  >
+                    {t("view")}
+                  </Link>
+                </Td>
+              </DataRow>
+            );
+          })}
+        </tbody>
+      </DataTable>
     </div>
   );
 }

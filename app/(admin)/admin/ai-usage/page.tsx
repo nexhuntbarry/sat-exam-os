@@ -1,6 +1,15 @@
 import { getServiceClient } from "@/lib/supabase";
 import AiUsageCharts from "./AiUsageCharts";
 import PageIntro from "@/components/shared/PageIntro";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  EmptyRow,
+  TruncatedText,
+} from "@/components/ui/data-table";
 
 async function getUsageData() {
   const db = getServiceClient();
@@ -59,7 +68,7 @@ export default async function AiUsagePage() {
   ];
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageIntro tKey="admin.aiUsage" />
       <h1 className="text-2xl font-bold text-charcoal">AI Usage</h1>
       <p className="text-soft-mute text-sm -mt-4">This month · Claude Sonnet 4.6 · $3/M input, $15/M output</p>
@@ -78,37 +87,35 @@ export default async function AiUsagePage() {
       <AiUsageCharts dailyTrend={usage.dailyTrend} />
 
       {/* Per-route table */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 py-3 border-b border-divider">
-          <h2 className="text-sm font-semibold text-charcoal">Calls per Route</h2>
-        </div>
+      <div>
+        <h2 className="text-sm font-semibold text-charcoal mb-3">Calls per Route</h2>
         {usage.byRoute.length === 0 ? (
           <p className="text-soft-mute text-sm text-center py-10">No usage data yet.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Route</th>
-                  <th className="text-right px-5 py-3 font-medium">Calls</th>
-                  <th className="text-right px-5 py-3 font-medium">Input Tokens</th>
-                  <th className="text-right px-5 py-3 font-medium">Output Tokens</th>
-                  <th className="text-right px-5 py-3 font-medium">Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usage.byRoute.map((r) => (
-                  <tr key={r.route} className="border-b border-divider last:border-0 hover:bg-light-bg/60">
-                    <td className="px-5 py-3 text-charcoal font-medium">{r.route}</td>
-                    <td className="px-5 py-3 text-right text-mid-gray">{r.calls}</td>
-                    <td className="px-5 py-3 text-right text-mid-gray">{r.tokens_input.toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right text-mid-gray">{r.tokens_output.toLocaleString()}</td>
-                    <td className="px-5 py-3 text-right text-mid-gray">${(r.cost_cents / 100).toFixed(4)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable>
+            <thead>
+              <HeadRow>
+                <Th kind="main" sticky="left">Route</Th>
+                <Th>Calls</Th>
+                <Th priority="md">Input Tokens</Th>
+                <Th priority="md">Output Tokens</Th>
+                <Th>Cost</Th>
+              </HeadRow>
+            </thead>
+            <tbody>
+              {usage.byRoute.map((r) => (
+                <DataRow key={r.route}>
+                  <Td kind="main" sticky="left">
+                    <TruncatedText>{r.route}</TruncatedText>
+                  </Td>
+                  <Td className="text-mid-gray">{r.calls}</Td>
+                  <Td priority="md" className="text-mid-gray">{r.tokens_input.toLocaleString()}</Td>
+                  <Td priority="md" className="text-mid-gray">{r.tokens_output.toLocaleString()}</Td>
+                  <Td className="text-mid-gray">${(r.cost_cents / 100).toFixed(4)}</Td>
+                </DataRow>
+              ))}
+            </tbody>
+          </DataTable>
         )}
       </div>
     </div>

@@ -4,9 +4,21 @@ import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import Link from "next/link";
-import { ArrowUpDown, ChevronUp, ChevronDown, RotateCcw } from "lucide-react";
+import { ArrowUpDown, ChevronUp, ChevronDown, RotateCcw, Eye } from "lucide-react";
 import { scaleSectionScore } from "@/lib/scoring";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDateTime, formatShortDate } from "@/lib/datetime";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  RowActionsMenu,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 export interface StudentResultRow {
   submissionId: string;
@@ -124,6 +136,9 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
 
   const selectCls = "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
+  // Student + grade + class + status + score + correct + time + submitted + action = 9
+  const COL_COUNT = 9;
+
   return (
     <div className="space-y-4">
       {/* Filters */}
@@ -148,169 +163,171 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
         </div>
       </div>
 
-      {/* Table */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {sorted.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">No students match the current filters.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("studentName")}>
-                      Student <SortIcon k="studentName" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden sm:table-cell">Grade</th>
-                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">Class</th>
-                  <th className="text-left px-5 py-3 font-medium">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("status")}>
-                      Status <SortIcon k="status" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("percentage")}>
-                      Score <SortIcon k="percentage" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden sm:table-cell">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("correctCount")}>
-                      Correct <SortIcon k="correctCount" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("timeSpentSeconds")}>
-                      Time <SortIcon k="timeSpentSeconds" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden lg:table-cell">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("submittedAt")}>
-                      Submitted <SortIcon k="submittedAt" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((row) => (
-                  <tr key={row.submissionId} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal font-medium">{row.studentName}</div>
-                      <div className="text-soft-mute text-xs">{row.email}</div>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">{row.grade ?? "—"}</td>
-                    <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{row.classGroup ?? "—"}</td>
-                    <td className="px-5 py-3">
-                      <span className={clsx(
-                        "px-2 py-0.5 rounded-full text-xs font-medium",
-                        statusStyles[row.status] ?? "bg-light-bg text-mid-gray"
-                      )}>
-                        {row.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={clsx(
-                        "font-semibold",
-                        row.percentage != null && row.percentage >= 70 ? "text-warm-amber" :
-                        row.percentage != null && row.percentage >= 50 ? "text-status-warning" :
-                        row.percentage != null ? "text-status-error" : "text-soft-mute"
-                      )}>
-                        {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
-                      </span>
-                      {(() => {
-                        const eff =
-                          row.scaledScore ??
-                          (row.percentage != null
-                            ? scaleSectionScore(Number(row.percentage))
-                            : null);
-                        return eff != null ? (
-                          <span
-                            className="ml-2 text-xs text-warm-coral-text"
-                            title="Estimated SAT scaled score (200-800)"
-                          >
-                            {eff}/800
-                          </span>
-                        ) : null;
-                      })()}
-                      {/* Two-module attempts show the per-module split
-                          under the combined headline so teachers can
-                          see Module 1 / Module 2 raw counts at a
-                          glance without opening the detail page. */}
-                      {row.modules && row.modules.length > 1 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
-                          {row.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}:{" "}
-                              {m.percentage != null
-                                ? `${m.percentage.toFixed(1)}%`
-                                : "—"}
-                              {m.scaledScore != null && ` · ${m.scaledScore}/800`}
-                            </div>
-                          ))}
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th kind="main" sticky="left">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("studentName")}>
+                Student <SortIcon k="studentName" />
+              </button>
+            </Th>
+            <Th priority="md">Grade</Th>
+            <Th priority="md">Class</Th>
+            <Th>
+              <button className="flex items-center gap-1" onClick={() => toggleSort("status")}>
+                Status <SortIcon k="status" />
+              </button>
+            </Th>
+            <Th>
+              <button className="flex items-center gap-1" onClick={() => toggleSort("percentage")}>
+                Score <SortIcon k="percentage" />
+              </button>
+            </Th>
+            <Th priority="md">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("correctCount")}>
+                Correct <SortIcon k="correctCount" />
+              </button>
+            </Th>
+            <Th priority="md">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("timeSpentSeconds")}>
+                Time <SortIcon k="timeSpentSeconds" />
+              </button>
+            </Th>
+            <Th priority="lg">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("submittedAt")}>
+                Submitted <SortIcon k="submittedAt" />
+              </button>
+            </Th>
+            <Th kind="actions" sticky="right"><span className="sr-only">Action</span></Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {sorted.length === 0 && (
+            <EmptyRow colSpan={COL_COUNT}>No students match the current filters.</EmptyRow>
+          )}
+          {sorted.map((row) => {
+            const eff =
+              row.scaledScore ??
+              (row.percentage != null ? scaleSectionScore(Number(row.percentage)) : null);
+
+            const canView = row.status === "Submitted" || row.status === "Late";
+
+            const actions: (RowAction | false)[] = [
+              canView && {
+                label: "View results",
+                icon: Eye,
+                href: `/teacher/tests/${testId}/results/${row.submissionId}`,
+              },
+              canView && !row.retakePending && {
+                label: grantingFor === row.studentId ? "Granting…" : "Allow retake",
+                icon: RotateCcw,
+                disabled: grantingFor === row.studentId,
+                onSelect: () => grantRetake(row.studentId, row.studentName),
+              },
+            ];
+
+            return (
+              <DataRow
+                key={row.submissionId}
+                expandBelow="lg"
+                colSpan={COL_COUNT}
+                details={
+                  <>
+                    <DetailItem label="Grade" priority="md">{row.grade ?? "—"}</DetailItem>
+                    <DetailItem label="Class" priority="md">{row.classGroup ?? "—"}</DetailItem>
+                    <DetailItem label="Correct" priority="md">
+                      {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
+                    </DetailItem>
+                    <DetailItem label="Time" priority="md">{fmtTime(row.timeSpentSeconds)}</DetailItem>
+                    <DetailItem label="Submitted" priority="lg">
+                      {row.submittedAt
+                        ? <span title={formatDateTime(row.submittedAt)}>{formatShortDate(row.submittedAt)}</span>
+                        : "—"}
+                    </DetailItem>
+                  </>
+                }
+              >
+                <Td kind="main" sticky="left">
+                  <TwoLineCell
+                    main={row.studentName}
+                    detail={row.email}
+                    mainClassName="font-medium text-charcoal"
+                  />
+                </Td>
+                <Td priority="md" className="text-mid-gray whitespace-nowrap">{row.grade ?? "—"}</Td>
+                <Td priority="md" className="text-mid-gray whitespace-nowrap">{row.classGroup ?? "—"}</Td>
+                <Td>
+                  <span className={clsx(
+                    "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
+                    statusStyles[row.status] ?? "bg-light-bg text-mid-gray"
+                  )}>
+                    {row.status}
+                  </span>
+                </Td>
+                <Td>
+                  <span className={clsx(
+                    "font-semibold tabular-nums",
+                    row.percentage != null && row.percentage >= 70 ? "text-warm-amber" :
+                    row.percentage != null && row.percentage >= 50 ? "text-status-warning" :
+                    row.percentage != null ? "text-status-error" : "text-soft-mute"
+                  )}>
+                    {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
+                  </span>
+                  {eff != null && (
+                    <span className="block text-xs text-warm-coral-text tabular-nums" title="Estimated SAT scaled score (200-800)">
+                      {eff}/800
+                    </span>
+                  )}
+                  {row.modules && row.modules.length > 1 && (
+                    <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
+                      {row.modules.map((m) => (
+                        <div key={m.submissionId}>
+                          {m.label}:{" "}
+                          {m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}
+                          {m.scaledScore != null && ` · ${m.scaledScore}/800`}
                         </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">
-                      <div>
-                        {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
-                      </div>
-                      {row.modules && row.modules.length > 1 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                          {row.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}: {m.correctCount}/{m.totalQuestions}
-                            </div>
-                          ))}
+                      ))}
+                    </div>
+                  )}
+                </Td>
+                <Td priority="md" className="text-mid-gray tabular-nums">
+                  <div>{row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}</div>
+                  {row.modules && row.modules.length > 1 && (
+                    <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
+                      {row.modules.map((m) => (
+                        <div key={m.submissionId}>
+                          {m.label}: {m.correctCount}/{m.totalQuestions}
                         </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{fmtTime(row.timeSpentSeconds)}</td>
-                    <td className="px-5 py-3 text-soft-mute text-xs hidden lg:table-cell">
-                      {row.submittedAt ? formatDateTime(row.submittedAt) : "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2">
-                        {(row.status === "Submitted" || row.status === "Late") && (
-                          <Link
-                            href={`/teacher/tests/${testId}/results/${row.submissionId}`}
-                            className="text-warm-coral-text text-xs hover:underline"
-                          >
-                            View
-                          </Link>
-                        )}
-                        {(row.status === "Submitted" || row.status === "Late") &&
-                          (row.retakePending ? (
-                            <span
-                              className="inline-flex items-center gap-1 text-status-success text-xs"
-                              title="Retake unlocked — student can start a new attempt"
-                            >
-                              <RotateCcw size={11} />
-                              Retake unlocked
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => grantRetake(row.studentId, row.studentName)}
-                              disabled={grantingFor === row.studentId}
-                              className="inline-flex items-center gap-1 text-warm-coral-text text-xs hover:underline disabled:opacity-50"
-                              title="Allow this student to take the test again"
-                            >
-                              <RotateCcw size={11} />
-                              {grantingFor === row.studentId ? "…" : "Allow retake"}
-                            </button>
-                          ))}
-                        {row.attemptNumber > 1 && (
-                          <span className="text-xs text-soft-mute">#{row.attemptNumber}</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      ))}
+                    </div>
+                  )}
+                </Td>
+                <Td priority="md" className="text-mid-gray whitespace-nowrap">{fmtTime(row.timeSpentSeconds)}</Td>
+                <Td priority="lg" className="text-soft-mute whitespace-nowrap">
+                  {row.submittedAt
+                    ? <span title={formatDateTime(row.submittedAt)}>{formatShortDate(row.submittedAt)}</span>
+                    : "—"}
+                </Td>
+                <Td kind="actions" sticky="right">
+                  {canView && row.retakePending && (
+                    <span
+                      className="inline-flex items-center gap-1 text-status-success text-xs whitespace-nowrap"
+                      title="Retake unlocked — student can start a new attempt"
+                    >
+                      <RotateCcw size={11} />
+                      Retake unlocked
+                    </span>
+                  )}
+                  {row.attemptNumber > 1 && (
+                    <span className="text-xs text-soft-mute mr-1">#{row.attemptNumber}</span>
+                  )}
+                  <RowActionsMenu label={`Actions for ${row.studentName}`} items={actions} />
+                </Td>
+              </DataRow>
+            );
+          })}
+        </tbody>
+      </DataTable>
     </div>
   );
 }

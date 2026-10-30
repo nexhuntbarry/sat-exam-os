@@ -4,9 +4,20 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import PageIntro from "@/components/shared/PageIntro";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
-import { formatDateTime } from "@/lib/datetime";
+import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import ResolveButton from "./ResolveButton";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  TwoLineCell,
+  TruncatedText,
+} from "@/components/ui/data-table";
 
 interface Search {
   status?: "open" | "resolved" | "all";
@@ -58,7 +69,7 @@ export default async function BugReportsPage({
       : "bg-warm-amber/15 text-warm-amber";
 
   return (
-    <div className="max-w-7xl mx-auto space-y-4">
+    <div className="space-y-4">
       <PageIntro tKey="admin.bugReports" />
       <h1 className="text-2xl font-bold text-charcoal">Bug Reports</h1>
 
@@ -78,97 +89,93 @@ export default async function BugReportsPage({
         ))}
       </div>
 
-      {reports.length === 0 ? (
-        <p className="text-soft-mute text-sm py-8 text-center">
-          No bug reports {filter !== "all" ? `with status "${filter}"` : ""}.
-        </p>
-      ) : (
-        <div className="bg-surface rounded-xl border border-border overflow-x-auto">
-          <table className="w-full min-w-[640px] text-sm">
-            <thead className="bg-light-bg text-left text-xs uppercase text-soft-mute">
-              <tr>
-                <th className="px-4 py-2.5">Question</th>
-                <th className="px-4 py-2.5">Audit flag</th>
-                <th className="px-4 py-2.5">Reviewer note</th>
-                <th className="px-4 py-2.5">Reported</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {reports.map((r) => {
-                const note = friendlyParsingNote(
-                  r.questions?.parsing_notes ?? null,
-                );
-                return (
-                  <tr
-                    key={r.id}
-                    className="border-t border-border hover:bg-light-bg/40"
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th kind="main" sticky="left">Question</Th>
+            <Th kind="long">Audit flag</Th>
+            <Th kind="long" priority="lg">Reviewer note</Th>
+            <Th priority="md">Reported</Th>
+            <Th>Status</Th>
+            <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {reports.length === 0 && (
+            <EmptyRow colSpan={6}>
+              No bug reports {filter !== "all" ? `with status "${filter}"` : ""}.
+            </EmptyRow>
+          )}
+          {reports.map((r) => {
+            const note = friendlyParsingNote(r.questions?.parsing_notes ?? null);
+            const qNum = r.questions?.original_question_number;
+            const moduleName = r.questions?.modules?.module_name ?? "(unknown module)";
+            const qStatus = r.questions?.parsing_status ?? "?";
+            const reportedTitle = `${formatDateTime(r.created_at)}${r.resolved_at ? ` · Resolved ${formatDateTime(r.resolved_at)}` : ""}`;
+            return (
+              <DataRow
+                key={r.id}
+                expandBelow="lg"
+                details={
+                  <>
+                    <DetailItem label="Reviewer note" priority="lg">
+                      {r.note ?? "—"}
+                    </DetailItem>
+                  </>
+                }
+              >
+                <Td kind="main" sticky="left">
+                  <Link
+                    href={`/admin/questions/${r.question_id}`}
+                    className="block hover:text-warm-coral-text transition-colors"
                   >
-                    <td className="px-4 py-3 align-top">
-                      <Link
-                        href={`/admin/questions/${r.question_id}`}
-                        className="font-medium text-charcoal hover:underline"
-                      >
-                        Q{r.questions?.original_question_number ?? "?"}
-                      </Link>
-                      <p className="text-xs text-soft-mute">
-                        {r.questions?.modules?.module_name ?? "(unknown module)"}
-                      </p>
-                      <p className="text-[11px] text-soft-mute">
-                        Now {r.questions?.parsing_status ?? "?"}
-                      </p>
-                    </td>
-                    <td className="px-4 py-3 align-top max-w-xs">
-                      {note ? (
-                        <>
-                          <p className="text-charcoal">{note.headline}</p>
-                          {note.detail && (
-                            <p className="text-xs text-soft-mute mt-0.5">
-                              {note.detail}
-                            </p>
-                          )}
-                        </>
-                      ) : (
-                        <span className="text-soft-mute text-xs">No audit flag</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top max-w-xs text-charcoal">
-                      {r.note ? (
-                        <span>{r.note}</span>
-                      ) : (
-                        <span className="text-soft-mute text-xs">—</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top text-xs text-soft-mute whitespace-nowrap">
-                      {formatDateTime(r.created_at)}
-                      {r.resolved_at && (
-                        <p className="text-[11px]">
-                          Resolved {formatDateTime(r.resolved_at)}
-                        </p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${pill(
-                          r.status,
-                        )}`}
-                      >
-                        {r.status}
+                    <TwoLineCell
+                      main={`Q${qNum ?? "?"}`}
+                      detail={`${moduleName} · ${qStatus}`}
+                      mainClassName="font-medium text-inherit"
+                    />
+                  </Link>
+                </Td>
+                <Td kind="long">
+                  {note ? (
+                    <TwoLineCell
+                      main={note.headline}
+                      detail={note.detail ?? ""}
+                    />
+                  ) : (
+                    <span className="text-soft-mute text-xs">No audit flag</span>
+                  )}
+                </Td>
+                <Td kind="long" priority="lg">
+                  {r.note ? (
+                    <TruncatedText title={r.note}>{r.note}</TruncatedText>
+                  ) : (
+                    <span className="text-soft-mute text-xs">—</span>
+                  )}
+                </Td>
+                <Td priority="md">
+                  <span title={reportedTitle} className="whitespace-nowrap">
+                    {formatShortDate(r.created_at)}
+                    {r.resolved_at && (
+                      <span className="block text-xs text-soft-mute">
+                        Resolved {formatShortDate(r.resolved_at)}
                       </span>
-                    </td>
-                    <td className="px-4 py-3 align-top">
-                      {r.status === "open" ? (
-                        <ResolveButton reportId={r.id} />
-                      ) : null}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                    )}
+                  </span>
+                </Td>
+                <Td>
+                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${pill(r.status)}`}>
+                    {r.status}
+                  </span>
+                </Td>
+                <Td kind="actions" sticky="right">
+                  {r.status === "open" ? <ResolveButton reportId={r.id} /> : null}
+                </Td>
+              </DataRow>
+            );
+          })}
+        </tbody>
+      </DataTable>
     </div>
   );
 }

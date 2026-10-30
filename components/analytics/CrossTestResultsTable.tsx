@@ -6,7 +6,17 @@ import { clsx } from "clsx";
 import { ArrowUpDown, ChevronUp, ChevronDown, Search } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { scaleSectionScore } from "@/lib/scoring";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDateTime, formatShortDate } from "@/lib/datetime";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  TwoLineCell,
+} from "@/components/ui/data-table";
 
 export interface CrossTestResultRow {
   submissionId: string;
@@ -134,6 +144,9 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
   const selectCls =
     "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
+  // Student + class + test + status + score + correct + time + submitted + action = 9
+  const COL_COUNT = 9;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-3 items-center">
@@ -177,159 +190,163 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
         </div>
       </div>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {sorted.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">
-            {t("noResults")}
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("studentName")}>
-                      {t("columns.student")} <SortIcon k="studentName" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">{t("columns.class")}</th>
-                  <th className="text-left px-5 py-3 font-medium">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("testName")}>
-                      {t("columns.test")} <SortIcon k="testName" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("status")}>
-                      {t("columns.status")} <SortIcon k="status" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("percentage")}>
-                      {t("columns.score")} <SortIcon k="percentage" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden sm:table-cell">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("correctCount")}>
-                      {t("columns.correct")} <SortIcon k="correctCount" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden md:table-cell">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("timeSpentSeconds")}>
-                      {t("columns.time")} <SortIcon k="timeSpentSeconds" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium hidden lg:table-cell">
-                    <button className="flex items-center gap-1" onClick={() => toggleSort("submittedAt")}>
-                      {t("columns.submitted")} <SortIcon k="submittedAt" />
-                    </button>
-                  </th>
-                  <th className="text-left px-5 py-3 font-medium">{t("columns.action")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((row) => (
-                  <tr
-                    key={row.submissionId}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th kind="main" sticky="left">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("studentName")}>
+                {t("columns.student")} <SortIcon k="studentName" />
+              </button>
+            </Th>
+            <Th priority="md">{t("columns.class")}</Th>
+            <Th kind="long">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("testName")}>
+                {t("columns.test")} <SortIcon k="testName" />
+              </button>
+            </Th>
+            <Th>
+              <button className="flex items-center gap-1" onClick={() => toggleSort("status")}>
+                {t("columns.status")} <SortIcon k="status" />
+              </button>
+            </Th>
+            <Th>
+              <button className="flex items-center gap-1" onClick={() => toggleSort("percentage")}>
+                {t("columns.score")} <SortIcon k="percentage" />
+              </button>
+            </Th>
+            <Th priority="md">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("correctCount")}>
+                {t("columns.correct")} <SortIcon k="correctCount" />
+              </button>
+            </Th>
+            <Th priority="md">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("timeSpentSeconds")}>
+                {t("columns.time")} <SortIcon k="timeSpentSeconds" />
+              </button>
+            </Th>
+            <Th priority="lg">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("submittedAt")}>
+                {t("columns.submitted")} <SortIcon k="submittedAt" />
+              </button>
+            </Th>
+            <Th kind="actions" sticky="right"><span className="sr-only">{t("columns.action")}</span></Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {sorted.length === 0 && (
+            <EmptyRow colSpan={COL_COUNT}>{t("noResults")}</EmptyRow>
+          )}
+          {sorted.map((row) => {
+            const s = effectiveScaled(row);
+            return (
+              <DataRow
+                key={row.submissionId}
+                expandBelow="lg"
+                colSpan={COL_COUNT}
+                details={
+                  <>
+                    <DetailItem label={t("columns.class")} priority="md">{row.classGroup ?? "—"}</DetailItem>
+                    <DetailItem label={t("columns.correct")} priority="md">
+                      {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
+                    </DetailItem>
+                    <DetailItem label={t("columns.time")} priority="md">{fmtTime(row.timeSpentSeconds)}</DetailItem>
+                    <DetailItem label={t("columns.submitted")} priority="lg">
+                      {row.submittedAt
+                        ? <span title={formatDateTime(row.submittedAt)}>{formatShortDate(row.submittedAt)}</span>
+                        : "—"}
+                    </DetailItem>
+                  </>
+                }
+              >
+                <Td kind="main" sticky="left">
+                  <TwoLineCell
+                    main={row.studentName}
+                    detail={row.email}
+                    mainClassName="font-medium text-charcoal"
+                  />
+                </Td>
+                <Td priority="md" className="text-mid-gray whitespace-nowrap">{row.classGroup ?? "—"}</Td>
+                <Td kind="long">
+                  <TwoLineCell
+                    main={row.testName}
+                    detail={row.section ?? ""}
+                  />
+                </Td>
+                <Td>
+                  <span
+                    className={clsx(
+                      "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
+                      statusStyles[row.status] ?? "bg-light-bg text-mid-gray"
+                    )}
                   >
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal font-medium">{row.studentName}</div>
-                      <div className="text-soft-mute text-xs">{row.email}</div>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{row.classGroup ?? "—"}</td>
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal">{row.testName}</div>
-                      {row.section && <div className="text-soft-mute text-xs">{row.section}</div>}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={clsx(
-                          "px-2 py-0.5 rounded-full text-xs font-medium",
-                          statusStyles[row.status] ?? "bg-light-bg text-mid-gray"
-                        )}
-                      >
-                        {row.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex flex-col">
-                        <span
-                          className={clsx(
-                            "font-semibold",
-                            row.percentage != null && row.percentage >= 70
-                              ? "text-warm-amber"
-                              : row.percentage != null && row.percentage >= 50
-                                ? "text-status-warning"
-                                : row.percentage != null
-                                  ? "text-status-error"
-                                  : "text-soft-mute"
-                          )}
-                        >
-                          {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
-                        </span>
-                        {(() => {
-                          const s = effectiveScaled(row);
-                          return s != null ? (
-                            <span
-                              className="text-warm-coral-text text-xs"
-                              title="Estimated SAT scaled score (200-800)"
-                            >
-                              {s}/800
-                            </span>
-                          ) : null;
-                        })()}
-                        {/* Two-module attempts show the per-module
-                            split under the combined headline. */}
-                        {row.modules && row.modules.length > 1 && (
-                          <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
-                            {row.modules.map((m) => (
-                              <div key={m.submissionId}>
-                                {m.label}:{" "}
-                                {m.percentage != null
-                                  ? `${m.percentage.toFixed(1)}%`
-                                  : "—"}
-                                {m.scaledScore != null && ` · ${m.scaledScore}/800`}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray hidden sm:table-cell">
-                      <div>
-                        {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
-                      </div>
-                      {row.modules && row.modules.length > 1 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                          {row.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}: {m.correctCount}/{m.totalQuestions}
-                            </div>
-                          ))}
+                    {row.status}
+                  </span>
+                </Td>
+                <Td>
+                  <span
+                    className={clsx(
+                      "font-semibold tabular-nums",
+                      row.percentage != null && row.percentage >= 70
+                        ? "text-warm-amber"
+                        : row.percentage != null && row.percentage >= 50
+                          ? "text-status-warning"
+                          : row.percentage != null
+                            ? "text-status-error"
+                            : "text-soft-mute"
+                    )}
+                  >
+                    {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
+                  </span>
+                  {s != null && (
+                    <span className="block text-warm-coral-text text-xs tabular-nums" title="Estimated SAT scaled score (200-800)">
+                      {s}/800
+                    </span>
+                  )}
+                  {row.modules && row.modules.length > 1 && (
+                    <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
+                      {row.modules.map((m) => (
+                        <div key={m.submissionId}>
+                          {m.label}:{" "}
+                          {m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}
+                          {m.scaledScore != null && ` · ${m.scaledScore}/800`}
                         </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray hidden md:table-cell">{fmtTime(row.timeSpentSeconds)}</td>
-                    <td className="px-5 py-3 text-soft-mute text-xs hidden lg:table-cell">
-                      {row.submittedAt ? formatDateTime(row.submittedAt) : "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      {(row.status === "Submitted" || row.status === "Late") && (
-                        <Link
-                          href={`/teacher/tests/${row.testId}/results/${row.submissionId}`}
-                          className="text-warm-coral-text text-xs hover:underline"
-                        >
-                          {t("view")}
-                        </Link>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      ))}
+                    </div>
+                  )}
+                </Td>
+                <Td priority="md" className="text-mid-gray tabular-nums">
+                  <div>{row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}</div>
+                  {row.modules && row.modules.length > 1 && (
+                    <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
+                      {row.modules.map((m) => (
+                        <div key={m.submissionId}>
+                          {m.label}: {m.correctCount}/{m.totalQuestions}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Td>
+                <Td priority="md" className="text-mid-gray whitespace-nowrap">{fmtTime(row.timeSpentSeconds)}</Td>
+                <Td priority="lg" className="text-soft-mute whitespace-nowrap">
+                  {row.submittedAt
+                    ? <span title={formatDateTime(row.submittedAt)}>{formatShortDate(row.submittedAt)}</span>
+                    : "—"}
+                </Td>
+                <Td kind="actions" sticky="right">
+                  {(row.status === "Submitted" || row.status === "Late") && (
+                    <Link
+                      href={`/teacher/tests/${row.testId}/results/${row.submissionId}`}
+                      className="text-warm-coral-text text-xs hover:underline whitespace-nowrap"
+                    >
+                      {t("view")}
+                    </Link>
+                  )}
+                </Td>
+              </DataRow>
+            );
+          })}
+        </tbody>
+      </DataTable>
     </div>
   );
 }

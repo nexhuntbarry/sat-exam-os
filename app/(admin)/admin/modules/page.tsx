@@ -5,8 +5,18 @@ import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import DeleteModuleButton from "./DeleteModuleButton";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDate } from "@/lib/datetime";
+import { formatShortDate } from "@/lib/datetime";
 import { approvalCounts, isFullyApproved } from "../tests/module-approval";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  TwoLineCell,
+} from "@/components/ui/data-table";
 
 interface ModuleRow {
   id: string;
@@ -87,24 +97,34 @@ export default async function ModulesPage({
   const modules = sortModules(await getModules(), sortKey, dir);
 
   // A sortable column header: clicking toggles asc/desc on that column.
-  const Header = ({ col, align = "left" }: { col: SortKey; align?: "left" | "right" }) => {
+  const SortTh = ({
+    col,
+    kind = "short" as const,
+    priority,
+    sticky,
+  }: {
+    col: SortKey;
+    kind?: "main" | "short" | "long" | "actions";
+    priority?: "always" | "md" | "lg" | "xl";
+    sticky?: "left" | "right";
+  }) => {
     const active = col === sortKey;
     const nextDir = active && dir === "asc" ? "desc" : "asc";
     return (
-      <th className={clsx("px-5 py-3 font-medium", align === "right" ? "text-right" : "text-left")}>
+      <Th kind={kind} priority={priority} sticky={sticky}>
         <Link
           href={`/admin/modules?sort=${col}&dir=${nextDir}`}
-          className={clsx("inline-flex items-center gap-1 hover:text-charcoal transition-colors", active ? "text-charcoal" : "text-soft-mute")}
+          className={clsx("inline-flex items-center gap-1 hover:text-charcoal transition-colors", active ? "text-charcoal" : "")}
         >
           {SORT_LABEL[col]}
           {active && (dir === "asc" ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
         </Link>
-      </th>
+      </Th>
     );
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageIntro tKey="admin.modules" />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-charcoal">Modules</h1>
@@ -117,94 +137,106 @@ export default async function ModulesPage({
         </Link>
       </div>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {modules.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
-            <FileText size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">
-              No modules yet.{" "}
-              <Link href="/admin/modules/new" className="text-warm-coral-text hover:underline">
-                Upload your first module
-              </Link>
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="border-b border-divider">
-                  <Header col="name" />
-                  <Header col="section" />
-                  <Header col="difficulty" />
-                  <Header col="questions" />
-                  <Header col="approval" />
-                  <Header col="status" />
-                  <Header col="uploaded" />
-                  <th className="text-right px-5 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {modules.map((mod) => (
-                  <tr
-                    key={mod.id}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <Link href={`/admin/modules/${mod.id}`} className="group">
-                        <div className={clsx("font-medium group-hover:underline", sectionTitleClass(mod.section))}>
-                          {mod.module_name}
-                        </div>
-                        {mod.source_name && (
-                          <div className="text-soft-mute text-xs">{mod.source_name}</div>
-                        )}
-                      </Link>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      {mod.section}
-                      {mod.module_number && ` · M${mod.module_number}`}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">{mod.difficulty ?? "—"}</td>
-                    <td className="px-5 py-3 text-mid-gray">{mod.total_questions}</td>
-                    <td className="px-5 py-3">
-                      {mod.approvalTotal === 0 ? (
-                        <span className="text-soft-mute">—</span>
-                      ) : (
-                        <span
-                          title={isFullyApproved({ approved: mod.approved, total: mod.approvalTotal }) ? "All questions approved" : `${mod.approvalTotal - mod.approved} question(s) not yet approved`}
-                          className={clsx(
-                            "px-2 py-1 rounded-full text-xs font-medium tabular-nums",
-                            isFullyApproved({ approved: mod.approved, total: mod.approvalTotal })
-                              ? "bg-status-success/15 text-status-success"
-                              : "bg-status-error/15 text-status-error",
-                          )}
-                        >
-                          {mod.approved}/{mod.approvalTotal}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
+      {modules.length === 0 ? (
+        <div className="py-16 text-center space-y-3">
+          <FileText size={40} className="text-charcoal/20 mx-auto" />
+          <p className="text-soft-mute text-sm">
+            No modules yet.{" "}
+            <Link href="/admin/modules/new" className="text-warm-coral-text hover:underline">
+              Upload your first module
+            </Link>
+          </p>
+        </div>
+      ) : (
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <SortTh col="name" kind="main" sticky="left" />
+              <SortTh col="section" priority="md" />
+              <SortTh col="difficulty" priority="md" />
+              <SortTh col="questions" priority="md" />
+              <SortTh col="approval" priority="md" />
+              <SortTh col="status" />
+              <SortTh col="uploaded" priority="lg" />
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {modules.map((mod) => {
+              const sectionLabel = mod.section
+                ? `${mod.section}${mod.module_number ? ` · M${mod.module_number}` : ""}`
+                : "—";
+              const approvalTitle = mod.approvalTotal === 0
+                ? undefined
+                : isFullyApproved({ approved: mod.approved, total: mod.approvalTotal })
+                  ? "All questions approved"
+                  : `${mod.approvalTotal - mod.approved} question(s) not yet approved`;
+
+              return (
+                <DataRow
+                  key={mod.id}
+                  expandBelow="lg"
+                  details={
+                    <>
+                      <DetailItem label="Section" priority="md">{sectionLabel}</DetailItem>
+                      <DetailItem label="Difficulty" priority="md">{mod.difficulty ?? "—"}</DetailItem>
+                      <DetailItem label="Questions" priority="md">{mod.total_questions ?? "—"}</DetailItem>
+                      <DetailItem label="Approved" priority="md">
+                        {mod.approvalTotal === 0 ? "—" : `${mod.approved}/${mod.approvalTotal}`}
+                      </DetailItem>
+                      <DetailItem label="Uploaded" priority="lg">{formatShortDate(mod.created_at)}</DetailItem>
+                    </>
+                  }
+                >
+                  <Td kind="main" sticky="left">
+                    <Link href={`/admin/modules/${mod.id}`} className="group block">
+                      <TwoLineCell
+                        main={mod.module_name}
+                        detail={mod.source_name ?? ""}
+                        mainClassName={clsx("font-medium group-hover:underline", sectionTitleClass(mod.section))}
+                      />
+                    </Link>
+                  </Td>
+                  <Td priority="md" className="text-mid-gray whitespace-nowrap">{sectionLabel}</Td>
+                  <Td priority="md" className="text-mid-gray">{mod.difficulty ?? "—"}</Td>
+                  <Td priority="md" className="text-mid-gray">{mod.total_questions}</Td>
+                  <Td priority="md">
+                    {mod.approvalTotal === 0 ? (
+                      <span className="text-soft-mute">—</span>
+                    ) : (
                       <span
+                        title={approvalTitle}
                         className={clsx(
-                          "px-2 py-1 rounded-full text-xs font-medium capitalize",
-                          statusStyles[mod.parsing_status] ?? "bg-light-bg text-mid-gray"
+                          "px-2 py-1 rounded-full text-xs font-medium tabular-nums whitespace-nowrap",
+                          isFullyApproved({ approved: mod.approved, total: mod.approvalTotal })
+                            ? "bg-status-success/15 text-status-success"
+                            : "bg-status-error/15 text-status-error",
                         )}
                       >
-                        {mod.parsing_status}
+                        {mod.approved}/{mod.approvalTotal}
                       </span>
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {formatDate(mod.created_at)}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <DeleteModuleButton moduleId={mod.id} moduleName={mod.module_name} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                    )}
+                  </Td>
+                  <Td>
+                    <span
+                      className={clsx(
+                        "px-2 py-1 rounded-full text-xs font-medium capitalize whitespace-nowrap",
+                        statusStyles[mod.parsing_status] ?? "bg-light-bg text-mid-gray"
+                      )}
+                    >
+                      {mod.parsing_status}
+                    </span>
+                  </Td>
+                  <Td priority="lg" className="text-soft-mute">{formatShortDate(mod.created_at)}</Td>
+                  <Td kind="actions" sticky="right">
+                    <DeleteModuleButton moduleId={mod.id} moduleName={mod.module_name} />
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      )}
     </div>
   );
 }

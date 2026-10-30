@@ -3,7 +3,17 @@ import { redirect } from "next/navigation";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDateTime } from "@/lib/datetime";
+import { formatDateTime, formatShortDate } from "@/lib/datetime";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  EmptyRow,
+  TwoLineCell,
+  TruncatedText,
+} from "@/components/ui/data-table";
 import {
   CHANGE_TYPE_LABEL,
   SOURCE_KIND_LABEL,
@@ -138,7 +148,7 @@ export default async function AdminReportsPage({ searchParams }: { searchParams:
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-5">
+    <div className="space-y-5">
       <PageIntro tKey="admin.reports" />
       <div>
         <h1 className="text-2xl font-bold text-charcoal">Reports</h1>
@@ -349,50 +359,55 @@ function QaRuns({ runs }: { runs: DevLogRow<QaRunEntry>[] }) {
 function Changelog({ rows }: { rows: DevLogRow<ChangeEntry>[] }) {
   if (!rows.length) return <Empty>No changes match these filters.</Empty>;
   return (
-    <div className={`${card} overflow-x-auto`}>
-      <table className="w-full min-w-[760px] text-sm">
-        <thead className="bg-light-bg text-left text-xs uppercase text-soft-mute">
-          <tr>
-            <th className="px-4 py-2.5 w-28">Live</th>
-            <th className="px-4 py-2.5">What changed</th>
-            <th className="px-4 py-2.5 w-32">Type</th>
-            <th className="px-4 py-2.5 w-44">Source</th>
-            <th className="px-4 py-2.5 w-32">Affects</th>
-            <th className="px-4 py-2.5 w-40">Verified</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ id, payload: c }) => (
-            <tr key={id} className="border-t border-border align-top">
-              <td className="px-4 py-3 text-charcoal whitespace-nowrap">{showDay(c.date)}</td>
-              <td className="px-4 py-3">
-                <p className="font-medium text-charcoal">{c.title}</p>
-                {c.body && <p className="text-xs text-mid-gray mt-0.5 whitespace-pre-line">{c.body}</p>}
-              </td>
-              <td className="px-4 py-3">
-                <Pill tone={c.type === "bug" ? "warn" : "neutral"}>{CHANGE_TYPE_LABEL[c.type] ?? c.type}</Pill>
-              </td>
-              <td className="px-4 py-3 text-xs text-charcoal space-y-0.5">
-                <p className="text-soft-mute">{SOURCE_KIND_LABEL[c.source_kind] ?? c.source_kind}</p>
-                {c.source && <p>{c.source}</p>}
-                <TicketLink id={c.ticket_id} />
-              </td>
-              <td className="px-4 py-3 text-xs text-charcoal capitalize">{c.roles.length ? c.roles.join(", ") : "—"}</td>
-              <td className="px-4 py-3 text-xs">
-                {c.verified.length ? (
-                  <>
-                    <Pill tone="good">Automated check</Pill>
-                    <p className="text-soft-mute mt-1 break-words font-mono">{c.verified.join(", ")}</p>
-                  </>
-                ) : (
-                  <Pill>Code change only</Pill>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable>
+      <thead>
+        <HeadRow>
+          <Th>Live</Th>
+          <Th kind="main">What changed</Th>
+          <Th>Type</Th>
+          <Th kind="long" priority="lg">Source</Th>
+          <Th priority="lg">Affects</Th>
+          <Th priority="xl">Verified</Th>
+        </HeadRow>
+      </thead>
+      <tbody>
+        {rows.map(({ id, payload: c }) => (
+          <DataRow key={id}>
+            <Td className="whitespace-nowrap text-charcoal">{formatShortDate(c.date)}</Td>
+            <Td kind="main">
+              <TwoLineCell
+                main={c.title}
+                detail={c.body ?? ""}
+                mainClassName="font-medium text-charcoal"
+              />
+            </Td>
+            <Td>
+              <Pill tone={c.type === "bug" ? "warn" : "neutral"}>{CHANGE_TYPE_LABEL[c.type] ?? c.type}</Pill>
+            </Td>
+            <Td kind="long" priority="lg">
+              <TwoLineCell
+                main={SOURCE_KIND_LABEL[c.source_kind] ?? c.source_kind}
+                detail={[c.source, c.ticket_id ? `ticket ${c.ticket_id.slice(0, 8)}` : null].filter(Boolean).join(" · ")}
+                mainClassName="text-soft-mute"
+              />
+            </Td>
+            <Td priority="lg" className="text-charcoal capitalize whitespace-nowrap text-xs">
+              {c.roles.length ? c.roles.join(", ") : "—"}
+            </Td>
+            <Td priority="xl" className="text-xs">
+              {c.verified.length ? (
+                <>
+                  <Pill tone="good">Automated check</Pill>
+                  <p className="text-soft-mute mt-1 break-words font-mono">{c.verified.join(", ")}</p>
+                </>
+              ) : (
+                <Pill>Code change only</Pill>
+              )}
+            </Td>
+          </DataRow>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }
 
