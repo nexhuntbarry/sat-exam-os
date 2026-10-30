@@ -3,12 +3,25 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle, Crop, Trash2 } from "lucide-react";
 import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
+
+// Matches the same logic in lib/ai/extract-images.ts — a GFM table needs a
+// header row of pipes AND a dash separator row right below it.
+function hasMarkdownTable(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length - 1; i++) {
+    if (!lines[i].includes("|")) continue;
+    const sep = lines[i + 1].trim();
+    if (/^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?$/.test(sep)) return true;
+  }
+  return false;
+}
 
 const SAT_DOMAINS = [
   "Information and Ideas",
@@ -234,6 +247,49 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       ...prev,
       choices: prev.choices.map((c) => (c.label === label ? { ...c, text } : c)),
     }));
+  }
+
+  async function handleCropSourceFigure() {
+    if (
+      !window.confirm(
+        "Re-run the image cropper for this question? Claude will pick a fresh bounding box and upload the new crop.",
+      )
+    )
+      return;
+    setActionLoading("source-figure-crop");
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/repair-image`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      showToast(json.message ?? (res.ok ? "Figure re-cropped." : "Crop failed."), res.ok);
+      if (res.ok) router.refresh();
+    } catch {
+      showToast("Crop failed.", false);
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleDeleteSourceFigure() {
+    if (
+      !window.confirm(
+        "Remove this source figure? The question will display only the text and any extracted images.",
+      )
+    )
+      return;
+    setActionLoading("source-figure-delete");
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/clear-image-flag`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      showToast(json.message ?? (res.ok ? "Source figure removed." : "Delete failed."), res.ok);
+      if (res.ok) {
+        setQ((prev) => ({ ...prev, has_image: false, image_urls: [], image_alts: [] }));
+        router.refresh();
+      }
+    } catch {
+      showToast("Delete failed.", false);
+    } finally {
+      setActionLoading(null);
+    }
   }
 
   // Use admin-only proxy route (handles private-blob auth) instead of raw URL
@@ -496,22 +552,84 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
             </details>
           </div>
 
-          {/* Inline PDF page — FALLBACK only. When a clean extracted crop
-              exists we show that (below) instead; rendering both duplicated the
-              chart. */}
-          {(q.has_image || q.has_table) &&
-            !(q.image_urls && q.image_urls.length > 0) && (
-            <div>
-              <label className="block text-xs text-soft-mute mb-2">
-                Source figure · Page {q.page_number ?? 1}
-              </label>
-              <iframe
-                src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
-                className="w-full h-[360px] rounded-xl border border-divider bg-white"
-                title={`Question figure (PDF page ${q.page_number ?? 1})`}
-              />
-            </div>
-          )}
+          {/* Inline PDF page — FALLBACK only shown when no extracted crop
+              exists. Auto-hidden when the table is already in question_text
+              as Markdown (has_table-only rows): the student won't see a
+              redundant PDF screenshot alongside the rendered table. When
+              has_image is ALSO set (real figure or misclassified), we still
+              show the iframe so the reviewer can crop or delete it. */}
+          {(() => {
+            const noExtracts = !(q.image_urls && q.image_urls.length > 0);
+            const tableInText = hasMarkdownTable(q.question_text);
+            // True when the source figure would show only because has_table
+            // is set — the table is already rendered from Markdown, so the
+            // full-page PDF view is a pure duplicate.
+            const tableOnlyDuplicate = q.has_table && !q.has_image && noExtracts && tableInText;
+            const showSourceFigure =
+              (q.has_image || q.has_table) && noExtracts && !tableOnlyDuplicate;
+
+            return (
+              <>
+                {/* Duplicate-table notice: table already in text, figure auto-hidden */}
+                {tableOnlyDuplicate && (
+                  <div className="flex items-center gap-2 rounded-xl bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
+                    <AlertCircle size={14} className="shrink-0 text-blue-500" />
+                    <span>
+                      Table already in question text — source figure hidden automatically.
+                    </span>
+                  </div>
+                )}
+
+                {/* Duplicate warning when has_image=true AND markdown table present */}
+                {showSourceFigure && tableInText && q.has_image && (
+                  <div className="flex items-center gap-2 rounded-xl bg-status-warning/8 border border-status-warning/20 px-3 py-2 text-xs text-status-warning">
+                    <AlertCircle size={14} className="shrink-0" />
+                    <span>
+                      Table is already in the question text — this source figure may be a screenshot of the same table.
+                      Use <strong>Delete</strong> below if it is redundant.
+                    </span>
+                  </div>
+                )}
+
+                {showSourceFigure && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-xs text-soft-mute">
+                        Source figure · Page {q.page_number ?? 1}
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={handleCropSourceFigure}
+                          disabled={actionLoading !== null}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface border border-divider text-xs text-charcoal hover:bg-light-bg disabled:opacity-50 transition-colors"
+                          title="Re-run the image cropper to get a clean bounding-box crop"
+                        >
+                          <Crop size={12} />
+                          {actionLoading === "source-figure-crop" ? "Cropping…" : "Crop"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDeleteSourceFigure}
+                          disabled={actionLoading !== null}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-status-error/10 border border-status-error/20 text-xs text-status-error hover:bg-status-error/20 disabled:opacity-50 transition-colors"
+                          title="Remove the source figure (clears has_image flag and any uploaded crops)"
+                        >
+                          <Trash2 size={12} />
+                          {actionLoading === "source-figure-delete" ? "Deleting…" : "Delete"}
+                        </button>
+                      </div>
+                    </div>
+                    <iframe
+                      src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
+                      className="w-full h-[360px] rounded-xl border border-divider bg-white"
+                      title={`Question figure (PDF page ${q.page_number ?? 1})`}
+                    />
+                  </div>
+                )}
+              </>
+            );
+          })()}
 
           {/* Extracted images (best-effort enhancement when cropping worked) */}
           {q.image_urls && q.image_urls.length > 0 && (
