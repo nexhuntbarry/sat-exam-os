@@ -779,5 +779,18 @@
     "saveFailed": "儲存失敗，請再試一次。",
     "networkError": "無法連線到伺服器，請檢查網路後再試一次。",
     "saving": "儲存中…"
+  },
+  "studentDetail": {
+    "colTest": "測驗",
+    "colSection": "科目",
+    "colStatus": "狀態",
+    "colResult": "成績",
+    "colSubmitted": "交卷時間",
+    "twoModules": "2 模組",
+    "attemptN": "第 {n} 次",
+    "expandModules": "展開模組明細",
+    "collapseModules": "收起模組明細",
+    "viewDetail": "查看詳情",
+    "noTests": "此學生尚未參加任何測驗。"
   }
 }
