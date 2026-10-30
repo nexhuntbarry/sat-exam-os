@@ -332,7 +332,7 @@ export default async function AdminTeacherDetailPage({
                               items={[
                                 {
                                   label: "View student",
-                                  icon: Eye,
+                                  icon: <Eye size={14} />,
                                   href: `/admin/students/${s.id}`,
                                 },
                               ]}

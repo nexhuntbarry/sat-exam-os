@@ -353,7 +353,7 @@ export default async function TeacherStudentResultsPage({
                       items={[
                         isDone && {
                           label: "View detail",
-                          icon: Eye,
+                          icon: <Eye size={14} />,
                           href: `/teacher/tests/${s.testId}/results/${s.id}`,
                         },
                       ]}

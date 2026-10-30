@@ -299,7 +299,7 @@ export default async function TeacherClassDetailPage({
                       items={[
                         {
                           label: "View tests",
-                          icon: Eye,
+                          icon: <Eye size={14} />,
                           href: `/teacher/classes/${group.id}/students/${s.id}`,
                         },
                       ]}

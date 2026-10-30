@@ -285,7 +285,7 @@ export default async function StudentResultsPage() {
                 : undefined;
 
               const actions: RowAction[] = [
-                { label: "View result", icon: Eye, href: `/student/tests/${r.testId}/result?submission=${r.detailSubmissionId}` },
+                { label: "View result", icon: <Eye size={14} />, href: `/student/tests/${r.testId}/result?submission=${r.detailSubmissionId}` },
               ];
 
               return (

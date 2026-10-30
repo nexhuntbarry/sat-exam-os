@@ -164,7 +164,7 @@ export default async function TeacherTestsPage() {
           const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
 
           const actions: RowAction[] = [
-            { label: "View detail", icon: Eye, href: `/teacher/tests/${test.id}` },
+            { label: "View detail", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}` },
           ];
 
           return (

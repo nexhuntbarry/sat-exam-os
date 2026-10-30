@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, type ComponentType, type KeyboardEvent } from "react";
+import { isValidElement, useEffect, useId, type ComponentType, type KeyboardEvent, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { MoreHorizontal } from "lucide-react";
@@ -12,7 +12,10 @@ import { usePopover } from "./usePopover";
  *  open over a closed menu). */
 export interface RowAction {
   label: string;
-  icon?: ComponentType<{ size?: number; className?: string }>;
+  /** A lucide icon component (client callers) or a rendered element such as
+   *  `<Eye size={14} />` (required from Server Components: functions can't
+   *  cross the server→client boundary). */
+  icon?: ComponentType<{ size?: number; className?: string }> | ReactElement;
   href?: string;
   onSelect?: () => void;
   /** "danger" renders the item in the error colour (suspend, delete, reject). */
@@ -117,7 +120,11 @@ export function RowActionsMenu({
               const Icon = a.icon;
               const content = (
                 <>
-                  {Icon && <Icon size={14} className="shrink-0" />}
+                  {isValidElement(Icon) ? (
+                    <span className="shrink-0 inline-flex">{Icon}</span>
+                  ) : (
+                    Icon && <Icon size={14} className="shrink-0" />
+                  )}
                   {a.label}
                 </>
               );

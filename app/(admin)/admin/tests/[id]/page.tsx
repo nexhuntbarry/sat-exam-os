@@ -439,9 +439,9 @@ export default async function TestDetailPage({
 
                 const rowActions: (RowAction | false)[] = [
                   st.progress.detailSubmissionId
-                    ? { label: "View result", icon: Eye, href: `/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}` }
+                    ? { label: "View result", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}` }
                     : st.submissionCount > 0
-                    ? { label: "View submissions", icon: FileText, href: submissionsHref }
+                    ? { label: "View submissions", icon: <FileText size={14} />, href: submissionsHref }
                     : false,
                 ];
 

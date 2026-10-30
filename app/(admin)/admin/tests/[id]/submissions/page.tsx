@@ -379,10 +379,10 @@ export default async function TestSubmissionsPage({
 
               const rowActions: (RowAction | false)[] = [
                 (a.status === "Submitted" || a.status === "Late")
-                  ? { label: "View detail", icon: Eye, href: `/teacher/tests/${test.id}/results/${a.detailSubmissionId}` }
+                  ? { label: "View detail", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}/results/${a.detailSubmissionId}` }
                   : false,
                 (a.status === "In Progress" && !!a.partialDetailSubmissionId)
-                  ? { label: "View partial", icon: Eye, href: `/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId!}` }
+                  ? { label: "View partial", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId!}` }
                   : false,
               ];
 
