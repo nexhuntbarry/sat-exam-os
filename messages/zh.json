@@ -750,5 +750,12 @@
     },
     "supportTitle": "卡住了？跟我們說。",
     "supportBody": "試用期間遇到任何不清楚或壞掉的地方，直接訊息 Barry 並附截圖 — 本週會根據老師回饋持續調整。"
+  },
+  "questionPreview": {
+    "editTab": "編輯",
+    "testTab": "學生視角（作答中）",
+    "resultsTab": "學生視角（作答後）",
+    "testBanner": "學生視角・作答模式 — 唯讀，顯示目前已儲存的內容",
+    "resultsBanner": "學生視角・成績檢閱 — 唯讀，顯示目前已儲存的內容"
   }
 }

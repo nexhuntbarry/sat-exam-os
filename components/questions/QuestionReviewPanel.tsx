@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle, Eye, BookOpen, FileCheck } from "lucide-react";
 import PDFViewer from "./PDFViewer";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDateTime } from "@/lib/datetime";
+import QuestionRenderer from "@/components/tests/QuestionRenderer";
+import ReviewQuestionCard from "@/components/tests/ReviewQuestionCard";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
 
 const SAT_DOMAINS = [
@@ -117,6 +119,10 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
+  type ViewMode = "edit" | "test" | "results";
+  const [viewMode, setViewMode] = useState<ViewMode>("edit");
+  /** Local answer state for the student-test preview — no DB writes. */
+  const [previewAnswer, setPreviewAnswer] = useState("");
 
   function showToast(msg: string, ok = true) {
     setToast({ msg, ok });
@@ -374,11 +380,39 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
         </div>
       </div>
 
+      {/* View mode tabs: Edit | Student view (test) | Student view (results) */}
+      <div className="flex items-center gap-1 border-b border-divider pb-0">
+        {(
+          [
+            { key: "edit", label: "Edit", Icon: BookOpen },
+            { key: "test", label: "Student view (test)", Icon: Eye },
+            { key: "results", label: "Student view (results)", Icon: FileCheck },
+          ] as const
+        ).map(({ key, label, Icon }) => (
+          <button
+            key={key}
+            onClick={() => {
+              setViewMode(key);
+              if (key !== "test") setPreviewAnswer("");
+            }}
+            className={clsx(
+              "flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-t-lg border-b-2 transition-colors -mb-px",
+              viewMode === key
+                ? "border-warm-coral text-warm-coral-text bg-warm-coral/5"
+                : "border-transparent text-mid-gray hover:text-charcoal hover:bg-light-bg",
+            )}
+          >
+            <Icon size={14} />
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Flags — translated, action-oriented banner with one-click
           repair buttons. Raw engineering string lives behind a
           collapsible disclosure for the rare case the reviewer
           wants the original log line. */}
-      {q.parsing_notes && (
+      {viewMode === "edit" && q.parsing_notes && (
         <ParsingNoteBanner
           questionId={q.id}
           raw={q.parsing_notes}
@@ -388,7 +422,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
 
       {/* Mismatch resolver — visible only when AI disagreed with the answer
           key at parse time. One-click to pick which answer wins. */}
-      {q.mismatch_with_official && (
+      {viewMode === "edit" && q.mismatch_with_official && (
         <div className="bg-status-warning/10 border border-status-warning/30 rounded-2xl p-4 space-y-3">
           <div className="flex items-start gap-2">
             <AlertCircle size={16} className="text-status-warning shrink-0 mt-0.5" />
@@ -459,8 +493,71 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
         </div>
       )}
 
+      {/* ── Student preview: test view ── */}
+      {viewMode === "test" && (
+        <div className="rounded-2xl border border-divider bg-surface p-6">
+          <p className="text-xs text-soft-mute uppercase tracking-wider font-medium mb-4">
+            Student view · Test-taking — read only, reflects current saved content
+          </p>
+          <QuestionRenderer
+            question={{
+              id: q.id,
+              module_id: q.module_id,
+              original_question_number: q.original_question_number ?? 1,
+              question_text: q.question_text,
+              choices: q.choices ?? [],
+              question_type: (q.question_type ?? "Multiple Choice") as "Multiple Choice" | "Student Produced Response",
+              has_image: q.has_image,
+              has_table: q.has_table,
+              source_pdf_url: null,
+              page_number: q.page_number,
+              section: q.section,
+              image_urls: q.image_urls,
+              image_alts: q.image_alts,
+            }}
+            selectedAnswer={previewAnswer}
+            onAnswer={setPreviewAnswer}
+            questionIndex={0}
+            totalQuestions={1}
+            annotationsEnabled={false}
+            showSourceFigure={false}
+            showDebugBadges={false}
+          />
+        </div>
+      )}
+
+      {/* ── Student preview: results/review view ── */}
+      {viewMode === "results" && (
+        <div className="rounded-2xl border border-divider bg-surface p-6">
+          <p className="text-xs text-soft-mute uppercase tracking-wider font-medium mb-4">
+            Student view · Results &amp; review — read only, reflects current saved content
+          </p>
+          <ReviewQuestionCard
+            question={{
+              id: q.id,
+              module_id: q.module_id,
+              original_question_number: q.original_question_number ?? 1,
+              question_text: q.question_text,
+              choices: q.choices ?? [],
+              question_type: (q.question_type ?? "Multiple Choice") as "Multiple Choice" | "Student Produced Response",
+              correct_answer: q.correct_answer,
+              explanation: q.explanation,
+              has_image: q.has_image,
+              has_table: q.has_table,
+              image_urls: q.image_urls,
+              image_alts: q.image_alts,
+              page_number: q.page_number,
+              source_pdf_url: null,
+            }}
+            mine={null}
+            showExplanation
+            showSourceFigure={false}
+          />
+        </div>
+      )}
+
       {/* Side-by-side layout */}
-      <div className="grid grid-cols-2 gap-6 min-h-[640px]">
+      {viewMode === "edit" && <div className="grid grid-cols-2 gap-6 min-h-[640px]">
         {/* Left: PDF */}
         <div className="flex flex-col gap-2">
           <p className="text-xs text-soft-mute font-medium uppercase tracking-wide">
@@ -744,7 +841,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -750,5 +750,12 @@
     },
     "supportTitle": "Stuck? Tell us.",
     "supportBody": "If something is unclear or broken during your trial, message Barry directly with a screenshot — we are actively iterating based on teacher feedback this week."
+  },
+  "questionPreview": {
+    "editTab": "Edit",
+    "testTab": "Student view (test)",
+    "resultsTab": "Student view (results)",
+    "testBanner": "Student view · Test-taking — read only, reflects current saved content",
+    "resultsBanner": "Student view · Results & review — read only, reflects current saved content"
   }
 }
