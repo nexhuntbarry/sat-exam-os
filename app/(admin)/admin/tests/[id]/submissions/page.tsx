@@ -352,10 +352,10 @@ export default async function TestSubmissionsPage({
           <thead>
             <HeadRow>
               <Th kind="main" sticky="left">Student</Th>
-              <Th priority="md">Module</Th>
+              <Th kind="long" priority="md">Module</Th>
               <Th>Status</Th>
               <Th>Score</Th>
-              <Th priority="md">Correct</Th>
+              <Th kind="long" priority="md">Correct</Th>
               <Th priority="2xl">Time</Th>
               <Th priority="lg">Submitted</Th>
               <Th priority="2xl">Attempt</Th>
@@ -408,7 +408,7 @@ export default async function TestSubmissionsPage({
                       mainClassName="font-medium text-charcoal"
                     />
                   </Td>
-                  <Td priority="md" className="text-mid-gray">
+                  <Td kind="long" priority="md" className="text-mid-gray">
                     <TwoLineCell
                       main={a.moduleHeadline}
                       detail={moduleBreakdown}
@@ -427,7 +427,7 @@ export default async function TestSubmissionsPage({
                       mainClassName="text-mid-gray"
                     />
                   </Td>
-                  <Td priority="md" className="text-mid-gray">
+                  <Td kind="long" priority="md" className="text-mid-gray">
                     <TwoLineCell
                       main={correctMain}
                       detail={correctBreakdown}

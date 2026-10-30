@@ -78,8 +78,10 @@ const ROW_CLICKABLE_BELOW: Record<Breakpoint, string> = {
 // percentage then decides its share of the free space. Override the
 // percentage per column with className (tailwind-merge resolves it).
 const KIND_CELL: Record<Kind, string> = {
-  main: "max-w-0 w-[30%]",
-  long: "max-w-0 w-[20%]",
+  // min-w keeps main/long readable when nowrap short cells claim the space;
+  // past that point the table scrolls (with sticky first/last columns).
+  main: "max-w-0 w-[30%] min-w-[11rem]",
+  long: "max-w-0 w-[20%] min-w-[7rem]",
   short: "w-px whitespace-nowrap",
   actions: "w-px whitespace-nowrap text-right",
 };

@@ -526,7 +526,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       href={`${detailBase}/${q.id}`}
                       className="block text-charcoal hover:text-warm-coral-text transition-colors"
                     >
-                      <MathMarkdown className="prose prose-sm max-w-none [&_p]:my-0 [&_p]:line-clamp-2">
+                      <MathMarkdown className="prose prose-sm max-w-none max-h-[4.5rem] overflow-hidden [&_p]:my-0 [&_p]:line-clamp-2 [&_ul]:my-0 [&_ol]:my-0">
                         {q.question_text.length > 200
                           ? q.question_text.slice(0, 200) + "…"
                           : q.question_text}
