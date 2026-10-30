@@ -3,15 +3,26 @@ import { getServiceClient } from "@/lib/supabase";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { BarChart2 } from "lucide-react";
+import { BarChart2, Eye } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatShortDate } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  EmptyRow,
+  RowActionsMenu,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -209,7 +220,7 @@ export default async function StudentResultsPage() {
   const occasions = await getStudentProgressOccasions(user.userId);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageIntro tKey="student.results" />
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold text-charcoal">My Results</h1>
@@ -234,115 +245,94 @@ export default async function StudentResultsPage() {
 
       <h2 className="text-lg font-semibold text-charcoal pt-2">Test History</h2>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {results.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
-            <BarChart2 size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">No completed tests yet.</p>
-            <Link
-              href="/student/tests"
-              className="inline-block mt-2 px-4 py-2 rounded-xl bg-warm-coral/15 text-warm-coral-text text-sm hover:bg-warm-coral/25 transition-colors"
-            >
-              Go to My Tests
-            </Link>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Test</th>
-                  <th className="text-left px-5 py-3 font-medium">Section</th>
-                  <th className="text-left px-5 py-3 font-medium">Score</th>
-                  <th className="text-left px-5 py-3 font-medium">Correct</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Submitted</th>
-                  <th className="text-left px-5 py-3 font-medium">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map((r) => {
-                  const pct = r.percentage;
-                  return (
-                    <tr key={r.key} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
-                      <td className="px-5 py-3">
-                        <div className="text-charcoal font-medium">{r.testName}</div>
-                        <div className="text-soft-mute text-xs">{r.moduleHeadline}</div>
-                      </td>
-                      <td className="px-5 py-3 text-mid-gray">{r.section ?? "—"}</td>
-                      <td className="px-5 py-3">
-                        {pct != null ? (
-                          <>
-                            <div className={clsx(
-                              "font-bold",
-                              pct >= 80 ? "text-warm-amber" : pct >= 60 ? "text-status-warning" : "text-status-error"
-                            )}>
-                              {pct.toFixed(1)}%
-                            </div>
-                            {r.scaledScore != null && (
-                              <div className="text-warm-coral-text text-xs font-medium">
-                                {r.scaledScore}/800
-                              </div>
-                            )}
-                            {r.isMultiModule && r.modules.length > 0 && (
-                              <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
-                                {r.modules.map((m) => (
-                                  <div key={m.submissionId}>
-                                    {m.label}:{" "}
-                                    {m.percentage != null
-                                      ? `${m.percentage.toFixed(1)}%`
-                                      : "—"}
-                                    {m.scaledScore != null && ` · ${m.scaledScore}/800`}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        ) : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        <div>
-                          {r.totalQuestions > 0
-                            ? `${r.correctCount}/${r.totalQuestions}`
-                            : "—"}
-                        </div>
-                        {r.isMultiModule && r.modules.length > 0 && (
-                          <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                            {r.modules.map((m) => (
-                              <div key={m.submissionId}>
-                                {m.label}: {m.correctCount}/{m.totalQuestions}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className={clsx(
-                          "px-2 py-1 rounded-full text-xs font-medium",
-                          r.status === "Submitted" ? "bg-warm-amber/15 text-warm-amber" : "bg-status-warning/15 text-status-warning"
-                        )}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-soft-mute text-xs">
-                        {r.submittedAt ? formatDate(r.submittedAt) : "—"}
-                      </td>
-                      <td className="px-5 py-3">
-                        <Link
-                          href={`/student/tests/${r.testId}/result?submission=${r.detailSubmissionId}`}
-                          className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium transition-colors"
-                        >
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {results.length === 0 ? (
+        <div className="py-16 text-center space-y-3 border-y border-divider">
+          <BarChart2 size={40} className="text-charcoal/20 mx-auto" />
+          <p className="text-soft-mute text-sm">No completed tests yet.</p>
+          <Link
+            href="/student/tests"
+            className="inline-block mt-2 px-4 py-2 rounded-xl bg-warm-coral/15 text-warm-coral-text text-sm hover:bg-warm-coral/25 transition-colors"
+          >
+            Go to My Tests
+          </Link>
+        </div>
+      ) : (
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Test</Th>
+              <Th priority="md">Section</Th>
+              <Th>Score</Th>
+              <Th priority="md">Correct</Th>
+              <Th>Status</Th>
+              <Th priority="md">Submitted</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Action</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {results.map((r) => {
+              const pct = r.percentage;
+              const scoreMain = pct != null
+                ? <span className={clsx("font-bold", pct >= 80 ? "text-warm-amber" : pct >= 60 ? "text-status-warning" : "text-status-error")}>{pct.toFixed(1)}%</span>
+                : <span className="text-soft-mute">—</span>;
+              const scoreDetail = r.scaledScore != null ? `${r.scaledScore}/800` : undefined;
+              const moduleScoreBreakdown = r.isMultiModule && r.modules.length > 0
+                ? r.modules.map((m) => `${m.label}: ${m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}${m.scaledScore != null ? ` · ${m.scaledScore}/800` : ""}`).join(" | ")
+                : undefined;
+              const correctMain = r.totalQuestions > 0 ? `${r.correctCount}/${r.totalQuestions}` : "—";
+              const moduleCorrectBreakdown = r.isMultiModule && r.modules.length > 0
+                ? r.modules.map((m) => `${m.label}: ${m.correctCount}/${m.totalQuestions}`).join(" | ")
+                : undefined;
+
+              const actions: RowAction[] = [
+                { label: "View result", icon: Eye, href: `/student/tests/${r.testId}/result?submission=${r.detailSubmissionId}` },
+              ];
+
+              return (
+                <DataRow key={r.key} colSpan={7}>
+                  <Td kind="main" sticky="left">
+                    <TwoLineCell
+                      main={r.testName}
+                      detail={r.moduleHeadline}
+                      mainClassName="font-medium text-charcoal"
+                    />
+                  </Td>
+                  <Td priority="md" className="text-mid-gray">
+                    {r.section ?? "—"}
+                  </Td>
+                  <Td>
+                    <TwoLineCell
+                      main={scoreMain}
+                      detail={scoreDetail ?? moduleScoreBreakdown}
+                    />
+                  </Td>
+                  <Td priority="md" className="text-mid-gray">
+                    <TwoLineCell
+                      main={correctMain}
+                      detail={moduleCorrectBreakdown}
+                      mainClassName="text-mid-gray"
+                    />
+                  </Td>
+                  <Td>
+                    <span className={clsx(
+                      "px-2 py-0.5 rounded-full text-xs font-medium",
+                      r.status === "Submitted" ? "bg-warm-amber/15 text-warm-amber" : "bg-status-warning/15 text-status-warning"
+                    )}>
+                      {r.status}
+                    </span>
+                  </Td>
+                  <Td priority="md" className="text-soft-mute">
+                    {r.submittedAt ? formatShortDate(r.submittedAt) : "—"}
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    <RowActionsMenu label={`Actions for ${r.testName}`} items={actions} />
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      )}
     </div>
   );
 }

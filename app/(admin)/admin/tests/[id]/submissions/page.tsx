@@ -5,9 +5,22 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import GrantRetakeButton from "./GrantRetakeButton";
-import { formatDateTimeSeconds } from "@/lib/datetime";
+import { formatDateTimeSeconds, formatShortDateTime, formatShortDate } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
-import { X } from "lucide-react";
+import { X, Eye } from "lucide-react";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  RowActionsMenu,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?: string) {
   const db = getServiceClient();
@@ -303,8 +316,10 @@ export default async function TestSubmissionsPage({
     return 0;
   });
 
+  const COL_SPAN = 9;
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <div className="flex items-center gap-2 text-soft-mute text-sm">
         <Link href="/admin/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
@@ -328,125 +343,124 @@ export default async function TestSubmissionsPage({
         )}
       </div>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {attempts.length === 0 ? (
-          <div className="py-16 text-center text-soft-mute text-sm">
-            No submissions yet.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Student</th>
-                  <th className="text-left px-5 py-3 font-medium">Module</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Score</th>
-                  <th className="text-left px-5 py-3 font-medium">Correct</th>
-                  <th className="text-left px-5 py-3 font-medium">Time Spent</th>
-                  <th className="text-left px-5 py-3 font-medium">Submitted</th>
-                  <th className="text-left px-5 py-3 font-medium">Attempt</th>
-                  <th className="text-left px-5 py-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {attempts.map((a) => (
-                  <tr key={a.key} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal font-medium">{a.studentDisplayName}</div>
-                      <div className="text-soft-mute text-xs">{a.studentEmail}</div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal text-xs font-medium">{a.moduleHeadline}</div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", statusStyles[a.status] ?? "bg-light-bg text-mid-gray")}>
-                        {a.status}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      <div>
-                        {a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—"}
-                      </div>
-                      {a.scaledScore != null && (
-                        <div className="text-warm-coral-text text-xs font-medium">
-                          {a.scaledScore}/800
-                        </div>
-                      )}
-                      {a.isMultiModule && a.modules.length > 0 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
-                          {a.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}:{" "}
-                              {m.percentage != null
-                                ? `${m.percentage.toFixed(1)}%`
-                                : "—"}
-                              {m.scaledScore != null && ` · ${m.scaledScore}/800`}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      <div>
-                        {a.totalQuestions > 0
-                          ? `${a.correctCount}/${a.totalQuestions}`
-                          : "—"}
-                      </div>
-                      {a.isMultiModule && a.modules.length > 0 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                          {a.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}: {m.correctCount}/{m.totalQuestions}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      {formatDuration(a.timeSpentSeconds)}
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {formatDateTimeSeconds(a.submittedAt)}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">#{a.attemptNumber}</td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {(a.status === "Submitted" || a.status === "Late") && (
-                          <Link
-                            href={`/teacher/tests/${test.id}/results/${a.detailSubmissionId}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral-text text-xs font-medium transition-colors"
-                            title="Open per-question detail (highlights, tutor notes, answer review)"
-                          >
-                            View detail
-                          </Link>
-                        )}
-                        {a.status === "In Progress" && a.partialDetailSubmissionId && (
-                          <Link
-                            href={`/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-amber/10 hover:bg-warm-amber/20 text-warm-amber text-xs font-medium transition-colors"
-                            title="One module is still In Progress — this opens the module that's already submitted"
-                          >
-                            View partial
-                          </Link>
-                        )}
-                        {(a.status === "Submitted" || a.status === "Late") && (
-                          <GrantRetakeButton
-                            testId={test.id}
-                            studentId={a.studentId}
-                            studentName={a.studentDisplayName ?? a.studentEmail}
-                            alreadyPending={pendingByStudent.has(a.studentId)}
-                          />
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {attempts.length === 0 ? (
+        <div className="py-16 text-center text-soft-mute text-sm border-y border-divider">
+          No submissions yet.
+        </div>
+      ) : (
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Student</Th>
+              <Th priority="md">Module</Th>
+              <Th>Status</Th>
+              <Th>Score</Th>
+              <Th priority="md">Correct</Th>
+              <Th priority="md">Time</Th>
+              <Th priority="lg">Submitted</Th>
+              <Th priority="xl">Attempt</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {attempts.map((a) => {
+              const scoreMain = a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—";
+              const scoreDetail = a.scaledScore != null ? `${a.scaledScore}/800` : undefined;
+              const correctMain = a.totalQuestions > 0 ? `${a.correctCount}/${a.totalQuestions}` : "—";
+              const submittedLabel = a.submittedAt ? formatShortDateTime(a.submittedAt) : "—";
+              const submittedTitle = a.submittedAt ? formatDateTimeSeconds(a.submittedAt) : undefined;
+
+              const moduleBreakdown = a.isMultiModule && a.modules.length > 0
+                ? a.modules.map((m) => `${m.label}: ${m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}${m.scaledScore != null ? ` · ${m.scaledScore}/800` : ""}`).join(" | ")
+                : undefined;
+              const correctBreakdown = a.isMultiModule && a.modules.length > 0
+                ? a.modules.map((m) => `${m.label}: ${m.correctCount}/${m.totalQuestions}`).join(" | ")
+                : undefined;
+
+              const rowActions: (RowAction | false)[] = [
+                (a.status === "Submitted" || a.status === "Late")
+                  ? { label: "View detail", icon: Eye, href: `/teacher/tests/${test.id}/results/${a.detailSubmissionId}` }
+                  : false,
+                (a.status === "In Progress" && !!a.partialDetailSubmissionId)
+                  ? { label: "View partial", icon: Eye, href: `/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId!}` }
+                  : false,
+              ];
+
+              return (
+                <DataRow
+                  key={a.key}
+                  expandBelow="xl"
+                  colSpan={COL_SPAN}
+                  details={
+                    <>
+                      <DetailItem label="Module" priority="md">{a.moduleHeadline}</DetailItem>
+                      <DetailItem label="Correct" priority="md">{correctMain}{correctBreakdown ? ` (${correctBreakdown})` : ""}</DetailItem>
+                      <DetailItem label="Time" priority="md">{formatDuration(a.timeSpentSeconds)}</DetailItem>
+                      <DetailItem label="Submitted" priority="lg">{submittedLabel}</DetailItem>
+                      <DetailItem label="Attempt" priority="xl">#{a.attemptNumber}</DetailItem>
+                    </>
+                  }
+                >
+                  <Td kind="main" sticky="left">
+                    <TwoLineCell
+                      main={a.studentDisplayName}
+                      detail={a.studentEmail}
+                      mainClassName="font-medium text-charcoal"
+                    />
+                  </Td>
+                  <Td priority="md" className="text-mid-gray">
+                    <TwoLineCell
+                      main={a.moduleHeadline}
+                      detail={moduleBreakdown}
+                      mainClassName="font-medium text-charcoal"
+                    />
+                  </Td>
+                  <Td>
+                    <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", statusStyles[a.status] ?? "bg-light-bg text-mid-gray")}>
+                      {a.status}
+                    </span>
+                  </Td>
+                  <Td>
+                    <TwoLineCell
+                      main={scoreMain}
+                      detail={scoreDetail}
+                      mainClassName="text-mid-gray"
+                    />
+                  </Td>
+                  <Td priority="md" className="text-mid-gray">
+                    <TwoLineCell
+                      main={correctMain}
+                      detail={correctBreakdown}
+                      mainClassName="text-mid-gray"
+                    />
+                  </Td>
+                  <Td priority="md" className="text-mid-gray">
+                    {formatDuration(a.timeSpentSeconds)}
+                  </Td>
+                  <Td priority="lg" className="text-soft-mute" title={submittedTitle}>
+                    {submittedLabel}
+                  </Td>
+                  <Td priority="xl" className="text-mid-gray">
+                    #{a.attemptNumber}
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    <ExpandToggle label={`More about ${a.studentDisplayName}`} />
+                    <RowActionsMenu label={`Actions for ${a.studentDisplayName}`} items={rowActions} />
+                    {(a.status === "Submitted" || a.status === "Late") && (
+                      <GrantRetakeButton
+                        testId={test.id}
+                        studentId={a.studentId}
+                        studentName={a.studentDisplayName ?? a.studentEmail}
+                        alreadyPending={pendingByStudent.has(a.studentId)}
+                      />
+                    )}
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      )}
     </div>
   );
 }
