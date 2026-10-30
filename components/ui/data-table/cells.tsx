@@ -1,0 +1,54 @@
+import type { ReactNode } from "react";
+import { cn } from "./cn";
+
+/** Single line of text that truncates with "…" and shows the full text on
+ *  hover. Pass `title` when children is not a plain string. */
+export function TruncatedText({
+  children,
+  title,
+  className,
+}: {
+  children: ReactNode;
+  title?: string;
+  className?: string;
+}) {
+  const hover = title ?? (typeof children === "string" || typeof children === "number" ? String(children) : undefined);
+  return (
+    <span className={cn("block min-w-0 truncate", className)} title={hover}>
+      {children}
+    </span>
+  );
+}
+
+/** Two-line cell: main value on top, small muted detail below. Both lines
+ *  truncate. Wrap it in a Link yourself if the row should navigate. */
+export function TwoLineCell({
+  main,
+  detail,
+  mainTitle,
+  detailTitle,
+  className,
+  mainClassName,
+}: {
+  main: ReactNode;
+  detail?: ReactNode;
+  /** Hover text when `main` is not a plain string. */
+  mainTitle?: string;
+  /** Hover text when `detail` is not a plain string. */
+  detailTitle?: string;
+  className?: string;
+  mainClassName?: string;
+}) {
+  return (
+    <span className={cn("block min-w-0", className)}>
+      <TruncatedText title={mainTitle} className={cn("text-charcoal", mainClassName)}>
+        {main}
+      </TruncatedText>
+      {detail != null && detail !== "" && (
+        <TruncatedText title={detailTitle} className="text-xs text-soft-mute">
+          {detail}
+        </TruncatedText>
+      )}
+    </span>
+  );
+}

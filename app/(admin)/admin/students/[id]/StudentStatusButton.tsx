@@ -14,6 +14,42 @@ interface Props {
 // Suspend an approved student or reactivate a suspended one. Reactivation
 // goes through the approve route (it flips account_status back to
 // approved without re-sending the welcome email).
+/**
+ * Prompt/confirm, then suspend (approved) or reactivate (suspended) a
+ * student. Returns null if the admin cancelled, otherwise the outcome.
+ * Shared with the Students list ⋯ menu.
+ */
+export async function changeStudentStatus(
+  { studentId, studentName, status }: Props,
+  onStart?: () => void,
+): Promise<{ ok: true } | { ok: false; error: string } | null> {
+  if (status !== "approved" && status !== "suspended") return null;
+  const suspending = status === "approved";
+  let body: Record<string, unknown> = {};
+  if (suspending) {
+    const reason = prompt(`Suspend ${studentName}? They will lose access until reactivated.\n\nReason (optional):`);
+    if (reason === null) return null;
+    body = { reason };
+  } else if (!confirm(`Reactivate ${studentName}?`)) {
+    return null;
+  }
+  onStart?.();
+  try {
+    const res = await fetch(`/api/admin/students/${studentId}/${suspending ? "suspend" : "approve"}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, error: j.error ?? "Failed" };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Network error" };
+  }
+}
+
 export default function StudentStatusButton({ studentId, studentName, status }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -24,33 +60,17 @@ export default function StudentStatusButton({ studentId, studentName, status }: 
   const suspending = status === "approved";
 
   async function run() {
-    let body: Record<string, unknown> = {};
-    if (suspending) {
-      const reason = prompt(`Suspend ${studentName}? They will lose access until reactivated.\n\nReason (optional):`);
-      if (reason === null) return;
-      body = { reason };
-    } else if (!confirm(`Reactivate ${studentName}?`)) {
+    const result = await changeStudentStatus({ studentId, studentName, status }, () => {
+      setBusy(true);
+      setError(null);
+    });
+    setBusy(false);
+    if (!result) return;
+    if (!result.ok) {
+      setError(result.error);
       return;
     }
-    setBusy(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/admin/students/${studentId}/${suspending ? "suspend" : "approve"}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        setError(j.error ?? "Failed");
-        return;
-      }
-      startTransition(() => router.refresh());
-    } catch {
-      setError("Network error");
-    } finally {
-      setBusy(false);
-    }
+    startTransition(() => router.refresh());
   }
 
   return (

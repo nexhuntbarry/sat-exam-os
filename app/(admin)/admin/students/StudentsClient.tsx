@@ -4,9 +4,36 @@ import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { Check, X, Search, ChevronDown } from "lucide-react";
-import { formatDate, formatDateTime } from "@/lib/datetime";
-import StudentStatusButton from "./[id]/StudentStatusButton";
+import { Check, X, Search, Eye, Ban, RotateCcw } from "lucide-react";
+import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
+import { changeStudentStatus } from "./[id]/StudentStatusButton";
+import {
+  ColumnsPicker,
+  DataRow,
+  DataTable,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  HeadRow,
+  RowActionsMenu,
+  Td,
+  Th,
+  TruncatedText,
+  TwoLineCell,
+  useColumnPrefs,
+  type ColumnDef,
+  type RowAction,
+} from "@/components/ui/data-table";
+
+const COLUMNS: ColumnDef[] = [
+  { key: "student", label: "Student", locked: true },
+  { key: "status", label: "Status", locked: true },
+  { key: "class", label: "Class" },
+  { key: "gradeSchool", label: "Grade & school" },
+  { key: "parent", label: "Parent" },
+  { key: "activity", label: "Activity" },
+  { key: "actions", label: "Actions", locked: true },
+];
 
 interface StudentProfile {
   grade: string | null;
@@ -221,6 +248,30 @@ export default function StudentsClient({ students, classGroups }: Props) {
   const [filter, setFilter] = useState<Filter>("all");
   const [approveTarget, setApproveTarget] = useState<Student | null>(null);
   const [, startTransition] = useTransition();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const cols = useColumnPrefs("admin-students", COLUMNS);
+
+  async function handleStatusChange(student: Student) {
+    const result = await changeStudentStatus(
+      {
+        studentId: student.id,
+        studentName: student.display_name ?? student.email,
+        status: student.account_status,
+      },
+      () => {
+        setBusyId(student.id);
+        setActionError(null);
+      },
+    );
+    setBusyId(null);
+    if (!result) return;
+    if (!result.ok) {
+      setActionError(`${student.display_name ?? student.email}: ${result.error}`);
+      return;
+    }
+    startTransition(() => router.refresh());
+  }
 
   async function handleSuspend(studentId: string) {
     const reason = prompt("Reject this student? They will not get access.\n\nReason (optional):");
@@ -269,7 +320,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
   ];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
       {approveTarget && (
         <ApproveModal
           student={approveTarget}
@@ -312,136 +363,178 @@ export default function StudentsClient({ students, classGroups }: Props) {
         ))}
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-soft-mute" />
-        <input
-          className="w-full max-w-sm bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors"
-          placeholder="Search by name, email, grade, school..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+      {/* Search + column picker */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-soft-mute" />
+          <input
+            className="w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors"
+            placeholder="Search by name, email, grade, school..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+        <ColumnsPicker prefs={cols} className="ml-auto" />
       </div>
 
-      {/* Table */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {filtered.length === 0 ? (
-          <div className="py-16 text-center text-soft-mute text-sm">
-            No {filter === "all" ? "" : `${filter} `}students found.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Name</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Class</th>
-                  <th className="text-left px-5 py-3 font-medium">Grade</th>
-                  <th className="text-left px-5 py-3 font-medium">School</th>
-                  <th className="text-left px-5 py-3 font-medium">Parent</th>
-                  <th className="text-left px-5 py-3 font-medium">Registered</th>
-                  <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
-                  <th className="text-left px-5 py-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((student) => {
-                  const profile = getProfile(student);
-                  return (
-                    <tr
-                      key={student.id}
-                      className={clsx(
-                        "border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors",
-                        student.account_status === "pending" && "bg-status-warning/10"
-                      )}
-                    >
-                      <td className="px-5 py-3">
-                        <Link
-                          href={`/admin/students/${student.id}`}
-                          className="block hover:text-warm-coral-text transition-colors"
-                        >
-                          <div className="font-medium text-charcoal">
-                            {student.display_name ?? "—"}
-                          </div>
-                          <div className="text-soft-mute text-xs">{student.email}</div>
-                        </Link>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={clsx(
-                            "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
-                            student.account_status === "approved"
-                              ? "bg-warm-amber/15 text-warm-amber"
-                              : student.account_status === "pending"
-                              ? "bg-status-warning/15 text-status-warning"
-                              : "bg-status-error/15 text-status-error"
-                          )}
-                        >
-                          {student.account_status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        {student.classes.length > 0 ? student.classes.join(", ") : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        {profile?.grade ? `Grade ${profile.grade}` : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        {profile?.school ?? "—"}
-                      </td>
-                      <td className="px-5 py-3">
-                        <div className="text-mid-gray">{profile?.parent_name ?? "—"}</div>
-                        <div className="text-soft-mute text-xs">{profile?.parent_email ?? ""}</div>
-                        <div className="text-soft-mute text-xs">{profile?.parent_phone ?? ""}</div>
-                      </td>
-                      <td className="px-5 py-3 text-soft-mute text-xs">
-                        {formatDate(student.created_at)}
-                      </td>
-                      <td className="px-5 py-3 text-soft-mute text-xs">
-                        {student.last_sign_in_at
-                          ? formatDateTime(student.last_sign_in_at)
-                          : student.clerk_user_id
-                            ? "—"
-                            : <span className="text-status-warning">never (pending)</span>}
-                      </td>
-                      {student.account_status === "pending" && (
-                        <td className="px-5 py-3">
-                          <div className="flex items-center gap-2">
-                            <button
-                              onClick={() => setApproveTarget(student)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-xs font-medium transition-colors"
-                            >
-                              <Check size={13} />
-                              Approve
-                            </button>
-                            <button
-                              onClick={() => handleSuspend(student.id)}
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-status-error/10 hover:bg-status-error/15 text-status-error text-xs font-medium transition-colors"
-                            >
-                              <X size={13} />
-                              Reject
-                            </button>
-                          </div>
-                        </td>
-                      )}
-                      {student.account_status !== "pending" && (
-                        <td className="px-5 py-3">
-                          <StudentStatusButton
-                            studentId={student.id}
-                            studentName={student.display_name ?? student.email}
-                            status={student.account_status}
-                          />
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      {actionError && (
+        <p role="alert" className="text-status-error text-sm bg-status-error/10 border border-status-error/20 rounded-xl px-3 py-2">
+          {actionError}
+        </p>
+      )}
+
+      {/* Table — kit reference implementation, see docs/table-standard.md */}
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th kind="main" sticky="left">Student</Th>
+            <Th>Status</Th>
+            {cols.isVisible("class") && <Th kind="long" priority="md" className="w-[16%]">Class</Th>}
+            {cols.isVisible("gradeSchool") && <Th kind="long" priority="lg" className="w-[22%]">Grade &amp; school</Th>}
+            {cols.isVisible("parent") && <Th kind="long" priority="xl" className="w-[18%]">Parent</Th>}
+            {cols.isVisible("activity") && <Th priority="lg">Activity</Th>}
+            <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {filtered.length === 0 && (
+            <EmptyRow colSpan={cols.visibleCount}>
+              No {filter === "all" ? "" : `${filter} `}students found.
+            </EmptyRow>
+          )}
+          {filtered.map((student) => {
+            const profile = getProfile(student);
+            const name = student.display_name ?? student.email;
+            const classes = student.classes.length > 0 ? student.classes.join(", ") : "—";
+            const gradeSchool =
+              [profile?.grade, profile?.school].filter(Boolean).join(" · ") || "—";
+            const parentContact = profile?.parent_phone || profile?.parent_email || "";
+            const parentAll = [profile?.parent_name, profile?.parent_phone, profile?.parent_email]
+              .filter(Boolean)
+              .join(" · ");
+            const lastSignIn = student.last_sign_in_at
+              ? formatShortDateTime(student.last_sign_in_at)
+              : null;
+            const activityMain = lastSignIn ?? (
+              student.clerk_user_id ? "Never signed in" : <span className="text-status-warning">never (pending)</span>
+            );
+            const registered = `Registered ${formatShortDate(student.created_at)}`;
+            const activityTitle = `${lastSignIn ? `Last sign-in ${formatDateTime(student.last_sign_in_at)}` : "Never signed in"} · Registered ${formatDateTime(student.created_at)}`;
+
+            const actions: (RowAction | false)[] = [
+              { label: "View details", icon: Eye, href: `/admin/students/${student.id}` },
+              student.account_status === "pending" && {
+                label: "Approve…",
+                icon: Check,
+                onSelect: () => setApproveTarget(student),
+              },
+              student.account_status === "pending" && {
+                label: "Reject…",
+                icon: X,
+                tone: "danger",
+                onSelect: () => handleSuspend(student.id),
+              },
+              student.account_status === "approved" && {
+                label: "Suspend…",
+                icon: Ban,
+                tone: "danger",
+                disabled: busyId === student.id,
+                onSelect: () => handleStatusChange(student),
+              },
+              student.account_status === "suspended" && {
+                label: "Reactivate…",
+                icon: RotateCcw,
+                disabled: busyId === student.id,
+                onSelect: () => handleStatusChange(student),
+              },
+            ];
+
+            return (
+              <DataRow
+                key={student.id}
+                tone={student.account_status === "pending" ? "warning" : "default"}
+                expandBelow="xl"
+                colSpan={cols.visibleCount}
+                details={
+                  <>
+                    {cols.isVisible("class") && <DetailItem label="Class" priority="md">{classes}</DetailItem>}
+                    {cols.isVisible("gradeSchool") && <DetailItem label="Grade & school" priority="lg">{gradeSchool}</DetailItem>}
+                    {cols.isVisible("parent") && (
+                      <DetailItem label="Parent" priority="xl">{parentAll || "—"}</DetailItem>
+                    )}
+                    {cols.isVisible("activity") && (
+                      <DetailItem label="Activity" priority="lg">
+                        {lastSignIn ? `Last sign-in ${lastSignIn}` : activityMain} · {registered}
+                      </DetailItem>
+                    )}
+                  </>
+                }
+              >
+                <Td kind="main" sticky="left">
+                  <Link
+                    href={`/admin/students/${student.id}`}
+                    className="block hover:text-warm-coral-text transition-colors"
+                  >
+                    <TwoLineCell
+                      main={student.display_name ?? "—"}
+                      detail={student.email}
+                      mainClassName="font-medium text-inherit"
+                    />
+                  </Link>
+                </Td>
+                <Td>
+                  <span
+                    className={clsx(
+                      "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
+                      student.account_status === "approved"
+                        ? "bg-warm-amber/15 text-warm-amber"
+                        : student.account_status === "pending"
+                        ? "bg-status-warning/15 text-status-warning"
+                        : "bg-status-error/15 text-status-error"
+                    )}
+                  >
+                    {student.account_status}
+                  </span>
+                </Td>
+                {cols.isVisible("class") && (
+                  <Td kind="long" priority="md" className="text-mid-gray">
+                    <TruncatedText>{classes}</TruncatedText>
+                  </Td>
+                )}
+                {cols.isVisible("gradeSchool") && (
+                  <Td kind="long" priority="lg" className="text-mid-gray">
+                    <TruncatedText>{gradeSchool}</TruncatedText>
+                  </Td>
+                )}
+                {cols.isVisible("parent") && (
+                  <Td kind="long" priority="xl">
+                    <TwoLineCell
+                      main={profile?.parent_name ?? "—"}
+                      detail={parentContact}
+                      mainTitle={parentAll || undefined}
+                      detailTitle={parentAll || undefined}
+                      mainClassName="text-mid-gray"
+                    />
+                  </Td>
+                )}
+                {cols.isVisible("activity") && (
+                  <Td priority="lg">
+                    <span className="block" title={activityTitle}>
+                      <span className="block text-mid-gray">{activityMain}</span>
+                      <span className="block text-xs text-soft-mute">{registered}</span>
+                    </span>
+                  </Td>
+                )}
+                <Td kind="actions" sticky="right">
+                  {busyId === student.id && <span className="mr-1 text-xs text-soft-mute">Saving…</span>}
+                  <ExpandToggle label={`More about ${name}`} />
+                  <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                </Td>
+              </DataRow>
+            );
+          })}
+        </tbody>
+      </DataTable>
     </div>
   );
 }
