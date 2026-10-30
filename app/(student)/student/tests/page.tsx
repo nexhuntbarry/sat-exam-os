@@ -232,7 +232,9 @@ async function getStudentTests(studentId: string) {
       ) &&
       !latestRows.some((r) => isModule2Track(r.adaptive_track));
     if (needsModule2) testStatus = "In Progress";
-    return { ...t, attempt, testStatus, needsModule2 };
+    // Latest submit time of the latest attempt, for "most recent first".
+    const lastSubmittedAt = latestRows.reduce<string>((m, r) => (r.submitted_at && r.submitted_at > m ? r.submitted_at : m), "");
+    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt };
   });
 }
 
@@ -254,30 +256,25 @@ function computeOnModule2(test: {
   );
 }
 
-function buildSubtitle(test: {
-  is_adaptive?: boolean | null;
-  module_2_id?: string | null;
-  time_limit_minutes?: number | null;
-  time_limit_minutes_module_2?: number | null;
-  is_untimed?: boolean | null;
-}): string {
-  const isTwoModule = Boolean(test.is_adaptive || test.module_2_id);
-  const isUntimed = test.is_untimed;
-  if (isTwoModule) {
-    if (isUntimed) return "2 modules · untimed";
-    const m1 = test.time_limit_minutes ?? 0;
-    const m2 = test.time_limit_minutes_module_2 ?? m1;
-    const total = m1 + m2;
-    return total > 0 ? `2 modules · ${total} min` : "2 modules · untimed";
-  } else {
-    if (isUntimed) return "1 module · untimed";
-    const m1 = test.time_limit_minutes ?? 0;
-    return m1 > 0 ? `1 module · ${m1} min` : "1 module · untimed";
-  }
+function buildSubtitle(
+  test: {
+    is_adaptive?: boolean | null;
+    module_2_id?: string | null;
+    time_limit_minutes?: number | null;
+    time_limit_minutes_module_2?: number | null;
+    is_untimed?: boolean | null;
+  },
+  t: (key: string, values?: Record<string, number>) => string,
+): string {
+  const count = test.is_adaptive || test.module_2_id ? 2 : 1;
+  const m1 = test.time_limit_minutes ?? 0;
+  const minutes = count === 2 ? m1 + (test.time_limit_minutes_module_2 ?? m1) : m1;
+  if (test.is_untimed || minutes <= 0) return t("subtitleUntimed", { count });
+  return t("subtitleTimed", { count, minutes });
 }
 
 // Sort order: In Progress first, then Not Started, then Submitted.
-// Within Submitted: most recent due_date descending (proxy for recency).
+// Within Submitted: most recently submitted first.
 // Within unfinished: ascending due_date (most urgent first).
 const STATUS_ORDER: Record<string, number> = {
   "In Progress": 0,
@@ -299,8 +296,8 @@ export default async function StudentTestsPage() {
     const sb = STATUS_ORDER[b.testStatus] ?? 3;
     if (sa !== sb) return sa - sb;
     if (a.testStatus === "Submitted") {
-      // most recent first
-      return (b.due_date ?? "").localeCompare(a.due_date ?? "");
+      // most recently submitted first
+      return b.lastSubmittedAt.localeCompare(a.lastSubmittedAt);
     }
     // ascending due_date for unfinished (most urgent first; no date = later)
     const da = a.due_date ?? "9999-12-31";
@@ -342,7 +339,7 @@ export default async function StudentTestsPage() {
                     | null;
                   const isTwoModule = Boolean(test.is_adaptive || test.module_2_id);
                   const onModule2 = computeOnModule2(test);
-                  const subtitle = buildSubtitle(test);
+                  const subtitle = buildSubtitle(test, t);
 
                   // Subject tag label
                   const section = mod?.section ?? (isTwoModule ? "Math" : null);

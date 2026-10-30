@@ -409,6 +409,8 @@
         "inProgress": "進行中",
         "inProgressM1of2": "進行中・第 1 模組／共 2 模組",
         "inProgressM2of2": "進行中・第 2 模組／共 2 模組",
+        "subtitleTimed": "{count} 個模組・{minutes} 分鐘",
+        "subtitleUntimed": "{count} 個模組・不限時",
         "submitted": "已繳交"
       },
       "actions": {
