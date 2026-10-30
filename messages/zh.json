@@ -770,5 +770,27 @@
     "resultsTab": "學生視角（作答後）",
     "testBanner": "學生視角・作答模式 — 唯讀，顯示目前已儲存的內容",
     "resultsBanner": "學生視角・成績檢閱 — 唯讀，顯示目前已儲存的內容"
+  },
+  "answerVisibility": {
+    "column": "答案",
+    "modeFollow": "依測驗設定",
+    "modeShow": "對此學生顯示",
+    "modeHide": "對此學生隱藏",
+    "alsoExplanations": "同時顯示解析",
+    "visible": "可見",
+    "hidden": "隱藏",
+    "withExplanations": "可見（含解析）",
+    "effective": "{state}（{source}）",
+    "source": {
+      "test": "測驗設定",
+      "class_review": "課堂檢討",
+      "student": "學生個別設定",
+      "not_submitted": "尚未交卷",
+      "retake_pending": "重考進行中"
+    },
+    "changedBy": "{name} 於 {date} 修改",
+    "saveFailed": "儲存失敗，請再試一次。",
+    "networkError": "無法連線到伺服器，請檢查網路後再試一次。",
+    "saving": "儲存中…"
   }
 }

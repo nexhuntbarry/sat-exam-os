@@ -14,6 +14,13 @@ import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { getQaClassGroupIds, getQaTestIds, onSide, scopeIds, scopeUsers } from "@/lib/qa";
+import { getTranslations } from "next-intl/server";
+import {
+  loadAnswerVisibilityInputs,
+  summarizeAnswerVisibility,
+  visibilityKey,
+} from "@/lib/answer-visibility";
+import { answerVisibilityLabel } from "@/components/tests/answer-visibility-label";
 
 async function getTest(id: string, viewerIsQa: boolean) {
   const db = getServiceClient();
@@ -166,9 +173,28 @@ export default async function TestDetailPage({
   const test = await getTest(id, user.isQa);
   if (!test) notFound();
 
+  const db = getServiceClient();
+
+  // Effective answer visibility for every student in the Students table
+  // (individual + class-assigned + unassigned-with-work) — the same decision
+  // their result / review pages enforce (test setting, class review,
+  // per-student override, retake safety).
+  const [visibilityInputs, tv] = await Promise.all([
+    loadAnswerVisibilityInputs(
+      db,
+      [test.id],
+      test.assignment.students.map((st) => st.id),
+      new Map([[test.id, {
+        show_answers_after_submission: test.show_answers_after_submission,
+        show_explanations_after_submission: test.show_explanations_after_submission,
+        review_unlocked: test.review_unlocked,
+      }]]),
+    ),
+    getTranslations("answerVisibility"),
+  ]);
+
   // Eligible modules for the Edit modal — same predicate as the create
   // page: every non-rejected question Approved (see module-approval.ts).
-  const db = getServiceClient();
   const { data: modulesRaw } = await db
     .from("modules")
     .select(
@@ -381,13 +407,14 @@ export default async function TestDetailPage({
           </p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full min-w-[720px] text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
                   <th className="text-left px-5 py-3 font-medium">Student</th>
                   <th className="text-left px-5 py-3 font-medium">Assigned via</th>
                   <th className="text-left px-5 py-3 font-medium">Status</th>
                   <th className="text-left px-5 py-3 font-medium">Score</th>
+                  <th className="text-left px-5 py-3 font-medium">{tv("column")}</th>
                   <th className="text-right px-5 py-3 font-medium">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -417,6 +444,18 @@ export default async function TestDetailPage({
                     </td>
                     <td className="px-5 py-3 text-charcoal">
                       {st.progress.score !== null ? `${st.progress.score.toFixed(1)}%` : "—"}
+                    </td>
+                    <td className="px-5 py-3 text-xs">
+                      {(() => {
+                        const input = visibilityInputs.get(visibilityKey(test.id, st.id));
+                        if (!input) return <span className="text-soft-mute">—</span>;
+                        const effective = summarizeAnswerVisibility(input);
+                        return (
+                          <span className={effective.answers ? "text-status-success" : "text-soft-mute"}>
+                            {answerVisibilityLabel(tv, effective)}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center justify-end gap-3">

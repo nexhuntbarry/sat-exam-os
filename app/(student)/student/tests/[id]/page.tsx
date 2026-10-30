@@ -10,6 +10,7 @@ import {
   isTestAssignedToStudent,
   scopeToStudentQuestionSet,
 } from "@/lib/student-exam";
+import { getAnswerVisibility } from "@/lib/answer-visibility";
 
 async function getTestInfo(testId: string, studentId: string) {
   const db = getServiceClient();
@@ -23,7 +24,7 @@ async function getTestInfo(testId: string, studentId: string) {
       id, test_name, status, time_limit_minutes, time_limit_minutes_module_2,
       due_date, open_date,
       allow_retake, show_answers_after_submission, module_id, module_2_id, is_untimed,
-      is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, review_unlocked,
+      is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id,
       modules!module_id(module_name, section, module_number)
     `)
     .eq("id", testId)
@@ -143,8 +144,13 @@ async function getTestInfo(testId: string, studentId: string) {
     .limit(1)
     .maybeSingle();
 
+  // Same decision the /review page enforces, so the link only shows when
+  // the page will actually open for this student.
+  const classReview = await getAnswerVisibility(db, testId, studentId, "class_review");
+
   return {
     test,
+    canOpenClassReview: classReview.answers,
     questionCount: totalQuestionCount,
     submission,
     module2Meta,
@@ -167,7 +173,7 @@ export default async function StudentTestLandingPage({
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 
-  const { test, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, hasRetakeGrant } = data;
+  const { test, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, hasRetakeGrant } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -295,7 +301,7 @@ export default async function StudentTestLandingPage({
           </div>
         )}
 
-        {Boolean((test as { review_unlocked?: boolean }).review_unlocked) && (
+        {canOpenClassReview && (
           <Link
             href={`/student/tests/${test.id}/review`}
             className="block w-full py-3 text-center rounded-xl border border-warm-amber/30 bg-warm-amber/10 text-warm-amber font-semibold transition-colors hover:bg-warm-amber/20"

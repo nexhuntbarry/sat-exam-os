@@ -9,6 +9,7 @@ import { scaleSectionScore } from "@/lib/scoring";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ReportProblemButton from "@/components/tests/ReportProblemButton";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
+import { getAnswerVisibility } from "@/lib/answer-visibility";
 
 const TRACK_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -38,7 +39,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
       started_at, submitted_at, time_spent_seconds, attempt_number,
       scaled_score, scaled_section, session_id, adaptive_track,
       tests!inner(
-        test_name, show_answers_after_submission, show_explanations_after_submission,
+        test_name,
         modules!module_id(module_name, section)
       )
     `)
@@ -55,7 +56,11 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
   const { data: submission } = await query.maybeSingle();
   if (!submission) return null;
 
-  const test = submission.tests as unknown as { test_name: string; show_answers_after_submission: boolean; show_explanations_after_submission: boolean; modules: { module_name: string; section: string } };
+  const test = submission.tests as unknown as { test_name: string; modules: { module_name: string; section: string } };
+
+  // Answer/explanation reveal: the shared server-side decision (test
+  // setting, per-student override, retake safety) — never the raw flags.
+  const visibility = await getAnswerVisibility(db, testId, studentId, "results");
 
   // Adaptive sessions split the attempt across two submissions. Pull
   // the sibling row(s) so we can stitch a combined score card. We only
@@ -105,7 +110,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
   // every module's answers in one review, grouped by module. For the
   // single-submission path we still only fetch the current submission.
   const reviewSubmissionIds: string[] = (() => {
-    if (!test.show_answers_after_submission) return [];
+    if (!visibility.answers) return [];
     if (sessionRows && sessionRows.length > 1) {
       return sessionRows
         .filter((r) => r.status === "Submitted" || r.status === "Late")
@@ -128,6 +133,13 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
       .in("submission_id", reviewSubmissionIds);
 
     answerDetails = records as typeof answerDetails ?? [];
+    // Don't even hand explanations to the renderer when they're hidden.
+    if (!visibility.explanations) {
+      answerDetails = (answerDetails ?? []).map((r) => ({
+        ...r,
+        questions: { ...r.questions, explanation: null },
+      }));
+    }
     // Sort by submission order first (Module 1 before Module 2 by
     // started_at), then by original question number within each module.
     const orderIndex = new Map<string, number>(
@@ -166,7 +178,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     skill: r.questions?.skill ?? null,
   }));
 
-  return { submission, test, answerDetails, sessionRows, breakdownRows };
+  return { submission, test, visibility, answerDetails, sessionRows, breakdownRows };
 }
 
 function formatDuration(seconds: number | null) {
@@ -194,7 +206,7 @@ export default async function StudentResultPage({
   if (!data) notFound();
   const reportsEnabled = await studentReportsEnabledFor(getServiceClient(), user);
 
-  const { submission, test, answerDetails, sessionRows, breakdownRows } = data;
+  const { submission, test, visibility, answerDetails, sessionRows, breakdownRows } = data;
   const pct = Number(submission.percentage ?? 0);
 
   // Partial state: a sibling submission in the same attempt is still
@@ -575,7 +587,7 @@ export default async function StudentResultPage({
                       </div>
                     )}
 
-                    {test.show_explanations_after_submission && q.explanation && (
+                    {visibility.explanations && q.explanation && (
                       <div className="p-3 bg-warm-coral/5 border border-warm-coral/15 rounded-lg">
                         <div className="text-warm-coral-text text-xs font-medium mb-1">Explanation</div>
                         <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1.5 [&_p]:leading-relaxed">
