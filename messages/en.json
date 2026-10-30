@@ -750,5 +750,18 @@
     },
     "supportTitle": "Stuck? Tell us.",
     "supportBody": "If something is unclear or broken during your trial, message Barry directly with a screenshot — we are actively iterating based on teacher feedback this week."
+  },
+  "questionReview": {
+    "sourceFigure": {
+      "label": "Source figure · Page {page}",
+      "cropButton": "Crop",
+      "cropButtonBusy": "Cropping…",
+      "cropConfirm": "Re-run the image cropper for this question? Claude will pick a fresh bounding box and upload the new crop.",
+      "deleteButton": "Delete",
+      "deleteButtonBusy": "Deleting…",
+      "deleteConfirm": "Remove this source figure? The question will display only the text and any extracted images.",
+      "tableDuplicateHidden": "Table already in question text — source figure hidden automatically.",
+      "tableDuplicateWarning": "Table is already in the question text — this source figure may be a screenshot of the same table. Use Delete below if it is redundant."
+    }
   }
 }
