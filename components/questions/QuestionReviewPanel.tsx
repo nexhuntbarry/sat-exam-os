@@ -130,6 +130,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   const [viewMode, setViewMode] = useState<ViewMode>("edit");
   /** Local answer state for the student-test preview — no DB writes. */
   const [previewAnswer, setPreviewAnswer] = useState("");
+  const [previewCrossedOut, setPreviewCrossedOut] = useState<Set<string>>(new Set());
 
   const [cropIndex, setCropIndex] = useState<number | null>(null);
   const [imageBusy, setImageBusy] = useState(false);
@@ -309,7 +310,19 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       const res = await fetch(`/api/admin/questions/${q.id}/repair-image`, { method: "POST" });
       const json = await res.json().catch(() => ({}));
       showToast(json.message ?? (res.ok ? "Figure re-cropped." : "Crop failed."), res.ok);
-      if (res.ok) router.refresh();
+      if (res.ok) {
+        // Local state doesn't follow router.refresh(); pull the new image fields.
+        const fresh = await fetch(`/api/admin/questions/${q.id}`).then((r) => r.json()).catch(() => null);
+        if (fresh?.data) {
+          setQ((prev) => ({
+            ...prev,
+            has_image: fresh.data.has_image,
+            image_urls: fresh.data.image_urls,
+            image_alts: fresh.data.image_alts,
+          }));
+        }
+        router.refresh();
+      }
     } catch {
       showToast("Crop failed.", false);
     } finally {
@@ -597,7 +610,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       {viewMode === "test" && (
         <div className="rounded-2xl border border-divider bg-surface p-6">
           <p className="text-xs text-soft-mute uppercase tracking-wider font-medium mb-4">
-            Student view · Test-taking — read only, reflects current saved content
+            Student view · Test-taking — read only, includes unsaved edits
           </p>
           <QuestionRenderer
             question={{
@@ -617,6 +630,15 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
             }}
             selectedAnswer={previewAnswer}
             onAnswer={setPreviewAnswer}
+            crossedOut={previewCrossedOut}
+            onToggleCrossOut={(label) =>
+              setPreviewCrossedOut((prev) => {
+                const next = new Set(prev);
+                if (next.has(label)) next.delete(label);
+                else next.add(label);
+                return next;
+              })
+            }
             questionIndex={0}
             totalQuestions={1}
             annotationsEnabled={false}
@@ -630,7 +652,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       {viewMode === "results" && (
         <div className="rounded-2xl border border-divider bg-surface p-6">
           <p className="text-xs text-soft-mute uppercase tracking-wider font-medium mb-4">
-            Student view · Results &amp; review — read only, reflects current saved content
+            Student view · Results &amp; review — read only, includes unsaved edits
           </p>
           <ReviewQuestionCard
             question={{

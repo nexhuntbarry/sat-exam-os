@@ -751,26 +751,6 @@
     "supportTitle": "卡住了？跟我們說。",
     "supportBody": "試用期間遇到任何不清楚或壞掉的地方，直接訊息 Barry 並附截圖 — 本週會根據老師回饋持續調整。"
   },
-  "questionReview": {
-    "sourceFigure": {
-      "label": "原始圖片 · 第 {page} 頁",
-      "cropButton": "重新裁切",
-      "cropButtonBusy": "裁切中…",
-      "cropConfirm": "重新執行圖片裁切器？Claude 會重新偵測邊界框並上傳新的裁切圖片。",
-      "deleteButton": "刪除",
-      "deleteButtonBusy": "刪除中…",
-      "deleteConfirm": "移除這個原始圖片？題目將只顯示文字及已裁切的圖片。",
-      "tableDuplicateHidden": "表格已存在於題目文字中 — 原始圖片已自動隱藏。",
-      "tableDuplicateWarning": "表格已存在於題目文字中 — 這個原始圖片可能只是相同表格的截圖。若為重複內容，請點擊下方「刪除」。"
-    }
-  },
-  "questionPreview": {
-    "editTab": "編輯",
-    "testTab": "學生視角（作答中）",
-    "resultsTab": "學生視角（作答後）",
-    "testBanner": "學生視角・作答模式 — 唯讀，顯示目前已儲存的內容",
-    "resultsBanner": "學生視角・成績檢閱 — 唯讀，顯示目前已儲存的內容"
-  },
   "answerVisibility": {
     "column": "答案",
     "modeFollow": "依測驗設定",
