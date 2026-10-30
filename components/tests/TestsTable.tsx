@@ -7,8 +7,17 @@ import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
 import StudentAnswerVisibilityControl from "@/components/tests/StudentAnswerVisibilityControl";
 import { answerVisibilityLabel } from "@/components/tests/answer-visibility-label";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
 import type { StudentAnswerMode, VisibilitySource } from "@/lib/answer-visibility";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  TwoLineCell,
+  TruncatedText,
+} from "@/components/ui/data-table";
 
 export interface SessionGroupModuleData {
   label: string;
@@ -150,166 +159,156 @@ export default function TestsTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[680px] text-sm">
-        <thead>
-          <tr className="border-b border-divider text-soft-mute text-xs">
-            <th className="text-left px-5 py-3 font-medium w-[32%]">{t("colTest")}</th>
-            <th className="text-left px-3 py-3 font-medium w-[7%]">{t("colSection")}</th>
-            <th className="text-left px-3 py-3 font-medium w-[15%]">{t("colStatus")}</th>
-            <th className="text-left px-3 py-3 font-medium w-[14%]">{t("colResult")}</th>
-            <th className="text-left px-3 py-3 font-medium w-[14%]">{t("colSubmitted")}</th>
-            <th className="text-left px-3 py-3 font-medium w-[18%]">{tv("column")}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((g) => {
-            const isExpanded = expanded.has(g.key);
-            const canExpand = g.isMultiModule && g.modules.length > 0;
-            return (
-              <Fragment key={g.key}>
-                <tr className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
-                  {/* Test */}
-                  <td className="px-5 py-3">
-                    <div className="flex items-start gap-1">
-                      {canExpand ? (
-                        <button
-                          type="button"
-                          onClick={() => toggle(g.key)}
-                          aria-expanded={isExpanded}
-                          aria-label={
-                            isExpanded
-                              ? t("collapseModules")
-                              : t("expandModules")
-                          }
-                          className="mt-0.5 flex-shrink-0 text-soft-mute hover:text-charcoal transition-colors"
-                        >
-                          {isExpanded ? (
-                            <ChevronDown size={14} />
-                          ) : (
-                            <ChevronRight size={14} />
-                          )}
-                        </button>
-                      ) : (
-                        <span className="inline-block w-[14px] flex-shrink-0" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span
-                            className="font-medium text-charcoal truncate block"
-                            title={g.testName}
-                          >
-                            {g.testName}
-                          </span>
-                          <Link
-                            href={`/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`}
-                            className="flex-shrink-0 text-soft-mute hover:text-warm-coral-text transition-colors"
-                            title={t("viewDetail")}
-                          >
-                            <ExternalLink size={11} />
-                          </Link>
-                        </div>
-                        {g.isMultiModule && (
-                          <span className="inline-block mt-0.5 px-1.5 py-0 rounded text-[10px] font-medium bg-light-bg text-mid-gray border border-divider leading-5">
-                            {t("twoModules")}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  {/* Section */}
-                  <td className="px-3 py-3">
-                    <span className="whitespace-nowrap text-mid-gray text-xs font-medium">
-                      {sectionShort(g.section)}
-                    </span>
-                  </td>
-                  {/* Status */}
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span
-                        className={clsx(
-                          "whitespace-nowrap px-2 py-0.5 rounded-full text-xs font-medium",
-                          STATUS_STYLES[g.status] ?? "bg-light-bg text-soft-mute",
-                        )}
+    <DataTable>
+      <thead>
+        <HeadRow>
+          <Th kind="main" sticky="left">{t("colTest")}</Th>
+          <Th priority="md">{t("colSection")}</Th>
+          <Th>{t("colStatus")}</Th>
+          <Th>{t("colResult")}</Th>
+          <Th priority="md">{t("colSubmitted")}</Th>
+          <Th kind="long" priority="lg" className="w-[18%]">{tv("column")}</Th>
+        </HeadRow>
+      </thead>
+      <tbody>
+        {rows.map((g) => {
+          const isExpanded = expanded.has(g.key);
+          const canExpand = g.isMultiModule && g.modules.length > 0;
+          const submittedLabel = g.submittedAt ? formatShortDate(g.submittedAt) : null;
+          const submittedTitle = g.submittedAt ? formatShortDateTime(g.submittedAt) : undefined;
+
+          return (
+            <Fragment key={g.key}>
+              <DataRow colSpan={6}>
+                {/* Test */}
+                <Td kind="main" sticky="left">
+                  <div className="flex items-start gap-1">
+                    {canExpand ? (
+                      <button
+                        type="button"
+                        onClick={() => toggle(g.key)}
+                        aria-expanded={isExpanded}
+                        aria-label={
+                          isExpanded
+                            ? t("collapseModules")
+                            : t("expandModules")
+                        }
+                        className="mt-0.5 flex-shrink-0 text-soft-mute hover:text-charcoal transition-colors"
                       >
-                        {g.status}
-                      </span>
-                      {(g.attemptNumber ?? 1) > 1 && (
-                        <span className="whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-medium bg-light-bg text-mid-gray border border-divider">
-                          {t("attemptN", { n: String(g.attemptNumber) })}
+                        {isExpanded ? (
+                          <ChevronDown size={14} />
+                        ) : (
+                          <ChevronRight size={14} />
+                        )}
+                      </button>
+                    ) : (
+                      <span className="inline-block w-[14px] flex-shrink-0" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <TruncatedText className="font-medium text-charcoal">
+                          {g.testName}
+                        </TruncatedText>
+                        <Link
+                          href={`/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`}
+                          className="flex-shrink-0 text-soft-mute hover:text-warm-coral-text transition-colors"
+                          title={t("viewDetail")}
+                        >
+                          <ExternalLink size={11} />
+                        </Link>
+                      </div>
+                      {g.isMultiModule && (
+                        <span className="inline-block mt-0.5 px-1.5 py-0 rounded text-[10px] font-medium bg-light-bg text-mid-gray border border-divider leading-5">
+                          {t("twoModules")}
                         </span>
                       )}
                     </div>
-                  </td>
-                  {/* Result */}
-                  <td className="px-3 py-3">
-                    {g.scaledScore != null ? (
-                      <div>
-                        <div className="text-base font-bold text-charcoal leading-tight">
-                          {g.scaledScore}
-                        </div>
-                        <div className="text-[11px] text-soft-mute mt-0.5">
-                          {g.total > 0 ? `${g.correct}/${g.total}` : "—"}
-                          {g.percentage != null
-                            ? ` · ${g.percentage.toFixed(1)}%`
+                  </div>
+                </Td>
+                {/* Section */}
+                <Td priority="md">
+                  <span className="text-mid-gray font-medium">
+                    {sectionShort(g.section)}
+                  </span>
+                </Td>
+                {/* Status */}
+                <Td>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span
+                      className={clsx(
+                        "whitespace-nowrap px-2 py-0.5 rounded-full text-xs font-medium",
+                        STATUS_STYLES[g.status] ?? "bg-light-bg text-soft-mute",
+                      )}
+                    >
+                      {g.status}
+                    </span>
+                    {(g.attemptNumber ?? 1) > 1 && (
+                      <span className="whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-medium bg-light-bg text-mid-gray border border-divider">
+                        {t("attemptN", { n: String(g.attemptNumber) })}
+                      </span>
+                    )}
+                  </div>
+                </Td>
+                {/* Result */}
+                <Td>
+                  {g.scaledScore != null ? (
+                    <TwoLineCell
+                      main={String(g.scaledScore)}
+                      detail={g.total > 0 ? `${g.correct}/${g.total}${g.percentage != null ? ` · ${g.percentage.toFixed(1)}%` : ""}` : undefined}
+                      mainClassName="text-base font-bold text-charcoal leading-tight"
+                    />
+                  ) : (
+                    <span className="text-soft-mute">—</span>
+                  )}
+                </Td>
+                {/* Submitted */}
+                <Td priority="md">
+                  {submittedLabel ? (
+                    <TwoLineCell
+                      main={submittedLabel}
+                      detail={formatDuration(g.timeSeconds)}
+                      mainTitle={submittedTitle}
+                      mainClassName="text-mid-gray"
+                    />
+                  ) : (
+                    <span className="text-soft-mute">—</span>
+                  )}
+                </Td>
+                {/* Answers */}
+                <Td kind="long" priority="lg" className="align-top">
+                  {g.visibility ? (
+                    <VisibilityCell
+                      testId={g.testId}
+                      studentId={studentId}
+                      vis={g.visibility}
+                    />
+                  ) : (
+                    <span className="text-soft-mute text-xs">—</span>
+                  )}
+                </Td>
+              </DataRow>
+              {/* Expandable module breakdown */}
+              {canExpand && isExpanded && (
+                <tr className="border-b border-divider bg-light-bg/40">
+                  <td colSpan={6} className="px-3 py-2.5">
+                    <div className="ml-[22px] space-y-0.5">
+                      {g.modules.map((m) => (
+                        <div key={m.submissionId} className="text-xs text-mid-gray">
+                          <span className="font-medium">{m.label}:</span>{" "}
+                          {m.correct}/{m.total}
+                          {m.percentage != null
+                            ? ` (${m.percentage.toFixed(1)}%)`
                             : ""}
                         </div>
-                      </div>
-                    ) : (
-                      <span className="text-soft-mute">—</span>
-                    )}
-                  </td>
-                  {/* Submitted */}
-                  <td className="px-3 py-3">
-                    {g.submittedAt ? (
-                      <div>
-                        <div className="text-mid-gray text-xs">
-                          {formatDate(g.submittedAt)}
-                        </div>
-                        <div className="text-soft-mute text-[11px] mt-0.5">
-                          {formatDuration(g.timeSeconds)}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-soft-mute">—</span>
-                    )}
-                  </td>
-                  {/* Answers */}
-                  <td className="px-3 py-3 align-top">
-                    {g.visibility ? (
-                      <VisibilityCell
-                        testId={g.testId}
-                        studentId={studentId}
-                        vis={g.visibility}
-                      />
-                    ) : (
-                      <span className="text-soft-mute text-xs">—</span>
-                    )}
+                      ))}
+                    </div>
                   </td>
                 </tr>
-                {/* Expandable module breakdown */}
-                {canExpand && isExpanded && (
-                  <tr className="border-b border-divider bg-light-bg/40">
-                    <td colSpan={6} className="px-5 py-2.5">
-                      <div className="ml-[22px] space-y-0.5">
-                        {g.modules.map((m) => (
-                          <div key={m.submissionId} className="text-xs text-mid-gray">
-                            <span className="font-medium">{m.label}:</span>{" "}
-                            {m.correct}/{m.total}
-                            {m.percentage != null
-                              ? ` (${m.percentage.toFixed(1)}%)`
-                              : ""}
-                          </div>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+              )}
+            </Fragment>
+          );
+        })}
+      </tbody>
+    </DataTable>
   );
 }

@@ -4,10 +4,26 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import type { ThHTMLAttributes } from "react";
+import { ChevronUp, ChevronDown, ChevronsUpDown, Eye } from "lucide-react";
 import { sectionTitleClass } from "@/lib/section-color";
-import { formatDate } from "@/lib/datetime";
+import { formatShortDate } from "@/lib/datetime";
 import AssignDialog from "./[id]/AssignDialog";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  RowActionsMenu,
+  TwoLineCell,
+  type RowAction,
+  type Priority,
+  type Kind,
+} from "@/components/ui/data-table";
 
 interface AssignOptions {
   allTeachers: { id: string; display_name: string | null; email: string }[];
@@ -96,21 +112,21 @@ export function compareTests(a: TestRow, b: TestRow, key: SortKey, dir: SortDir)
   return dir === "asc" ? cmp : -cmp;
 }
 
-// ── sort header button ─────────────────────────────────────────────────────────
+// ── sort header — wraps the kit Th with an inline sort button ─────────────────
 
-function SortTh({
-  label,
-  sortKey,
-  active,
-  dir,
-  onSort,
-}: {
+type SortThProps = {
   label: string;
   sortKey: SortKey;
   active: boolean;
   dir: SortDir;
   onSort: (key: SortKey) => void;
-}) {
+  kind?: Kind;
+  priority?: Priority;
+  sticky?: "left" | "right";
+  className?: string;
+} & Omit<ThHTMLAttributes<HTMLTableCellElement>, "onClick">;
+
+function SortTh({ label, sortKey, active, dir, onSort, kind, priority, sticky, className, ...thProps }: SortThProps) {
   const ariaSort: React.AriaAttributes["aria-sort"] = !active
     ? "none"
     : dir === "asc"
@@ -118,12 +134,12 @@ function SortTh({
     : "descending";
 
   return (
-    <th className="text-left px-5 py-3 font-medium" aria-sort={ariaSort}>
+    <Th kind={kind} priority={priority} sticky={sticky} className={className} aria-sort={ariaSort} {...thProps}>
       <button
         onClick={() => onSort(sortKey)}
         className={clsx(
           "inline-flex items-center gap-1 hover:text-charcoal transition-colors",
-          active ? "text-charcoal" : "text-soft-mute",
+          active ? "text-charcoal" : "",
         )}
       >
         {label}
@@ -137,7 +153,7 @@ function SortTh({
           <ChevronsUpDown size={13} className="shrink-0 opacity-40" />
         )}
       </button>
-    </th>
+    </Th>
   );
 }
 
@@ -161,90 +177,125 @@ function TestsTable({
     return [...rows].sort((a, b) => compareTests(a, b, sortKey, sortDir));
   }, [rows, sortKey, sortDir]);
 
+  // 8 columns total
+  const COL_SPAN = 8;
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-sm">
-        <thead>
-          <tr className="border-b border-divider text-soft-mute">
-            <SortTh label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
-            <SortTh label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
-            <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
-            <th className="text-left px-5 py-3 font-medium text-soft-mute">Assignments</th>
-            <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
-            <SortTh label="Due Date" sortKey="due_date" active={sortKey === "due_date"} dir={sortDir} onSort={onSort} />
-            <SortTh label="Created" sortKey="created_at" active={sortKey === "created_at"} dir={sortDir} onSort={onSort} />
-            <th className="text-left px-5 py-3 font-medium text-soft-mute">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((test) => {
-            const mod = test.modules as TestMod | null;
-            const mod2 = (test.module_2 ?? null) as Pick<TestMod, "module_name" | "module_number"> | null;
-            return (
-              <tr
-                key={test.id}
-                className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-              >
-                <td className="px-5 py-3 max-w-xs [overflow-wrap:anywhere]">
-                  <Link href={`/admin/tests/${test.id}`} className="hover:text-warm-coral-text transition-colors">
-                    <div className={clsx("font-medium", sectionTitleClass(mod?.section))}>{test.test_name}</div>
-                    {test.is_adaptive && (
-                      <span className="text-[10px] uppercase tracking-wider text-warm-coral-text font-semibold">Adaptive</span>
-                    )}
-                  </Link>
-                </td>
-                <td className="px-5 py-3 text-mid-gray">
-                  {mod && mod2 ? (
-                    <>
-                      <div>{mod.module_name}</div>
-                      <div className="mt-1">{mod2.module_name}</div>
-                      <div className="text-xs text-soft-mute">{mod.section} · M1 + M2</div>
-                    </>
-                  ) : mod ? (
-                    <>
-                      {mod.module_name}
-                      <div className="text-xs text-soft-mute">
-                        {mod.section}{mod.module_number ? ` · M${mod.module_number}` : ""}
-                      </div>
-                    </>
-                  ) : (
-                    <span className="text-soft-mute italic text-xs">Adaptive · multi-module</span>
-                  )}
-                </td>
-                <td className="px-5 py-3">
-                  <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", STATUS_STYLES[test.status] ?? "bg-light-bg text-mid-gray")}>
-                    {test.status}
-                  </span>
-                </td>
-                <td className="px-5 py-3 text-mid-gray whitespace-nowrap" title="Teachers · Students · Class groups">
-                  {test.assignment.teacherIds.length}T · {test.assignment.studentIds.length}S · {test.assignment.classGroupIds.length}C
-                </td>
-                <td className="px-5 py-3 text-mid-gray">
-                  {test.submissions.done} / {test.submissions.total}
-                </td>
-                <td className="px-5 py-3 text-soft-mute text-xs">
-                  {test.due_date ? formatDate(test.due_date) : "—"}
-                </td>
-                <td className="px-5 py-3 text-soft-mute text-xs">
-                  {formatDate(test.created_at)}
-                </td>
-                <td className="px-5 py-3">
-                  <AssignDialog
-                    variant="menu"
-                    testId={test.id}
-                    studentIds={test.assignment.studentIds}
-                    classGroupIds={test.assignment.classGroupIds}
-                    teacherIds={test.assignment.teacherIds}
-                    allClassGroups={assignOptions.allClassGroups}
-                    allTeachers={assignOptions.allTeachers}
+    <DataTable>
+      <thead>
+        <HeadRow>
+          <SortTh kind="main" sticky="left" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
+          <SortTh kind="long" priority="md" className="w-[16%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
+          <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
+          <Th priority="lg">Assignments</Th>
+          <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
+          <SortTh priority="lg" label="Due" sortKey="due_date" active={sortKey === "due_date"} dir={sortDir} onSort={onSort} />
+          <SortTh priority="xl" label="Created" sortKey="created_at" active={sortKey === "created_at"} dir={sortDir} onSort={onSort} />
+          <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+        </HeadRow>
+      </thead>
+      <tbody>
+        {sorted.length === 0 && (
+          <EmptyRow colSpan={COL_SPAN}>No tests found.</EmptyRow>
+        )}
+        {sorted.map((test) => {
+          const mod = test.modules as TestMod | null;
+          const mod2 = (test.module_2 ?? null) as Pick<TestMod, "module_name" | "module_number"> | null;
+
+          const moduleMain = mod && mod2
+            ? `${mod.module_name} + ${mod2.module_name}`
+            : mod
+            ? mod.module_name
+            : null;
+          const moduleDetail = mod && mod2
+            ? `${mod.section} · M1 + M2`
+            : mod
+            ? `${mod.section}${mod.module_number ? ` · M${mod.module_number}` : ""}`
+            : null;
+          const moduleLabel = mod
+            ? moduleMain + (moduleDetail ? ` (${moduleDetail})` : "")
+            : "Adaptive · multi-module";
+
+          const assignments = `${test.assignment.teacherIds.length}T · ${test.assignment.studentIds.length}S · ${test.assignment.classGroupIds.length}C`;
+          const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
+          const createdLabel = formatShortDate(test.created_at);
+
+          const actions: RowAction[] = [
+            { label: "View detail", icon: Eye, href: `/admin/tests/${test.id}` },
+          ];
+
+          return (
+            <DataRow
+              key={test.id}
+              expandBelow="xl"
+              colSpan={COL_SPAN}
+              details={
+                <>
+                  <DetailItem label="Module" priority="md">{moduleLabel}</DetailItem>
+                  <DetailItem label="Assignments" priority="lg">{assignments}</DetailItem>
+                  <DetailItem label="Due" priority="lg">{dueLabel}</DetailItem>
+                  <DetailItem label="Created" priority="xl">{createdLabel}</DetailItem>
+                </>
+              }
+            >
+              <Td kind="main" sticky="left">
+                <Link href={`/admin/tests/${test.id}`} className="block hover:text-warm-coral-text transition-colors">
+                  <TwoLineCell
+                    main={
+                      <span className={clsx("font-medium", sectionTitleClass(mod?.section))}>
+                        {test.test_name}
+                      </span>
+                    }
+                    detail={
+                      test.is_adaptive ? (
+                        <span className="text-[10px] uppercase tracking-wider text-warm-coral-text font-semibold">Adaptive</span>
+                      ) : undefined
+                    }
                   />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                </Link>
+              </Td>
+              <Td kind="long" priority="md" className="text-mid-gray">
+                {mod ? (
+                  <TwoLineCell main={moduleMain ?? "—"} detail={moduleDetail ?? undefined} mainClassName="text-mid-gray" />
+                ) : (
+                  <span className="text-soft-mute italic">Adaptive · multi-module</span>
+                )}
+              </Td>
+              <Td>
+                <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", STATUS_STYLES[test.status] ?? "bg-light-bg text-mid-gray")}>
+                  {test.status}
+                </span>
+              </Td>
+              <Td priority="lg" className="text-mid-gray" title="Teachers · Students · Class groups">
+                {assignments}
+              </Td>
+              <Td className="text-mid-gray">
+                {test.submissions.done} / {test.submissions.total}
+              </Td>
+              <Td priority="lg" className="text-soft-mute">
+                {dueLabel}
+              </Td>
+              <Td priority="xl" className="text-soft-mute">
+                {createdLabel}
+              </Td>
+              <Td kind="actions" sticky="right">
+                <ExpandToggle label={`More about ${test.test_name}`} />
+                <AssignDialog
+                  variant="menu"
+                  testId={test.id}
+                  studentIds={test.assignment.studentIds}
+                  classGroupIds={test.assignment.classGroupIds}
+                  teacherIds={test.assignment.teacherIds}
+                  allClassGroups={assignOptions.allClassGroups}
+                  allTeachers={assignOptions.allTeachers}
+                />
+                <RowActionsMenu label={`Actions for ${test.test_name}`} items={actions} />
+              </Td>
+            </DataRow>
+          );
+        })}
+      </tbody>
+    </DataTable>
   );
 }
 
@@ -327,7 +378,7 @@ export default function TestsTableClient({
       )}
       {closedTests.length > 0 && (
         <details className="border-t border-divider">
-          <summary className="px-5 py-3 text-sm text-soft-mute cursor-pointer hover:text-charcoal select-none">
+          <summary className="px-3 py-3 text-sm text-soft-mute cursor-pointer hover:text-charcoal select-none">
             Closed tests ({closedTests.length})
           </summary>
           <TestsTable

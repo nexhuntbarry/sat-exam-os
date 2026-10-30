@@ -6,10 +6,19 @@ import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDate } from "@/lib/datetime";
+import { formatShortDate } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
 import { getTranslations } from "next-intl/server";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  EmptyRow,
+  TwoLineCell,
+} from "@/components/ui/data-table";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -307,185 +316,180 @@ export default async function StudentTestsPage() {
 
   const hasDueDates = sorted.some((t2) => Boolean(t2.due_date));
 
+  const COL_SPAN = hasDueDates ? 5 : 4;
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageIntro tKey="student.tests" />
       <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {sorted.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
-            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">{t("noTests")}</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">{t("columns.testName")}</th>
-                  <th className="text-left px-5 py-3 font-medium whitespace-nowrap">{t("columns.status")}</th>
-                  {hasDueDates && (
-                    <th className="text-left px-5 py-3 font-medium whitespace-nowrap">{t("columns.dueDate")}</th>
-                  )}
-                  <th className="text-left px-5 py-3 font-medium">{t("columns.score")}</th>
-                  <th className="text-left px-5 py-3 font-medium">{t("columns.action")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sorted.map((test) => {
-                  const mod = test.modules as unknown as
-                    | { module_name: string; section: string; module_number: number | null }
-                    | null;
-                  const isTwoModule = Boolean(test.is_adaptive || test.module_2_id);
-                  const onModule2 = computeOnModule2(test);
-                  const subtitle = buildSubtitle(test, t);
+      {sorted.length === 0 ? (
+        <div className="py-16 text-center space-y-3 border-y border-divider">
+          <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
+          <p className="text-soft-mute text-sm">{t("noTests")}</p>
+        </div>
+      ) : (
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">{t("columns.testName")}</Th>
+              <Th>{t("columns.status")}</Th>
+              {hasDueDates && <Th>{t("columns.dueDate")}</Th>}
+              <Th>{t("columns.score")}</Th>
+              <Th kind="actions" sticky="right">{t("columns.action")}</Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {sorted.map((test) => {
+              const mod = test.modules as unknown as
+                | { module_name: string; section: string; module_number: number | null }
+                | null;
+              const isTwoModule = Boolean(test.is_adaptive || test.module_2_id);
+              const onModule2 = computeOnModule2(test);
+              const subtitle = buildSubtitle(test, t);
 
-                  // Subject tag label
-                  const section = mod?.section ?? (isTwoModule ? "Math" : null);
-                  const subjectLabel =
-                    section === "Math"
-                      ? t("subject.math")
-                      : section === "Reading & Writing"
-                      ? t("subject.readingWriting")
-                      : section ?? null;
-                  const subjectClass =
-                    section === "Math"
-                      ? "bg-blue-50 text-blue-600 border border-blue-200"
-                      : section === "Reading & Writing"
-                      ? "bg-violet-50 text-violet-600 border border-violet-200"
-                      : "bg-light-bg text-mid-gray border border-divider";
+              // Subject tag label
+              const section = mod?.section ?? (isTwoModule ? "Math" : null);
+              const subjectLabel =
+                section === "Math"
+                  ? t("subject.math")
+                  : section === "Reading & Writing"
+                  ? t("subject.readingWriting")
+                  : section ?? null;
+              const subjectClass =
+                section === "Math"
+                  ? "bg-blue-50 text-blue-600 border border-blue-200"
+                  : section === "Reading & Writing"
+                  ? "bg-violet-50 text-violet-600 border border-violet-200"
+                  : "bg-light-bg text-mid-gray border border-divider";
 
-                  // Status string (never wraps)
-                  const statusLabel =
-                    test.testStatus === "Submitted"
-                      ? t("status.submitted")
-                      : test.testStatus === "In Progress"
-                      ? isTwoModule
-                        ? onModule2
-                          ? t("status.inProgressM2of2")
-                          : t("status.inProgressM1of2")
-                        : t("status.inProgress")
-                      : t("status.notStarted");
+              // Status string (never wraps)
+              const statusLabel =
+                test.testStatus === "Submitted"
+                  ? t("status.submitted")
+                  : test.testStatus === "In Progress"
+                  ? isTwoModule
+                    ? onModule2
+                      ? t("status.inProgressM2of2")
+                      : t("status.inProgressM1of2")
+                    : t("status.inProgress")
+                  : t("status.notStarted");
 
-                  const statusClass =
-                    test.testStatus === "Submitted"
-                      ? "bg-warm-amber/15 text-warm-amber"
-                      : test.testStatus === "In Progress"
-                      ? "bg-warm-coral/15 text-warm-coral-text"
-                      : "bg-light-bg text-mid-gray";
+              const statusClass =
+                test.testStatus === "Submitted"
+                  ? "bg-warm-amber/15 text-warm-amber"
+                  : test.testStatus === "In Progress"
+                  ? "bg-warm-coral/15 text-warm-coral-text"
+                  : "bg-light-bg text-mid-gray";
 
-                  // Score: only for fully submitted tests
-                  const showScore =
-                    test.testStatus === "Submitted" &&
-                    test.attempt?.percentage != null;
+              // Score: only for fully submitted tests
+              const showScore =
+                test.testStatus === "Submitted" &&
+                test.attempt?.percentage != null;
 
-                  // Action: Continue covers resume + continue-to-module-2
-                  const continueHref =
-                    test.needsModule2 || test.testStatus !== "In Progress"
-                      ? `/student/tests/${test.id}`
-                      : `/student/tests/${test.id}/take`;
+              // Action: Continue covers resume + continue-to-module-2
+              const continueHref =
+                test.needsModule2 || test.testStatus !== "In Progress"
+                  ? `/student/tests/${test.id}`
+                  : `/student/tests/${test.id}/take`;
 
-                  return (
-                    <tr
-                      key={test.id}
-                      className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
+              return (
+                <DataRow key={test.id} colSpan={COL_SPAN}>
+                  <Td kind="main" sticky="left">
+                    <Link
+                      href={`/student/tests/${test.id}`}
+                      className="block hover:text-warm-coral-text transition-colors"
                     >
-                      <td className="px-5 py-3">
-                        <Link
-                          href={`/student/tests/${test.id}`}
-                          className="font-medium text-charcoal hover:text-warm-coral-text transition-colors"
-                        >
-                          {test.test_name}
-                        </Link>
-                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                          {subjectLabel && (
-                            <span
-                              className={clsx(
-                                "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap",
-                                subjectClass,
-                              )}
-                            >
-                              {subjectLabel}
-                            </span>
-                          )}
-                          <span className="text-soft-mute text-xs">{subtitle}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3">
-                        <span
-                          className={clsx(
-                            "inline-flex items-center px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap",
-                            statusClass,
-                          )}
-                        >
-                          {statusLabel}
-                        </span>
-                      </td>
-                      {hasDueDates && (
-                        <td className="px-5 py-3 text-soft-mute text-xs whitespace-nowrap">
-                          {test.due_date ? formatDate(test.due_date) : "—"}
-                        </td>
+                      <TwoLineCell
+                        main={test.test_name}
+                        detail={
+                          <span className="flex items-center gap-1.5 flex-wrap">
+                            {subjectLabel && (
+                              <span
+                                className={clsx(
+                                  "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap",
+                                  subjectClass,
+                                )}
+                              >
+                                {subjectLabel}
+                              </span>
+                            )}
+                            <span className="text-soft-mute text-xs">{subtitle}</span>
+                          </span>
+                        }
+                        mainClassName="font-medium text-charcoal"
+                      />
+                    </Link>
+                  </Td>
+                  <Td>
+                    <span
+                      className={clsx(
+                        "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
+                        statusClass,
                       )}
-                      <td className="px-5 py-3 text-mid-gray">
-                        {showScore && test.attempt ? (
-                          <>
-                            {test.attempt.scaledScore != null ? (
-                              <div className="font-semibold text-charcoal">
-                                {test.attempt.scaledScore}
-                                <span className="text-soft-mute font-normal">/800</span>
-                              </div>
-                            ) : null}
-                            <div className="text-xs text-soft-mute">
-                              {test.attempt.percentage!.toFixed(1)}%
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-soft-mute">—</span>
-                        )}
-                      </td>
-                      <td className="px-5 py-3">
-                        {test.testStatus === "Submitted" ? (
+                    >
+                      {statusLabel}
+                    </span>
+                  </Td>
+                  {hasDueDates && (
+                    <Td className="text-soft-mute">
+                      {test.due_date ? formatShortDate(test.due_date) : "—"}
+                    </Td>
+                  )}
+                  <Td>
+                    {showScore && test.attempt ? (
+                      <TwoLineCell
+                        main={
+                          test.attempt.scaledScore != null
+                            ? <span className="font-semibold text-charcoal">{test.attempt.scaledScore}<span className="text-soft-mute font-normal">/800</span></span>
+                            : <span className="text-soft-mute">—</span>
+                        }
+                        detail={`${test.attempt.percentage!.toFixed(1)}%`}
+                      />
+                    ) : (
+                      <span className="text-soft-mute">—</span>
+                    )}
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    {test.testStatus === "Submitted" ? (
+                      <Link
+                        href={`/student/tests/${test.id}/result`}
+                        className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium whitespace-nowrap transition-colors"
+                      >
+                        {t("actions.viewResult")}
+                      </Link>
+                    ) : test.testStatus === "In Progress" || test.needsModule2 ? (
+                      <div className="flex items-center gap-2">
+                        <Link
+                          href={continueHref}
+                          className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium whitespace-nowrap transition-colors"
+                        >
+                          {t("actions.continue")}
+                        </Link>
+                        {test.attempt?.partialResultSubmissionId && (
                           <Link
-                            href={`/student/tests/${test.id}/result`}
+                            href={`/student/tests/${test.id}/result?submission=${test.attempt.partialResultSubmissionId}`}
                             className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium whitespace-nowrap transition-colors"
                           >
                             {t("actions.viewResult")}
                           </Link>
-                        ) : test.testStatus === "In Progress" || test.needsModule2 ? (
-                          <div className="flex items-center gap-2">
-                            <Link
-                              href={continueHref}
-                              className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium whitespace-nowrap transition-colors"
-                            >
-                              {t("actions.continue")}
-                            </Link>
-                            {test.attempt?.partialResultSubmissionId && (
-                              <Link
-                                href={`/student/tests/${test.id}/result?submission=${test.attempt.partialResultSubmissionId}`}
-                                className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium whitespace-nowrap transition-colors"
-                              >
-                                {t("actions.viewResult")}
-                              </Link>
-                            )}
-                          </div>
-                        ) : (
-                          <Link
-                            href={`/student/tests/${test.id}`}
-                            className="px-3 py-1.5 rounded-lg bg-warm-amber/15 text-warm-amber hover:bg-warm-amber/25 text-xs font-medium whitespace-nowrap transition-colors"
-                          >
-                            {t("actions.start")}
-                          </Link>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      </div>
+                    ) : (
+                      <Link
+                        href={`/student/tests/${test.id}`}
+                        className="px-3 py-1.5 rounded-lg bg-warm-amber/15 text-warm-amber hover:bg-warm-amber/25 text-xs font-medium whitespace-nowrap transition-colors"
+                      >
+                        {t("actions.start")}
+                      </Link>
+                    )}
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      )}
     </div>
   );
 }

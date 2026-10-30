@@ -4,8 +4,16 @@ import { ArrowLeft } from "lucide-react";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaTestIds, onSide } from "@/lib/qa";
-import { formatDateTime } from "@/lib/datetime";
+import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
 import SubmissionRowActions from "./SubmissionRowActions";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  EmptyRow,
+} from "@/components/ui/data-table";
 
 export const dynamic = "force-dynamic";
 
@@ -81,7 +89,7 @@ export default async function ManageSubmissionsPage({
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <div className="flex items-center gap-3 text-soft-mute text-sm">
         <Link href={`/admin/tests/${testId}`} className="hover:text-charcoal inline-flex items-center gap-1">
           <ArrowLeft size={14} /> Back to test
@@ -105,7 +113,7 @@ export default async function ManageSubmissionsPage({
       </div>
 
       {groups.size === 0 ? (
-        <div className="bg-surface border border-divider rounded-2xl py-12 text-center text-soft-mute text-sm">
+        <div className="py-12 text-center text-soft-mute text-sm border-y border-divider">
           No submissions yet.
         </div>
       ) : (
@@ -127,16 +135,16 @@ export default async function ManageSubmissionsPage({
                   studentName={group.studentName}
                 />
               </div>
-              <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
-                <thead className="bg-light-bg text-soft-mute text-xs uppercase tracking-wider">
-                  <tr>
-                    <th className="text-left px-4 py-2 font-medium">Module</th>
-                    <th className="text-left px-4 py-2 font-medium">Status</th>
-                    <th className="text-left px-4 py-2 font-medium">Score</th>
-                    <th className="text-left px-4 py-2 font-medium">Started</th>
-                    <th className="text-left px-4 py-2 font-medium">Submitted</th>
-                    <th className="text-left px-4 py-2 font-medium">Actions</th>
-                  </tr>
+              <DataTable className="border-t-0">
+                <thead>
+                  <HeadRow>
+                    <Th kind="main">Module</Th>
+                    <Th>Status</Th>
+                    <Th>Score</Th>
+                    <Th priority="md">Started</Th>
+                    <Th priority="md">Submitted</Th>
+                    <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+                  </HeadRow>
                 </thead>
                 <tbody>
                   {group.submissions
@@ -156,23 +164,23 @@ export default async function ManageSubmissionsPage({
                                 ? "Module 2 · Hard"
                                 : "Single";
                       return (
-                        <tr key={s.id} className="border-t border-divider">
-                          <td className="px-4 py-2 text-charcoal font-medium">
+                        <DataRow key={s.id} colSpan={6}>
+                          <Td kind="main" className="font-medium text-charcoal">
                             {moduleLabel}
-                          </td>
-                          <td className="px-4 py-2 text-mid-gray">{s.status}</td>
-                          <td className="px-4 py-2 text-mid-gray">
+                          </Td>
+                          <Td className="text-mid-gray">{s.status}</Td>
+                          <Td className="text-mid-gray">
                             {s.percentage != null
                               ? `${Number(s.percentage).toFixed(0)}%`
                               : "—"}
-                          </td>
-                          <td className="px-4 py-2 text-mid-gray text-xs">
-                            {formatDateTime(s.started_at)}
-                          </td>
-                          <td className="px-4 py-2 text-mid-gray text-xs">
-                            {s.submitted_at ? formatDateTime(s.submitted_at) : "—"}
-                          </td>
-                          <td className="px-4 py-2">
+                          </Td>
+                          <Td priority="md" className="text-soft-mute" title={formatDateTime(s.started_at)}>
+                            {formatShortDateTime(s.started_at)}
+                          </Td>
+                          <Td priority="md" className="text-soft-mute" title={s.submitted_at ? formatDateTime(s.submitted_at) : undefined}>
+                            {s.submitted_at ? formatShortDateTime(s.submitted_at) : "—"}
+                          </Td>
+                          <Td kind="actions" sticky="right">
                             <SubmissionRowActions
                               attemptKey={s.id}
                               submissionIds={[s.id]}
@@ -180,12 +188,12 @@ export default async function ManageSubmissionsPage({
                               isInProgress={s.status === "In Progress"}
                               studentName={group.studentName}
                             />
-                          </td>
-                        </tr>
+                          </Td>
+                        </DataRow>
                       );
                     })}
                 </tbody>
-              </table></div>
+              </DataTable>
             </div>
           ))}
         </div>

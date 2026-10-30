@@ -5,10 +5,21 @@ import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDate, formatDateTime, formatShortDateTime, formatShortDate } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  TwoLineCell,
+} from "@/components/ui/data-table";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -350,78 +361,82 @@ export default async function TeacherTestDetailPage({
         {attempts.length === 0 ? (
           <div className="py-12 text-center text-soft-mute text-sm">No submissions yet.</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Student</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Score</th>
-                  <th className="text-left px-5 py-3 font-medium">Correct</th>
-                  <th className="text-left px-5 py-3 font-medium">Time</th>
-                  <th className="text-left px-5 py-3 font-medium">Submitted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {attempts.map((a) => (
-                  <tr key={a.key} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal font-medium">{a.studentName}</div>
-                      <div className="text-soft-mute text-xs">{a.email}</div>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", statusStyles[a.status] ?? "bg-light-bg text-mid-gray")}>
+          <DataTable className="border-t-0">
+            <thead>
+              <HeadRow>
+                <Th kind="main" sticky="left">Student</Th>
+                <Th>Status</Th>
+                <Th>Score</Th>
+                <Th priority="md">Correct</Th>
+                <Th priority="md">Time</Th>
+                <Th priority="lg">Submitted</Th>
+              </HeadRow>
+            </thead>
+            <tbody>
+              {attempts.map((a) => {
+                const scoreMain = a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—";
+                const scoreDetail = a.scaledScore != null ? `${a.scaledScore}/800` : undefined;
+                const correctMain = a.totalQuestions > 0 ? `${a.correctCount}/${a.totalQuestions}` : "—";
+                const submittedLabel = a.submittedAt ? formatShortDateTime(a.submittedAt) : "—";
+                const submittedTitle = a.submittedAt ? formatDateTime(a.submittedAt) : undefined;
+
+                const moduleScoreBreakdown = a.isMultiModule && a.modules.length > 0
+                  ? a.modules.map((m) => `${m.label}: ${m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}${m.scaledScore != null ? ` · ${m.scaledScore}/800` : ""}`).join(" | ")
+                  : undefined;
+                const moduleCorrectBreakdown = a.isMultiModule && a.modules.length > 0
+                  ? a.modules.map((m) => `${m.label}: ${m.correctCount}/${m.totalQuestions}`).join(" | ")
+                  : undefined;
+
+                return (
+                  <DataRow
+                    key={a.key}
+                    expandBelow="lg"
+                    colSpan={6}
+                    details={
+                      <>
+                        <DetailItem label="Correct" priority="md">{correctMain}{moduleCorrectBreakdown ? ` (${moduleCorrectBreakdown})` : ""}</DetailItem>
+                        <DetailItem label="Time" priority="md">{formatDuration(a.timeSpentSeconds)}</DetailItem>
+                        <DetailItem label="Submitted" priority="lg">{submittedLabel}</DetailItem>
+                      </>
+                    }
+                  >
+                    <Td kind="main" sticky="left">
+                      <TwoLineCell
+                        main={a.studentName}
+                        detail={a.email}
+                        mainClassName="font-medium text-charcoal"
+                      />
+                    </Td>
+                    <Td>
+                      <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", statusStyles[a.status] ?? "bg-light-bg text-mid-gray")}>
                         {a.status}
                       </span>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      <div>
-                        {a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—"}
-                      </div>
-                      {a.scaledScore != null && (
-                        <div className="text-warm-coral-text text-xs font-medium">
-                          {a.scaledScore}/800
-                        </div>
-                      )}
-                      {a.isMultiModule && a.modules.length > 0 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
-                          {a.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}:{" "}
-                              {m.percentage != null
-                                ? `${m.percentage.toFixed(1)}%`
-                                : "—"}
-                              {m.scaledScore != null && ` · ${m.scaledScore}/800`}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      <div>
-                        {a.totalQuestions > 0
-                          ? `${a.correctCount}/${a.totalQuestions}`
-                          : "—"}
-                      </div>
-                      {a.isMultiModule && a.modules.length > 0 && (
-                        <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                          {a.modules.map((m) => (
-                            <div key={m.submissionId}>
-                              {m.label}: {m.correctCount}/{m.totalQuestions}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">{formatDuration(a.timeSpentSeconds)}</td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {a.submittedAt ? formatDateTime(a.submittedAt) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </Td>
+                    <Td>
+                      <TwoLineCell
+                        main={scoreMain}
+                        detail={scoreDetail ?? moduleScoreBreakdown}
+                        mainClassName="text-mid-gray"
+                      />
+                    </Td>
+                    <Td priority="md" className="text-mid-gray">
+                      <TwoLineCell
+                        main={correctMain}
+                        detail={moduleCorrectBreakdown}
+                        mainClassName="text-mid-gray"
+                      />
+                    </Td>
+                    <Td priority="md" className="text-mid-gray">
+                      {formatDuration(a.timeSpentSeconds)}
+                    </Td>
+                    <Td priority="lg" className="text-soft-mute" title={submittedTitle}>
+                      {submittedLabel}
+                    </Td>
+                  </DataRow>
+                );
+              })}
+            </tbody>
+          </DataTable>
         )}
       </div>
     </div>

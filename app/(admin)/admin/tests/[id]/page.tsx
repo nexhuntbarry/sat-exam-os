@@ -4,7 +4,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { ChevronLeft, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronDown, Eye, FileText } from "lucide-react";
 import TestDetailActions from "./TestDetailActions";
 import EditTestButton from "./EditTestButton";
 import RemoveStudentButton from "./RemoveStudentButton";
@@ -12,7 +12,7 @@ import AssignDialog from "./AssignDialog";
 import { approvalCounts, isFullyApproved } from "../module-approval";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDate, formatDateTime, formatShortDate } from "@/lib/datetime";
 import { getQaClassGroupIds, getQaTestIds, onSide, scopeIds, scopeUsers } from "@/lib/qa";
 import { getTranslations } from "next-intl/server";
 import {
@@ -21,6 +21,19 @@ import {
   visibilityKey,
 } from "@/lib/answer-visibility";
 import { answerVisibilityLabel } from "@/components/tests/answer-visibility-label";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  RowActionsMenu,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 async function getTest(id: string, viewerIsQa: boolean) {
   const db = getServiceClient();
@@ -406,88 +419,99 @@ export default async function TestDetailPage({
             No students yet. Use Assign to add students or classes.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Student</th>
-                  <th className="text-left px-5 py-3 font-medium">Assigned via</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Score</th>
-                  <th className="text-left px-5 py-3 font-medium">{tv("column")}</th>
-                  <th className="text-right px-5 py-3 font-medium">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {assignment.students.map((st) => (
-                  <tr key={st.id} className="border-b border-divider last:border-0">
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal font-medium">{st.name}</div>
-                      {st.email !== st.name && <div className="text-soft-mute text-xs">{st.email}</div>}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">
-                      {[st.individual ? "Individual" : null, ...st.groups].filter(Boolean).join(" · ") || (
+          <DataTable className="border-t-0">
+            <thead>
+              <HeadRow>
+                <Th kind="main" sticky="left">Student</Th>
+                <Th priority="lg">Assigned via</Th>
+                <Th>Status</Th>
+                <Th>Score</Th>
+                <Th kind="long" priority="lg" className="w-[18%]">{tv("column")}</Th>
+                <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+              </HeadRow>
+            </thead>
+            <tbody>
+              {assignment.students.map((st) => {
+                const assignedVia = [st.individual ? "Individual" : null, ...st.groups].filter(Boolean).join(" · ");
+                const input = visibilityInputs.get(visibilityKey(test.id, st.id));
+                const effective = input ? summarizeAnswerVisibility(input) : null;
+                const visLabel = effective ? answerVisibilityLabel(tv, effective) : null;
+
+                const rowActions: (RowAction | false)[] = [
+                  st.progress.detailSubmissionId
+                    ? { label: "View result", icon: Eye, href: `/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}` }
+                    : st.submissionCount > 0
+                    ? { label: "View submissions", icon: FileText, href: submissionsHref }
+                    : false,
+                ];
+
+                return (
+                  <DataRow
+                    key={st.id}
+                    expandBelow="lg"
+                    colSpan={6}
+                    details={
+                      <>
+                        <DetailItem label="Assigned via" priority="lg">{assignedVia || "Not assigned (has work)"}</DetailItem>
+                        <DetailItem label={tv("column")} priority="lg">
+                          {visLabel ?? "—"}
+                        </DetailItem>
+                      </>
+                    }
+                  >
+                    <Td kind="main" sticky="left">
+                      <TwoLineCell
+                        main={st.name}
+                        detail={st.email !== st.name ? st.email : undefined}
+                        mainClassName="font-medium text-charcoal"
+                      />
+                    </Td>
+                    <Td priority="lg" className="text-mid-gray">
+                      {assignedVia || (
                         <span className="italic text-soft-mute">Not assigned (has work)</span>
                       )}
-                    </td>
-                    <td className="px-5 py-3">
+                    </Td>
+                    <Td>
                       <span
                         className={clsx(
-                          "px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap",
+                          "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
                           progressStyles[st.progress.status],
                         )}
                       >
                         {st.progress.status}
                       </span>
-                    </td>
-                    <td className="px-5 py-3 text-charcoal">
+                    </Td>
+                    <Td className="text-charcoal">
                       {st.progress.score !== null ? `${st.progress.score.toFixed(1)}%` : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-xs">
-                      {(() => {
-                        const input = visibilityInputs.get(visibilityKey(test.id, st.id));
-                        if (!input) return <span className="text-soft-mute">—</span>;
-                        const effective = summarizeAnswerVisibility(input);
-                        return (
-                          <span className={effective.answers ? "text-status-success" : "text-soft-mute"}>
-                            {answerVisibilityLabel(tv, effective)}
-                          </span>
-                        );
-                      })()}
-                    </td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center justify-end gap-3">
-                        {st.progress.detailSubmissionId ? (
-                          <Link
-                            href={`/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}`}
-                            className="text-xs text-warm-coral-text hover:underline whitespace-nowrap"
-                          >
-                            View
-                          </Link>
-                        ) : st.submissionCount > 0 ? (
-                          <Link href={submissionsHref} className="text-xs text-soft-mute hover:text-charcoal whitespace-nowrap">
-                            Submissions
-                          </Link>
-                        ) : null}
-                        {st.individual && (
-                          <RemoveStudentButton
-                            testId={test.id}
-                            studentId={st.id}
-                            studentName={st.name}
-                            submissionCount={st.submissionCount}
-                            hasGradedSubmission={st.hasGradedSubmission}
-                            visibleViaGroup={st.visibleViaGroup}
-                          />
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    </Td>
+                    <Td kind="long" priority="lg">
+                      {effective ? (
+                        <span className={effective.answers ? "text-status-success text-xs" : "text-soft-mute text-xs"}>
+                          {visLabel}
+                        </span>
+                      ) : (
+                        <span className="text-soft-mute text-xs">—</span>
+                      )}
+                    </Td>
+                    <Td kind="actions" sticky="right">
+                      <ExpandToggle label={`More about ${st.name}`} />
+                      <RowActionsMenu label={`Actions for ${st.name}`} items={rowActions} />
+                      {st.individual && (
+                        <RemoveStudentButton
+                          testId={test.id}
+                          studentId={st.id}
+                          studentName={st.name}
+                          submissionCount={st.submissionCount}
+                          hasGradedSubmission={st.hasGradedSubmission}
+                          visibleViaGroup={st.visibleViaGroup}
+                        />
+                      )}
+                    </Td>
+                  </DataRow>
+                );
+              })}
+            </tbody>
+          </DataTable>
         )}
       </div>
 

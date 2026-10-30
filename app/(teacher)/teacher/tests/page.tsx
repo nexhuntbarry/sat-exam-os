@@ -2,13 +2,26 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ClipboardList } from "lucide-react";
+import { ClipboardList, Eye } from "lucide-react";
 import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatShortDate } from "@/lib/datetime";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getAssignedStudentIds, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import {
+  DataTable,
+  HeadRow,
+  Th,
+  Td,
+  DataRow,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  RowActionsMenu,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 async function getTeacherTests(user: { userId: string; role: string | null; isQa: boolean }) {
   const db = getServiceClient();
@@ -126,98 +139,117 @@ export default async function TeacherTestsPage() {
   // list shows what's live by default.
   const activeTests = tests.filter((t) => t.status !== "Closed");
   const closedTests = tests.filter((t) => t.status === "Closed");
+  const COL_SPAN = 8;
+
   const renderTable = (rows: typeof tests) => (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Test Name</th>
-                  <th className="text-left px-5 py-3 font-medium">Section</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Students</th>
-                  <th className="text-left px-5 py-3 font-medium">Submitted</th>
-                  <th className="text-left px-5 py-3 font-medium">Avg Score</th>
-                  <th className="text-left px-5 py-3 font-medium">Due</th>
-                  <th className="text-left px-5 py-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((test) => {
-                  const mod = test.modules as unknown as
-                    | { module_name: string; section: string; module_number: number | null }
-                    | null;
-                  return (
-                    <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
-                      <td className="px-5 py-3">
-                        <Link href={`/teacher/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral-text transition-colors", sectionTitleClass(mod?.section))}>
-                          {test.test_name}
-                        </Link>
-                      </td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        {mod ? <>{mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</> : "Adaptive"}
-                      </td>
-                      <td className="px-5 py-3">
-                        <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
-                          {test.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 text-mid-gray">{test.totalStudents}</td>
-                      <td className="px-5 py-3 text-mid-gray">{test.submittedCount}</td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        {test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}
-                      </td>
-                      <td className="px-5 py-3 text-soft-mute text-xs">
-                        {test.due_date ? formatDate(test.due_date) : "—"}
-                      </td>
-                      <td className="px-5 py-3">
-                        <Link href={`/teacher/tests/${test.id}`} className="text-xs text-warm-coral-text hover:underline">
-                          View
-                        </Link>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+    <DataTable>
+      <thead>
+        <HeadRow>
+          <Th kind="main" sticky="left">Test Name</Th>
+          <Th priority="md">Section</Th>
+          <Th>Status</Th>
+          <Th priority="md">Students</Th>
+          <Th>Submitted</Th>
+          <Th priority="md">Avg Score</Th>
+          <Th priority="lg">Due</Th>
+          <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+        </HeadRow>
+      </thead>
+      <tbody>
+        {rows.map((test) => {
+          const mod = test.modules as unknown as
+            | { module_name: string; section: string; module_number: number | null }
+            | null;
+          const sectionLabel = mod ? `${mod.section}${mod.module_number ? ` M${mod.module_number}` : ""}` : "Adaptive";
+          const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
+
+          const actions: RowAction[] = [
+            { label: "View detail", icon: Eye, href: `/teacher/tests/${test.id}` },
+          ];
+
+          return (
+            <DataRow
+              key={test.id}
+              expandBelow="lg"
+              colSpan={COL_SPAN}
+              details={
+                <>
+                  <DetailItem label="Section" priority="md">{sectionLabel}</DetailItem>
+                  <DetailItem label="Students" priority="md">{String(test.totalStudents)}</DetailItem>
+                  <DetailItem label="Avg Score" priority="md">{test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}</DetailItem>
+                  <DetailItem label="Due" priority="lg">{dueLabel}</DetailItem>
+                </>
+              }
+            >
+              <Td kind="main" sticky="left">
+                <Link
+                  href={`/teacher/tests/${test.id}`}
+                  className={clsx("font-medium hover:text-warm-coral-text transition-colors", sectionTitleClass(mod?.section))}
+                >
+                  <TwoLineCell main={test.test_name} mainClassName="font-medium" />
+                </Link>
+              </Td>
+              <Td priority="md" className="text-mid-gray">
+                {sectionLabel}
+              </Td>
+              <Td>
+                <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
+                  {test.status}
+                </span>
+              </Td>
+              <Td priority="md" className="text-mid-gray">{test.totalStudents}</Td>
+              <Td className="text-mid-gray">{test.submittedCount}</Td>
+              <Td priority="md" className="text-mid-gray">
+                {test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}
+              </Td>
+              <Td priority="lg" className="text-soft-mute">
+                {dueLabel}
+              </Td>
+              <Td kind="actions" sticky="right">
+                <ExpandToggle label={`More about ${test.test_name}`} />
+                <RowActionsMenu label={`Actions for ${test.test_name}`} items={actions} />
+              </Td>
+            </DataRow>
+          );
+        })}
+      </tbody>
+    </DataTable>
   );
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageIntro tKey="teacher.tests" />
       <h1 className="text-2xl font-bold text-charcoal">My Tests</h1>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {tests.length === 0 ? (
-          <div className="py-16 px-6 text-center space-y-3 max-w-md mx-auto">
-            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
-            <p className="text-mid-gray text-xs">
-              Build a Draft test in{" "}
-              <Link href="/teacher/teaching-mode" className="text-warm-coral-text hover:underline">
-                Teaching Mode
-              </Link>
-              {" "}or ask your admin to assign one. The{" "}
-              <Link href="/teacher/help" className="text-warm-coral-text hover:underline">
-                Quick Start
-              </Link>
-              {" "}walks through the full flow.
-            </p>
-          </div>
-        ) : (
-          <>
-            {activeTests.length > 0 && renderTable(activeTests)}
-            {closedTests.length > 0 && (
-              <details className="border-t border-divider">
-                <summary className="px-5 py-3 text-sm text-soft-mute cursor-pointer hover:text-charcoal select-none">
-                  Closed tests ({closedTests.length})
-                </summary>
-                {renderTable(closedTests)}
-              </details>
-            )}
-          </>
-        )}
-      </div>
+      {tests.length === 0 ? (
+        <div className="py-16 px-6 text-center space-y-3 max-w-md mx-auto">
+          <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
+          <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
+          <p className="text-mid-gray text-xs">
+            Build a Draft test in{" "}
+            <Link href="/teacher/teaching-mode" className="text-warm-coral-text hover:underline">
+              Teaching Mode
+            </Link>
+            {" "}or ask your admin to assign one. The{" "}
+            <Link href="/teacher/help" className="text-warm-coral-text hover:underline">
+              Quick Start
+            </Link>
+            {" "}walks through the full flow.
+          </p>
+        </div>
+      ) : (
+        <>
+          {activeTests.length > 0 && renderTable(activeTests)}
+          {closedTests.length > 0 && (
+            <details className="border-t border-divider">
+              <summary className="px-3 py-3 text-sm text-soft-mute cursor-pointer hover:text-charcoal select-none">
+                Closed tests ({closedTests.length})
+              </summary>
+              {renderTable(closedTests)}
+            </details>
+          )}
+        </>
+      )}
     </div>
   );
 }
