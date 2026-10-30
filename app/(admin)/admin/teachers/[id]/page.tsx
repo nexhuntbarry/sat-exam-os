@@ -1,11 +1,23 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Mail, Users, GraduationCap, BookOpen } from "lucide-react";
+import { ArrowLeft, Mail, Users, GraduationCap, BookOpen, Eye } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { formatDate } from "@/lib/datetime";
 import { isQaEmail } from "@/lib/qa";
+import {
+  DataRow,
+  DataTable,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  HeadRow,
+  RowActionsMenu,
+  Td,
+  Th,
+  TwoLineCell,
+} from "@/components/ui/data-table";
 
 async function getTeacherDetail(teacherId: string) {
   const db = getServiceClient();
@@ -281,45 +293,55 @@ export default async function AdminTeacherDetailPage({
                     No students enrolled in this class yet.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
+                  <DataTable>
                     <thead>
-                      <tr className="border-b border-divider text-soft-mute">
-                        <th className="text-left px-5 py-2 font-medium">Student</th>
-                        <th className="text-left px-5 py-2 font-medium">Grade</th>
-                        <th className="text-left px-5 py-2 font-medium">Class group label</th>
-                        <th className="text-left px-5 py-2 font-medium">Action</th>
-                      </tr>
+                      <HeadRow>
+                        <Th kind="main" sticky="left">Student</Th>
+                        <Th>Grade</Th>
+                        <Th priority="lg">Class group label</Th>
+                        <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+                      </HeadRow>
                     </thead>
                     <tbody>
                       {cls.students.map((s) => (
-                        <tr
+                        <DataRow
                           key={s.id}
-                          className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
+                          expandBelow="lg"
+                          colSpan={4}
+                          details={
+                            <DetailItem label="Class group label" priority="lg">
+                              {s.class_group ?? "—"}
+                            </DetailItem>
+                          }
                         >
-                          <td className="px-5 py-2.5">
-                            <div className="text-charcoal font-medium">
-                              {s.display_name ?? "—"}
-                            </div>
-                            <div className="text-soft-mute text-xs">{s.email}</div>
-                          </td>
-                          <td className="px-5 py-2.5 text-mid-gray text-xs">
-                            {s.grade ?? "—"}
-                          </td>
-                          <td className="px-5 py-2.5 text-mid-gray text-xs">
+                          <Td kind="main" sticky="left">
+                            <TwoLineCell
+                              main={s.display_name ?? "—"}
+                              detail={s.email}
+                              mainClassName="font-medium text-charcoal"
+                            />
+                          </Td>
+                          <Td className="text-mid-gray">{s.grade ?? "—"}</Td>
+                          <Td priority="lg" className="text-mid-gray">
                             {s.class_group ?? "—"}
-                          </td>
-                          <td className="px-5 py-2.5">
-                            <Link
-                              href={`/admin/students/${s.id}`}
-                              className="text-warm-coral-text text-xs hover:underline"
-                            >
-                              View student
-                            </Link>
-                          </td>
-                        </tr>
+                          </Td>
+                          <Td kind="actions" sticky="right">
+                            <ExpandToggle label={`More about ${s.display_name ?? s.email}`} />
+                            <RowActionsMenu
+                              label={`Actions for ${s.display_name ?? s.email}`}
+                              items={[
+                                {
+                                  label: "View student",
+                                  icon: Eye,
+                                  href: `/admin/students/${s.id}`,
+                                },
+                              ]}
+                            />
+                          </Td>
+                        </DataRow>
                       ))}
                     </tbody>
-                  </table></div>
+                  </DataTable>
                 )}
               </div>
             ))}

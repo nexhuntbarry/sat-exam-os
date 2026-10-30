@@ -4,8 +4,22 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { UserPlus, X, Mail, ShieldCheck } from "lucide-react";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { UserPlus, X, Eye, ShieldCheck, UserX } from "lucide-react";
+import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
+import {
+  DataRow,
+  DataTable,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  HeadRow,
+  RowActionsMenu,
+  Td,
+  Th,
+  TruncatedText,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 interface TeacherProfile {
   assigned_classes: unknown[];
@@ -237,7 +251,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       {showInvite && (
         <InviteModal
           onClose={() => setShowInvite(false)}
@@ -259,113 +273,139 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
         </button>
       </div>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {teachers.length === 0 ? (
-          <div className="py-16 text-center text-soft-mute text-sm">
-            No teachers yet. Invite one to get started.
-          </div>
-        ) : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className="border-b border-divider text-soft-mute">
-                <th className="text-left px-5 py-3 font-medium">Teacher</th>
-                <th className="text-left px-5 py-3 font-medium">Specialty</th>
-                <th className="text-left px-5 py-3 font-medium">Reviewer</th>
-                <th className="text-left px-5 py-3 font-medium">Status</th>
-                <th className="text-left px-5 py-3 font-medium">Invited</th>
-                <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
-                <th className="text-left px-5 py-3 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {teachers.map((teacher) => {
-                const profile = getProfile(teacher);
-                return (
-                  <tr
-                    key={teacher.id}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <Link
-                        href={`/admin/teachers/${teacher.id}`}
-                        className="block hover:text-warm-coral-text transition-colors"
-                      >
-                        <div className="font-medium text-charcoal hover:text-warm-coral-text">
-                          {teacher.display_name ?? "—"}
-                        </div>
-                        <div className="flex items-center gap-1 text-soft-mute text-xs mt-0.5">
-                          <Mail size={11} />
-                          {teacher.email}
-                        </div>
-                      </Link>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th kind="main" sticky="left">Teacher</Th>
+            <Th>Status</Th>
+            <Th priority="md">Reviewer</Th>
+            <Th kind="long" priority="lg" className="w-[18%]">Specialty</Th>
+            <Th priority="lg">Activity</Th>
+            <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {teachers.length === 0 && (
+            <EmptyRow colSpan={6}>No teachers yet. Invite one to get started.</EmptyRow>
+          )}
+          {teachers.map((teacher) => {
+            const profile = getProfile(teacher);
+            const name = teacher.display_name ?? teacher.email;
+            const lastSignIn = teacher.last_sign_in_at
+              ? formatShortDateTime(teacher.last_sign_in_at)
+              : null;
+            const lastSignInFull = teacher.last_sign_in_at
+              ? formatDateTime(teacher.last_sign_in_at)
+              : null;
+            const activityMain = lastSignIn ?? (
+              teacher.clerk_user_id
+                ? "Never signed in"
+                : <span className="text-status-warning">never (pending)</span>
+            );
+            const activityDetail = `Invited ${formatShortDate(teacher.created_at)}`;
+            const activityTitle = `${lastSignInFull ? `Last sign-in ${lastSignInFull}` : "Never signed in"} · Invited ${formatDateTime(teacher.created_at)}`;
+
+            const actions: (RowAction | false)[] = [
+              { label: "View details", icon: Eye, href: `/admin/teachers/${teacher.id}` },
+              teacher.can_review_questions
+                ? {
+                    label: "Revoke reviewer",
+                    icon: ShieldCheck,
+                    onSelect: () => handleToggleReviewer(teacher.id, true),
+                  }
+                : {
+                    label: "Grant reviewer",
+                    icon: ShieldCheck,
+                    onSelect: () => handleToggleReviewer(teacher.id, false),
+                  },
+              teacher.account_status !== "suspended" && {
+                label: "Remove…",
+                icon: UserX,
+                tone: "danger",
+                onSelect: () => handleRemove(teacher.id, name),
+              },
+            ];
+
+            return (
+              <DataRow
+                key={teacher.id}
+                expandBelow="xl"
+                colSpan={6}
+                details={
+                  <>
+                    <DetailItem label="Reviewer" priority="md">
+                      {teacher.can_review_questions ? "Reviewer" : "Off"}
+                    </DetailItem>
+                    <DetailItem label="Specialty" priority="lg">
                       {profile?.specialty ?? "—"}
-                    </td>
-                    <td className="px-5 py-3">
-                      <button
-                        onClick={() =>
-                          handleToggleReviewer(teacher.id, teacher.can_review_questions)
-                        }
-                        className={clsx(
-                          "inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors",
-                          teacher.can_review_questions
-                            ? "bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25"
-                            : "bg-light-bg text-mid-gray hover:bg-divider",
-                        )}
-                        title={
-                          teacher.can_review_questions
-                            ? "Click to revoke question-review permission"
-                            : "Click to grant question-review permission"
-                        }
-                      >
-                        <ShieldCheck size={11} />
-                        {teacher.can_review_questions ? "Reviewer" : "Off"}
-                      </button>
-                    </td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={clsx(
-                          "px-2 py-1 rounded-full text-xs font-medium",
-                          teacher.account_status === "approved"
-                            ? "bg-warm-amber/15 text-warm-amber"
-                            : teacher.account_status === "pending"
-                            ? "bg-status-warning/15 text-status-warning"
-                            : "bg-status-error/15 text-status-error"
-                        )}
-                      >
-                        {teacher.account_status}
+                    </DetailItem>
+                    <DetailItem label="Activity" priority="lg">
+                      <span title={activityTitle}>
+                        {lastSignIn ?? (teacher.clerk_user_id ? "Never signed in" : "never (pending)")}
+                        {" · "}
+                        {activityDetail}
                       </span>
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {formatDate(teacher.created_at)}
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {teacher.last_sign_in_at
-                        ? formatDateTime(teacher.last_sign_in_at)
-                        : teacher.clerk_user_id
-                          ? "—"
-                          : <span className="text-status-warning">never (pending)</span>}
-                    </td>
-                    <td className="px-5 py-3">
-                      {teacher.account_status !== "suspended" && (
-                        <button
-                          onClick={() =>
-                            handleRemove(teacher.id, teacher.display_name ?? teacher.email)
-                          }
-                          className="px-3 py-1.5 rounded-lg bg-status-error/10 hover:bg-status-error/15 text-status-error text-xs font-medium transition-colors"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table></div>
-        )}
-      </div>
+                    </DetailItem>
+                  </>
+                }
+              >
+                <Td kind="main" sticky="left">
+                  <Link
+                    href={`/admin/teachers/${teacher.id}`}
+                    className="block hover:text-warm-coral-text transition-colors"
+                  >
+                    <TwoLineCell
+                      main={teacher.display_name ?? "—"}
+                      detail={teacher.email}
+                      mainClassName="font-medium text-inherit"
+                    />
+                  </Link>
+                </Td>
+                <Td>
+                  <span
+                    className={clsx(
+                      "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
+                      teacher.account_status === "approved"
+                        ? "bg-warm-amber/15 text-warm-amber"
+                        : teacher.account_status === "pending"
+                        ? "bg-status-warning/15 text-status-warning"
+                        : "bg-status-error/15 text-status-error",
+                    )}
+                  >
+                    {teacher.account_status}
+                  </span>
+                </Td>
+                <Td priority="md">
+                  <span
+                    className={clsx(
+                      "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium",
+                      teacher.can_review_questions
+                        ? "bg-warm-coral/15 text-warm-coral-text"
+                        : "bg-light-bg text-mid-gray",
+                    )}
+                  >
+                    <ShieldCheck size={11} />
+                    {teacher.can_review_questions ? "Reviewer" : "Off"}
+                  </span>
+                </Td>
+                <Td kind="long" priority="lg" className="text-mid-gray">
+                  <TruncatedText>{profile?.specialty ?? "—"}</TruncatedText>
+                </Td>
+                <Td priority="lg">
+                  <span className="block" title={activityTitle}>
+                    <span className="block text-mid-gray">{activityMain}</span>
+                    <span className="block text-xs text-soft-mute">{activityDetail}</span>
+                  </span>
+                </Td>
+                <Td kind="actions" sticky="right">
+                  <ExpandToggle label={`More about ${name}`} />
+                  <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                </Td>
+              </DataRow>
+            );
+          })}
+        </tbody>
+      </DataTable>
     </div>
   );
 }

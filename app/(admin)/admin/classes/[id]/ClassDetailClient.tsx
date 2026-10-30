@@ -2,8 +2,22 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, ExternalLink } from "lucide-react";
-import { formatDate } from "@/lib/datetime";
+import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, ExternalLink, Eye } from "lucide-react";
+import { formatShortDate } from "@/lib/datetime";
+import {
+  DataRow,
+  DataTable,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  HeadRow,
+  RowActionsMenu,
+  Td,
+  Th,
+  TruncatedText,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 export interface AssignedTest {
   id: string;
@@ -452,129 +466,148 @@ export default function ClassDetailClient({
       )}
 
       {/* Assigned Tests */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-divider flex items-center gap-2">
+      <section>
+        <div className="flex items-center gap-2 mb-3">
           <ClipboardList size={14} className="text-warm-coral-text" />
           <h2 className="font-semibold text-charcoal">Assigned Tests</h2>
           <span className="text-soft-mute font-normal text-sm">({assignedTests.length})</span>
         </div>
-        {assignedTests.length === 0 ? (
-          <div className="py-10 text-center text-soft-mute text-sm">
-            No tests assigned to this class yet.
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="text-soft-mute border-b border-divider">
-                  <th className="text-left px-5 py-3 font-medium">Test</th>
-                  <th className="text-left px-5 py-3 font-medium">Section</th>
-                  <th className="text-left px-5 py-3 font-medium">Open</th>
-                  <th className="text-left px-5 py-3 font-medium">Due</th>
-                  <th className="text-left px-5 py-3 font-medium">Progress</th>
-                  <th className="text-right px-5 py-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {assignedTests.map((t) => (
-                  <tr key={t.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-charcoal">{t.name}</div>
-                      {t.status && (
-                        <div className="text-soft-mute text-xs mt-0.5">{t.status}</div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">{t.section ?? "—"}</td>
-                    <td className="px-5 py-3 text-mid-gray">{t.openDate ? formatDate(t.openDate) : "—"}</td>
-                    <td className="px-5 py-3 text-mid-gray">{t.dueDate ? formatDate(t.dueDate) : "—"}</td>
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal">
-                        {t.submitted}/{t.total} submitted
-                      </div>
-                      {t.avgScore !== null && (
-                        <div className="text-soft-mute text-xs mt-0.5">
-                          Avg {t.avgScore.toFixed(1)}%
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <div className="flex items-center gap-2 justify-end">
-                        <a
-                          href={`/admin/tests/${t.id}/submissions?class=${classGroup.id}`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral-text text-xs font-medium transition-colors"
-                        >
-                          View results
-                        </a>
-                        <a
-                          href={`/admin/tests/${t.id}`}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-divider hover:bg-light-bg text-mid-gray text-xs font-medium transition-colors"
-                        >
-                          <ExternalLink size={11} />
-                          Test page
-                        </a>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Test</Th>
+              <Th>Section</Th>
+              <Th priority="lg">Dates</Th>
+              <Th>Progress</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {assignedTests.length === 0 && (
+              <EmptyRow colSpan={5}>No tests assigned to this class yet.</EmptyRow>
+            )}
+            {assignedTests.map((t) => {
+              const openStr = t.openDate ? formatShortDate(t.openDate) : "—";
+              const dueStr = t.dueDate ? formatShortDate(t.dueDate) : "—";
+              const datesDetail = `${openStr} → ${dueStr}`;
+              const actions: RowAction[] = [
+                {
+                  label: "View results",
+                  icon: Eye,
+                  href: `/admin/tests/${t.id}/submissions?class=${classGroup.id}`,
+                },
+                {
+                  label: "Test page",
+                  icon: ExternalLink,
+                  href: `/admin/tests/${t.id}`,
+                },
+              ];
+              return (
+                <DataRow
+                  key={t.id}
+                  expandBelow="lg"
+                  colSpan={5}
+                  details={
+                    <DetailItem label="Dates" priority="lg">{datesDetail}</DetailItem>
+                  }
+                >
+                  <Td kind="main" sticky="left">
+                    <TwoLineCell
+                      main={t.name}
+                      detail={t.status ?? undefined}
+                      mainClassName="font-medium text-charcoal"
+                    />
+                  </Td>
+                  <Td className="text-mid-gray">{t.section ?? "—"}</Td>
+                  <Td priority="lg">
+                    <TwoLineCell
+                      main={`Open: ${openStr}`}
+                      detail={`Due: ${dueStr}`}
+                      mainClassName="text-mid-gray"
+                    />
+                  </Td>
+                  <Td>
+                    <TwoLineCell
+                      main={`${t.submitted}/${t.total} submitted`}
+                      detail={t.avgScore !== null ? `Avg ${t.avgScore.toFixed(1)}%` : undefined}
+                      mainClassName="text-charcoal"
+                    />
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    <ExpandToggle label={`More about ${t.name}`} />
+                    <RowActionsMenu label={`Actions for ${t.name}`} items={actions} />
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      </section>
 
       {/* Members list */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-divider">
-          <h2 className="font-semibold text-charcoal">Members</h2>
-        </div>
-        {members.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">
-            No members yet. Add students above.
-          </div>
-        ) : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className="text-soft-mute border-b border-divider">
-                <th className="text-left px-5 py-3 font-medium">Student</th>
-                <th className="text-left px-5 py-3 font-medium">Grade</th>
-                <th className="text-left px-5 py-3 font-medium">School</th>
-                <th className="text-right px-5 py-3 font-medium">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {members.map((m) => {
-                const u = m.users;
-                const profile = u?.student_profiles;
-                return (
-                  <tr
-                    key={m.id}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-charcoal">{u?.display_name ?? "—"}</div>
-                      <div className="text-soft-mute text-xs">{u?.email}</div>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">
-                      {profile?.grade ? `Grade ${profile.grade}` : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray">{profile?.school ?? "—"}</td>
-                    <td className="px-5 py-3 text-right">
-                      <button
-                        onClick={() => handleAction(m.student_id, "remove")}
-                        disabled={loading}
-                        className="flex items-center gap-1.5 ml-auto px-3 py-1.5 rounded-lg bg-status-error/10 hover:bg-status-error/15 text-status-error text-xs font-medium transition-colors disabled:opacity-50"
-                      >
-                        <UserMinus size={13} />
-                        Remove
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table></div>
-        )}
-      </div>
+      <section>
+        <h2 className="font-semibold text-charcoal mb-3">Members</h2>
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Student</Th>
+              <Th>Grade</Th>
+              <Th kind="long" priority="md" className="w-[22%]">School</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {members.length === 0 && (
+              <EmptyRow colSpan={4}>No members yet. Add students above.</EmptyRow>
+            )}
+            {members.map((m) => {
+              const u = m.users;
+              const profile = u?.student_profiles;
+              const name = u?.display_name ?? u?.email ?? "—";
+              return (
+                <DataRow
+                  key={m.id}
+                  expandBelow="md"
+                  colSpan={4}
+                  details={
+                    <DetailItem label="School" priority="md">
+                      {profile?.school ?? "—"}
+                    </DetailItem>
+                  }
+                >
+                  <Td kind="main" sticky="left">
+                    <TwoLineCell
+                      main={u?.display_name ?? "—"}
+                      detail={u?.email}
+                      mainClassName="font-medium text-charcoal"
+                    />
+                  </Td>
+                  <Td className="text-mid-gray">
+                    {profile?.grade ? `Grade ${profile.grade}` : "—"}
+                  </Td>
+                  <Td kind="long" priority="md" className="text-mid-gray">
+                    <TruncatedText>{profile?.school ?? "—"}</TruncatedText>
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    <ExpandToggle label={`More about ${name}`} />
+                    <RowActionsMenu
+                      label={`Actions for ${name}`}
+                      items={[
+                        {
+                          label: "Remove from class",
+                          icon: UserMinus,
+                          tone: "danger",
+                          onSelect: () => handleAction(m.student_id, "remove"),
+                        },
+                      ]}
+                    />
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      </section>
     </div>
   );
 }

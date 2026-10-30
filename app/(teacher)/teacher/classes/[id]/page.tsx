@@ -1,11 +1,24 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, MapPin, GraduationCap, Users } from "lucide-react";
+import { ArrowLeft, MapPin, GraduationCap, Users, Eye } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { getTestSections, inSubjects } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
-import { formatDateTime } from "@/lib/datetime";
+import { formatShortDateTime } from "@/lib/datetime";
+import {
+  DataRow,
+  DataTable,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  HeadRow,
+  RowActionsMenu,
+  Td,
+  Th,
+  TruncatedText,
+  TwoLineCell,
+} from "@/components/ui/data-table";
 
 export const dynamic = "force-dynamic";
 
@@ -199,101 +212,104 @@ export default async function TeacherClassDetailPage({
         </div>
       </div>
 
-      <section className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-divider">
-          <h2 className="text-charcoal font-semibold">Roster</h2>
-        </div>
-        {students.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">
-            No students in this class yet.
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-divider text-soft-mute">
-                <th className="text-left px-5 py-3 font-medium">Student</th>
-                <th className="text-left px-5 py-3 font-medium">Tests assigned</th>
-                <th className="text-left px-5 py-3 font-medium">Completed</th>
-                <th className="text-left px-5 py-3 font-medium">Avg score</th>
-                <th className="text-left px-5 py-3 font-medium">Latest</th>
-                <th className="text-left px-5 py-3 font-medium">History</th>
-              </tr>
-            </thead>
-            <tbody>
-              {students.map((s) => {
-                const stats = perStudent[s.id] ?? { total: 0, completed: 0, scores: [], latest: null };
-                const avg =
-                  stats.scores.length > 0
-                    ? stats.scores.reduce((a, b) => a + b, 0) / stats.scores.length
-                    : null;
-                return (
-                  <tr
-                    key={s.id}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <Link
-                        href={`/teacher/classes/${group.id}/students/${s.id}`}
-                        className="font-medium text-charcoal hover:text-warm-coral-text transition-colors"
-                      >
-                        {s.display_name ?? s.email}
-                      </Link>
-                      {s.display_name && (
-                        <div className="text-soft-mute text-xs">{s.email}</div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">{stats.total}</td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">{stats.completed}</td>
-                    <td className="px-5 py-3 text-xs font-medium">
-                      {avg == null ? (
-                        <span className="text-soft-mute">—</span>
-                      ) : (
-                        <span
-                          className={
-                            avg < 60
-                              ? "text-status-error"
-                              : avg < 80
-                              ? "text-warm-amber"
-                              : "text-status-success"
-                          }
-                        >
-                          {avg.toFixed(1)}%
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">
-                      {stats.latest ? (
-                        <div className="space-y-0.5">
-                          <div className="text-charcoal truncate max-w-[14rem]">
-                            {stats.latest.test_name}
-                          </div>
-                          <div>
-                            {stats.latest.percentage != null
-                              ? `${stats.latest.percentage.toFixed(0)}%`
-                              : "—"}
-                            {stats.latest.submitted_at
-                              ? ` · ${formatDateTime(stats.latest.submitted_at)}`
-                              : ""}
-                          </div>
-                        </div>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
-                      <Link
-                        href={`/teacher/classes/${group.id}/students/${s.id}`}
-                        className="text-warm-coral-text text-xs font-medium hover:underline"
-                      >
-                        View tests
-                      </Link>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+      <section>
+        <h2 className="text-charcoal font-semibold mb-3">Roster</h2>
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Student</Th>
+              <Th>Progress</Th>
+              <Th kind="long" priority="lg" className="w-[28%]">Latest</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {students.length === 0 && (
+              <EmptyRow colSpan={4}>No students in this class yet.</EmptyRow>
+            )}
+            {students.map((s) => {
+              const stats = perStudent[s.id] ?? { total: 0, completed: 0, scores: [], latest: null };
+              const avg =
+                stats.scores.length > 0
+                  ? stats.scores.reduce((a, b) => a + b, 0) / stats.scores.length
+                  : null;
+              const avgStr = avg == null ? "—" : `${avg.toFixed(1)}%`;
+              const latestName = stats.latest?.test_name ?? null;
+              const latestDetail = stats.latest
+                ? [
+                    stats.latest.percentage != null
+                      ? `${stats.latest.percentage.toFixed(0)}%`
+                      : null,
+                    stats.latest.submitted_at
+                      ? formatShortDateTime(stats.latest.submitted_at)
+                      : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
+                : null;
+              const name = s.display_name ?? s.email;
+
+              return (
+                <DataRow
+                  key={s.id}
+                  expandBelow="lg"
+                  colSpan={4}
+                  details={
+                    <DetailItem label="Latest" priority="lg">
+                      {latestName
+                        ? `${latestName}${latestDetail ? ` · ${latestDetail}` : ""}`
+                        : "—"}
+                    </DetailItem>
+                  }
+                >
+                  <Td kind="main" sticky="left">
+                    <Link
+                      href={`/teacher/classes/${group.id}/students/${s.id}`}
+                      className="block hover:text-warm-coral-text transition-colors"
+                    >
+                      <TwoLineCell
+                        main={s.display_name ?? s.email}
+                        detail={s.display_name ? s.email : undefined}
+                        mainClassName="font-medium text-inherit"
+                      />
+                    </Link>
+                  </Td>
+                  <Td>
+                    <TwoLineCell
+                      main={`${stats.completed}/${stats.total} done`}
+                      detail={avgStr !== "—" ? `Avg ${avgStr}` : undefined}
+                      mainClassName="text-mid-gray"
+                    />
+                  </Td>
+                  <Td kind="long" priority="lg">
+                    {latestName ? (
+                      <TwoLineCell
+                        main={<TruncatedText>{latestName}</TruncatedText>}
+                        detail={latestDetail ?? undefined}
+                        mainClassName="text-charcoal"
+                      />
+                    ) : (
+                      <span className="text-soft-mute">—</span>
+                    )}
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    <ExpandToggle label={`More about ${name}`} />
+                    <RowActionsMenu
+                      label={`Actions for ${name}`}
+                      items={[
+                        {
+                          label: "View tests",
+                          icon: Eye,
+                          href: `/teacher/classes/${group.id}/students/${s.id}`,
+                        },
+                      ]}
+                    />
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
       </section>
     </div>
   );
