@@ -763,5 +763,12 @@
       "tableDuplicateHidden": "Table already in question text — source figure hidden automatically.",
       "tableDuplicateWarning": "Table is already in the question text — this source figure may be a screenshot of the same table. Use Delete below if it is redundant."
     }
+  },
+  "questionPreview": {
+    "editTab": "Edit",
+    "testTab": "Student view (test)",
+    "resultsTab": "Student view (results)",
+    "testBanner": "Student view · Test-taking — read only, reflects current saved content",
+    "resultsBanner": "Student view · Results & review — read only, reflects current saved content"
   }
 }
