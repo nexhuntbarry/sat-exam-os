@@ -2,7 +2,9 @@ import { getServiceClient } from "@/lib/supabase";
 import { notFound } from "next/navigation";
 import ClassDetailClient from "./ClassDetailClient";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaClassGroupIds, onSide, scopeUsers } from "@/lib/qa";
+import { getQaClassGroupIds, getQaTestIds, onSide, scopeUsers } from "@/lib/qa";
+import type { AssignedTest } from "./ClassDetailClient";
+import { summarizeTestProgress, type ProgressSubmission } from "@/lib/test-progress";
 
 async function getClassGroup(id: string) {
   const db = getServiceClient();
@@ -118,6 +120,88 @@ async function getLinkedTests(classGroupId: string) {
   });
 }
 
+// Full test cards with per-class progress for the "Assigned Tests" section.
+// Uses summarizeTestProgress (same logic as the test detail page) so two-module
+// tests and retakes are handled correctly: each student counts once, only when
+// their latest attempt has every module graded.
+async function getAssignedTests(
+  classGroupId: string,
+  memberStudentIds: string[],
+  viewerIsQa: boolean,
+): Promise<AssignedTest[]> {
+  const db = getServiceClient();
+  const { data } = await db
+    .from("test_assignments")
+    .select(
+      "test_id, tests(id, test_name, open_date, due_date, status, module_2_id, is_adaptive, modules!module_id(section))",
+    )
+    .contains("class_group_ids", [classGroupId]);
+
+  if (!data || data.length === 0) return [];
+
+  // Scope to the viewer's QA side (real admin sees only real tests, QA only QA tests).
+  const qaTestIds = await getQaTestIds();
+  const visibleRows = data.filter((row) => onSide(row.test_id as string, qaTestIds, viewerIsQa));
+  if (visibleRows.length === 0) return [];
+
+  const testIds = visibleRows.map((r) => r.test_id as string);
+
+  // Fetch all submission rows for these tests scoped to this class's members.
+  // Include test_id so we can group, plus every field summarizeTestProgress needs.
+  const { data: allSubs } =
+    memberStudentIds.length > 0
+      ? await db
+          .from("submissions")
+          .select(
+            "id, test_id, student_id, status, session_id, adaptive_track, started_at, correct_count, total_questions",
+          )
+          .in("test_id", testIds)
+          .in("student_id", memberStudentIds)
+      : { data: [] as (ProgressSubmission & { test_id: string })[] };
+
+  // Group by test_id.
+  const subsByTest = new Map<string, (ProgressSubmission & { test_id: string })[]>();
+  for (const s of allSubs ?? []) {
+    const tid = (s as { test_id: string }).test_id;
+    const list = subsByTest.get(tid) ?? [];
+    list.push(s as ProgressSubmission & { test_id: string });
+    subsByTest.set(tid, list);
+  }
+
+  return visibleRows.map((row) => {
+    const t = Array.isArray(row.tests) ? row.tests[0] : row.tests;
+    type TestMeta = {
+      test_name?: string;
+      open_date?: string | null;
+      due_date?: string | null;
+      status?: string;
+      module_2_id?: string | null;
+      is_adaptive?: boolean | null;
+      modules?: { section?: string } | { section?: string }[] | null;
+    };
+    const tMeta = (t as TestMeta | null) ?? null;
+    const mod = tMeta?.modules;
+    const modObj = Array.isArray(mod) ? mod[0] : mod;
+    const section = (modObj as { section?: string } | null | undefined)?.section ?? null;
+    const twoModules = Boolean(tMeta?.module_2_id || tMeta?.is_adaptive);
+
+    const testSubs = subsByTest.get(row.test_id as string) ?? [];
+    const progress = summarizeTestProgress(testSubs, memberStudentIds, twoModules);
+
+    return {
+      id: row.test_id as string,
+      name: tMeta?.test_name ?? "Untitled test",
+      section,
+      openDate: tMeta?.open_date ?? null,
+      dueDate: tMeta?.due_date ?? null,
+      status: tMeta?.status ?? null,
+      submitted: progress.finished,
+      total: memberStudentIds.length,
+      avgScore: progress.avgScore,
+    };
+  });
+}
+
 export default async function ClassDetailPage({
   params,
 }: {
@@ -137,6 +221,9 @@ export default async function ClassDetailPage({
 
   if (!classGroup) notFound();
 
+  const memberStudentIds = members.map((m) => m.student_id);
+  const assignedTests = await getAssignedTests(id, memberStudentIds, isQa);
+
   return (
     <ClassDetailClient
       classGroup={classGroup}
@@ -145,6 +232,7 @@ export default async function ClassDetailPage({
       allTeachers={allTeachers}
       assignedTeachers={assignedTeachers}
       linkedTests={linkedTests}
+      assignedTests={assignedTests}
     />
   );
 }

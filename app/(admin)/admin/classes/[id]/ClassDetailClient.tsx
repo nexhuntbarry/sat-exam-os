@@ -2,7 +2,20 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil } from "lucide-react";
+import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, ExternalLink } from "lucide-react";
+import { formatDate } from "@/lib/datetime";
+
+export interface AssignedTest {
+  id: string;
+  name: string;
+  section: string | null;
+  openDate: string | null;
+  dueDate: string | null;
+  status: string | null;
+  submitted: number;
+  total: number;
+  avgScore: number | null;
+}
 
 interface ClassGroup {
   id: string;
@@ -49,6 +62,7 @@ interface Props {
   allTeachers: Teacher[];
   assignedTeachers: AssignedTeacher[];
   linkedTests: { id: string; name: string }[];
+  assignedTests: AssignedTest[];
 }
 
 export default function ClassDetailClient({
@@ -58,6 +72,7 @@ export default function ClassDetailClient({
   allTeachers,
   assignedTeachers,
   linkedTests,
+  assignedTests,
 }: Props) {
   const router = useRouter();
 
@@ -435,6 +450,77 @@ export default function ClassDetailClient({
           </div>
         </div>
       )}
+
+      {/* Assigned Tests */}
+      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-divider flex items-center gap-2">
+          <ClipboardList size={14} className="text-warm-coral-text" />
+          <h2 className="font-semibold text-charcoal">Assigned Tests</h2>
+          <span className="text-soft-mute font-normal text-sm">({assignedTests.length})</span>
+        </div>
+        {assignedTests.length === 0 ? (
+          <div className="py-10 text-center text-soft-mute text-sm">
+            No tests assigned to this class yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[640px] text-sm">
+              <thead>
+                <tr className="text-soft-mute border-b border-divider">
+                  <th className="text-left px-5 py-3 font-medium">Test</th>
+                  <th className="text-left px-5 py-3 font-medium">Section</th>
+                  <th className="text-left px-5 py-3 font-medium">Open</th>
+                  <th className="text-left px-5 py-3 font-medium">Due</th>
+                  <th className="text-left px-5 py-3 font-medium">Progress</th>
+                  <th className="text-right px-5 py-3 font-medium">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assignedTests.map((t) => (
+                  <tr key={t.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
+                    <td className="px-5 py-3">
+                      <div className="font-medium text-charcoal">{t.name}</div>
+                      {t.status && (
+                        <div className="text-soft-mute text-xs mt-0.5">{t.status}</div>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-mid-gray">{t.section ?? "—"}</td>
+                    <td className="px-5 py-3 text-mid-gray">{t.openDate ? formatDate(t.openDate) : "—"}</td>
+                    <td className="px-5 py-3 text-mid-gray">{t.dueDate ? formatDate(t.dueDate) : "—"}</td>
+                    <td className="px-5 py-3">
+                      <div className="text-charcoal">
+                        {t.submitted}/{t.total} submitted
+                      </div>
+                      {t.avgScore !== null && (
+                        <div className="text-soft-mute text-xs mt-0.5">
+                          Avg {t.avgScore.toFixed(1)}%
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <div className="flex items-center gap-2 justify-end">
+                        <a
+                          href={`/admin/tests/${t.id}/submissions?class=${classGroup.id}`}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral-text text-xs font-medium transition-colors"
+                        >
+                          View results
+                        </a>
+                        <a
+                          href={`/admin/tests/${t.id}`}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-divider hover:bg-light-bg text-mid-gray text-xs font-medium transition-colors"
+                        >
+                          <ExternalLink size={11} />
+                          Test page
+                        </a>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Members list */}
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">

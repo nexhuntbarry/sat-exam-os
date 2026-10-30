@@ -1,14 +1,15 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaTestIds, onSide } from "@/lib/qa";
+import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import GrantRetakeButton from "./GrantRetakeButton";
 import { formatDateTimeSeconds } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
+import { X } from "lucide-react";
 
-async function getSubmissions(testId: string) {
+async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?: string) {
   const db = getServiceClient();
 
   const { data: test } = await db
@@ -19,7 +20,31 @@ async function getSubmissions(testId: string) {
 
   if (!test) return null;
 
-  const { data: submissions } = await db
+  // Resolve class filter: look up name + member student ids.
+  // Silently drop the filter if the class group is on the wrong QA side.
+  let classFilterName: string | null = null;
+  let classFilterStudentIds: Set<string> | null = null;
+  if (classFilter) {
+    const qaGroups = await getQaClassGroupIds();
+    if (onSide(classFilter, qaGroups, viewerIsQa)) {
+      const { data: cg } = await db
+        .from("class_groups")
+        .select("id, name")
+        .eq("id", classFilter)
+        .maybeSingle();
+      if (cg) {
+        classFilterName = (cg as { name: string }).name;
+        const { data: memberRows } = await db
+          .from("class_group_members")
+          .select("student_id")
+          .eq("class_group_id", classFilter);
+        classFilterStudentIds = new Set((memberRows ?? []).map((m) => m.student_id as string));
+      }
+    }
+    // If not on the same side, classFilter* stays null — filter is silently ignored.
+  }
+
+  let query = db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
@@ -28,8 +53,16 @@ async function getSubmissions(testId: string) {
       users!inner(display_name, email),
       modules!module_id(module_name)
     `)
-    .eq("test_id", testId)
-    .order("submitted_at", { ascending: false });
+    .eq("test_id", testId);
+
+  if (classFilterStudentIds && classFilterStudentIds.size > 0) {
+    query = query.in("student_id", Array.from(classFilterStudentIds));
+  } else if (classFilterStudentIds && classFilterStudentIds.size === 0) {
+    // Class exists but has no members — return empty
+    return { test, submissions: [], pendingByStudent: new Set<string>(), classFilterName, classFilterId: classFilter ?? null };
+  }
+
+  const { data: submissions } = await query.order("submitted_at", { ascending: false });
 
   // Pending retake grants — keyed by student so the row can show
   // either a "Grant retake" button or an existing "Retake granted" pill.
@@ -40,7 +73,7 @@ async function getSubmissions(testId: string) {
     .is("consumed_at", null);
   const pendingByStudent = new Set((grants ?? []).map((g) => g.student_id as string));
 
-  return { test, submissions: submissions ?? [], pendingByStudent };
+  return { test, submissions: submissions ?? [], pendingByStudent, classFilterName, classFilterId: classFilter ?? null };
 }
 
 const TRACK_LABEL: Record<string, string> = {
@@ -67,18 +100,21 @@ function formatDuration(seconds: number | null) {
 
 export default async function TestSubmissionsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ class?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user || user.role !== "admin") redirect("/sign-in");
 
   const { id } = await params;
+  const { class: classParam } = await searchParams;
   if (!onSide(id, await getQaTestIds(), user.isQa)) notFound();
-  const data = await getSubmissions(id);
+  const data = await getSubmissions(id, user.isQa, classParam);
   if (!data) notFound();
 
-  const { test, submissions, pendingByStudent } = data;
+  const { test, submissions, pendingByStudent, classFilterName, classFilterId } = data;
 
   type RawSubmission = (typeof submissions)[number];
 
@@ -277,7 +313,20 @@ export default async function TestSubmissionsPage({
         <span className="text-charcoal">Submissions</span>
       </div>
 
-      <h1 className="text-2xl font-bold text-charcoal">Submissions — {test.test_name}</h1>
+      <div className="flex items-center gap-3 flex-wrap">
+        <h1 className="text-2xl font-bold text-charcoal">Submissions — {test.test_name}</h1>
+        {classFilterName && classFilterId && (
+          <Link
+            href={`/admin/tests/${test.id}/submissions`}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-warm-coral/15 text-warm-coral-text text-sm font-medium hover:bg-warm-coral/25 transition-colors"
+            title="Remove class filter"
+          >
+            Filtered: {classFilterName}
+            <X size={13} />
+            Show all
+          </Link>
+        )}
+      </div>
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         {attempts.length === 0 ? (
