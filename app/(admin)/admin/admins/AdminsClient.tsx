@@ -4,7 +4,20 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import { ShieldCheck, UserPlus, X, Mail, Lock, Check, Pause, Trash2, AlertTriangle } from "lucide-react";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
+import {
+  DataRow,
+  DataTable,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  HeadRow,
+  RowActionsMenu,
+  Td,
+  Th,
+  TwoLineCell,
+  type RowAction,
+} from "@/components/ui/data-table";
 
 interface Admin {
   id: string;
@@ -197,8 +210,6 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
 
-  // canInvite is the super-admin gate from the page; reuse it for the
-  // approve / suspend / delete buttons since the same permission applies.
   const isSuper = canInvite;
 
   async function callAction(adminId: string, action: "approve" | "suspend") {
@@ -242,7 +253,7 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       {showInvite && (
         <InviteModal
           onClose={() => setShowInvite(false)}
@@ -281,135 +292,140 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
         )}
       </div>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {admins.length === 0 ? (
-          <div className="py-16 text-center text-soft-mute text-sm">
-            No admins yet.
-          </div>
-        ) : (
-          <div className="overflow-x-auto"><table className="w-full min-w-[640px] text-sm">
-            <thead>
-              <tr className="border-b border-divider text-soft-mute">
-                <th className="text-left px-5 py-3 font-medium">Admin</th>
-                <th className="text-left px-5 py-3 font-medium">Tier</th>
-                <th className="text-left px-5 py-3 font-medium">Status</th>
-                <th className="text-left px-5 py-3 font-medium">Created</th>
-                <th className="text-left px-5 py-3 font-medium">Last sign-in</th>
-                {isSuper && (
-                  <th className="text-left px-5 py-3 font-medium">Actions</th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {admins.map((a) => {
-                const isMe = a.id === currentUserId;
-                return (
-                  <tr
-                    key={a.id}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <div className="font-medium text-charcoal">
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th kind="main" sticky="left">Admin</Th>
+            <Th>Tier</Th>
+            <Th>Status</Th>
+            <Th priority="lg">Activity</Th>
+            <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {admins.length === 0 && (
+            <EmptyRow colSpan={5}>No admins yet.</EmptyRow>
+          )}
+          {admins.map((a) => {
+            const isMe = a.id === currentUserId;
+            const name = a.display_name ?? a.email;
+            const lastSignIn = a.last_sign_in_at
+              ? formatShortDateTime(a.last_sign_in_at)
+              : null;
+            const lastSignInFull = a.last_sign_in_at
+              ? formatDateTime(a.last_sign_in_at)
+              : null;
+            const activityMain = lastSignIn ?? (
+              a.clerk_user_id
+                ? "Never signed in"
+                : <span className="text-status-warning">never (pending)</span>
+            );
+            const activityDetail = `Joined ${formatShortDate(a.created_at)}`;
+            const activityTitle = `${lastSignInFull ? `Last sign-in ${lastSignInFull}` : "Never signed in"} · Joined ${formatDateTime(a.created_at)}`;
+
+            const actions: (RowAction | false)[] = isSuper && !isMe
+              ? [
+                  a.account_status === "approved"
+                    ? {
+                        label: "Suspend…",
+                        icon: Pause,
+                        disabled: actingId === `${a.id}:suspend`,
+                        onSelect: () => callAction(a.id, "suspend"),
+                      }
+                    : {
+                        label: a.account_status === "pending" ? "Approve" : "Reactivate",
+                        icon: Check,
+                        disabled: actingId === `${a.id}:approve`,
+                        onSelect: () => callAction(a.id, "approve"),
+                      },
+                  {
+                    label: "Delete…",
+                    icon: Trash2,
+                    tone: "danger",
+                    onSelect: () => {
+                      setDeleteTarget(a);
+                      setDeleteText("");
+                      setDeleteError(null);
+                    },
+                  },
+                ]
+              : [];
+
+            return (
+              <DataRow
+                key={a.id}
+                expandBelow="lg"
+                colSpan={5}
+                details={
+                  <DetailItem label="Activity" priority="lg">
+                    <span title={activityTitle}>
+                      {lastSignIn ?? (a.clerk_user_id ? "Never signed in" : "never (pending)")}
+                      {" · "}
+                      {activityDetail}
+                    </span>
+                  </DetailItem>
+                }
+              >
+                <Td kind="main" sticky="left">
+                  <TwoLineCell
+                    main={
+                      <>
                         {a.display_name ?? "—"}
                         {isMe && (
                           <span className="ml-2 text-xs text-soft-mute font-normal">(you)</span>
                         )}
-                      </div>
-                      <div className="flex items-center gap-1 text-soft-mute text-xs mt-0.5">
+                      </>
+                    }
+                    detail={
+                      <span className="inline-flex items-center gap-1">
                         <Mail size={11} />
                         {a.email}
-                      </div>
-                    </td>
-                    <td className="px-5 py-3">
-                      {a.is_super_admin ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-warm-coral/15 text-warm-coral-text">
-                          <ShieldCheck size={11} />
-                          Super
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-light-bg text-mid-gray">
-                          Admin
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={clsx(
-                          "px-2 py-1 rounded-full text-xs font-medium",
-                          a.account_status === "approved"
-                            ? "bg-warm-amber/15 text-warm-amber"
-                            : a.account_status === "pending"
-                            ? "bg-status-warning/15 text-status-warning"
-                            : "bg-status-error/15 text-status-error",
-                        )}
-                      >
-                        {a.account_status}
                       </span>
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {formatDate(a.created_at)}
-                    </td>
-                    <td className="px-5 py-3 text-soft-mute text-xs">
-                      {a.last_sign_in_at
-                        ? formatDateTime(a.last_sign_in_at)
-                        : a.clerk_user_id
-                        ? "—"
-                        : <span className="text-status-warning">never (pending)</span>}
-                    </td>
-                    {isSuper && (
-                      <td className="px-5 py-3">
-                        {isMe ? (
-                          <span className="text-soft-mute text-xs italic">—</span>
-                        ) : (
-                          <div className="flex items-center gap-1.5">
-                            {a.account_status === "approved" ? (
-                              <button
-                                onClick={() => callAction(a.id, "suspend")}
-                                disabled={actingId === `${a.id}:suspend`}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-status-warning/15 hover:bg-status-warning/25 text-status-warning text-xs font-medium transition-colors disabled:opacity-50"
-                                title="Block this admin from signing in"
-                              >
-                                <Pause size={11} />
-                                Suspend
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => callAction(a.id, "approve")}
-                                disabled={actingId === `${a.id}:approve`}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-xs font-medium transition-colors disabled:opacity-50"
-                                title={
-                                  a.account_status === "pending"
-                                    ? "Mark this admin as approved"
-                                    : "Reactivate this admin"
-                                }
-                              >
-                                <Check size={11} />
-                                {a.account_status === "pending" ? "Approve" : "Reactivate"}
-                              </button>
-                            )}
-                            <button
-                              onClick={() => {
-                                setDeleteTarget(a);
-                                setDeleteText("");
-                                setDeleteError(null);
-                              }}
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-status-error/10 hover:bg-status-error/20 text-status-error text-xs font-medium transition-colors"
-                              title="Permanently remove this admin"
-                            >
-                              <Trash2 size={11} />
-                              Delete
-                            </button>
-                          </div>
-                        )}
-                      </td>
+                    }
+                    mainClassName="font-medium text-charcoal"
+                  />
+                </Td>
+                <Td>
+                  {a.is_super_admin ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-warm-coral/15 text-warm-coral-text">
+                      <ShieldCheck size={11} />
+                      Super
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-light-bg text-mid-gray">
+                      Admin
+                    </span>
+                  )}
+                </Td>
+                <Td>
+                  <span
+                    className={clsx(
+                      "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
+                      a.account_status === "approved"
+                        ? "bg-warm-amber/15 text-warm-amber"
+                        : a.account_status === "pending"
+                        ? "bg-status-warning/15 text-status-warning"
+                        : "bg-status-error/15 text-status-error",
                     )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table></div>
-        )}
-      </div>
+                  >
+                    {a.account_status}
+                  </span>
+                </Td>
+                <Td priority="lg">
+                  <span className="block" title={activityTitle}>
+                    <span className="block text-mid-gray">{activityMain}</span>
+                    <span className="block text-xs text-soft-mute">{activityDetail}</span>
+                  </span>
+                </Td>
+                <Td kind="actions" sticky="right">
+                  <ExpandToggle label={`More about ${name}`} />
+                  <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                </Td>
+              </DataRow>
+            );
+          })}
+        </tbody>
+      </DataTable>
 
       {/* Delete-admin double-confirm */}
       {deleteTarget && (

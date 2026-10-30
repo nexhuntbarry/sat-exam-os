@@ -4,6 +4,15 @@ import { scaleSectionScore } from "@/lib/scoring";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaUserIds, scopeIds } from "@/lib/qa";
 import { BarChart3, Users, ChevronLeft, ClipboardList } from "lucide-react";
+import {
+  DataRow,
+  DataTable,
+  EmptyRow,
+  HeadRow,
+  Td,
+  Th,
+  TruncatedText,
+} from "@/components/ui/data-table";
 
 // ── Data types ──────────────────────────────────────────────────────────────
 
@@ -244,7 +253,7 @@ export default async function ClassGroupAnalyticsPage() {
   const groups = await getClassGroupAnalytics((await getCurrentUser())?.isQa ?? false);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <div>
         <Link
           href="/admin"
@@ -307,41 +316,39 @@ export default async function ClassGroupAnalyticsPage() {
                   No tests taken by this group yet.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[640px] text-sm">
-                    <thead>
-                      <tr className="border-b border-divider text-soft-mute">
-                        <th className="text-left px-5 py-3 font-medium">Test</th>
-                        <th className="text-right px-5 py-3 font-medium">Submitted</th>
-                        <th className="text-right px-5 py-3 font-medium">Avg %</th>
-                        <th className="text-right px-5 py-3 font-medium">Avg Scaled</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.tests.map((t) => (
-                        <tr
-                          key={t.testId}
-                          className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                        >
-                          <td className="px-5 py-3 text-charcoal font-medium">
-                            {t.testName}
-                          </td>
-                          <td className="px-5 py-3 text-right text-mid-gray tabular-nums">
-                            {t.studentsSubmitted} / {g.memberCount}
-                          </td>
-                          <td className="px-5 py-3 text-right text-charcoal tabular-nums">
-                            {t.avgPercentage != null
-                              ? `${t.avgPercentage.toFixed(1)}%`
-                              : "—"}
-                          </td>
-                          <td className="px-5 py-3 text-right text-warm-coral-text font-medium tabular-nums">
-                            {t.avgScaledScore != null ? `${t.avgScaledScore}/800` : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable>
+                  <thead>
+                    <HeadRow>
+                      <Th kind="main">Test</Th>
+                      <Th className="text-right">Submitted</Th>
+                      <Th className="text-right">Avg %</Th>
+                      <Th className="text-right">Avg Scaled</Th>
+                    </HeadRow>
+                  </thead>
+                  <tbody>
+                    {g.tests.length === 0 && (
+                      <EmptyRow colSpan={4}>No tests taken by this group yet.</EmptyRow>
+                    )}
+                    {g.tests.map((t) => (
+                      <DataRow key={t.testId} colSpan={4}>
+                        <Td kind="main">
+                          <TruncatedText>{t.testName}</TruncatedText>
+                        </Td>
+                        <Td className="text-right text-mid-gray tabular-nums">
+                          {t.studentsSubmitted} / {g.memberCount}
+                        </Td>
+                        <Td className="text-right text-charcoal tabular-nums">
+                          {t.avgPercentage != null
+                            ? `${t.avgPercentage.toFixed(1)}%`
+                            : "—"}
+                        </Td>
+                        <Td className="text-right text-warm-coral-text font-medium tabular-nums">
+                          {t.avgScaledScore != null ? `${t.avgScaledScore}/800` : "—"}
+                        </Td>
+                      </DataRow>
+                    ))}
+                  </tbody>
+                </DataTable>
               )}
             </div>
           ))}

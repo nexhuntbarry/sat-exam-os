@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, ClipboardList } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye } from "lucide-react";
 import { clsx } from "clsx";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
@@ -11,12 +11,25 @@ import {
   inSubjects,
 } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
-import { formatDateTime, formatDate } from "@/lib/datetime";
+import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import {
+  DataRow,
+  DataTable,
+  DetailItem,
+  EmptyRow,
+  ExpandToggle,
+  HeadRow,
+  RowActionsMenu,
+  Td,
+  Th,
+  TruncatedText,
+  TwoLineCell,
+} from "@/components/ui/data-table";
 
 export const dynamic = "force-dynamic";
 
@@ -245,93 +258,112 @@ export default async function TeacherStudentResultsPage({
         <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
       )}
 
-      <section className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-divider">
-          <h2 className="text-charcoal font-semibold flex items-center gap-2">
-            <ClipboardList size={15} />
-            Test history
-          </h2>
+      <section>
+        <div className="flex items-center gap-2 mb-3">
+          <ClipboardList size={15} className="text-charcoal" />
+          <h2 className="text-charcoal font-semibold">Test history</h2>
         </div>
-        {submissions.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">
-            No tests assigned to this student under your account yet.
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-divider text-soft-mute">
-                <th className="text-left px-5 py-3 font-medium">Test</th>
-                <th className="text-left px-5 py-3 font-medium">Section</th>
-                <th className="text-left px-5 py-3 font-medium">Due</th>
-                <th className="text-left px-5 py-3 font-medium">Submitted</th>
-                <th className="text-left px-5 py-3 font-medium">Status</th>
-                <th className="text-left px-5 py-3 font-medium">Score</th>
-                <th className="text-left px-5 py-3 font-medium">Detail</th>
-              </tr>
-            </thead>
-            <tbody>
-              {submissions.map((s) => {
-                const isDone = s.status === "Submitted" || s.status === "Late";
-                return (
-                  <tr
-                    key={s.id}
-                    className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
-                  >
-                    <td className="px-5 py-3">
-                      <div className="text-charcoal font-medium">{s.testName}</div>
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">{s.section ?? "—"}</td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">
-                      {s.dueDate ? formatDate(s.dueDate) : "—"}
-                    </td>
-                    <td className="px-5 py-3 text-mid-gray text-xs">
-                      {s.submittedAt ? formatDateTime(s.submittedAt) : "—"}
-                    </td>
-                    <td className="px-5 py-3">
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Test</Th>
+              <Th priority="lg">Dates</Th>
+              <Th>Status</Th>
+              <Th>Score</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {submissions.length === 0 && (
+              <EmptyRow colSpan={5}>
+                No tests assigned to this student under your account yet.
+              </EmptyRow>
+            )}
+            {submissions.map((s) => {
+              const isDone = s.status === "Submitted" || s.status === "Late";
+              const dueStr = s.dueDate ? formatShortDate(s.dueDate) : "—";
+              const submittedStr = s.submittedAt
+                ? formatShortDateTime(s.submittedAt)
+                : "—";
+              const submittedFull = s.submittedAt
+                ? formatDateTime(s.submittedAt)
+                : null;
+
+              return (
+                <DataRow
+                  key={s.id}
+                  expandBelow="lg"
+                  colSpan={5}
+                  details={
+                    <DetailItem label="Dates" priority="lg">
+                      {`Due: ${dueStr} · Submitted: ${submittedStr}`}
+                    </DetailItem>
+                  }
+                >
+                  <Td kind="main" sticky="left">
+                    <TwoLineCell
+                      main={<TruncatedText>{s.testName}</TruncatedText>}
+                      detail={s.section ?? undefined}
+                      mainClassName="font-medium text-charcoal"
+                    />
+                  </Td>
+                  <Td priority="lg">
+                    <TwoLineCell
+                      main={`Due: ${dueStr}`}
+                      detail={
+                        submittedFull
+                          ? <span title={submittedFull}>{submittedStr}</span>
+                          : submittedStr
+                      }
+                      mainClassName="text-mid-gray"
+                    />
+                  </Td>
+                  <Td>
+                    <span
+                      className={clsx(
+                        "px-2 py-0.5 rounded-full text-xs font-medium",
+                        statusCls[s.status] ?? "bg-light-bg text-mid-gray",
+                      )}
+                    >
+                      {s.status}
+                    </span>
+                  </Td>
+                  <Td>
+                    {s.percentage == null ? (
+                      <span className="text-soft-mute text-xs">—</span>
+                    ) : (
                       <span
                         className={clsx(
-                          "px-2 py-0.5 rounded-full text-xs font-medium",
-                          statusCls[s.status] ?? "bg-light-bg text-mid-gray",
+                          "text-xs font-medium",
+                          s.percentage < 60
+                            ? "text-status-error"
+                            : s.percentage < 80
+                            ? "text-warm-amber"
+                            : "text-status-success",
                         )}
                       >
-                        {s.status}
+                        {s.percentage.toFixed(0)}%
                       </span>
-                    </td>
-                    <td className="px-5 py-3 text-xs font-medium">
-                      {s.percentage == null ? (
-                        <span className="text-soft-mute">—</span>
-                      ) : (
-                        <span
-                          className={
-                            s.percentage < 60
-                              ? "text-status-error"
-                              : s.percentage < 80
-                              ? "text-warm-amber"
-                              : "text-status-success"
-                          }
-                        >
-                          {s.percentage.toFixed(0)}%
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-5 py-3">
-                      {isDone ? (
-                        <Link
-                          href={`/teacher/tests/${s.testId}/results/${s.id}`}
-                          className="text-warm-coral-text text-xs font-medium hover:underline"
-                        >
-                          View detail
-                        </Link>
-                      ) : (
-                        <span className="text-soft-mute text-xs">—</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
+                    )}
+                  </Td>
+                  <Td kind="actions" sticky="right">
+                    <ExpandToggle label={`More about ${s.testName}`} />
+                    <RowActionsMenu
+                      label={`Actions for ${s.testName}`}
+                      items={[
+                        isDone && {
+                          label: "View detail",
+                          icon: Eye,
+                          href: `/teacher/tests/${s.testId}/results/${s.id}`,
+                        },
+                      ]}
+                    />
+                  </Td>
+                </DataRow>
+              );
+            })}
+          </tbody>
+        </DataTable>
       </section>
     </div>
   );
