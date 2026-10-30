@@ -5,11 +5,11 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
-import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDate } from "@/lib/datetime";
 import { scaleSectionScore } from "@/lib/scoring";
 import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
+import { getTranslations } from "next-intl/server";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -180,7 +180,7 @@ async function getStudentTests(studentId: string) {
   const [{ data: tests }, { data: submissions }] = await Promise.all([
     db.from("tests")
       .select(`
-        id, test_name, status, due_date, time_limit_minutes, is_adaptive, module_2_id,
+        id, test_name, status, due_date, time_limit_minutes, time_limit_minutes_module_2, is_untimed, is_adaptive, module_2_id,
         modules!module_id(module_name, section, module_number)
       `)
       .in("id", testIds)
@@ -236,135 +236,248 @@ async function getStudentTests(studentId: string) {
   });
 }
 
-const testStatusStyles: Record<string, string> = {
-  "Not Started": "bg-light-bg text-mid-gray",
-  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
-  Submitted: "bg-warm-amber/15 text-warm-amber",
+// Determine whether the student is actively on Module 2 (M1 done, M2
+// started or pending start) for the status and subject-tag label.
+function computeOnModule2(test: {
+  is_adaptive?: boolean | null;
+  module_2_id?: string | null;
+  needsModule2: boolean;
+  attempt: TestAttempt | null;
+}): boolean {
+  const isTwoModule = Boolean(test.is_adaptive || test.module_2_id);
+  if (!isTwoModule) return false;
+  return (
+    test.needsModule2 ||
+    (test.attempt?.modules ?? []).some(
+      (m) => m.label.startsWith("Module 2") && m.status === "In Progress",
+    )
+  );
+}
+
+function buildSubtitle(test: {
+  is_adaptive?: boolean | null;
+  module_2_id?: string | null;
+  time_limit_minutes?: number | null;
+  time_limit_minutes_module_2?: number | null;
+  is_untimed?: boolean | null;
+}): string {
+  const isTwoModule = Boolean(test.is_adaptive || test.module_2_id);
+  const isUntimed = test.is_untimed;
+  if (isTwoModule) {
+    if (isUntimed) return "2 modules · untimed";
+    const m1 = test.time_limit_minutes ?? 0;
+    const m2 = test.time_limit_minutes_module_2 ?? m1;
+    const total = m1 + m2;
+    return total > 0 ? `2 modules · ${total} min` : "2 modules · untimed";
+  } else {
+    if (isUntimed) return "1 module · untimed";
+    const m1 = test.time_limit_minutes ?? 0;
+    return m1 > 0 ? `1 module · ${m1} min` : "1 module · untimed";
+  }
+}
+
+// Sort order: In Progress first, then Not Started, then Submitted.
+// Within Submitted: most recent due_date descending (proxy for recency).
+// Within unfinished: ascending due_date (most urgent first).
+const STATUS_ORDER: Record<string, number> = {
+  "In Progress": 0,
+  "Not Started": 1,
+  Submitted: 2,
 };
 
 export default async function StudentTestsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const tests = await getStudentTests(user.userId);
+  const [tests, t] = await Promise.all([
+    getStudentTests(user.userId),
+    getTranslations("student.tests"),
+  ]);
+
+  const sorted = [...tests].sort((a, b) => {
+    const sa = STATUS_ORDER[a.testStatus] ?? 3;
+    const sb = STATUS_ORDER[b.testStatus] ?? 3;
+    if (sa !== sb) return sa - sb;
+    if (a.testStatus === "Submitted") {
+      // most recent first
+      return (b.due_date ?? "").localeCompare(a.due_date ?? "");
+    }
+    // ascending due_date for unfinished (most urgent first; no date = later)
+    const da = a.due_date ?? "9999-12-31";
+    const db2 = b.due_date ?? "9999-12-31";
+    return da.localeCompare(db2);
+  });
+
+  const hasDueDates = sorted.some((t2) => Boolean(t2.due_date));
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       <PageIntro tKey="student.tests" />
-      <h1 className="text-2xl font-bold text-charcoal">My Tests</h1>
+      <h1 className="text-2xl font-bold text-charcoal">{t("title")}</h1>
 
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {tests.length === 0 ? (
+        {sorted.length === 0 ? (
           <div className="py-16 text-center space-y-3">
             <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">No tests assigned to you yet.</p>
+            <p className="text-soft-mute text-sm">{t("noTests")}</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-divider text-soft-mute">
-                  <th className="text-left px-5 py-3 font-medium">Test Name</th>
-                  <th className="text-left px-5 py-3 font-medium">Section</th>
-                  <th className="text-left px-5 py-3 font-medium">Status</th>
-                  <th className="text-left px-5 py-3 font-medium">Due Date</th>
-                  <th className="text-left px-5 py-3 font-medium">Score</th>
-                  <th className="text-left px-5 py-3 font-medium">Action</th>
+                  <th className="text-left px-5 py-3 font-medium">{t("columns.testName")}</th>
+                  <th className="text-left px-5 py-3 font-medium whitespace-nowrap">{t("columns.status")}</th>
+                  {hasDueDates && (
+                    <th className="text-left px-5 py-3 font-medium whitespace-nowrap">{t("columns.dueDate")}</th>
+                  )}
+                  <th className="text-left px-5 py-3 font-medium">{t("columns.score")}</th>
+                  <th className="text-left px-5 py-3 font-medium">{t("columns.action")}</th>
                 </tr>
               </thead>
               <tbody>
-                {tests.map((test) => {
+                {sorted.map((test) => {
                   const mod = test.modules as unknown as
                     | { module_name: string; section: string; module_number: number | null }
                     | null;
+                  const isTwoModule = Boolean(test.is_adaptive || test.module_2_id);
+                  const onModule2 = computeOnModule2(test);
+                  const subtitle = buildSubtitle(test);
+
+                  // Subject tag label
+                  const section = mod?.section ?? (isTwoModule ? "Math" : null);
+                  const subjectLabel =
+                    section === "Math"
+                      ? t("subject.math")
+                      : section === "Reading & Writing"
+                      ? t("subject.readingWriting")
+                      : section ?? null;
+                  const subjectClass =
+                    section === "Math"
+                      ? "bg-blue-50 text-blue-600 border border-blue-200"
+                      : section === "Reading & Writing"
+                      ? "bg-violet-50 text-violet-600 border border-violet-200"
+                      : "bg-light-bg text-mid-gray border border-divider";
+
+                  // Status string (never wraps)
+                  const statusLabel =
+                    test.testStatus === "Submitted"
+                      ? t("status.submitted")
+                      : test.testStatus === "In Progress"
+                      ? isTwoModule
+                        ? onModule2
+                          ? t("status.inProgressM2of2")
+                          : t("status.inProgressM1of2")
+                        : t("status.inProgress")
+                      : t("status.notStarted");
+
+                  const statusClass =
+                    test.testStatus === "Submitted"
+                      ? "bg-warm-amber/15 text-warm-amber"
+                      : test.testStatus === "In Progress"
+                      ? "bg-warm-coral/15 text-warm-coral-text"
+                      : "bg-light-bg text-mid-gray";
+
+                  // Score: only for fully submitted tests
+                  const showScore =
+                    test.testStatus === "Submitted" &&
+                    test.attempt?.percentage != null;
+
+                  // Action: Continue covers resume + continue-to-module-2
+                  const continueHref =
+                    test.needsModule2 || test.testStatus !== "In Progress"
+                      ? `/student/tests/${test.id}`
+                      : `/student/tests/${test.id}/take`;
+
                   return (
-                    <tr key={test.id} className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors">
+                    <tr
+                      key={test.id}
+                      className="border-b border-divider last:border-0 hover:bg-light-bg/60 transition-colors"
+                    >
                       <td className="px-5 py-3">
-                        <Link href={`/student/tests/${test.id}`} className={clsx("font-medium hover:text-warm-coral-text transition-colors", sectionTitleClass(mod?.section))}>
+                        <Link
+                          href={`/student/tests/${test.id}`}
+                          className="font-medium text-charcoal hover:text-warm-coral-text transition-colors"
+                        >
                           {test.test_name}
                         </Link>
-                        <div className="text-soft-mute text-xs mt-0.5">
-                          {mod ? mod.module_name : "Adaptive · multi-module"}
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          {subjectLabel && (
+                            <span
+                              className={clsx(
+                                "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap",
+                                subjectClass,
+                              )}
+                            >
+                              {subjectLabel}
+                            </span>
+                          )}
+                          <span className="text-soft-mute text-xs">{subtitle}</span>
                         </div>
                       </td>
-                      <td className="px-5 py-3 text-mid-gray">
-                        {mod ? <>{mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</> : "Math"}
-                      </td>
                       <td className="px-5 py-3">
-                        <span className={clsx("px-2 py-1 rounded-full text-xs font-medium", testStatusStyles[test.testStatus] ?? "bg-light-bg text-mid-gray")}>
-                          {test.testStatus}
+                        <span
+                          className={clsx(
+                            "inline-flex items-center px-2 py-1 rounded-full text-xs font-medium whitespace-nowrap",
+                            statusClass,
+                          )}
+                        >
+                          {statusLabel}
                         </span>
                       </td>
-                      <td className="px-5 py-3 text-soft-mute text-xs">
-                        {test.due_date ? formatDate(test.due_date) : "—"}
-                      </td>
+                      {hasDueDates && (
+                        <td className="px-5 py-3 text-soft-mute text-xs whitespace-nowrap">
+                          {test.due_date ? formatDate(test.due_date) : "—"}
+                        </td>
+                      )}
                       <td className="px-5 py-3 text-mid-gray">
-                        {test.attempt?.percentage != null ? (
+                        {showScore && test.attempt ? (
                           <>
-                            <div>{test.attempt.percentage.toFixed(1)}%</div>
-                            {test.attempt.scaledScore != null && (
-                              <div className="text-warm-coral-text text-xs font-medium">
-                                {test.attempt.scaledScore}/800
+                            {test.attempt.scaledScore != null ? (
+                              <div className="font-semibold text-charcoal">
+                                {test.attempt.scaledScore}
+                                <span className="text-soft-mute font-normal">/800</span>
                               </div>
-                            )}
-                            {test.attempt.isMultiModule &&
-                              test.attempt.modules.length > 0 && (
-                                <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                                  {test.attempt.modules.map((m) => (
-                                    <div key={m.submissionId}>
-                                      {m.label}:{" "}
-                                      {m.percentage != null
-                                        ? `${m.percentage.toFixed(1)}%`
-                                        : "—"}
-                                      {" · "}
-                                      {m.correctCount}/{m.totalQuestions}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                            ) : null}
+                            <div className="text-xs text-soft-mute">
+                              {test.attempt.percentage!.toFixed(1)}%
+                            </div>
                           </>
                         ) : (
-                          "—"
+                          <span className="text-soft-mute">—</span>
                         )}
                       </td>
                       <td className="px-5 py-3">
                         {test.testStatus === "Submitted" ? (
                           <Link
                             href={`/student/tests/${test.id}/result`}
-                            className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium transition-colors"
+                            className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium whitespace-nowrap transition-colors"
                           >
-                            View Result
+                            {t("actions.viewResult")}
                           </Link>
-                        ) : test.needsModule2 ? (
-                          <Link
-                            href={`/student/tests/${test.id}`}
-                            className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium transition-colors"
-                          >
-                            Continue to Module 2
-                          </Link>
-                        ) : test.testStatus === "In Progress" ? (
-                          <div className="flex items-center gap-2 flex-wrap">
+                        ) : test.testStatus === "In Progress" || test.needsModule2 ? (
+                          <div className="flex items-center gap-2">
                             <Link
-                              href={`/student/tests/${test.id}/take`}
-                              className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium transition-colors"
+                              href={continueHref}
+                              className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium whitespace-nowrap transition-colors"
                             >
-                              Resume
+                              {t("actions.continue")}
                             </Link>
                             {test.attempt?.partialResultSubmissionId && (
                               <Link
                                 href={`/student/tests/${test.id}/result?submission=${test.attempt.partialResultSubmissionId}`}
-                                className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium transition-colors"
+                                className="px-3 py-1.5 rounded-lg bg-surface text-mid-gray hover:text-charcoal hover:bg-light-bg text-xs font-medium whitespace-nowrap transition-colors"
                               >
-                                View Module 1 Result
+                                {t("actions.viewResult")}
                               </Link>
                             )}
                           </div>
                         ) : (
                           <Link
                             href={`/student/tests/${test.id}`}
-                            className="px-3 py-1.5 rounded-lg bg-warm-amber/15 text-warm-amber hover:bg-warm-amber/25 text-xs font-medium transition-colors"
+                            className="px-3 py-1.5 rounded-lg bg-warm-amber/15 text-warm-amber hover:bg-warm-amber/25 text-xs font-medium whitespace-nowrap transition-colors"
                           >
-                            Start Test
+                            {t("actions.start")}
                           </Link>
                         )}
                       </td>

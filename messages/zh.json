@@ -398,8 +398,7 @@
       "title": "我的測驗",
       "noTests": "尚未分配測驗給您。",
       "columns": {
-        "testName": "測驗名稱",
-        "section": "科目",
+        "testName": "測驗",
         "status": "狀態",
         "dueDate": "截止日期",
         "score": "分數",
@@ -408,12 +407,18 @@
       "status": {
         "notStarted": "未開始",
         "inProgress": "進行中",
+        "inProgressM1of2": "進行中・第 1 模組／共 2 模組",
+        "inProgressM2of2": "進行中・第 2 模組／共 2 模組",
         "submitted": "已繳交"
       },
       "actions": {
-        "start": "開始測驗",
-        "resume": "繼續",
+        "start": "開始",
+        "continue": "繼續",
         "viewResult": "查看結果"
+      },
+      "subject": {
+        "math": "數學",
+        "readingWriting": "閱讀與寫作"
       },
       "landing": {
         "timeLimit": "時間限制",

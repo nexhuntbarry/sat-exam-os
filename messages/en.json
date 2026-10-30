@@ -398,22 +398,27 @@
       "title": "My Tests",
       "noTests": "No tests assigned to you yet.",
       "columns": {
-        "testName": "Test Name",
-        "section": "Section",
+        "testName": "Test",
         "status": "Status",
         "dueDate": "Due Date",
         "score": "Score",
         "action": "Action"
       },
       "status": {
-        "notStarted": "Not Started",
-        "inProgress": "In Progress",
+        "notStarted": "Not started",
+        "inProgress": "In progress",
+        "inProgressM1of2": "In progress · Module 1 of 2",
+        "inProgressM2of2": "In progress · Module 2 of 2",
         "submitted": "Submitted"
       },
       "actions": {
-        "start": "Start Test",
-        "resume": "Resume",
-        "viewResult": "View Result"
+        "start": "Start",
+        "continue": "Continue",
+        "viewResult": "View result"
+      },
+      "subject": {
+        "math": "Math",
+        "readingWriting": "Reading & Writing"
       },
       "landing": {
         "timeLimit": "Time Limit",
