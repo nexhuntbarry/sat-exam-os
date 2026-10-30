@@ -85,7 +85,7 @@ export async function DELETE(
   const { data: linked, error: linkedError } = await db
     .from("test_assignments")
     .select("id, class_group_ids")
-    .contains("class_group_ids", [id]);
+    .contains("class_group_ids", JSON.stringify([id]));
   if (linkedError) {
     console.error("[class-groups/delete] assignment lookup error:", linkedError);
     return NextResponse.json({ error: "Failed to delete class group" }, { status: 500 });

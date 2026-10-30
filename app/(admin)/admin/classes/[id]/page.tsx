@@ -113,7 +113,7 @@ async function getLinkedTests(classGroupId: string) {
   const { data } = await db
     .from("test_assignments")
     .select("test_id, tests(test_name)")
-    .contains("class_group_ids", [classGroupId]);
+    .contains("class_group_ids", JSON.stringify([classGroupId]));
   return (data ?? []).map((row) => {
     const t = Array.isArray(row.tests) ? row.tests[0] : row.tests;
     return { id: row.test_id as string, name: ((t as { test_name?: string } | null)?.test_name ?? "Untitled test") };
@@ -130,12 +130,13 @@ async function getAssignedTests(
   viewerIsQa: boolean,
 ): Promise<AssignedTest[]> {
   const db = getServiceClient();
-  const { data } = await db
+  const { data, error } = await db
     .from("test_assignments")
     .select(
       "test_id, tests(id, test_name, open_date, due_date, status, module_2_id, is_adaptive, modules!module_id(section))",
     )
-    .contains("class_group_ids", [classGroupId]);
+    .contains("class_group_ids", JSON.stringify([classGroupId]));
+  if (error) console.error("[classes/assigned-tests] lookup error:", error);
 
   if (!data || data.length === 0) return [];
 
