@@ -12,6 +12,7 @@
 // Bounding boxes that fall outside the page or have non-positive area
 // are silently skipped so a single bad bbox cannot fail the whole parse.
 
+import { hasMarkdownTable } from "@/lib/markdown-table";
 import { put } from "@vercel/blob";
 import sharp from "sharp";
 import type { ParsedQuestion } from "./parse-pdf";
@@ -197,18 +198,7 @@ async function cropRegion(
   }
 }
 
-// A GFM table needs a header row of pipes AND a dash separator row
-// (| --- | --- |). A single line with pipes is not enough.
-export function hasMarkdownTable(text: string | null | undefined): boolean {
-  if (!text) return false;
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (!lines[i].includes("|")) continue;
-    const sep = lines[i + 1].trim();
-    if (/^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?$/.test(sep)) return true;
-  }
-  return false;
-}
+export { hasMarkdownTable };
 
 // Alt text is shown to students; never let it carry an answer hint
 // ("Graph C … (correct answer)", "✓").

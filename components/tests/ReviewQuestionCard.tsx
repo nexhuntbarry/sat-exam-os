@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
+import { hasMarkdownTable } from "@/lib/markdown-table";
 
 // One question as shown in a REVIEW walkthrough (student class-review and
 // teacher class-review both render through this so they can never drift
@@ -50,7 +51,11 @@ export default function ReviewQuestionCard({
   const hasCrops = Array.isArray(q.image_urls) && q.image_urls.length > 0;
   // Graph-choice crops count too: the raw page would show the ✓ answer mark.
   const hasChoiceCrops = choices.some((c) => !!c.image_url);
-  const needsFigureFallback = showSourceFigure && (q.has_image || q.has_table) && !hasCrops && !hasChoiceCrops;
+  // A table-only question whose table is already rebuilt as Markdown doesn't
+  // need the page screenshot too (it would show the table twice).
+  const tableAlreadyInText = q.has_table && !q.has_image && hasMarkdownTable(q.question_text);
+  const needsFigureFallback =
+    showSourceFigure && (q.has_image || q.has_table) && !tableAlreadyInText && !hasCrops && !hasChoiceCrops;
 
   return (
     <div className="bg-surface border border-divider rounded-2xl p-5 space-y-3">

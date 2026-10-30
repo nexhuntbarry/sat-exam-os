@@ -12,19 +12,8 @@ import { formatDateTime } from "@/lib/datetime";
 import QuestionRenderer from "@/components/tests/QuestionRenderer";
 import ReviewQuestionCard from "@/components/tests/ReviewQuestionCard";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
+import { hasMarkdownTable } from "@/lib/markdown-table";
 
-// Matches the same logic in lib/ai/extract-images.ts — a GFM table needs a
-// header row of pipes AND a dash separator row right below it.
-function hasMarkdownTable(text: string | null | undefined): boolean {
-  if (!text) return false;
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length - 1; i++) {
-    if (!lines[i].includes("|")) continue;
-    const sep = lines[i + 1].trim();
-    if (/^\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)+\|?$/.test(sep)) return true;
-  }
-  return false;
-}
 
 const SAT_DOMAINS = [
   "Information and Ideas",
