@@ -13,7 +13,7 @@
 -- server-side. A student who hasn't submitted, or who has a retake
 -- pending / in progress, never sees answers regardless of this row.
 --
--- Server-side only (service role), like test_retake_grants: RLS stays off.
+-- Server-side only (service role): RLS on, no policies (see bottom).
 
 create table if not exists public.student_answer_visibility (
   test_id uuid not null references public.tests(id) on delete cascade,
@@ -44,3 +44,8 @@ create table if not exists public.student_answer_visibility_log (
 
 create index if not exists idx_student_answer_visibility_log_test_student
   on public.student_answer_visibility_log (test_id, student_id, changed_at desc);
+
+-- Like the other tables: RLS on with no policies, so only the service role
+-- (server) can read or write; the anon key gets nothing.
+alter table public.student_answer_visibility enable row level security;
+alter table public.student_answer_visibility_log enable row level security;
