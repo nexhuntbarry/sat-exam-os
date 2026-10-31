@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, ExternalLink, Eye } from "lucide-react";
+import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, Eye } from "lucide-react";
 import { formatShortDate } from "@/lib/datetime";
 import {
   DataRow,
@@ -11,13 +11,15 @@ import {
   EmptyRow,
   ExpandToggle,
   HeadRow,
+  RowActions,
   RowActionsMenu,
+  RowButton,
   Td,
   Th,
   TruncatedText,
   TwoLineCell,
-  type RowAction,
 } from "@/components/ui/data-table";
+import { Portal } from "@/components/ui/Portal";
 
 export interface AssignedTest {
   id: string;
@@ -296,6 +298,7 @@ export default function ClassDetailClient({
 
       {/* Delete-class double-confirm modal */}
       {deleteOpen && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="p-5 border-b border-divider flex items-start gap-3">
@@ -356,6 +359,7 @@ export default function ClassDetailClient({
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Teachers */}
@@ -490,21 +494,10 @@ export default function ClassDetailClient({
               const openStr = t.openDate ? formatShortDate(t.openDate) : "—";
               const dueStr = t.dueDate ? formatShortDate(t.dueDate) : "—";
               const datesDetail = `${openStr} → ${dueStr}`;
-              const actions: RowAction[] = [
-                {
-                  label: "View results",
-                  icon: Eye,
-                  href: `/admin/tests/${t.id}/submissions?class=${classGroup.id}`,
-                },
-                {
-                  label: "Test page",
-                  icon: ExternalLink,
-                  href: `/admin/tests/${t.id}`,
-                },
-              ];
               return (
                 <DataRow
                   key={t.id}
+                  href={`/admin/tests/${t.id}`}
                   expandBelow="lg"
                   colSpan={5}
                   details={
@@ -534,8 +527,14 @@ export default function ClassDetailClient({
                     />
                   </Td>
                   <Td kind="actions" sticky="right">
-                    <ExpandToggle label={`More about ${t.name}`} />
-                    <RowActionsMenu label={`Actions for ${t.name}`} items={actions} />
+                    <RowActions>
+                      <ExpandToggle label={`More about ${t.name}`} />
+                      <RowButton
+                        label="Results"
+                        icon={<Eye size={13} />}
+                        href={`/admin/tests/${t.id}/submissions?class=${classGroup.id}`}
+                      />
+                    </RowActions>
                   </Td>
                 </DataRow>
               );
@@ -567,6 +566,7 @@ export default function ClassDetailClient({
               return (
                 <DataRow
                   key={m.id}
+                  href={`/admin/students/${m.student_id}`}
                   expandBelow="md"
                   colSpan={4}
                   details={
@@ -589,18 +589,22 @@ export default function ClassDetailClient({
                     <TruncatedText>{profile?.school ?? "—"}</TruncatedText>
                   </Td>
                   <Td kind="actions" sticky="right">
-                    <ExpandToggle label={`More about ${name}`} />
-                    <RowActionsMenu
-                      label={`Actions for ${name}`}
-                      items={[
-                        {
-                          label: "Remove from class",
-                          icon: UserMinus,
-                          tone: "danger",
-                          onSelect: () => handleAction(m.student_id, "remove"),
-                        },
-                      ]}
-                    />
+                    <RowActions>
+                      <ExpandToggle label={`More about ${name}`} />
+                      <RowActionsMenu
+                        label={`Actions for ${name}`}
+                        items={[
+                          {
+                            label: "Remove from class…",
+                            icon: UserMinus,
+                            tone: "danger",
+                            onSelect: () => {
+                              if (confirm(`Remove ${name} from ${classGroup.name}?`)) handleAction(m.student_id, "remove");
+                            },
+                          },
+                        ]}
+                      />
+                    </RowActions>
                   </Td>
                 </DataRow>
               );

@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import MathMarkdown from "@/components/MathMarkdown";
+import { Portal } from "@/components/ui/Portal";
 
 interface TestSummary {
   id: string;
@@ -487,6 +488,7 @@ function PracticeSetModal({
   }, [name, selectedCount, selectedIds, cohortId, router]);
 
   return (
+    <Portal>
     <div
       className="fixed inset-0 bg-charcoal/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       onClick={onClose}
@@ -614,6 +616,7 @@ function PracticeSetModal({
         </footer>
       </div>
     </div>
+    </Portal>
   );
 }
 

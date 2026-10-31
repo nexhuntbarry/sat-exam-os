@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, X, Users } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
 
 interface ClassGroup {
   id: string;
@@ -50,6 +51,7 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: () 
     "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
       <div className="bg-surface border border-divider rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
         <div className="flex items-center justify-between">
@@ -117,6 +119,7 @@ function CreateModal({ onClose, onCreate }: { onClose: () => void; onCreate: () 
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 

@@ -24,6 +24,7 @@ import {
   type TdHTMLAttributes,
   type ThHTMLAttributes,
 } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronDown } from "lucide-react";
 import { cn } from "./cn";
 
@@ -179,12 +180,16 @@ const ROW_TONE = {
     "bg-[color-mix(in_srgb,var(--color-status-warning)_10%,var(--color-surface))] hover:bg-[color-mix(in_srgb,var(--color-status-warning)_16%,var(--color-surface))]",
 } as const;
 
-/** Body row. Pass `details` (usually DetailItem elements) to get the
- *  expandable pattern: below `expandBelow` the row is clickable and an
- *  ExpandToggle in the row shows a details row with the hidden columns.
- *  Clicks on links/buttons/inputs inside the row do not toggle it. */
+/** Body row. Pass `href` to make the whole row open that detail page (so
+ *  "View details" doesn't belong in the ⋯ menu). Pass `details` (usually
+ *  DetailItem elements) to get the expandable pattern: below `expandBelow`
+ *  an ExpandToggle in the row shows a details row with the hidden columns;
+ *  without `href`, clicking the row toggles it too.
+ *  Clicks on links/buttons/inputs inside the row (and clicks inside portals
+ *  such as dialogs opened from the row) are ignored. */
 export function DataRow({
   children,
+  href,
   details,
   expandBelow = "xl",
   tone = "default",
@@ -192,6 +197,8 @@ export function DataRow({
   className,
 }: {
   children: ReactNode;
+  /** Detail page opened by clicking the row (Ctrl/⌘-click opens a new tab). */
+  href?: string;
   details?: ReactNode;
   /** Breakpoint from which all columns are visible (the highest priority used). */
   expandBelow?: Breakpoint;
@@ -200,15 +207,23 @@ export function DataRow({
   colSpan?: number;
   className?: string;
 }) {
+  const router = useRouter();
   const [expanded, setExpanded] = useState(false);
   const detailsId = useId();
   const span = colSpan ?? Children.toArray(children).filter(isValidElement).length;
 
   function onRowClick(e: MouseEvent<HTMLTableRowElement>) {
-    if (!details) return;
+    if (!href && !details) return;
     const target = e.target as HTMLElement;
-    if (target.closest("a,button,input,select,textarea,label,[role=menu],[role=menuitem]")) return;
+    // React bubbles events from portals (dialogs, menus) through the row.
+    if (!e.currentTarget.contains(target)) return;
+    if (target.closest("a,button,input,select,textarea,label,[role=menu],[role=menuitem],[role=dialog]")) return;
     if (window.getSelection()?.toString()) return; // user is selecting text
+    if (href) {
+      if (e.metaKey || e.ctrlKey) window.open(href, "_blank");
+      else router.push(href);
+      return;
+    }
     setExpanded((v) => !v);
   }
 
@@ -219,7 +234,7 @@ export function DataRow({
         className={cn(
           "border-b border-divider transition-colors",
           ROW_TONE[tone],
-          details && ROW_CLICKABLE_BELOW[expandBelow],
+          href ? "cursor-pointer" : details && ROW_CLICKABLE_BELOW[expandBelow],
           expanded && "border-b-0",
           className,
         )}

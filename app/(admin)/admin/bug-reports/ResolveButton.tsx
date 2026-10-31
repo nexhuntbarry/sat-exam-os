@@ -27,7 +27,7 @@ export default function ResolveButton({ reportId }: { reportId: string }) {
     <button
       onClick={resolve}
       disabled={busy}
-      className="px-2 py-1 rounded-md text-xs bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber font-medium transition-colors disabled:opacity-50"
+      className="whitespace-nowrap px-2 py-1 rounded-md text-xs bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber font-medium transition-colors disabled:opacity-50"
     >
       {busy ? "..." : "Mark resolved"}
     </button>

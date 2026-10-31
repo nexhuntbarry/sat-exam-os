@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { Portal } from "@/components/ui/Portal";
 
 interface UploadConfirmDialogProps {
   onConfirm: () => void;
@@ -73,6 +74,7 @@ export default function UploadConfirmDialog({ onConfirm, onCancel }: UploadConfi
   }, []);
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
       <div
         className="absolute inset-0 bg-black/60 backdrop-blur-sm"
@@ -148,5 +150,6 @@ export default function UploadConfirmDialog({ onConfirm, onCancel }: UploadConfi
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

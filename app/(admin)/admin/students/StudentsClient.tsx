@@ -4,9 +4,10 @@ import { useState, useTransition } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { Check, X, Search, Eye, Ban, RotateCcw } from "lucide-react";
+import { Check, X, Search, Ban, RotateCcw, Trash2 } from "lucide-react";
 import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import { changeStudentStatus } from "./[id]/StudentStatusButton";
+import DeleteStudentButton from "./[id]/DeleteStudentButton";
 import {
   ColumnsPicker,
   DataRow,
@@ -15,7 +16,9 @@ import {
   EmptyRow,
   ExpandToggle,
   HeadRow,
+  RowActions,
   RowActionsMenu,
+  RowButton,
   Td,
   Th,
   TruncatedText,
@@ -24,6 +27,7 @@ import {
   type ColumnDef,
   type RowAction,
 } from "@/components/ui/data-table";
+import { Portal } from "@/components/ui/Portal";
 
 const COLUMNS: ColumnDef[] = [
   { key: "student", label: "Student", locked: true },
@@ -133,6 +137,7 @@ function ApproveModal({
     "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
       <div className="bg-surface border border-divider rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
         <div className="flex items-center justify-between">
@@ -239,6 +244,7 @@ function ApproveModal({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -250,7 +256,53 @@ export default function StudentsClient({ students, classGroups }: Props) {
   const [, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Student | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
   const cols = useColumnPrefs("admin-students", COLUMNS);
+
+  // Bulk approve: the single-approve route in a loop, so every student goes
+  // through the same role / QA-isolation checks. No class or profile fields.
+  async function approveMany(ids: string[]) {
+    if (ids.length === 0 || bulk) return;
+    const noun = ids.length === 1 ? "student" : "students";
+    if (!confirm(`Approve ${ids.length} ${noun}? They will get access and an approval email.`)) return;
+    setActionError(null);
+    setBulk({ done: 0, total: ids.length });
+    const failed: string[] = [];
+    for (const [i, id] of ids.entries()) {
+      try {
+        const res = await fetch(`/api/admin/students/${id}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        if (!res.ok) failed.push(id);
+      } catch {
+        failed.push(id);
+      }
+      setBulk({ done: i + 1, total: ids.length });
+    }
+    setBulk(null);
+    setSelected(new Set(failed));
+    if (failed.length > 0) {
+      const names = failed.map((id) => {
+        const s = students.find((x) => x.id === id);
+        return s?.display_name ?? s?.email ?? id;
+      });
+      setActionError(`Could not approve ${failed.length} of ${ids.length}: ${names.join(", ")}`);
+    }
+    startTransition(() => router.refresh());
+  }
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function handleStatusChange(student: Student) {
     const result = await changeStudentStatus(
@@ -312,6 +364,11 @@ export default function StudentsClient({ students, classGroups }: Props) {
     ...matches.filter((s) => s.account_status !== "pending"),
   ];
 
+  const pendingIds = students.filter((s) => s.account_status === "pending").map((s) => s.id);
+  const selectedPending = pendingIds.filter((id) => selected.has(id));
+  const visiblePending = filtered.filter((s) => s.account_status === "pending").map((s) => s.id);
+  const allVisibleSelected = visiblePending.length > 0 && visiblePending.every((id) => selected.has(id));
+
   const chips: { key: Filter; label: string }[] = [
     { key: "all", label: "All" },
     { key: "pending", label: "Pending" },
@@ -337,11 +394,50 @@ export default function StudentsClient({ students, classGroups }: Props) {
         <h1 className="text-2xl font-bold text-charcoal">Students</h1>
       </div>
 
+      {deleteTarget && (
+        <DeleteStudentButton
+          studentId={deleteTarget.id}
+          studentName={deleteTarget.display_name ?? deleteTarget.email}
+          email={deleteTarget.email}
+          open
+          onClose={() => setDeleteTarget(null)}
+          onDeleted={() => {
+            setDeleteTarget(null);
+            startTransition(() => router.refresh());
+          }}
+        />
+      )}
+
       {counts.pending > 0 && (
-        <div className="bg-status-warning/10 border border-status-warning/20 rounded-xl px-4 py-3 text-sm text-charcoal">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-status-warning/10 border border-status-warning/20 rounded-xl px-4 py-3 text-sm text-charcoal">
           <span className="font-semibold">
             {counts.pending} {counts.pending === 1 ? "student" : "students"} waiting for approval
           </span>
+          <span className="text-soft-mute" aria-hidden>·</span>
+          <button
+            type="button"
+            disabled={bulk !== null}
+            onClick={() => approveMany(pendingIds)}
+            className="font-semibold text-warm-coral-text hover:underline disabled:opacity-50"
+          >
+            Approve all
+          </button>
+          {selectedPending.length > 0 && (
+            <button
+              type="button"
+              disabled={bulk !== null}
+              onClick={() => approveMany(selectedPending)}
+              className="ml-auto inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-warm-coral px-3 text-xs font-semibold text-white hover:bg-warm-coral-dark disabled:opacity-50"
+            >
+              <Check size={13} />
+              Approve selected ({selectedPending.length})
+            </button>
+          )}
+          {bulk && (
+            <span role="status" className="text-xs text-soft-mute">
+              Approving {bulk.done}/{bulk.total}…
+            </span>
+          )}
         </div>
       )}
 
@@ -387,7 +483,31 @@ export default function StudentsClient({ students, classGroups }: Props) {
       <DataTable>
         <thead>
           <HeadRow>
-            <Th kind="main" sticky="left">Student</Th>
+            <Th kind="main" sticky="left">
+              {visiblePending.length > 0 ? (
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-warm-coral"
+                    checked={allVisibleSelected}
+                    onChange={() =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        for (const id of visiblePending) {
+                          if (allVisibleSelected) next.delete(id);
+                          else next.add(id);
+                        }
+                        return next;
+                      })
+                    }
+                    aria-label="Select all pending students"
+                  />
+                  Student
+                </label>
+              ) : (
+                "Student"
+              )}
+            </Th>
             <Th>Status</Th>
             {cols.isVisible("class") && <Th kind="long" priority="md" className="w-[16%]">Class</Th>}
             {cols.isVisible("gradeSchool") && <Th kind="long" priority="lg" className="w-[22%]">Grade &amp; school</Th>}
@@ -421,37 +541,31 @@ export default function StudentsClient({ students, classGroups }: Props) {
             const registered = `Registered ${formatShortDate(student.created_at)}`;
             const activityTitle = `${lastSignIn ? `Last sign-in ${formatDateTime(student.last_sign_in_at)}` : "Never signed in"} · Registered ${formatDateTime(student.created_at)}`;
 
+            // Rule 4: the state's main action is a visible button; risky or
+            // rare ones live in ⋯. The row itself opens the student.
+            const isPending = student.account_status === "pending";
+            const busy = busyId === student.id || bulk !== null;
             const actions: (RowAction | false)[] = [
-              { label: "View details", icon: Eye, href: `/admin/students/${student.id}` },
-              student.account_status === "pending" && {
-                label: "Approve…",
-                icon: Check,
-                onSelect: () => setApproveTarget(student),
-              },
-              student.account_status === "pending" && {
-                label: "Reject…",
-                icon: X,
-                tone: "danger",
-                onSelect: () => handleSuspend(student.id),
-              },
               student.account_status === "approved" && {
                 label: "Suspend…",
                 icon: Ban,
                 tone: "danger",
-                disabled: busyId === student.id,
+                disabled: busy,
                 onSelect: () => handleStatusChange(student),
               },
               student.account_status === "suspended" && {
-                label: "Reactivate…",
-                icon: RotateCcw,
-                disabled: busyId === student.id,
-                onSelect: () => handleStatusChange(student),
+                label: "Delete…",
+                icon: Trash2,
+                tone: "danger",
+                disabled: busy,
+                onSelect: () => setDeleteTarget(student),
               },
             ];
 
             return (
               <DataRow
                 key={student.id}
+                href={`/admin/students/${student.id}`}
                 tone={student.account_status === "pending" ? "warning" : "default"}
                 expandBelow="xl"
                 colSpan={cols.visibleCount}
@@ -471,16 +585,27 @@ export default function StudentsClient({ students, classGroups }: Props) {
                 }
               >
                 <Td kind="main" sticky="left">
-                  <Link
-                    href={`/admin/students/${student.id}`}
-                    className="block hover:text-warm-coral-text transition-colors"
-                  >
-                    <TwoLineCell
-                      main={student.display_name ?? "—"}
-                      detail={student.email}
-                      mainClassName="font-medium text-inherit"
-                    />
-                  </Link>
+                  <span className="flex min-w-0 items-center gap-2">
+                    {isPending && (
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 shrink-0 accent-warm-coral"
+                        checked={selected.has(student.id)}
+                        onChange={() => toggleSelected(student.id)}
+                        aria-label={`Select ${name}`}
+                      />
+                    )}
+                    <Link
+                      href={`/admin/students/${student.id}`}
+                      className="block min-w-0 flex-1 hover:text-warm-coral-text transition-colors"
+                    >
+                      <TwoLineCell
+                        main={student.display_name ?? "—"}
+                        detail={student.email}
+                        mainClassName="font-medium text-inherit"
+                      />
+                    </Link>
+                  </span>
                 </Td>
                 <Td>
                   <span
@@ -526,9 +651,37 @@ export default function StudentsClient({ students, classGroups }: Props) {
                   </Td>
                 )}
                 <Td kind="actions" sticky="right">
-                  {busyId === student.id && <span className="mr-1 text-xs text-soft-mute">Saving…</span>}
-                  <ExpandToggle label={`More about ${name}`} />
-                  <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                  <RowActions>
+                    {busyId === student.id && <span className="text-xs text-soft-mute">Saving…</span>}
+                    <ExpandToggle label={`More about ${name}`} />
+                    {isPending && (
+                      <>
+                        <RowButton
+                          label="Approve"
+                          tone="primary"
+                          icon={<Check size={13} />}
+                          disabled={busy}
+                          onClick={() => setApproveTarget(student)}
+                        />
+                        <RowButton
+                          label="Reject"
+                          tone="danger"
+                          icon={<X size={13} />}
+                          disabled={busy}
+                          onClick={() => handleSuspend(student.id)}
+                        />
+                      </>
+                    )}
+                    {student.account_status === "suspended" && (
+                      <RowButton
+                        label="Reactivate"
+                        icon={<RotateCcw size={13} />}
+                        disabled={busy}
+                        onClick={() => handleStatusChange(student)}
+                      />
+                    )}
+                    <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                  </RowActions>
                 </Td>
               </DataRow>
             );

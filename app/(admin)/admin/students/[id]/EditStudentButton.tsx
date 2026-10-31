@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, X, AlertTriangle } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
 
 interface StudentEditable {
   id: string;
@@ -103,6 +104,7 @@ export default function EditStudentButton({ student }: Props) {
       </button>
 
       {open && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-2xl shadow-2xl max-h-[88vh] flex flex-col">
             <div className="flex items-center justify-between p-5 border-b border-divider">
@@ -264,10 +266,12 @@ export default function EditStudentButton({ student }: Props) {
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {/* Double-confirm modal */}
       {confirming && (
+        <Portal>
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="p-5 border-b border-divider flex items-start gap-3">
@@ -313,6 +317,7 @@ export default function EditStudentButton({ student }: Props) {
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </>
   );

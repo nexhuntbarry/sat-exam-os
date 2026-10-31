@@ -3,6 +3,7 @@
 import { useEffect, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { UserPlus, X, Search, CheckCircle2 } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
 
 interface Student {
   id: string;
@@ -110,6 +111,7 @@ export default function AddStudentsButton({ testId, alreadyAssigned, open: openP
       )}
 
       {open && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
             {tabs}
@@ -224,6 +226,7 @@ export default function AddStudentsButton({ testId, alreadyAssigned, open: openP
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </>
   );

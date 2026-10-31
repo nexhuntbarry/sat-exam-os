@@ -1,6 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Mail, Users, GraduationCap, BookOpen, Eye } from "lucide-react";
+import { ArrowLeft, Mail, Users, GraduationCap, BookOpen } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
@@ -13,7 +13,6 @@ import {
   EmptyRow,
   ExpandToggle,
   HeadRow,
-  RowActionsMenu,
   Td,
   Th,
   TwoLineCell,
@@ -306,6 +305,7 @@ export default async function AdminTeacherDetailPage({
                       {cls.students.map((s) => (
                         <DataRow
                           key={s.id}
+                          href={`/admin/students/${s.id}`}
                           expandBelow="lg"
                           colSpan={4}
                           details={
@@ -327,16 +327,6 @@ export default async function AdminTeacherDetailPage({
                           </Td>
                           <Td kind="actions" sticky="right">
                             <ExpandToggle label={`More about ${s.display_name ?? s.email}`} />
-                            <RowActionsMenu
-                              label={`Actions for ${s.display_name ?? s.email}`}
-                              items={[
-                                {
-                                  label: "View student",
-                                  icon: <Eye size={14} />,
-                                  href: `/admin/students/${s.id}`,
-                                },
-                              ]}
-                            />
                           </Td>
                         </DataRow>
                       ))}

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, X } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
 
 interface ModuleData {
   id: string;
@@ -65,6 +66,7 @@ export default function EditModuleButton({ mod }: { mod: ModuleData }) {
         Edit
       </button>
       {open && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="px-5 py-4 border-b border-divider flex items-center justify-between">
@@ -160,6 +162,7 @@ export default function EditModuleButton({ mod }: { mod: ModuleData }) {
             </div>
           </div>
         </div>
+        </Portal>
       )}
       <style jsx global>{`
         .input {

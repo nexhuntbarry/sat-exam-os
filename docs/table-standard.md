@@ -19,8 +19,18 @@ One standard for every list/table in the app. Kit: `components/ui/data-table`
      text in a hover `title` (`TruncatedText`). Never wraps or widens the table.
    - `actions`: the ⋯ column, shrink-to-fit, right-aligned.
    Override a flexible column's share with `className="w-[16%]"`.
-4. **Row actions go in a ⋯ menu** (`RowActionsMenu`), not several buttons.
-   "View details" first, destructive actions last with `tone: "danger"`.
+4. **Row actions: the common one is a button, the rest go in ⋯.** The most
+   common action for the row's *current state* is a visible one-click
+   `RowButton` (e.g. a pending student: **Approve** (primary) + **Reject**; a
+   suspended student: **Reactivate**). Only less frequent or risky actions
+   (Suspend, Delete, Remove, Reset, Grant retake…) go in the ⋯ menu
+   (`RowActionsMenu`), destructive ones last with `tone: "danger"`. Clicking
+   a row opens its detail page (`DataRow href`), so "View" / "View details"
+   is never a menu item where the row is clickable; if nothing else is left,
+   omit the ⋯. Keep confirmations on destructive actions. Wrap the cell's
+   contents in `RowActions` (one line, never wraps); the actions column
+   stays `sticky="right"`. Reference: Tests list (**Assign ▾** + ⋯) and
+   Students.
 5. **Responsive columns.** Give lower-priority columns `priority="md" | "lg" |
    "xl"`; they hide below that breakpoint. Pass the hidden fields to
    `DataRow details={…}` as `DetailItem`s with the same priority, set
@@ -29,6 +39,13 @@ One standard for every list/table in the app. Kit: `components/ui/data-table`
    `ColumnsPicker` lets each viewer hide columns (saved in localStorage).
 6. **Sticky edges.** First column `sticky="left"`, actions `sticky="right"`
    (on both `Th` and `Td`). Rows have solid backgrounds so this stays opaque.
+   Sticky cells are `z-[1]` and form their own stacking context, so a
+   `fixed` dialog or menu rendered *inside* a row is trapped under later
+   rows' sticky cells. Every modal overlay and dropdown must render through
+   a portal: wrap dialogs in `<Portal>` (`@/components/ui/Portal`) with
+   `fixed inset-0 z-50`; menus use `RowActionsMenu` (already portalled) or
+   `<Portal>` + `fixed z-50`. Never raise a sticky cell's z-index to fix
+   overlap.
 7. **Short dates.** Use `formatShortDateTime` / `formatShortDate` from
    `lib/datetime.ts` (New York time; year omitted for the current year:
    `10/30 4:55 PM`, otherwise `10/30/2025 4:55 PM`). Put the full
@@ -44,13 +61,15 @@ scrolling. Mostly 5–7 columns; merge or demote the rest.
 | `DataTable` | Root (`overflow-x-auto` wrapper + `<table>`). Put `<thead>`/`<tbody>` inside. |
 | `HeadRow` | Header `<tr>` with solid background. |
 | `Th`, `Td` | Cells. Props: `priority` (`always`\|`md`\|`lg`\|`xl`, default `always`), `kind` (`main`\|`short`\|`long`\|`actions`, default `short`), `sticky` (`left`\|`right`), plus normal th/td attributes. |
-| `DataRow` | Body `<tr>`. Props: `details` (DetailItems), `expandBelow` (`md`\|`lg`\|`xl`, default `xl`), `tone` (`default`\|`warning`), `colSpan` (details row span; defaults to the cell count). |
+| `DataRow` | Body `<tr>`. Props: `href` (whole row opens it; Ctrl/⌘-click = new tab; add `ExpandToggle` if the row also has `details`), `details` (DetailItems), `expandBelow` (`md`\|`lg`\|`xl`, default `xl`), `tone` (`default`\|`warning`), `colSpan` (details row span; defaults to the cell count). |
 | `DetailItem` | `label` + value in the details row; `priority` = its column's priority (shown only while that column is hidden). |
 | `ExpandToggle` | Chevron button for the details row (only renders below `expandBelow`). |
 | `EmptyRow` | "No results" row: `colSpan` + children. |
 | `TwoLineCell` | `main`, `detail`, optional `mainTitle`/`detailTitle`/`mainClassName`. |
 | `TruncatedText` | One truncated line with hover title (`title` prop if children isn't a string). |
 | `RowActionsMenu` | ⋯ menu. `label` (aria name, e.g. ``Actions for ${name}``) and `items: RowAction[]` (false/null allowed). `RowAction = { label, icon?, href? \| onSelect?, tone?: "danger", disabled? }`. Portal + fixed position, keyboard and Esc/outside-click close. `onSelect` runs after the menu closes. |
+| `RowButton` | Visible row action. `label`, `href` (Server Components OK) or `onClick` (client only), `icon` as an element (`<Check size={13} />`), `tone` (`primary`\|`default`\|`danger`), `disabled`, `title`. Never wraps. |
+| `RowActions` | One-line, right-aligned wrapper for the actions cell (`ExpandToggle`, `RowButton`s, `RowActionsMenu`). |
 | `useColumnPrefs(key, columns)` / `ColumnsPicker` | Optional per-viewer column visibility. `columns: ColumnDef[]` (`{ key, label, locked?, defaultHidden? }`, define at module level). Guard each `Th`/`Td`/`DetailItem` with `prefs.isVisible(key)`; use `prefs.visibleCount` for colSpans. |
 | `cn` | clsx + tailwind-merge. |
 
@@ -68,15 +87,18 @@ scrolling. Mostly 5–7 columns; merge or demote the rest.
   </thead>
   <tbody>
     {rows.map((r) => (
-      <DataRow key={r.id} expandBelow="lg"
+      <DataRow key={r.id} href={`/x/${r.id}`} expandBelow="lg"
         details={<DetailItem label="School" priority="lg">{r.school}</DetailItem>}>
         <Td kind="main" sticky="left"><TwoLineCell main={r.name} detail={r.email} /></Td>
         <Td>{r.status}</Td>
         <Td kind="long" priority="lg"><TruncatedText>{r.school}</TruncatedText></Td>
         <Td kind="actions" sticky="right">
-          <ExpandToggle />
-          <RowActionsMenu label={`Actions for ${r.name}`}
-            items={[{ label: "View details", href: `/x/${r.id}` }]} />
+          <RowActions>
+            <ExpandToggle />
+            {r.pending && <RowButton label="Approve" tone="primary" onClick={() => approve(r)} />}
+            <RowActionsMenu label={`Actions for ${r.name}`}
+              items={[{ label: "Delete…", tone: "danger", onSelect: () => remove(r) }]} />
+          </RowActions>
         </Td>
       </DataRow>
     ))}
@@ -85,6 +107,8 @@ scrolling. Mostly 5–7 columns; merge or demote the rest.
 ```
 
 Gotchas: priority/kind classes are literal strings in the kit, don't build
-class names dynamically. Clicks on `a`, `button`, `input`, `select`, `label`
+class names dynamically. Server Components can't pass functions to the kit
+(icon components, `onClick`/`onSelect`): pass rendered elements and `href`s,
+or move the action into a small client component. Clicks on `a`, `button`, `input`, `select`, `label`
 inside a row don't toggle it. If the details row would be empty for a table
 (no prioritised columns), omit `details` and `ExpandToggle`.

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCcw, Send, Trash2 } from "lucide-react";
+import { RowActions, RowActionsMenu, RowButton } from "@/components/ui/data-table";
 
 interface Props {
   attemptKey: string;
@@ -71,25 +72,18 @@ export default function SubmissionRowActions({
     );
   }
 
+  // Rule 4: Force submit (in progress) is visible; Reset / Delete are in ⋯.
+  const resetMsg = `Reset ${who} submission — wipe its answers and restart the timer? The submission row stays but its answers are cleared. This only affects ${studentName ?? "this student"}.`;
+  const deleteMsg = `Delete just ${who} submission row? If part of a 2-module attempt, the OTHER module's submission stays. Use 'Delete attempt' above to wipe both.`;
   return (
-    <div className="flex items-center gap-1.5">
-      <button
-        onClick={() =>
-          call(
-            "reset",
-            "POST",
-            `Reset ${who} submission — wipe its answers and restart the timer? The submission row stays but its answers are cleared. This only affects ${studentName ?? "this student"}.`,
-          )
-        }
-        disabled={busy !== null}
-        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-light-bg hover:bg-divider text-charcoal text-xs font-medium disabled:opacity-40"
-        title="Reset answers, restart timer (keeps the submission row)"
-      >
-        <RotateCcw size={11} />
-        {busy === "reset" ? "…" : "Reset"}
-      </button>
+    <RowActions>
+      {error && <span className="text-status-error text-xs">{error}</span>}
       {isInProgress && (
-        <button
+        <RowButton
+          label={busy === "force-submit" ? "Submitting…" : "Force submit"}
+          icon={<Send size={13} />}
+          disabled={busy !== null}
+          title="Grade and close this In-Progress submission now"
           onClick={() =>
             call(
               "force-submit",
@@ -97,30 +91,26 @@ export default function SubmissionRowActions({
               `Force submit ${who} submission using the current saved answers? Grades and closes it now.`,
             )
           }
-          disabled={busy !== null}
-          className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-xs font-medium disabled:opacity-40"
-          title="Grade and close this In-Progress submission now"
-        >
-          <Send size={11} />
-          {busy === "force-submit" ? "…" : "Force submit"}
-        </button>
+        />
       )}
-      <button
-        onClick={() =>
-          call(
-            "delete",
-            "DELETE",
-            `Delete just ${who} submission row? If part of a 2-module attempt, the OTHER module's submission stays. Use 'Delete attempt' above to wipe both.`,
-          )
-        }
-        disabled={busy !== null}
-        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-status-error/10 hover:bg-status-error/20 text-status-error text-xs font-medium disabled:opacity-40"
-        title="Hard-delete this submission row"
-      >
-        <Trash2 size={11} />
-        {busy === "delete" ? "…" : "Delete"}
-      </button>
-      {error && <span className="text-status-error text-xs ml-1">{error}</span>}
-    </div>
+      <RowActionsMenu
+        label={`Actions for ${studentName ?? "submission"}`}
+        items={[
+          {
+            label: busy === "reset" ? "Resetting…" : "Reset answers…",
+            icon: <RotateCcw size={14} />,
+            disabled: busy !== null,
+            onSelect: () => call("reset", "POST", resetMsg),
+          },
+          {
+            label: busy === "delete" ? "Deleting…" : "Delete submission…",
+            icon: <Trash2 size={14} />,
+            tone: "danger",
+            disabled: busy !== null,
+            onSelect: () => call("delete", "DELETE", deleteMsg),
+          },
+        ]}
+      />
+    </RowActions>
   );
 }

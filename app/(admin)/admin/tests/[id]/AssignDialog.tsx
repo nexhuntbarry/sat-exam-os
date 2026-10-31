@@ -6,6 +6,7 @@ import { clsx } from "clsx";
 import AddStudentsButton from "./AddStudentsButton";
 import AssignClassGroupsButton from "./AssignClassGroupsButton";
 import AssignTeachersButton from "./AssignTeachersButton";
+import { Portal } from "@/components/ui/Portal";
 
 type Tab = "students" | "classes" | "teachers";
 
@@ -108,19 +109,22 @@ export default function AssignDialog({
           }}
           aria-haspopup="menu"
           aria-expanded={Boolean(menuAt)}
-          className="inline-flex items-center gap-1 text-xs font-medium text-warm-coral-text hover:underline"
+          className="inline-flex h-7 items-center gap-1 whitespace-nowrap rounded-lg bg-warm-coral px-2.5 text-xs font-medium text-white align-middle transition-colors hover:bg-warm-coral-dark"
         >
           Assign
           <ChevronDown size={12} />
         </button>
       )}
 
+      {/* Portal: inside the sticky actions cell the menu would share its
+          stacking context and later rows' sticky cells would paint over it. */}
       {menuAt && (
+        <Portal>
         <div
           ref={menuRef}
           role="menu"
           style={{ top: menuAt.top, right: menuAt.right }}
-          className="fixed z-40 min-w-[9rem] bg-surface border border-divider rounded-xl shadow-lg py-1"
+          className="fixed z-50 min-w-[9rem] bg-surface border border-divider rounded-xl shadow-lg py-1"
         >
           {labels.map((l) => (
             <button
@@ -137,6 +141,7 @@ export default function AssignDialog({
             </button>
           ))}
         </div>
+        </Portal>
       )}
 
       {tab === "students" && (

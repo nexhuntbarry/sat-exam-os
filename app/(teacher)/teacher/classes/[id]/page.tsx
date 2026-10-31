@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, MapPin, GraduationCap, Users, Eye } from "lucide-react";
+import { ArrowLeft, MapPin, GraduationCap, Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { getTestSections, inSubjects } from "@/lib/teacher-access";
@@ -13,7 +13,6 @@ import {
   EmptyRow,
   ExpandToggle,
   HeadRow,
-  RowActionsMenu,
   Td,
   Th,
   TruncatedText,
@@ -252,6 +251,7 @@ export default async function TeacherClassDetailPage({
               return (
                 <DataRow
                   key={s.id}
+                  href={`/teacher/classes/${group.id}/students/${s.id}`}
                   expandBelow="lg"
                   colSpan={4}
                   details={
@@ -294,16 +294,6 @@ export default async function TeacherClassDetailPage({
                   </Td>
                   <Td kind="actions" sticky="right">
                     <ExpandToggle label={`More about ${name}`} />
-                    <RowActionsMenu
-                      label={`Actions for ${name}`}
-                      items={[
-                        {
-                          label: "View tests",
-                          icon: <Eye size={14} />,
-                          href: `/teacher/classes/${group.id}/students/${s.id}`,
-                        },
-                      ]}
-                    />
                   </Td>
                 </DataRow>
               );

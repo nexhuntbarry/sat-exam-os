@@ -3,6 +3,7 @@
 import { useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Users, X, CheckCircle2 } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
 
 interface Teacher {
   id: string;
@@ -86,6 +87,7 @@ export default function AssignTeachersButton({
       )}
 
       {open && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-lg shadow-2xl flex flex-col max-h-[80vh]">
             {tabs}
@@ -153,6 +155,7 @@ export default function AssignTeachersButton({
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </>
   );

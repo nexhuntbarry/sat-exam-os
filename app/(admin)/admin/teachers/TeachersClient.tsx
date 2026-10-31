@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { UserPlus, X, Eye, ShieldCheck, UserX } from "lucide-react";
+import { UserPlus, X, ShieldCheck, UserX } from "lucide-react";
 import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import {
   DataRow,
@@ -13,6 +13,7 @@ import {
   EmptyRow,
   ExpandToggle,
   HeadRow,
+  RowActions,
   RowActionsMenu,
   Td,
   Th,
@@ -20,6 +21,7 @@ import {
   TwoLineCell,
   type RowAction,
 } from "@/components/ui/data-table";
+import { Portal } from "@/components/ui/Portal";
 
 interface TeacherProfile {
   assigned_classes: unknown[];
@@ -97,6 +99,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
     "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
       <div className="bg-surface border border-divider rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
         <div className="flex items-center justify-between">
@@ -223,6 +226,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         )}
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -306,7 +310,6 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
             const activityTitle = `${lastSignInFull ? `Last sign-in ${lastSignInFull}` : "Never signed in"} · Invited ${formatDateTime(teacher.created_at)}`;
 
             const actions: (RowAction | false)[] = [
-              { label: "View details", icon: Eye, href: `/admin/teachers/${teacher.id}` },
               teacher.can_review_questions
                 ? {
                     label: "Revoke reviewer",
@@ -329,6 +332,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
             return (
               <DataRow
                 key={teacher.id}
+                href={`/admin/teachers/${teacher.id}`}
                 expandBelow="xl"
                 colSpan={6}
                 details={
@@ -398,8 +402,10 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                   </span>
                 </Td>
                 <Td kind="actions" sticky="right">
-                  <ExpandToggle label={`More about ${name}`} />
-                  <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                  <RowActions>
+                    <ExpandToggle label={`More about ${name}`} />
+                    <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                  </RowActions>
                 </Td>
               </DataRow>
             );
