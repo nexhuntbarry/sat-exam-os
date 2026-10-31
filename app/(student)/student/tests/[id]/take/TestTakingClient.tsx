@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { flushSync } from "react-dom";
 import { useAuth } from "@clerk/nextjs";
 import {
   ChevronLeft,
@@ -685,10 +686,22 @@ export default function TestTakingClient({
     }
   }
 
+  // Every automatic page change goes through here. The Desmos panel is the
+  // full desmos.com app in an iframe: once a graph has expressions it asks
+  // "leave this graph? unsaved work will be lost" on unload, so the browser
+  // showed "Leave site?" and blocked the move to Module 2 / the result page
+  // after a submit that had already landed (support b1cf70bf). Unmount the
+  // iframe first so nothing can hold the navigation.
+  function navigateAway(url: string) {
+    flushSync(() => setActiveAid(null));
+    document.querySelectorAll("iframe").forEach((f) => f.remove());
+    window.location.assign(url);
+  }
+
   // Where to go once this module is submitted: Module 1 → the take page
   // (it opens Module 2), otherwise the result page.
   function leaveAfterSubmit() {
-    window.location.assign(
+    navigateAway(
       test.moduleLabel === "Module 1"
         ? `/student/tests/${testId}/take`
         : `/student/tests/${testId}/result?submission=${submissionId}`,
@@ -820,7 +833,7 @@ export default function TestTakingClient({
         // "Submission already submitted" — an earlier request landed but
         // its response never reached us. Reload the take page: it opens
         // Module 2 if one is in progress, otherwise redirects to the test page.
-        window.location.assign(`/student/tests/${testId}/take`);
+        navigateAway(`/student/tests/${testId}/take`);
         return;
       }
       if (isJsonOk(res) && payload?.data?.id) {
@@ -841,9 +854,9 @@ export default function TestTakingClient({
         // state, fresh server fetch, and a fresh timer.
         const nextId = payload?.data?.nextSubmissionId;
         if (nextId) {
-          window.location.assign(`/student/tests/${testId}/take`);
+          navigateAway(`/student/tests/${testId}/take`);
         } else {
-          window.location.assign(
+          navigateAway(
             `/student/tests/${testId}/result?submission=${submissionId}`,
           );
         }
