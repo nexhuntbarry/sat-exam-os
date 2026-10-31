@@ -6,6 +6,9 @@ import { ChevronDown, ChevronRight, Eye, FileText, UserMinus, X } from "lucide-r
 import Link from "next/link";
 import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
+import { StatusBadge, SubjectTag } from "@/components/ui/StatusBadge";
+import { ScoreCell } from "@/components/ui/ScoreCell";
+import type { ScoreDisplay } from "@/lib/score-display";
 import StudentAnswerVisibilityControl from "@/components/tests/StudentAnswerVisibilityControl";
 import { answerVisibilityLabel } from "@/components/tests/answer-visibility-label";
 import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
@@ -69,6 +72,8 @@ export interface TestRow {
   /** Two-module tests: each module's full name, e.g. {label:"M1", name:"…Module 1"}. */
   moduleNames: { label: string; name: string }[];
   visibility: VisibilityRowData | null;
+  /** Shared score cell (null = not started / nothing graded yet). */
+  score: ScoreDisplay | null;
   /** Currently assigned individually. */
   assignedDirect: boolean;
   /** Class names it's currently assigned through. */
@@ -78,13 +83,6 @@ export interface TestRow {
   /** Not started, individually assigned only (no class): safe to unassign. */
   removable: boolean;
 }
-
-const STATUS_STYLES: Record<TestRowStatus, string> = {
-  Submitted: "bg-warm-amber/15 text-warm-amber",
-  Late: "bg-status-warning/15 text-status-warning",
-  "In progress": "bg-warm-coral/15 text-warm-coral-text",
-  "Not started": "bg-light-bg text-mid-gray",
-};
 
 const STATUS_KEY: Record<TestRowStatus, string> = {
   Submitted: "statusSubmitted",
@@ -366,9 +364,7 @@ export default function TestsTable({
                           {g.testName}
                         </ClampText>
                       </Link>
-                      {sectionLabel && (
-                        <div className="mt-0.5 text-[11px] font-medium text-mid-gray">{sectionLabel}</div>
-                      )}
+                      {sectionLabel && <SubjectTag section={g.section} className="mt-0.5" />}
                       {g.moduleNames.length > 1 &&
                         g.moduleNames.map((m) => (
                           <div key={m.label} className="text-[11px] text-soft-mute leading-snug break-words">
@@ -381,25 +377,21 @@ export default function TestsTable({
                 {/* Status */}
                 <Td>
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    <span
-                      className={clsx(
-                        "whitespace-nowrap px-2 py-0.5 rounded-full text-xs font-medium",
-                        STATUS_STYLES[g.status],
-                      )}
-                    >
-                      {t(STATUS_KEY[g.status])}
-                    </span>
+                    <StatusBadge
+                      kind="attempt"
+                      status={g.status}
+                      label={
+                        g.status === "In progress" && g.currentModule != null && g.moduleCount > 1
+                          ? `${t(STATUS_KEY[g.status])} (${t("moduleOf", { n: String(g.currentModule), m: String(g.moduleCount) })})`
+                          : t(STATUS_KEY[g.status])
+                      }
+                    />
                     {(g.attemptNumber ?? 1) > 1 && (
                       <span className="whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-medium bg-light-bg text-mid-gray border border-divider">
                         {t("attemptN", { n: String(g.attemptNumber) })}
                       </span>
                     )}
                   </div>
-                  {g.status === "In progress" && g.currentModule != null && (
-                    <div className="text-[11px] text-soft-mute mt-0.5 whitespace-nowrap">
-                      {t("moduleOf", { n: String(g.currentModule), m: String(g.moduleCount) })}
-                    </div>
-                  )}
                 </Td>
                 {/* Assigned via */}
                 <Td kind="long" priority="xl" className="w-[14%]">
@@ -426,15 +418,7 @@ export default function TestsTable({
                 </Td>
                 {/* Result */}
                 <Td>
-                  {g.scaledScore != null ? (
-                    <TwoLineCell
-                      main={String(g.scaledScore)}
-                      detail={g.total > 0 ? `${g.correct}/${g.total}${g.percentage != null ? ` · ${g.percentage.toFixed(1)}%` : ""}` : undefined}
-                      mainClassName="text-base font-bold text-charcoal leading-tight"
-                    />
-                  ) : (
-                    <span className="text-soft-mute">—</span>
-                  )}
+                  <ScoreCell score={g.score} />
                 </Td>
                 {/* Submitted */}
                 <Td priority="md">

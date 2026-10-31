@@ -1,12 +1,15 @@
 import { getServiceClient } from "@/lib/supabase";
-import { studentTestProgress, summarizeTestProgress, type StudentTestProgress } from "@/lib/test-progress";
-import { scaleSectionScore } from "@/lib/scoring";
+import { studentTestProgress, summarizeTestProgress } from "@/lib/test-progress";
+import { scoreDisplay, averageSat } from "@/lib/score-display";
+import { ScoreCell } from "@/components/ui/ScoreCell";
+import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
+import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
 import { getTestSections } from "@/lib/teacher-access";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { ChevronLeft, ChevronDown, ChevronUp, ChevronsUpDown, Eye, FileText } from "lucide-react";
+import { ChevronDown, ChevronUp, ChevronsUpDown, Eye, FileText } from "lucide-react";
 import TestDetailActions from "./TestDetailActions";
 import EditTestButton from "./EditTestButton";
 import RemoveStudentButton from "./RemoveStudentButton";
@@ -14,7 +17,7 @@ import AssignDialog from "./AssignDialog";
 import { approvalCounts, isFullyApproved } from "../module-approval";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
-import { formatDate, formatDateTime, formatShortDate } from "@/lib/datetime";
+import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
 import { getQaClassGroupIds, getQaTestIds, onSide, scopeIds, scopeUsers } from "@/lib/qa";
 import { getTranslations } from "next-intl/server";
 import {
@@ -163,44 +166,6 @@ async function getTest(id: string, viewerIsQa: boolean) {
   };
 }
 
-const statusText: Record<string, string> = {
-  Draft: "text-mid-gray",
-  Published: "text-warm-amber",
-  Closed: "text-status-error",
-};
-
-const progressStyles: Record<string, string> = {
-  Submitted: "bg-warm-amber/15 text-warm-amber",
-  "In progress": "bg-warm-coral/15 text-warm-coral-text",
-  "Not started": "bg-light-bg text-mid-gray",
-};
-
-// Questions per module on a full SAT; fewer scored means some were left
-// out (Needs Review questions aren't shown to students or scored).
-const FULL_MODULE: Record<string, number> = { "Reading & Writing": 27, Math: 22 };
-
-/** Score cell for one student: SAT estimate on top (finished attempts only),
- *  per-module correct counts below, review notes in the hover title. */
-function scoreView(p: StudentTestProgress, section: string | null) {
-  if (p.modules.length === 0) return null;
-  const two = p.modules.length > 1;
-  const full = section ? FULL_MODULE[section] : undefined;
-  const notes: string[] = [];
-  const parts = p.modules.map((m) => {
-    const tag = two ? `M${m.number} ` : "";
-    if (!m.graded) return `${tag}—`;
-    const missing = full != null && m.total != null ? full - m.total : 0;
-    if (missing > 0) {
-      notes.push(
-        `${two ? `M${m.number}: ` : ""}${missing} question${missing === 1 ? "" : "s"} in review, not scored`,
-      );
-    }
-    return `${tag}${m.correct}/${m.total}`;
-  });
-  const sat = p.status === "Submitted" && p.score != null ? scaleSectionScore(p.score) : null;
-  return { sat, modules: parts.join(" · "), pct: p.score, notes };
-}
-
 export default async function TestDetailPage({
   params,
   searchParams,
@@ -314,7 +279,7 @@ export default async function TestDetailPage({
 
   // Score column: SAT estimate per student; header click sorts by it
   // (?sort=score high→low, ?sort=score-asc low→high, unfinished last).
-  const scoreOf = new Map(assignment.students.map((st) => [st.id, scoreView(st.progress, section)]));
+  const scoreOf = new Map(assignment.students.map((st) => [st.id, scoreDisplay(st.progress.modules, section)]));
   const satOf = (sid: string) => scoreOf.get(sid)?.sat ?? null;
   const sortDir = sort === "score" ? -1 : sort === "score-asc" ? 1 : 0;
   const students = sortDir
@@ -324,8 +289,7 @@ export default async function TestDetailPage({
         return (x - y) * sortDir || a.name.localeCompare(b.name);
       })
     : assignment.students;
-  const finishedSats = assignment.students.map((st) => satOf(st.id)).filter((x): x is number => x != null);
-  const avgSat = finishedSats.length > 0 ? Math.round(finishedSats.reduce((a, b) => a + b, 0) / finishedSats.length) : null;
+  const avgSat = averageSat(assignment.students.map((st) => satOf(st.id)));
   const scoreSortHref = `/admin/tests/${id}?sort=${sort === "score" ? "score-asc" : "score"}`;
   const submissionsHref = `/admin/tests/${test.id}/submissions`;
 
@@ -352,27 +316,28 @@ export default async function TestDetailPage({
   ];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <Link
-        href="/admin/tests"
-        className="inline-flex items-center gap-1 text-soft-mute text-sm hover:text-charcoal transition-colors"
-      >
-        <ChevronLeft size={14} />
-        Tests
-      </Link>
-
-      {/* 1. Header */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-charcoal break-words">{test.test_name}</h1>
-          <p className="text-soft-mute text-sm mt-1">
-            {modulesShort} · {timeLimit} ·{" "}
-            <span className={clsx("font-semibold", statusText[test.status] ?? "text-mid-gray")}>
-              {test.status}
-            </span>
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+    <div className="space-y-6">
+      {/* 1. Header: name, one summary line, Assign (main) · Edit · More */}
+      <DetailHeader
+        back={{ href: "/admin/tests", label: "Tests" }}
+        title={test.test_name}
+        badge={<StatusBadge kind="test" status={test.status as TestStatus} />}
+        summary={
+          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+            <SubjectTag section={section} />
+            <span>{modulesShort}</span>
+            <span aria-hidden>·</span>
+            <span>{timeLimit}</span>
+            {test.due_date && (
+              <>
+                <span aria-hidden>·</span>
+                <span title={formatDateTime(test.due_date)}>Due {formatShortDateTime(test.due_date)}</span>
+              </>
+            )}
+          </span>
+        }
+        actions={
+          <>
           <AssignDialog
             testId={test.id}
             studentIds={assignment.studentIds}
@@ -410,67 +375,55 @@ export default async function TestDetailPage({
             submissionCount={test.stats.total}
             gradedCount={test.stats.submitted}
           />
-        </div>
-      </div>
+          </>
+        }
+      />
 
-      {/* 2. Summary row */}
-      <div className="bg-surface border border-divider rounded-2xl px-5 py-4 flex flex-wrap items-center gap-x-6 gap-y-3 text-sm">
-        <div>
-          <div className="text-soft-mute text-xs">Students</div>
-          <div className="text-charcoal font-semibold">{progress.students}</div>
-        </div>
-        <div>
-          <div className="text-soft-mute text-xs">Submitted</div>
-          <div className="text-charcoal font-semibold">
-            {progress.finished}/{progress.students}
-          </div>
-        </div>
-        <div>
-          <div className="text-soft-mute text-xs">Avg SAT</div>
-          <div className="text-charcoal font-semibold">
-            {avgSat ?? "—"}
-            {progress.avgScore !== null && (
-              <span className="ml-1.5 text-xs font-normal text-soft-mute">{progress.avgScore.toFixed(1)}%</span>
-            )}
-          </div>
-        </div>
-        <div>
-          <div className="text-soft-mute text-xs">Open / Due</div>
-          <div className="text-charcoal font-semibold">
-            {test.open_date ? formatDate(test.open_date) : "—"} / {test.due_date ? formatDate(test.due_date) : "—"}
-          </div>
-        </div>
-        <div>
-          <div className="text-soft-mute text-xs">Retake</div>
-          <div className="text-charcoal font-semibold">{test.allow_retake ? "Allowed" : "No"}</div>
-        </div>
-        <Link href={submissionsHref} className="ml-auto text-warm-coral-text text-sm hover:underline">
-          View all submissions →
-        </Link>
-      </div>
+      {/* 2. Key numbers */}
+      <StatCards
+        items={[
+          { label: "Submitted", value: `${progress.finished} / ${progress.students}`, detail: "students finished" },
+          {
+            label: "Avg SAT",
+            value: avgSat ?? "—",
+            detail: progress.avgScore !== null ? `${progress.avgScore.toFixed(1)}% correct` : undefined,
+          },
+          {
+            label: "Open / Due",
+            value: <span className="text-base">{test.due_date ? formatShortDateTime(test.due_date) : "No due date"}</span>,
+            detail: test.open_date ? `Opens ${formatShortDateTime(test.open_date)}` : "Open now",
+          },
+          { label: "Retake", value: <span className="text-base">{test.allow_retake ? "Allowed" : "Not allowed"}</span> },
+        ]}
+      />
 
       {/* 3. Students */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 pt-4 pb-3 space-y-1 border-b border-divider">
-          <h2 className="text-charcoal font-semibold">Students</h2>
-          <p className="text-soft-mute text-xs">
-            <span className="text-mid-gray font-medium">Teachers:</span>{" "}
-            {assignment.teachers.length === 0
-              ? "None assigned"
-              : assignment.teachers.map((t) => t.display_name || t.email).join(", ")}
-            <span className="mx-2">·</span>
-            <span className="text-mid-gray font-medium">Classes:</span>{" "}
-            {assignment.classGroups.length === 0
-              ? "None"
-              : assignment.classGroups.map((cg) => cg.name).join(", ")}
-          </p>
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div className="space-y-0.5">
+            <h2 className="text-charcoal font-semibold">Students</h2>
+            <p className="text-soft-mute text-xs">
+              <span className="text-mid-gray font-medium">Teachers:</span>{" "}
+              {assignment.teachers.length === 0
+                ? "None assigned"
+                : assignment.teachers.map((t) => t.display_name || t.email).join(", ")}
+              <span className="mx-2">·</span>
+              <span className="text-mid-gray font-medium">Classes:</span>{" "}
+              {assignment.classGroups.length === 0
+                ? "None"
+                : assignment.classGroups.map((cg) => cg.name).join(", ")}
+            </p>
+          </div>
+          <Link href={submissionsHref} className="text-warm-coral-text text-sm hover:underline">
+            View all submissions →
+          </Link>
         </div>
         {assignment.students.length === 0 ? (
-          <p className="px-5 py-8 text-center text-soft-mute text-sm">
-            No students yet. Use Assign to add students or classes.
+          <p className="rounded-2xl border border-dashed border-divider px-5 py-8 text-center text-soft-mute text-sm">
+            No students yet. Use <strong className="text-charcoal">Assign</strong> above to add students or a class.
           </p>
         ) : (
-          <DataTable className="border-t-0">
+          <DataTable>
             <thead>
               <HeadRow>
                 <Th kind="main" sticky="left">Student</Th>
@@ -529,34 +482,14 @@ export default async function TestDetailPage({
                       )}
                     </Td>
                     <Td>
-                      <span
-                        className={clsx(
-                          "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
-                          progressStyles[st.progress.status],
-                        )}
-                      >
-                        {st.progress.status}
-                      </span>
+                      <StatusBadge
+                        kind="attempt"
+                        status={st.progress.status}
+                        module={st.progress.currentModule ? { n: st.progress.currentModule, of: st.progress.moduleCount } : null}
+                      />
                     </Td>
                     <Td>
-                      {(() => {
-                        const sv = scoreOf.get(st.id);
-                        if (!sv) return <span className="text-soft-mute">—</span>;
-                        const title = [sv.pct != null ? `${sv.pct.toFixed(1)}% correct` : null, ...sv.notes]
-                          .filter(Boolean)
-                          .join("\n");
-                        return (
-                          <div title={title || undefined}>
-                            {sv.sat != null && (
-                              <div className="text-base font-bold text-charcoal leading-tight">{sv.sat}</div>
-                            )}
-                            <div className="text-xs text-mid-gray whitespace-nowrap">
-                              {sv.modules}
-                              {sv.notes.length > 0 && <span className="text-status-warning"> *</span>}
-                            </div>
-                          </div>
-                        );
-                      })()}
+                      <ScoreCell score={scoreOf.get(st.id) ?? null} />
                     </Td>
                     <Td kind="long" priority="lg">
                       {effective ? (
@@ -589,7 +522,7 @@ export default async function TestDetailPage({
             </tbody>
           </DataTable>
         )}
-      </div>
+      </section>
 
       {/* 4. Answers & review */}
       <div className="bg-surface border border-divider rounded-2xl p-5 space-y-4">

@@ -115,3 +115,14 @@ class names dynamically. Server Components can't pass functions to the kit
 or move the action into a small client component. Clicks on `a`, `button`, `input`, `select`, `label`
 inside a row don't toggle it. If the details row would be empty for a table
 (no prioritised columns), omit `details` and `ExpandToggle`.
+
+## Shared page components (support cb57e703 / f83c766b)
+
+| Component | Use |
+|---|---|
+| `StatusBadge` (`@/components/ui/StatusBadge`) | Every status pill. One vocabulary + colour per status: attempt Not started / In progress (Module x of y) / Submitted / Late; test Draft / Published / Closed; module Draft / In review (n) / Ready; student Pending / Active / Suspended. Never red (red = errors and destructive actions). `studentStatusLabel()` / `attemptStatusLabel()` map DB values. |
+| `SubjectTag` | Subject as a small neutral tag: Math / R&W. No coloured titles. |
+| `ScoreCell` + `scoreDisplay()` (`@/lib/score-display`) | Every score: SAT section score (200–800) large, per-module counts small ("M1 22/27 · M2 18/27"), in-review note + % on hover. No SAT until every module is in; no per-module SAT. Averages: `averageSat()` with % as small text. |
+| `DetailHeader`, `StatCards` (`@/components/ui/DetailHeader`) | Detail pages: back link, name + status badge, one summary line, main action · Edit · ⋯; then 3–4 key numbers (neutral colours); then content. |
+
+Formats: dates via `formatShortDateTime` ("10/30 4:55 PM", year only when not this year); no "Due —" when there's no due date; empty states say what to do next.

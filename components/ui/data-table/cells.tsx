@@ -41,7 +41,9 @@ export function ClampText({
 }
 
 /** Two-line cell: main value on top, small muted detail below. Both lines
- *  truncate. Wrap it in a Link yourself if the row should navigate. */
+ *  truncate, unless `wrapMain`: then a name/title wraps onto up to two lines
+ *  and stays complete (rule 3), and only the detail truncates. Wrap it in a
+ *  Link yourself if the row should navigate. */
 export function TwoLineCell({
   main,
   detail,
@@ -49,6 +51,7 @@ export function TwoLineCell({
   detailTitle,
   className,
   mainClassName,
+  wrapMain = false,
 }: {
   main: ReactNode;
   detail?: ReactNode;
@@ -58,12 +61,15 @@ export function TwoLineCell({
   detailTitle?: string;
   className?: string;
   mainClassName?: string;
+  /** Main is a name/title: wrap instead of truncating. */
+  wrapMain?: boolean;
 }) {
+  const Main = wrapMain ? ClampText : TruncatedText;
   return (
     <span className={cn("block min-w-0", className)}>
-      <TruncatedText title={mainTitle} className={cn("text-charcoal", mainClassName)}>
+      <Main title={mainTitle} className={cn("text-charcoal", mainClassName)}>
         {main}
-      </TruncatedText>
+      </Main>
       {detail != null && detail !== "" && (
         <TruncatedText title={detailTitle} className="text-xs text-soft-mute">
           {detail}

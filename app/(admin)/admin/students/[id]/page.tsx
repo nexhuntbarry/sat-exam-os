@@ -9,6 +9,8 @@ import { getStudentAssignments } from "@/lib/student-exam";
 import { studentTestProgress } from "@/lib/test-progress";
 import { getTestSections } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
+import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
+import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 import EditStudentButton from "./EditStudentButton";
 import StudentActionsMenu from "./StudentActionsMenu";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
@@ -105,6 +107,7 @@ type TestMeta = {
 
 type SessionGroupModule = {
   label: string;
+  graded: boolean;
   submissionId: string;
   correct: number;
   total: number;
@@ -131,6 +134,8 @@ type SessionGroup = {
   isMultiModule: boolean;
   modules: SessionGroupModule[];
   moduleNames: { label: string; name: string }[];
+  /** Single-row attempts: the row's adaptive_track (null = legacy one-module attempt). */
+  track: string | null;
 };
 
 const MODULE_LABEL: Record<string, string> = {
@@ -159,6 +164,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
 
   const toModuleView = (r: SubmissionRow): SessionGroupModule => ({
     label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
+    graded: r.status === "Submitted" || r.status === "Late",
     submissionId: r.id,
     correct: r.correct_count ?? 0,
     total: r.total_questions ?? 0,
@@ -188,6 +194,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
     isMultiModule: false,
     modules: [],
     moduleNames: [],
+    track: r.adaptive_track,
   });
 
   const groups: SessionGroup[] = singletons.map(toGroup);
@@ -251,6 +258,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
       detailSubmissionId: sorted[sorted.length - 1].id,
       isMultiModule: true,
       modules: sorted.map(toModuleView),
+      track: null,
       moduleNames: sorted
         .filter((r) => r.modules?.module_name)
         .map((r, i) => ({ label: `M${i + 1}`, name: r.modules!.module_name })),
@@ -395,18 +403,6 @@ export default async function AdminStudentDetailPage({
     (p) => p.status === "Submitted",
   ).length;
 
-  // Latest section scores (groups are already sorted by submittedAt desc)
-  const latestMathScore =
-    groups.find((g) => g.section === "Math" && g.scaledScore != null)
-      ?.scaledScore ?? null;
-  const latestRWScore =
-    groups.find(
-      (g) => g.section === "Reading & Writing" && g.scaledScore != null,
-    )?.scaledScore ?? null;
-  const estimatedTotal =
-    latestMathScore != null && latestRWScore != null
-      ? latestMathScore + latestRWScore
-      : null;
 
   const assignmentFields = (testId: string) => {
     const a = assignments.get(testId);
@@ -422,6 +418,16 @@ export default async function AdminStudentDetailPage({
 
   // Build serializable rows for TestsTable: one per attempt taken, plus one
   // per assigned test the student hasn't started.
+  // One score display everywhere (lib/score-display): SAT once every module
+  // is in, per-module counts, unfinished modules as "—".
+  const scoreOfGroup = (g: SessionGroup) => {
+    const count = g.track ? progressOf.get(g.testId)?.moduleCount ?? 1 : 1;
+    const mods: ScoreModule[] = g.isMultiModule
+      ? g.modules.map((m, i) => ({ number: i + 1, graded: m.graded, correct: m.correct, total: m.total }))
+      : [{ number: 1, graded: g.status !== "In Progress", correct: g.correct, total: g.total }];
+    for (let n = mods.length + 1; n <= count; n++) mods.push({ number: n, graded: false, correct: null, total: null });
+    return scoreDisplay(mods, g.section);
+  };
   const attemptRows: TestRow[] = groups.map((g) => {
     const input = visibilityInputs.get(visibilityKey(g.testId, id));
     const isControlRow = controlRowKey.get(g.testId) === g.key;
@@ -475,6 +481,7 @@ export default async function AdminStudentDetailPage({
         percentage: m.percentage,
       })),
       visibility,
+      score: scoreOfGroup(g),
       removable: false,
     };
   });
@@ -500,6 +507,7 @@ export default async function AdminStudentDetailPage({
       modules: [],
       moduleNames: moduleNamesOf(a.testId),
       visibility: null,
+      score: null,
       // Only an individual assignment can be undone per student; a class
       // assignment would need the whole class unassigned.
       removable: a.direct && a.classGroupIds.length === 0,
@@ -518,6 +526,17 @@ export default async function AdminStudentDetailPage({
       .sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? "")),
   ];
 
+  // Latest finished section scores (groups are sorted by submittedAt desc;
+  // an attempt still in progress has no SAT score yet).
+  const latestMathScore =
+    groups.map((g) => (g.section === "Math" ? scoreOfGroup(g)?.sat : null)).find((x) => x != null) ?? null;
+  const latestRWScore =
+    groups.map((g) => (g.section === "Reading & Writing" ? scoreOfGroup(g)?.sat : null)).find((x) => x != null) ?? null;
+  const estimatedTotal =
+    latestMathScore != null && latestRWScore != null
+      ? latestMathScore + latestRWScore
+      : null;
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -533,18 +552,7 @@ export default async function AdminStudentDetailPage({
             {student.email}
           </p>
         </div>
-        <span
-          className={clsx(
-            "px-3 py-1 rounded-full text-xs font-medium capitalize",
-            student.account_status === "approved"
-              ? "bg-warm-amber/15 text-warm-amber"
-              : student.account_status === "pending"
-              ? "bg-status-warning/15 text-status-warning"
-              : "bg-status-error/15 text-status-error",
-          )}
-        >
-          {student.account_status}
-        </span>
+        <StatusBadge kind="student" status={studentStatusLabel(student.account_status)} />
         <EditStudentButton
           student={{
             id: student.id,

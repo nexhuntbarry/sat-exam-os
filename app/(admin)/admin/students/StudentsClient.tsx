@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { Check, X, Search, Ban, RotateCcw, Trash2 } from "lucide-react";
+import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import { changeStudentStatus } from "./[id]/StudentStatusButton";
 import DeleteStudentButton from "./[id]/DeleteStudentButton";
@@ -372,7 +373,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
   const chips: { key: Filter; label: string }[] = [
     { key: "all", label: "All" },
     { key: "pending", label: "Pending" },
-    { key: "approved", label: "Approved" },
+    { key: "approved", label: "Active" },
     { key: "suspended", label: "Suspended" },
   ];
 
@@ -602,24 +603,14 @@ export default function StudentsClient({ students, classGroups }: Props) {
                       <TwoLineCell
                         main={student.display_name ?? "—"}
                         detail={student.email}
+                        wrapMain
                         mainClassName="font-medium text-inherit"
                       />
                     </Link>
                   </span>
                 </Td>
                 <Td>
-                  <span
-                    className={clsx(
-                      "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
-                      student.account_status === "approved"
-                        ? "bg-warm-amber/15 text-warm-amber"
-                        : student.account_status === "pending"
-                        ? "bg-status-warning/15 text-status-warning"
-                        : "bg-status-error/15 text-status-error"
-                    )}
-                  >
-                    {student.account_status}
-                  </span>
+                  <StatusBadge kind="student" status={studentStatusLabel(student.account_status)} />
                 </Td>
                 {cols.isVisible("class") && (
                   <Td kind="long" priority="md" className="text-mid-gray">
