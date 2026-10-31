@@ -4,7 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
-import { findParsePlaceholder } from "@/lib/parse-guards";
+import { findApproveBlocker } from "@/lib/parse-guards";
 
 export const maxDuration = 60;
 
@@ -69,12 +69,9 @@ export async function POST(
     );
   }
 
-  const placeholder = findParsePlaceholder(q.question_text, q.choices);
-  if (placeholder) {
-    return NextResponse.json(
-      { error: `Can't approve: the stem or choices contain parser placeholder text ("${placeholder}"). Fix the text first.` },
-      { status: 400 },
-    );
+  const blocker = findApproveBlocker(q.question_text, q.choices, q.question_type);
+  if (blocker) {
+    return NextResponse.json({ error: `Can't approve: ${blocker.reason}. Fix the text first.` }, { status: 400 });
   }
 
   const update: Record<string, unknown> = {
