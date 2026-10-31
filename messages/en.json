@@ -409,8 +409,6 @@
         "inProgress": "In progress",
         "inProgressM1of2": "In progress · Module 1 of 2",
         "inProgressM2of2": "In progress · Module 2 of 2",
-        "subtitleTimed": "{count, plural, one {# module} other {# modules}} · {minutes} min",
-        "subtitleUntimed": "{count, plural, one {# module} other {# modules}} · untimed",
         "submitted": "Submitted"
       },
       "actions": {
@@ -434,7 +432,9 @@
         "viewResult": "View Result",
         "pastDue": "This test is no longer available — the due date has passed.",
         "inProgressNote": "You have an in-progress submission. Resuming will continue from where you left off."
-      }
+      },
+      "subtitleTimed": "{count, plural, one {# module} other {# modules}} · {minutes} min",
+      "subtitleUntimed": "{count, plural, one {# module} other {# modules}} · untimed"
     },
     "result": {
       "title": "Your Score",
