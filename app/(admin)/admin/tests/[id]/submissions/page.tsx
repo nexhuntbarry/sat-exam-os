@@ -3,10 +3,12 @@ import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { clsx } from "clsx";
 import GrantRetakeButton from "./GrantRetakeButton";
 import { formatDateTimeSeconds, formatShortDateTime, formatShortDate } from "@/lib/datetime";
-import { scaleSectionScore } from "@/lib/scoring";
+import { attemptScore, type AttemptScore } from "@/lib/score-display";
+import { getTestSections } from "@/lib/teacher-access";
+import { ScoreCell } from "@/components/ui/ScoreCell";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { X, Eye } from "lucide-react";
 import {
   DataTable,
@@ -97,13 +99,6 @@ const TRACK_LABEL: Record<string, string> = {
 };
 
 
-const statusStyles: Record<string, string> = {
-  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
-  Submitted: "bg-warm-amber/15 text-warm-amber",
-  Late: "bg-status-warning/15 text-status-warning",
-  Expired: "bg-status-error/15 text-status-error",
-};
-
 function formatDuration(seconds: number | null) {
   if (!seconds) return "—";
   const m = Math.floor(seconds / 60);
@@ -130,16 +125,7 @@ export default async function TestSubmissionsPage({
   const { test, submissions, pendingByStudent, classFilterName, classFilterId } = data;
 
   type RawSubmission = (typeof submissions)[number];
-
-  type ModuleView = {
-    submissionId: string;
-    label: string;
-    correctCount: number;
-    totalQuestions: number;
-    percentage: number | null;
-    scaledScore: number | null;
-    status: string;
-  };
+  const section = (await getTestSections(getServiceClient(), [test.id])).get(test.id) ?? null;
 
   type Attempt = {
     key: string;
@@ -147,164 +133,66 @@ export default async function TestSubmissionsPage({
     studentDisplayName: string;
     studentEmail: string;
     moduleHeadline: string;
-    status: string;
-    correctCount: number;
-    totalQuestions: number;
-    percentage: number | null;
-    scaledScore: number | null;
+    attempt: AttemptScore;
     timeSpentSeconds: number;
     submittedAt: string | null;
     attemptNumber: number;
     detailSubmissionId: string;
-    isMultiModule: boolean;
-    modules: ModuleView[];
-    // When this is a multi-module attempt with at least one module
-    // submitted but another still In Progress, point the admin at
-    // the submitted module so they can still inspect what's done.
+    // When the attempt is still in progress but a module is already
+    // graded, point the admin at it so they can inspect what's done.
     partialDetailSubmissionId: string | null;
   };
 
   // Two-module attempts produce two submission rows sharing one
-  // session_id; group siblings so the admin sees one row per attempt
-  // with a combined headline plus per-module split. Legacy
-  // single-module rows (session_id NULL) stay as their own group.
+  // session_id; group siblings so the admin sees one row per attempt,
+  // scored with the shared score display. Legacy single-module rows
+  // (session_id NULL) stay as their own group.
   const bySession = new Map<string, RawSubmission[]>();
-  const singletons: RawSubmission[] = [];
   for (const s of submissions) {
-    if (s.session_id) {
-      const list = bySession.get(s.session_id) ?? [];
-      list.push(s);
-      bySession.set(s.session_id, list);
-    } else {
-      singletons.push(s);
-    }
+    const key = s.session_id ?? `solo:${s.id}`;
+    bySession.set(key, [...(bySession.get(key) ?? []), s]);
   }
 
   const attempts: Attempt[] = [];
-  for (const s of singletons) {
-    const u = s.users as unknown as { display_name: string; email: string };
-    const mod = s.modules as unknown as { module_name: string } | null;
-    const trackLabel = s.adaptive_track
-      ? TRACK_LABEL[s.adaptive_track] ?? s.adaptive_track
-      : null;
-    const p = s.percentage != null ? Number(s.percentage) : null;
-    attempts.push({
-      key: s.id,
-      studentId: s.student_id,
-      studentDisplayName: u.display_name,
-      studentEmail: u.email,
-      moduleHeadline: trackLabel
-        ? mod?.module_name
-          ? `${trackLabel} · ${mod.module_name}`
-          : trackLabel
-        : mod?.module_name ?? "—",
-      status: s.status,
-      correctCount: s.correct_count ?? 0,
-      totalQuestions: s.total_questions ?? 0,
-      percentage: p,
-      scaledScore: p != null ? scaleSectionScore(p) : null,
-      timeSpentSeconds: s.time_spent_seconds ?? 0,
-      submittedAt: s.submitted_at,
-      attemptNumber: s.attempt_number ?? 1,
-      detailSubmissionId: s.id,
-      isMultiModule: false,
-      modules: [],
-      partialDetailSubmissionId: null,
-    });
-  }
-  for (const [sessionId, list] of bySession) {
-    if (list.length === 1) {
-      const s = list[0];
-      const u = s.users as unknown as { display_name: string; email: string };
-      const mod = s.modules as unknown as { module_name: string } | null;
-      const trackLabel = s.adaptive_track
-        ? TRACK_LABEL[s.adaptive_track] ?? s.adaptive_track
-        : null;
-      const p = s.percentage != null ? Number(s.percentage) : null;
-      attempts.push({
-        key: s.id,
-        studentId: s.student_id,
-        studentDisplayName: u.display_name,
-        studentEmail: u.email,
-        moduleHeadline: trackLabel
-          ? mod?.module_name
-            ? `${trackLabel} · ${mod.module_name}`
-            : trackLabel
-          : mod?.module_name ?? "—",
-        status: s.status,
-        correctCount: s.correct_count ?? 0,
-        totalQuestions: s.total_questions ?? 0,
-        percentage: p,
-        scaledScore: p != null ? scaleSectionScore(p) : null,
-        timeSpentSeconds: s.time_spent_seconds ?? 0,
-        submittedAt: s.submitted_at,
-        attemptNumber: s.attempt_number ?? 1,
-        detailSubmissionId: s.id,
-        isMultiModule: false,
-        modules: [],
-        partialDetailSubmissionId: null,
-      });
-      continue;
-    }
+  for (const [key, list] of bySession) {
     const sorted = [...list].sort((a, b) => {
       const rank = (t: string | null) => (t === "module_1" ? 0 : 1);
       return rank(a.adaptive_track) - rank(b.adaptive_track);
     });
     const head = sorted[0];
     const u = head.users as unknown as { display_name: string; email: string };
-    const correct = sorted.reduce((acc, r) => acc + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((acc, r) => acc + (r.total_questions ?? 0), 0);
-    const time = sorted.reduce((acc, r) => acc + (r.time_spent_seconds ?? 0), 0);
-    const pct = total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
-    const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
-      ? "In Progress"
-      : statuses.includes("Late")
-      ? "Late"
-      : statuses[statuses.length - 1] ?? "Submitted";
-    const lastSubmittedAt =
-      sorted
-        .map((r) => r.submitted_at)
-        .filter((d): d is string => !!d)
-        .sort()
-        .pop() ?? null;
+    const mod = head.modules as unknown as { module_name: string } | null;
+    const trackLabel = head.adaptive_track
+      ? TRACK_LABEL[head.adaptive_track] ?? head.adaptive_track
+      : null;
+    const attempt = attemptScore(sorted, section);
     attempts.push({
-      key: sessionId,
+      key,
       studentId: head.student_id,
       studentDisplayName: u.display_name,
       studentEmail: u.email,
-      moduleHeadline: "Module 1 + Module 2",
-      status,
-      correctCount: correct,
-      totalQuestions: total,
-      percentage: pct,
-      scaledScore: pct != null ? scaleSectionScore(pct) : null,
-      timeSpentSeconds: time,
-      submittedAt: lastSubmittedAt,
+      moduleHeadline: sorted.length > 1
+        ? "Module 1 + Module 2"
+        : trackLabel
+        ? mod?.module_name
+          ? `${trackLabel} · ${mod.module_name}`
+          : trackLabel
+        : mod?.module_name ?? "—",
+      attempt,
+      timeSpentSeconds: sorted.reduce((acc, r) => acc + (r.time_spent_seconds ?? 0), 0),
+      submittedAt:
+        sorted
+          .map((r) => r.submitted_at)
+          .filter((d): d is string => !!d)
+          .sort()
+          .pop() ?? null,
       attemptNumber: head.attempt_number ?? 1,
       // Detail link routes to the Module 2 (last) submission so the
       // result view can stitch both modules via session_id.
       detailSubmissionId: sorted[sorted.length - 1].id,
-      isMultiModule: true,
-      modules: sorted.map((r) => {
-        const p = r.percentage != null ? Number(r.percentage) : null;
-        return {
-          submissionId: r.id,
-          label: TRACK_LABEL[r.adaptive_track ?? ""] ?? "Module",
-          correctCount: r.correct_count ?? 0,
-          totalQuestions: r.total_questions ?? 0,
-          percentage: p,
-          scaledScore: p != null ? scaleSectionScore(p) : null,
-          status: r.status,
-        };
-      }),
-      // Surface the most-recent submitted module as a partial-detail
-      // target when the attempt is mid-flight.
       partialDetailSubmissionId:
-        status === "In Progress"
-          ? sorted.find(
-              (r) => r.status === "Submitted" || r.status === "Late",
-            )?.id ?? null
+        attempt.status === "In progress"
+          ? sorted.find((r) => r.status === "Submitted" || r.status === "Late")?.id ?? null
           : null,
     });
   }
@@ -316,7 +204,7 @@ export default async function TestSubmissionsPage({
     return 0;
   });
 
-  const COL_SPAN = 9;
+  const COL_SPAN = 8;
 
   return (
     <div className="space-y-6">
@@ -355,7 +243,6 @@ export default async function TestSubmissionsPage({
               <Th kind="long" priority="md">Module</Th>
               <Th>Status</Th>
               <Th>Score</Th>
-              <Th kind="long" priority="md">Correct</Th>
               <Th priority="2xl">Time</Th>
               <Th priority="lg">Submitted</Th>
               <Th priority="2xl">Attempt</Th>
@@ -364,25 +251,16 @@ export default async function TestSubmissionsPage({
           </thead>
           <tbody>
             {attempts.map((a) => {
-              const scoreMain = a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—";
-              const scoreDetail = a.scaledScore != null ? `${a.scaledScore}/800` : undefined;
-              const correctMain = a.totalQuestions > 0 ? `${a.correctCount}/${a.totalQuestions}` : "—";
               const submittedLabel = a.submittedAt ? formatShortDateTime(a.submittedAt) : "—";
               const submittedTitle = a.submittedAt ? formatDateTimeSeconds(a.submittedAt) : undefined;
 
-              const moduleBreakdown = a.isMultiModule && a.modules.length > 0
-                ? a.modules.map((m) => `${m.label}: ${m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}${m.scaledScore != null ? ` · ${m.scaledScore}/800` : ""}`).join(" | ")
-                : undefined;
-              const correctBreakdown = a.isMultiModule && a.modules.length > 0
-                ? a.modules.map((m) => `${m.label}: ${m.correctCount}/${m.totalQuestions}`).join(" | ")
-                : undefined;
-
               // Rule 4: viewing the attempt is the visible action (and the
               // row link); Grant retake is in ⋯.
+              const done = a.attempt.status === "Submitted" || a.attempt.status === "Late";
               const primary =
-                a.status === "Submitted" || a.status === "Late"
+                done
                   ? { label: "View detail", href: `/teacher/tests/${test.id}/results/${a.detailSubmissionId}` }
-                  : a.status === "In Progress" && a.partialDetailSubmissionId
+                  : a.partialDetailSubmissionId
                   ? { label: "View partial", href: `/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId}` }
                   : null;
 
@@ -395,7 +273,6 @@ export default async function TestSubmissionsPage({
                   details={
                     <>
                       <DetailItem label="Module" priority="md">{a.moduleHeadline}</DetailItem>
-                      <DetailItem label="Correct" priority="md">{correctMain}{correctBreakdown ? ` (${correctBreakdown})` : ""}</DetailItem>
                       <DetailItem label="Time" priority="2xl">{formatDuration(a.timeSpentSeconds)}</DetailItem>
                       <DetailItem label="Submitted" priority="lg">{submittedLabel}</DetailItem>
                       <DetailItem label="Attempt" priority="2xl">#{a.attemptNumber}</DetailItem>
@@ -410,30 +287,13 @@ export default async function TestSubmissionsPage({
                     />
                   </Td>
                   <Td kind="long" priority="md" className="text-mid-gray">
-                    <TwoLineCell
-                      main={a.moduleHeadline}
-                      detail={moduleBreakdown}
-                      mainClassName="font-medium text-charcoal"
-                    />
+                    {a.moduleHeadline}
                   </Td>
                   <Td>
-                    <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", statusStyles[a.status] ?? "bg-light-bg text-mid-gray")}>
-                      {a.status}
-                    </span>
+                    <StatusBadge kind="attempt" status={a.attempt.status} module={a.attempt.module} />
                   </Td>
                   <Td>
-                    <TwoLineCell
-                      main={scoreMain}
-                      detail={scoreDetail}
-                      mainClassName="text-mid-gray"
-                    />
-                  </Td>
-                  <Td kind="long" priority="md" className="text-mid-gray">
-                    <TwoLineCell
-                      main={correctMain}
-                      detail={correctBreakdown}
-                      mainClassName="text-mid-gray"
-                    />
+                    <ScoreCell score={a.attempt.score} />
                   </Td>
                   <Td priority="2xl" className="text-mid-gray">
                     {formatDuration(a.timeSpentSeconds)}
@@ -448,7 +308,7 @@ export default async function TestSubmissionsPage({
                     <RowActions>
                     <ExpandToggle label={`More about ${a.studentDisplayName}`} />
                     {primary && <RowButton label={primary.label} icon={<Eye size={13} />} href={primary.href} />}
-                    {(a.status === "Submitted" || a.status === "Late") && (
+                    {done && (
                       <GrantRetakeButton
                         testId={test.id}
                         studentId={a.studentId}

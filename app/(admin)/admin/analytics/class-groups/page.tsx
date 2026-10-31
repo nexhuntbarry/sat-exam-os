@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getServiceClient } from "@/lib/supabase";
-import { scaleSectionScore } from "@/lib/scoring";
+import { attemptScore, averageSat } from "@/lib/score-display";
+import { getTestSections } from "@/lib/teacher-access";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaUserIds, scopeIds } from "@/lib/qa";
 import { BarChart3, Users, ChevronLeft, ClipboardList } from "lucide-react";
@@ -40,18 +41,18 @@ type SubmissionRow = {
   student_id: string;
   test_id: string;
   status: string;
-  percentage: number | string | null;
-  scaled_score: number | null;
+  correct_count: number | null;
+  total_questions: number | null;
   session_id: string | null;
   adaptive_track: string | null;
 };
 
-// One logical attempt (a two-module adaptive session collapses to one).
+// One finished attempt (a two-module session collapses to one).
 type Attempt = {
   studentId: string;
   testId: string;
+  sat: number | null;
   percentage: number | null;
-  scaledScore: number | null;
 };
 
 // Per-test aggregate within a single class group.
@@ -60,8 +61,9 @@ type TestStat = {
   testName: string;
   createdAt: string | null;
   studentsSubmitted: number;
+  avgSat: number | null;
+  /** % correct, secondary to avgSat. */
   avgPercentage: number | null;
-  avgScaledScore: number | null;
 };
 
 type GroupStat = {
@@ -71,67 +73,34 @@ type GroupStat = {
   grade: string | null;
   memberCount: number;
   tests: TestStat[];
+  overallAvgSat: number | null;
   overallAvgPercentage: number | null;
 };
 
-// ── Attempt building (mirrors teacher buildSubmissionAttempts, simplified) ───
-// Two-module adaptive attempts produce two submission rows sharing one
-// session_id; collapse each session into a single attempt by averaging the
-// per-module percentages/scaled scores so a student isn't double-counted.
-// Rows with a NULL session_id are standalone attempts.
-function buildAttempts(rows: SubmissionRow[]): Attempt[] {
+// ── Attempt building ─────────────────────────────────────────────────────────
+// Two-module attempts produce two submission rows sharing one session_id;
+// each session is one attempt, scored with the shared score display (SAT
+// from the combined counts, only once every module is in). Rows with a NULL
+// session_id are standalone attempts. Unfinished attempts are left out so
+// averages use finished attempts only.
+function buildAttempts(rows: SubmissionRow[], sectionOf: Map<string, string | null>): Attempt[] {
   const bySession = new Map<string, SubmissionRow[]>();
-  const attempts: Attempt[] = [];
-
-  const toPct = (v: number | string | null): number | null =>
-    v != null && v !== "" ? Number(v) : null;
-
-  const scaledForAttempt = (
-    rowScaledScores: (number | null)[],
-    avgPct: number | null,
-  ): number | null => {
-    const stored = rowScaledScores.filter(
-      (s): s is number => s != null,
-    );
-    if (stored.length > 0) {
-      return Math.round(stored.reduce((a, b) => a + b, 0) / stored.length);
-    }
-    return avgPct != null ? scaleSectionScore(avgPct) : null;
-  };
-
   for (const r of rows) {
-    if (r.session_id) {
-      const list = bySession.get(r.session_id) ?? [];
-      list.push(r);
-      bySession.set(r.session_id, list);
-    } else {
-      const pct = toPct(r.percentage);
-      attempts.push({
-        studentId: r.student_id,
-        testId: r.test_id,
-        percentage: pct,
-        scaledScore: scaledForAttempt([r.scaled_score], pct),
-      });
-    }
+    const key = r.session_id ?? `solo:${r.id}`;
+    bySession.set(key, [...(bySession.get(key) ?? []), r]);
   }
 
+  const attempts: Attempt[] = [];
   for (const list of bySession.values()) {
-    const pcts = list
-      .map((r) => toPct(r.percentage))
-      .filter((p): p is number => p != null);
-    const avgPct =
-      pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
+    const { status, score } = attemptScore(list, sectionOf.get(list[0].test_id));
+    if (status !== "Submitted" && status !== "Late") continue;
     attempts.push({
       studentId: list[0].student_id,
       testId: list[0].test_id,
-      percentage: avgPct,
-      scaledScore: scaledForAttempt(
-        list.map((r) => r.scaled_score),
-        avgPct,
-      ),
+      sat: score?.sat ?? null,
+      percentage: score?.pct ?? null,
     });
   }
-
   return attempts;
 }
 
@@ -154,7 +123,7 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
     scopeIds(db
       .from("submissions")
       .select(
-        "id, student_id, test_id, status, percentage, scaled_score, session_id, adaptive_track",
+        "id, student_id, test_id, status, correct_count, total_questions, session_id, adaptive_track",
       )
       .in("status", ["Submitted", "Late"]), "student_id", qaUsers, viewerIsQa),
   ]);
@@ -162,9 +131,9 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
   const groups = (groupsRes.data ?? []) as ClassGroupRow[];
   const members = (membersRes.data ?? []) as MemberRow[];
   const tests = (testsRes.data ?? []) as TestRow[];
-  const attempts = buildAttempts(
-    (submissionsRes.data ?? []) as SubmissionRow[],
-  );
+  const subRows = (submissionsRes.data ?? []) as SubmissionRow[];
+  const sectionOf = await getTestSections(db, Array.from(new Set(subRows.map((r) => r.test_id))));
+  const attempts = buildAttempts(subRows, sectionOf);
 
   // student_id -> set of group ids they belong to (may be several)
   const studentGroups = new Map<string, string[]>();
@@ -209,18 +178,13 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
           .map((a) => a.percentage)
           .filter((p): p is number => p != null),
       );
-      const avgScaledScore = mean(
-        list
-          .map((a) => a.scaledScore)
-          .filter((s): s is number => s != null),
-      );
       testStats.push({
         testId,
         testName: t.test_name,
         createdAt: t.created_at,
         studentsSubmitted: students.size,
+        avgSat: averageSat(list.map((a) => a.sat)),
         avgPercentage,
-        avgScaledScore: avgScaledScore != null ? Math.round(avgScaledScore) : null,
       });
     }
 
@@ -231,9 +195,11 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
       return a.testName.localeCompare(b.testName);
     });
 
+    const groupAttempts = Array.from(byTest.values()).flat();
+    const overallAvgSat = averageSat(groupAttempts.map((a) => a.sat));
     const overallAvgPercentage = mean(
-      testStats
-        .map((t) => t.avgPercentage)
+      groupAttempts
+        .map((a) => a.percentage)
         .filter((p): p is number => p != null),
     );
 
@@ -244,6 +210,7 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
       grade: g.grade,
       memberCount,
       tests: testStats,
+      overallAvgSat,
       overallAvgPercentage,
     };
   });
@@ -271,7 +238,7 @@ export default async function ClassGroupAnalyticsPage() {
         <div>
           <h1 className="text-2xl font-bold text-charcoal">Class Group Analytics</h1>
           <p className="text-soft-mute text-sm mt-1">
-            Average score per test for each class group.
+            Average SAT score per test for each class group (finished attempts only).
           </p>
         </div>
       </div>
@@ -301,12 +268,15 @@ export default async function ClassGroupAnalyticsPage() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-soft-mute text-xs">Overall Avg</div>
+                  <div className="text-soft-mute text-xs">Overall Avg SAT</div>
                   <div className="text-xl font-bold text-warm-amber tabular-nums">
-                    {g.overallAvgPercentage != null
-                      ? `${g.overallAvgPercentage.toFixed(1)}%`
-                      : "—"}
+                    {g.overallAvgSat ?? "—"}
                   </div>
+                  {g.overallAvgPercentage != null && (
+                    <div className="text-soft-mute text-xs tabular-nums">
+                      {g.overallAvgPercentage.toFixed(1)}% correct
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -321,29 +291,26 @@ export default async function ClassGroupAnalyticsPage() {
                     <HeadRow>
                       <Th kind="main">Test</Th>
                       <Th className="text-right">Submitted</Th>
-                      <Th className="text-right">Avg %</Th>
-                      <Th className="text-right">Avg Scaled</Th>
+                      <Th className="text-right">Avg SAT</Th>
                     </HeadRow>
                   </thead>
                   <tbody>
                     {g.tests.length === 0 && (
-                      <EmptyRow colSpan={4}>No tests taken by this group yet.</EmptyRow>
+                      <EmptyRow colSpan={3}>No tests taken by this group yet.</EmptyRow>
                     )}
                     {g.tests.map((t) => (
-                      <DataRow key={t.testId} colSpan={4}>
+                      <DataRow key={t.testId} colSpan={3}>
                         <Td kind="main">
                           <TruncatedText>{t.testName}</TruncatedText>
                         </Td>
                         <Td className="text-right text-mid-gray tabular-nums">
                           {t.studentsSubmitted} / {g.memberCount}
                         </Td>
-                        <Td className="text-right text-charcoal tabular-nums">
-                          {t.avgPercentage != null
-                            ? `${t.avgPercentage.toFixed(1)}%`
-                            : "—"}
-                        </Td>
-                        <Td className="text-right text-warm-coral-text font-medium tabular-nums">
-                          {t.avgScaledScore != null ? `${t.avgScaledScore}/800` : "—"}
+                        <Td className="text-right tabular-nums">
+                          <div className="font-bold text-charcoal">{t.avgSat ?? "—"}</div>
+                          {t.avgPercentage != null && (
+                            <div className="text-xs text-soft-mute">{t.avgPercentage.toFixed(1)}% correct</div>
+                          )}
                         </Td>
                       </DataRow>
                     ))}
