@@ -373,3 +373,44 @@ export async function enforceStemIntegrity(
   if (cut.length > 0) console.warn(`[stem-guard] module=${moduleId} cut-off stems: Q${cut.join(", Q")}`);
   return { checked: rows.length, flagged };
 }
+
+// ── Approve gate ─────────────────────────────────────────────────────
+// The parse-time guards above only run when a module is parsed, so a cut-off
+// question could still be Approved by hand later (support a997bafb: Test #14
+// M2 Q27 — stem ending in a comma, choice A just "\"). The approve paths
+// (single PATCH and bulk approve) check this too.
+export const CHOICE_CUT_OFF_NOTE = "Needs review: an answer choice is empty or cut off — compare with the PDF.";
+
+/** A text-only choice that is empty or just punctuation/symbols ("\", "—"). */
+export function choiceLooksBroken(c: unknown): boolean {
+  if (!choiceHasContent(c)) return true;
+  if (typeof c === "object" && c && (c as { image_url?: string | null }).image_url) return false;
+  const t = (typeof c === "string" ? c : (c as { text?: string | null } | null)?.text ?? "").trim();
+  return !/[\p{L}\p{N}$]/u.test(t);
+}
+
+/** Why this question can't be Approved as-is (null = OK). */
+export function findApproveBlocker(
+  questionText: string | null | undefined,
+  choices: unknown,
+  questionType?: string | null,
+): { reason: string; note: string } | null {
+  const placeholder = findParsePlaceholder(questionText, choices);
+  if (placeholder) {
+    return { reason: `the stem or choices contain parser placeholder text ("${placeholder}")`, note: placeholderNote(placeholder) };
+  }
+  // A stem that ends on a full stop or question mark isn't cut off even if a
+  // quote looks unbalanced (a fill-in blank inside a title, a typo'd quote).
+  const endsCleanly = /[?.!)\]]["”'’]?$/.test((questionText ?? "").trim());
+  if (stemLooksCutOff(questionText) && !endsCleanly) {
+    return { reason: "the question text looks cut off (compare it with the PDF)", note: STEM_CUT_OFF_NOTE };
+  }
+  if (questionType !== "Student-Produced Response" && Array.isArray(choices) && choices.length > 0) {
+    const bad = choices.findIndex((c) => choiceLooksBroken(c));
+    if (bad >= 0) {
+      const label = (choices[bad] as { label?: string } | null)?.label ?? String.fromCharCode(65 + bad);
+      return { reason: `choice ${label} is empty or cut off (compare it with the PDF)`, note: CHOICE_CUT_OFF_NOTE };
+    }
+  }
+  return null;
+}

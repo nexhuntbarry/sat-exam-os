@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
-import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
+import { findApproveBlocker } from "@/lib/parse-guards";
 
 // POST /api/admin/questions/bulk-approve
 // Body: { question_ids: string[] } OR { filter: { moduleId?, minConfidence? } }
@@ -23,27 +23,27 @@ export async function POST(req: Request) {
     updated_at: now,
   };
 
-  // Drop rows whose stem/choices still carry parser placeholder text: they
-  // stay in (or move to) Needs Review with a note instead of being approved.
+  // Drop rows whose stem/choices still carry parser placeholder text or look
+  // cut off: they stay in (or move to) Needs Review with a note instead of
+  // being approved.
   async function excludePlaceholders(
-    rows: { id: string; question_text: string | null; choices: unknown; parsing_notes: string | null }[],
+    rows: { id: string; question_text: string | null; choices: unknown; question_type: string | null; parsing_notes: string | null }[],
   ): Promise<{ clean: string[]; blocked: number }> {
     const clean: string[] = [];
     let blocked = 0;
     for (const r of rows) {
-      const placeholder = findParsePlaceholder(r.question_text, r.choices);
-      if (!placeholder) {
+      const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type);
+      if (!blocker) {
         clean.push(r.id);
         continue;
       }
       blocked++;
       const base = (r.parsing_notes || "").trim();
-      const note = placeholderNote(placeholder);
       await db
         .from("questions")
         .update({
           parsing_status: "Needs Review",
-          parsing_notes: base && !base.includes("parser placeholder text") ? `${base}; ${note}` : note,
+          parsing_notes: base && !base.includes(blocker.note) ? `${base}; ${blocker.note}` : blocker.note,
           updated_at: now,
         })
         .eq("id", r.id);
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     }
     const { data: rows, error: selErr } = await db
       .from("questions")
-      .select("id, question_text, choices, parsing_notes")
+      .select("id, question_text, choices, question_type, parsing_notes")
       .in("id", ids);
     if (selErr) {
       console.error("[bulk-approve] select error:", selErr);
@@ -67,7 +67,7 @@ export async function POST(req: Request) {
     const { clean, blocked } = await excludePlaceholders(rows ?? []);
     if (clean.length === 0) {
       return NextResponse.json(
-        { error: `None approved: ${blocked} question(s) contain parser placeholder text and were kept in Needs Review.`, blocked },
+        { error: `None approved: ${blocked} question(s) contain parser placeholder text or look cut off, and were kept in Needs Review.`, blocked },
         { status: 400 },
       );
     }
@@ -90,7 +90,7 @@ export async function POST(req: Request) {
       minConfidence?: number;
     };
 
-    let query = db.from("questions").select("id, question_text, choices, parsing_notes");
+    let query = db.from("questions").select("id, question_text, choices, question_type, parsing_notes");
 
     if (moduleId) query = query.eq("module_id", moduleId);
     if (minConfidence !== undefined) {
