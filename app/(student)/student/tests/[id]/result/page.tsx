@@ -5,7 +5,7 @@ import Link from "next/link";
 import { CheckCircle, XCircle, Clock, BarChart2 } from "lucide-react";
 import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
-import { scaleSectionScore } from "@/lib/scoring";
+import { attemptScore } from "@/lib/score-display";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ReportProblemButton from "@/components/tests/ReportProblemButton";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
@@ -207,7 +207,13 @@ export default async function StudentResultPage({
   const reportsEnabled = await studentReportsEnabledFor(getServiceClient(), user);
 
   const { submission, test, visibility, answerDetails, sessionRows, breakdownRows } = data;
-  const pct = Number(submission.percentage ?? 0);
+  // Same score display as everywhere else: SAT section score only once
+  // every module is in, per-module correct counts, % as secondary text.
+  const section = test.modules?.section ?? submission.scaled_section ?? null;
+  const score = attemptScore(
+    (sessionRows && sessionRows.length > 0 ? sessionRows : [submission]).map((r) => ({ ...r, student_id: user.userId })),
+    section,
+  ).score;
 
   // Partial state: a sibling submission in the same attempt is still
   // "In Progress" so the combined view can't render. We still want to
@@ -224,12 +230,8 @@ export default async function StudentResultPage({
     .map((r) => TRACK_LABEL[r.adaptive_track ?? ""] ?? "another module")
     .join(", ");
 
-  // Build the combined Module 1 + Module 2 view when this is a fully
-  // graded adaptive session. We weight by raw counts (not by averaging
-  // percentages) so an unequal-sized Module 2 doesn't distort the
-  // headline score, then run the result through scaleSectionScore so
-  // the 200..800 estimate accounts for the harder/easier module the
-  // student was routed to.
+  // Build the combined Module 1 + Module 2 view (stats + per-module
+  // links) when this is a fully graded two-module session.
   const isAdaptiveSession =
     Array.isArray(sessionRows) &&
     sessionRows.length > 1 &&
@@ -240,16 +242,12 @@ export default async function StudentResultPage({
     label: string;
     correct: number;
     total: number;
-    percentage: number;
-    scaled: number | null;
     timeSeconds: number;
     isCurrent: boolean;
   };
   let combined: {
     correct: number;
     total: number;
-    pct: number;
-    scaled: number;
     timeSeconds: number;
     module1: SessionRowView | null;
     module2: SessionRowView | null;
@@ -258,18 +256,12 @@ export default async function StudentResultPage({
   if (isAdaptiveSession && sessionRows) {
     const totalCorrect = sessionRows.reduce((s, r) => s + (r.correct_count ?? 0), 0);
     const totalQs = sessionRows.reduce((s, r) => s + (r.total_questions ?? 0), 0);
-    const combinedPct = totalQs > 0
-      ? Math.round((totalCorrect / totalQs) * 100 * 10) / 10
-      : 0;
-    const combinedScaled = scaleSectionScore(combinedPct);
     const combinedTime = sessionRows.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
     const view = (r: SessionRow): SessionRowView => ({
       id: r.id,
       label: TRACK_LABEL[r.adaptive_track ?? ""] ?? "Module",
       correct: r.correct_count ?? 0,
       total: r.total_questions ?? 0,
-      percentage: Number(r.percentage ?? 0),
-      scaled: r.scaled_score ?? null,
       timeSeconds: r.time_spent_seconds ?? 0,
       isCurrent: r.id === submission.id,
     });
@@ -286,8 +278,6 @@ export default async function StudentResultPage({
     combined = {
       correct: totalCorrect,
       total: totalQs,
-      pct: combinedPct,
-      scaled: combinedScaled,
       timeSeconds: combinedTime,
       module1: m1 ? view(m1) : null,
       module2: m2 ? view(m2) : null,
@@ -327,35 +317,29 @@ export default async function StudentResultPage({
         </div>
       )}
 
-      {/* Score card — adaptive flow shows the combined Module 1 +
-          Module 2 view; legacy single-module flow keeps the original
-          per-submission card. */}
-      {combined ? (
-        <div className="bg-surface border border-divider rounded-2xl p-8 text-center space-y-4">
-          <div className="text-soft-mute text-sm font-medium uppercase tracking-wider">
-            Your Score · Combined
+      {/* Score card — SAT section score once every module is in, then
+          per-module correct counts; % correct is secondary. Two-module
+          sessions also link to each module's own answers. */}
+      <div className="bg-surface border border-divider rounded-2xl p-8 text-center space-y-4">
+        <div className="text-soft-mute text-sm font-medium uppercase tracking-wider">
+          {score?.sat != null ? `Estimated SAT score${section ? ` · ${section}` : ""}` : "Your Score"}
+        </div>
+        {score?.sat != null && (
+          <div className="text-6xl font-bold text-charcoal">
+            {score.sat}
+            <span className="text-2xl text-soft-mute font-normal">/800</span>
           </div>
-          <div className={clsx(
-            "text-6xl font-bold",
-            combined.pct >= 80 ? "text-warm-amber" : combined.pct >= 60 ? "text-status-warning" : "text-status-error",
-          )}>
-            {combined.pct.toFixed(1)}%
-          </div>
-          <div className="text-charcoal text-lg">
-            {combined.correct} / {combined.total} correct
-          </div>
-          <div className="inline-flex flex-col items-center gap-1 px-6 py-3 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
-            <span className="text-soft-mute text-xs uppercase tracking-wider">
-              Estimated SAT score{submission.scaled_section ? ` · ${submission.scaled_section}` : ""}
-            </span>
-            <span className="text-warm-coral-text text-3xl font-bold">
-              {combined.scaled}
-              <span className="text-base text-soft-mute font-normal">/800</span>
-            </span>
-            <span className="text-soft-mute text-[10px] italic">
-              estimate — combines Module 1 + Module 2 raw counts
-            </span>
-          </div>
+        )}
+        <div className="text-charcoal text-lg">
+          {score ? `${score.modules} correct` : "—"}
+        </div>
+        {score?.pct != null && (
+          <div className="text-soft-mute text-xs">{score.pct.toFixed(1)}% correct</div>
+        )}
+        {score && score.notes.length > 0 && (
+          <div className="text-status-warning text-xs">* {score.notes.join(" · ")}</div>
+        )}
+        {combined && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 text-left">
             {[combined.module1, combined.module2].filter((m): m is SessionRowView => !!m).map((m) => (
               <Link
@@ -370,50 +354,20 @@ export default async function StudentResultPage({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-charcoal font-semibold text-sm">{m.label}</span>
-                  <span className="text-warm-coral-text text-sm font-semibold">
-                    {m.percentage.toFixed(1)}%
+                  <span className="text-mid-gray text-sm">
+                    {m.correct}/{m.total} correct
                   </span>
-                </div>
-                <div className="text-soft-mute text-xs mt-1">
-                  {m.correct} / {m.total} correct
                 </div>
               </Link>
             ))}
           </div>
-        </div>
-      ) : (
-        <div className="bg-surface border border-divider rounded-2xl p-8 text-center space-y-4">
-          <div className="text-soft-mute text-sm font-medium uppercase tracking-wider">Your Score</div>
-          <div className={clsx(
-            "text-6xl font-bold",
-            pct >= 80 ? "text-warm-amber" : pct >= 60 ? "text-status-warning" : "text-status-error"
-          )}>
-            {pct.toFixed(1)}%
+        )}
+        {submission.status === "Late" && (
+          <div className="inline-block px-3 py-1 bg-status-warning/15 text-status-warning rounded-full text-xs font-medium">
+            Submitted Late
           </div>
-          <div className="text-charcoal text-lg">
-            {submission.correct_count} / {submission.total_questions} correct
-          </div>
-          {submission.scaled_score != null && (
-            <div className="inline-flex flex-col items-center gap-1 px-6 py-3 rounded-2xl bg-warm-coral/10 border border-warm-coral/20">
-              <span className="text-soft-mute text-xs uppercase tracking-wider">
-                Estimated SAT score{submission.scaled_section ? ` · ${submission.scaled_section}` : ""}
-              </span>
-              <span className="text-warm-coral-text text-3xl font-bold">
-                {submission.scaled_score}
-                <span className="text-base text-soft-mute font-normal">/800</span>
-              </span>
-              <span className="text-soft-mute text-[10px] italic">
-                estimate — not adaptive scoring
-              </span>
-            </div>
-          )}
-          {submission.status === "Late" && (
-            <div className="inline-block px-3 py-1 bg-status-warning/15 text-status-warning rounded-full text-xs font-medium">
-              Submitted Late
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Stats — combined when this is a multi-module session, else
           fall back to the single submission's numbers. */}

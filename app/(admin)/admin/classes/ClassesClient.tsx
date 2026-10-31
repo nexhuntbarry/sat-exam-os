@@ -2,8 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, X, Users } from "lucide-react";
+import Link from "next/link";
+import { Plus, X } from "lucide-react";
 import { Portal } from "@/components/ui/Portal";
+import { DataRow, DataTable, EmptyRow, HeadRow, Td, Th, TwoLineCell } from "@/components/ui/data-table";
 
 interface ClassGroup {
   id: string;
@@ -129,7 +131,7 @@ export default function ClassesClient({ classGroups }: { classGroups: ClassGroup
   const [, startTransition] = useTransition();
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       {showCreate && (
         <CreateModal
           onClose={() => setShowCreate(false)}
@@ -151,41 +153,33 @@ export default function ClassesClient({ classGroups }: { classGroups: ClassGroup
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {classGroups.length === 0 ? (
-          <div className="col-span-full py-16 text-center text-soft-mute text-sm bg-surface border border-divider rounded-2xl">
-            No class groups yet. Create one to organize students.
-          </div>
-        ) : (
-          classGroups.map((cg) => (
-            <a
-              key={cg.id}
-              href={`/admin/classes/${cg.id}`}
-              className="block bg-surface border border-divider rounded-2xl p-5 hover:bg-light-bg hover:border-divider transition-all group"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <h3 className="font-semibold text-charcoal group-hover:text-warm-coral-text transition-colors">
-                    {cg.name}
-                  </h3>
-                  {cg.campus && (
-                    <p className="text-soft-mute text-xs mt-0.5">{cg.campus}</p>
-                  )}
-                </div>
-                {cg.grade && (
-                  <span className="px-2 py-1 rounded-full bg-warm-coral/15 text-warm-coral-text text-xs font-medium">
-                    Grade {cg.grade}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-1.5 text-mid-gray text-sm">
-                <Users size={14} />
-                <span>{cg.memberCount} student{cg.memberCount !== 1 ? "s" : ""}</span>
-              </div>
-            </a>
-          ))
-        )}
-      </div>
+      <DataTable>
+        <thead>
+          <HeadRow>
+            <Th kind="main" sticky="left">Class</Th>
+            <Th>Grade</Th>
+            <Th>Students</Th>
+          </HeadRow>
+        </thead>
+        <tbody>
+          {classGroups.length === 0 && (
+            <EmptyRow colSpan={3}>No class groups yet. Create one to organize students.</EmptyRow>
+          )}
+          {classGroups.map((cg) => (
+            <DataRow key={cg.id} href={`/admin/classes/${cg.id}`}>
+              <Td kind="main" sticky="left">
+                <Link href={`/admin/classes/${cg.id}`} className="block text-charcoal hover:text-warm-coral-text transition-colors">
+                  <TwoLineCell main={cg.name} detail={cg.campus ?? undefined} wrapMain mainClassName="font-medium text-inherit" />
+                </Link>
+              </Td>
+              <Td className="text-mid-gray">{cg.grade ? `Grade ${cg.grade}` : "—"}</Td>
+              <Td className="text-mid-gray">
+                {cg.memberCount} student{cg.memberCount !== 1 ? "s" : ""}
+              </Td>
+            </DataRow>
+          ))}
+        </tbody>
+      </DataTable>
     </div>
   );
 }

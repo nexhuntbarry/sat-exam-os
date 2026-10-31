@@ -3,15 +3,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ImagePlus, X } from "lucide-react";
-import { formatDateTime } from "@/lib/datetime";
+import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
+import { StatusBadge, type ReportStatus } from "@/components/ui/StatusBadge";
 import { STATUS_LABEL, type SupportRow, type SupportStatus } from "@/lib/support-shared";
 
-const PILL: Record<SupportStatus, string> = {
-  new: "bg-status-warning/15 text-status-warning",
-  in_progress: "bg-warm-coral/15 text-warm-coral-text",
-  needs_approval: "bg-warm-amber/15 text-warm-amber",
-  fixed: "bg-status-success/15 text-status-success",
-  declined: "bg-light-bg text-mid-gray",
+// Short badge word per status; the full STATUS_LABEL shows on hover.
+const BADGE: Record<SupportStatus, ReportStatus> = {
+  new: "Received",
+  in_progress: "Fixing",
+  needs_approval: "Needs approval",
+  fixed: "Fixed",
+  declined: "Closed",
 };
 
 /** Text box + screenshot picker (click, or paste an image). Posts multipart to `url`. */
@@ -145,10 +147,14 @@ export default function SupportClient({ requests }: { requests: SupportRow[] }) 
         {requests.map((r) => (
           <div key={r.id} id={r.id} className="rounded-xl border border-divider bg-surface p-4 space-y-3 scroll-mt-20">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-soft-mute">{formatDateTime(r.created_at)}</span>
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PILL[r.payload.status]}`}>
-                {STATUS_LABEL[r.payload.status]}
+              <span className="text-xs text-soft-mute" title={formatDateTime(r.created_at)}>
+                {formatShortDateTime(r.created_at)}
               </span>
+              <StatusBadge
+                kind="report"
+                status={BADGE[r.payload.status] ?? "Received"}
+                title={STATUS_LABEL[r.payload.status]}
+              />
             </div>
             {r.payload.messages.map((m, i) => (
               <div
@@ -156,7 +162,8 @@ export default function SupportClient({ requests }: { requests: SupportRow[] }) 
                 className={`rounded-lg px-3 py-2 text-sm ${m.from === "dev" ? "bg-warm-coral/5 border border-warm-coral/15" : "bg-light-bg"}`}
               >
                 <div className="text-[11px] text-soft-mute mb-1">
-                  {m.from === "dev" ? "Dev team" : "You"} · {formatDateTime(m.at)}
+                  {m.from === "dev" ? "Dev team" : "You"} ·{" "}
+                  <span title={formatDateTime(m.at)}>{formatShortDateTime(m.at)}</span>
                 </div>
                 <div className="whitespace-pre-wrap text-charcoal">{m.body}</div>
                 {m.screenshots && m.screenshots.length > 0 && (

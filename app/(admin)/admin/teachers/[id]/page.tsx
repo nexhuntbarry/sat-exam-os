@@ -1,10 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Mail, Users, GraduationCap, BookOpen } from "lucide-react";
-import { clsx } from "clsx";
+import { Users } from "lucide-react";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { formatDate } from "@/lib/datetime";
+import { formatDate, formatShortDate } from "@/lib/datetime";
 import { isQaEmail } from "@/lib/qa";
 import {
   DataRow,
@@ -17,6 +16,8 @@ import {
   Th,
   TwoLineCell,
 } from "@/components/ui/data-table";
+import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
+import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 
 async function getTeacherDetail(teacherId: string) {
   const db = getServiceClient();
@@ -166,12 +167,6 @@ async function getTeacherDetail(teacherId: string) {
   };
 }
 
-const statusStyles: Record<string, string> = {
-  approved: "bg-warm-amber/15 text-warm-amber",
-  pending: "bg-status-warning/15 text-status-warning",
-  suspended: "bg-status-error/15 text-status-error",
-};
-
 export default async function AdminTeacherDetailPage({
   params,
 }: {
@@ -187,62 +182,37 @@ export default async function AdminTeacherDetailPage({
   const { teacher, classes, stats } = data;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center gap-3">
-        <Link
-          href="/admin/teachers"
-          className="text-soft-mute hover:text-charcoal transition-colors"
-          aria-label="Back to teachers"
-        >
-          <ArrowLeft size={20} />
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-2xl font-bold text-charcoal">
-            {teacher.display_name ?? teacher.email}
-          </h1>
-          <p className="text-soft-mute text-sm flex items-center gap-1.5 mt-0.5">
-            <Mail size={12} />
-            {teacher.email}
-          </p>
-        </div>
-        <span
-          className={clsx(
-            "px-3 py-1 rounded-full text-xs font-medium capitalize",
-            statusStyles[teacher.account_status] ?? "bg-light-bg text-mid-gray",
-          )}
-        >
-          {teacher.account_status}
-        </span>
-      </div>
+    <div className="space-y-6">
+      <DetailHeader
+        back={{ href: "/admin/teachers", label: "Teachers" }}
+        title={teacher.display_name ?? teacher.email}
+        badge={<StatusBadge kind="student" status={studentStatusLabel(teacher.account_status)} />}
+        summary={
+          <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>{teacher.email}</span>
+            {teacher.specialty && (
+              <>
+                <span aria-hidden>·</span>
+                <span>{teacher.specialty}</span>
+              </>
+            )}
+            <span aria-hidden>·</span>
+            <span>{teacher.can_review_questions ? "Can review questions" : "Not a reviewer"}</span>
+            <span aria-hidden>·</span>
+            <span title={formatDate(teacher.created_at)}>Joined {formatShortDate(teacher.created_at)}</span>
+          </span>
+        }
+      />
+      {teacher.bio && <p className="text-sm text-mid-gray whitespace-pre-line">{teacher.bio}</p>}
 
-      {/* Profile / stats */}
-      <div className="bg-surface border border-divider rounded-2xl p-6 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-        <div>
-          <p className="text-soft-mute text-xs">Joined</p>
-          <p className="text-charcoal font-medium">{formatDate(teacher.created_at)}</p>
-        </div>
-        <div>
-          <p className="text-soft-mute text-xs">Can review questions</p>
-          <p className="text-charcoal font-medium">
-            {teacher.can_review_questions ? "Yes" : "No"}
-          </p>
-        </div>
-        <div>
-          <p className="text-soft-mute text-xs">Specialty</p>
-          <p className="text-charcoal font-medium">{teacher.specialty ?? "—"}</p>
-        </div>
-        <div>
-          <p className="text-soft-mute text-xs">Bio</p>
-          <p className="text-charcoal font-medium line-clamp-2">{teacher.bio ?? "—"}</p>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        <StatCard label="Classes" value={stats.classCount} icon={<GraduationCap size={16} />} />
-        <StatCard label="Students" value={stats.studentCount} icon={<Users size={16} />} />
-        <StatCard label="Assigned tests" value={stats.assignedTests} icon={<BookOpen size={16} />} />
-        <StatCard label="Submissions" value={stats.totalSubmissions} icon={<BookOpen size={16} />} />
-      </div>
+      <StatCards
+        items={[
+          { label: "Classes", value: stats.classCount },
+          { label: "Students", value: stats.studentCount },
+          { label: "Assigned tests", value: stats.assignedTests },
+          { label: "Submissions", value: stats.totalSubmissions },
+        ]}
+      />
 
       {/* Classes */}
       <section className="space-y-3">
@@ -272,25 +242,20 @@ export default async function AdminTeacherDetailPage({
         ) : (
           <div className="space-y-4">
             {classes.map((cls) => (
-              <div
-                key={cls.id}
-                className="bg-surface border border-divider rounded-2xl overflow-hidden"
-              >
-                <div className="px-5 py-4 border-b border-divider flex items-center justify-between gap-3 flex-wrap">
-                  <div>
-                    <h3 className="text-charcoal font-semibold">{cls.name}</h3>
-                    <p className="text-soft-mute text-xs mt-0.5">
-                      {[cls.campus, cls.grade].filter(Boolean).join(" · ") || "—"}
-                      {" · "}
-                      {cls.students.length}{" "}
-                      {cls.students.length === 1 ? "student" : "students"}
-                    </p>
-                  </div>
+              <div key={cls.id} className="space-y-2">
+                <div>
+                  <h3 className="text-charcoal font-semibold">{cls.name}</h3>
+                  <p className="text-soft-mute text-xs mt-0.5">
+                    {[cls.campus, cls.grade].filter(Boolean).join(" · ") || "—"}
+                    {" · "}
+                    {cls.students.length}{" "}
+                    {cls.students.length === 1 ? "student" : "students"}
+                  </p>
                 </div>
                 {cls.students.length === 0 ? (
-                  <div className="py-8 text-center text-soft-mute text-sm">
-                    No students enrolled in this class yet.
-                  </div>
+                  <p className="rounded-2xl border border-dashed border-divider px-5 py-6 text-center text-soft-mute text-sm">
+                    No students in this class yet. Add them in Classes.
+                  </p>
                 ) : (
                   <DataTable>
                     <thead>
@@ -318,6 +283,7 @@ export default async function AdminTeacherDetailPage({
                             <TwoLineCell
                               main={s.display_name ?? "—"}
                               detail={s.email}
+                              wrapMain
                               mainClassName="font-medium text-charcoal"
                             />
                           </Td>
@@ -342,22 +308,3 @@ export default async function AdminTeacherDetailPage({
   );
 }
 
-function StatCard({
-  label,
-  value,
-  icon,
-}: {
-  label: string;
-  value: number;
-  icon: React.ReactNode;
-}) {
-  return (
-    <div className="bg-surface border border-divider rounded-2xl p-4">
-      <div className="flex items-center gap-2 text-soft-mute text-xs">
-        <span className="text-warm-coral-text">{icon}</span>
-        {label}
-      </div>
-      <div className="text-2xl font-bold text-charcoal mt-1">{value}</div>
-    </div>
-  );
-}

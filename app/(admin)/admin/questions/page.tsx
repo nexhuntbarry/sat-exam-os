@@ -5,7 +5,7 @@ import StatusPills from "./StatusPills";
 
 export default function QuestionsPage() {
   return (
-    <div className="max-w-7xl mx-auto space-y-4">
+    <div className="space-y-4">
       <PageIntro tKey="admin.questions" />
       <h1 className="text-2xl font-bold text-charcoal">Question Bank</h1>
       {/* Quick jump pills for the review queue. Each links to the

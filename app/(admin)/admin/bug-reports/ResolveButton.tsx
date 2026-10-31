@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Check } from "lucide-react";
+import { RowButton } from "@/components/ui/data-table";
 
 export default function ResolveButton({ reportId }: { reportId: string }) {
   const router = useRouter();
@@ -24,12 +26,11 @@ export default function ResolveButton({ reportId }: { reportId: string }) {
   }
 
   return (
-    <button
-      onClick={resolve}
+    <RowButton
+      label={busy ? "Resolving…" : "Mark resolved"}
+      icon={<Check size={13} />}
       disabled={busy}
-      className="whitespace-nowrap px-2 py-1 rounded-md text-xs bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber font-medium transition-colors disabled:opacity-50"
-    >
-      {busy ? "..." : "Mark resolved"}
-    </button>
+      onClick={resolve}
+    />
   );
 }

@@ -3,11 +3,11 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { clsx } from "clsx";
 import { Check, X, Save, Printer } from "lucide-react";
 import { SubmissionDetailPanel } from "@/components/analytics/SubmissionDetailPanel";
 import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel";
-import { scaleSectionScore } from "@/lib/scoring";
+import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
+import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
 interface StudentInfo {
@@ -162,6 +162,19 @@ export default function SubmissionDetailPage() {
 
   const { student, submission, answers } = data;
   const correctCount = answers.filter((a) => a.isCorrect).length;
+  // Same score display as everywhere else: SAT section score only once
+  // every module is in; a Module 1 alone (Module 2 not created yet) is
+  // unfinished.
+  const scoreModules: ScoreModule[] = (data.modules ?? []).map((m, i) => ({
+    number: i + 1,
+    graded: m.status === "Submitted" || m.status === "Late",
+    correct: m.correctCount,
+    total: m.totalQuestions,
+  }));
+  if (scoreModules.length === 1 && data.modules?.[0].label === "Module 1") {
+    scoreModules.push({ number: 2, graded: false, correct: null, total: null });
+  }
+  const score = scoreDisplay(scoreModules, submission.scaledSection);
 
   function handlePrint() {
     // The per-question rows in SubmissionDetailPanel are gated by
@@ -208,54 +221,32 @@ export default function SubmissionDetailPage() {
               {student.classGroup && <span>· {student.classGroup}</span>}
             </div>
           </div>
-          <span className={clsx(
-            "px-3 py-1 rounded-full text-sm font-medium",
-            submission.status === "Submitted" ? "bg-warm-amber/15 text-warm-amber" :
-            submission.status === "Late" ? "bg-status-warning/15 text-status-warning" :
-            "bg-light-bg text-soft-mute"
-          )}>
-            {submission.status}
-          </span>
+          <StatusBadge kind="attempt" status={attemptStatusLabel(submission.status)} />
         </div>
       </div>
 
       {/* Score summary */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
-        <div className="bg-surface border border-divider rounded-xl p-4 col-span-2 sm:col-span-1">
-          <div className="text-soft-mute text-xs mb-1">Score</div>
-          <div className={clsx(
-            "text-3xl font-bold",
-            submission.percentage != null && submission.percentage >= 70 ? "text-warm-amber" :
-            submission.percentage != null && submission.percentage >= 50 ? "text-status-warning" : "text-status-error"
-          )}>
-            {submission.percentage != null ? `${Number(submission.percentage).toFixed(1)}%` : "—"}
+        <div
+          className="bg-warm-coral/10 border border-warm-coral/20 rounded-xl p-4 col-span-2"
+          title={[score?.pct != null ? `${score.pct.toFixed(1)}% correct` : null, ...(score?.notes ?? [])].filter(Boolean).join("\n") || undefined}
+        >
+          <div className="text-soft-mute text-xs mb-1">
+            Est. SAT score
+            {submission.scaledSection ? ` · ${submission.scaledSection}` : ""}
           </div>
-        </div>
-        {(() => {
-          // Fall back to live computation when the submission predates
-          // migration 0015 (scaled_score IS NULL in older rows).
-          const effectiveScaled =
-            submission.scaledScore ??
-            (submission.percentage != null
-              ? scaleSectionScore(Number(submission.percentage))
-              : null);
-          if (effectiveScaled == null) return null;
-          return (
-            <div
-              className="bg-warm-coral/10 border border-warm-coral/20 rounded-xl p-4"
-              title="Estimated SAT scaled score (200-800). Based on TestNinja-style approximation; not adaptive yet."
-            >
-              <div className="text-soft-mute text-xs mb-1">
-                Est. SAT score
-                {submission.scaledSection ? ` · ${submission.scaledSection}` : ""}
-              </div>
-              <div className="text-3xl font-bold text-warm-coral-text">
-                {effectiveScaled}
-                <span className="text-sm text-soft-mute font-normal">/800</span>
-              </div>
+          {score?.sat != null && (
+            <div className="text-3xl font-bold text-warm-coral-text">
+              {score.sat}
+              <span className="text-sm text-soft-mute font-normal">/800</span>
             </div>
-          );
-        })()}
+          )}
+          <div className={score?.sat != null ? "text-xs text-mid-gray" : "text-xl font-semibold text-charcoal"}>
+            {score ? score.modules : "—"}
+            {score && score.notes.length > 0 && <span className="text-status-warning"> *</span>}
+          </div>
+          {score?.pct != null && <div className="text-xs text-soft-mute">{score.pct.toFixed(1)}% correct</div>}
+        </div>
         <div className="bg-surface border border-divider rounded-xl p-4">
           <div className="text-soft-mute text-xs mb-1">Correct</div>
           <div className="text-charcoal text-2xl font-bold flex items-center gap-1">
@@ -330,9 +321,6 @@ export default function SubmissionDetailPage() {
       {data.modules && data.modules.length > 1 ? (
         <div className="space-y-6">
           {data.modules.map((m) => {
-            const effScaled =
-              m.scaledScore ??
-              (m.percentage != null ? scaleSectionScore(m.percentage) : null);
             return (
               <div key={m.submissionId} className="space-y-3">
                 <div className="flex items-center justify-between gap-3 bg-surface border border-divider rounded-2xl px-5 py-3">
@@ -341,7 +329,6 @@ export default function SubmissionDetailPage() {
                     <p className="text-soft-mute text-xs mt-0.5">
                       {m.correctCount}/{m.totalQuestions} correct
                       {m.percentage != null && ` · ${m.percentage.toFixed(1)}%`}
-                      {effScaled != null && ` · ${effScaled}/800`}
                       {" · "}{fmtTime(m.timeSpentSeconds)}
                     </p>
                   </div>

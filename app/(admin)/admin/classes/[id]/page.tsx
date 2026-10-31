@@ -4,7 +4,8 @@ import ClassDetailClient from "./ClassDetailClient";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide, scopeUsers } from "@/lib/qa";
 import type { AssignedTest } from "./ClassDetailClient";
-import { summarizeTestProgress, type ProgressSubmission } from "@/lib/test-progress";
+import { studentTestProgress, summarizeTestProgress, type ProgressSubmission } from "@/lib/test-progress";
+import { averageSat, scoreDisplay } from "@/lib/score-display";
 
 async function getClassGroup(id: string) {
   const db = getServiceClient();
@@ -188,6 +189,15 @@ async function getAssignedTests(
 
     const testSubs = subsByTest.get(row.test_id as string) ?? [];
     const progress = summarizeTestProgress(testSubs, memberStudentIds, twoModules);
+    // Avg SAT over finished students, same score display as the test page.
+    const byStudent = new Map<string, ProgressSubmission[]>();
+    for (const s of testSubs) byStudent.set(s.student_id, [...(byStudent.get(s.student_id) ?? []), s]);
+    const avgSat = averageSat(
+      Array.from(byStudent.values()).map((subs) => {
+        const p = studentTestProgress(subs, twoModules);
+        return p.status === "Submitted" ? scoreDisplay(p.modules, section)?.sat : null;
+      }),
+    );
 
     return {
       id: row.test_id as string,
@@ -199,6 +209,7 @@ async function getAssignedTests(
       submitted: progress.finished,
       total: memberStudentIds.length,
       avgScore: progress.avgScore,
+      avgSat,
     };
   });
 }

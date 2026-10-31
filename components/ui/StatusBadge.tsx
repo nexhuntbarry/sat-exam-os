@@ -18,6 +18,10 @@ export type AttemptStatus = "Not started" | "In progress" | "Submitted" | "Late"
 export type TestStatus = "Draft" | "Published" | "Closed";
 export type ModuleStatus = "Draft" | "In review" | "Ready";
 export type StudentStatus = "Pending" | "Active" | "Suspended";
+/** questions.parsing_status ("Needs Review" is shown as "Needs review"). */
+export type QuestionStatus = "Draft" | "Needs Review" | "Approved" | "Rejected";
+/** Bug reports (Open / Resolved) and Report a Problem requests. */
+export type ReportStatus = "Open" | "Resolved" | "Received" | "Fixing" | "Needs approval" | "Fixed" | "Closed";
 
 const ATTEMPT: Record<AttemptStatus, Tone> = {
   "Not started": "neutral",
@@ -28,6 +32,21 @@ const ATTEMPT: Record<AttemptStatus, Tone> = {
 const TEST: Record<TestStatus, Tone> = { Draft: "neutral", Published: "success", Closed: "dark" };
 const MODULE: Record<ModuleStatus, Tone> = { Draft: "neutral", "In review": "warning", Ready: "success" };
 const STUDENT: Record<StudentStatus, Tone> = { Pending: "warning", Active: "success", Suspended: "dark" };
+const QUESTION: Record<QuestionStatus, Tone> = {
+  Draft: "neutral",
+  "Needs Review": "warning",
+  Approved: "success",
+  Rejected: "dark",
+};
+const REPORT: Record<ReportStatus, Tone> = {
+  Open: "warning",
+  Resolved: "success",
+  Received: "neutral",
+  Fixing: "active",
+  "Needs approval": "warning",
+  Fixed: "success",
+  Closed: "dark",
+};
 
 /** users.account_status → the label admins see. */
 export function studentStatusLabel(accountStatus: string): StudentStatus {
@@ -49,6 +68,8 @@ type Props = { className?: string; title?: string; label?: string } & (
   | { kind: "test"; status: TestStatus }
   | { kind: "module"; status: ModuleStatus; count?: number }
   | { kind: "student"; status: StudentStatus }
+  | { kind: "question"; status: QuestionStatus }
+  | { kind: "report"; status: ReportStatus }
 );
 
 /** Status pill. `label` overrides the text (e.g. a translation) but never
@@ -74,6 +95,14 @@ export function StatusBadge(props: Props) {
       break;
     case "student":
       tone = STUDENT[props.status];
+      text = props.status;
+      break;
+    case "question":
+      tone = QUESTION[props.status] ?? "neutral";
+      text = props.status === "Needs Review" ? "Needs review" : props.status;
+      break;
+    case "report":
+      tone = REPORT[props.status] ?? "neutral";
       text = props.status;
       break;
   }

@@ -678,7 +678,8 @@
       "tests": "Tests",
       "students": "Students",
       "submissions": "Submissions",
-      "avgScore": "Avg Score"
+      "avgScore": "Avg SAT",
+      "pctCorrect": "{pct}% correct"
     }
   },
   "teacherAnalysis": {

@@ -22,6 +22,7 @@ import {
   type RowAction,
 } from "@/components/ui/data-table";
 import { Portal } from "@/components/ui/Portal";
+import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 
 interface TeacherProfile {
   assigned_classes: unknown[];
@@ -139,7 +140,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
               <p className="text-mid-gray text-xs">
                 {email} is already in the system
                 {duplicate.display_name ? ` as ${duplicate.display_name}` : ""}
-                {` (status: ${duplicate.account_status})`}.
+                {duplicate.account_status !== "unknown" && ` (${studentStatusLabel(duplicate.account_status)})`}.
               </p>
             </div>
             <p className="text-mid-gray text-sm">Send invite email again?</p>
@@ -304,7 +305,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
             const activityMain = lastSignIn ?? (
               teacher.clerk_user_id
                 ? "Never signed in"
-                : <span className="text-status-warning">never (pending)</span>
+                : <span className="text-soft-mute">Not signed up yet</span>
             );
             const activityDetail = `Invited ${formatShortDate(teacher.created_at)}`;
             const activityTitle = `${lastSignInFull ? `Last sign-in ${lastSignInFull}` : "Never signed in"} · Invited ${formatDateTime(teacher.created_at)}`;
@@ -345,7 +346,7 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                     </DetailItem>
                     <DetailItem label="Activity" priority="lg">
                       <span title={activityTitle}>
-                        {lastSignIn ?? (teacher.clerk_user_id ? "Never signed in" : "never (pending)")}
+                        {lastSignIn ?? (teacher.clerk_user_id ? "Never signed in" : "Not signed up yet")}
                         {" · "}
                         {activityDetail}
                       </span>
@@ -361,23 +362,13 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                     <TwoLineCell
                       main={teacher.display_name ?? "—"}
                       detail={teacher.email}
+                      wrapMain
                       mainClassName="font-medium text-inherit"
                     />
                   </Link>
                 </Td>
                 <Td>
-                  <span
-                    className={clsx(
-                      "px-2 py-0.5 rounded-full text-xs font-medium capitalize",
-                      teacher.account_status === "approved"
-                        ? "bg-warm-amber/15 text-warm-amber"
-                        : teacher.account_status === "pending"
-                        ? "bg-status-warning/15 text-status-warning"
-                        : "bg-status-error/15 text-status-error",
-                    )}
-                  >
-                    {teacher.account_status}
-                  </span>
+                  <StatusBadge kind="student" status={studentStatusLabel(teacher.account_status)} />
                 </Td>
                 <Td priority="md">
                   <span

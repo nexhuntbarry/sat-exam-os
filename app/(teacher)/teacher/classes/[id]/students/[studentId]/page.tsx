@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, ClipboardList } from "lucide-react";
-import { clsx } from "clsx";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import {
@@ -12,6 +11,9 @@ import {
 import { getServiceClient } from "@/lib/supabase";
 import { getStudentAssignments } from "@/lib/student-exam";
 import { studentTestProgress } from "@/lib/test-progress";
+import { attemptScore, averageSat, type ScoreDisplay } from "@/lib/score-display";
+import { ScoreCell } from "@/components/ui/ScoreCell";
+import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
@@ -33,14 +35,6 @@ import {
 } from "@/components/ui/data-table";
 
 export const dynamic = "force-dynamic";
-
-const statusCls: Record<string, string> = {
-  Submitted: "bg-warm-amber/15 text-warm-amber",
-  Late: "bg-status-warning/15 text-status-warning",
-  "In progress": "bg-warm-coral/15 text-warm-coral-text",
-  "Not started": "bg-light-bg text-mid-gray",
-  Expired: "bg-light-bg text-mid-gray",
-};
 
 async function loadStudent(
   classGroupId: string,
@@ -194,8 +188,6 @@ async function loadStudent(
     const head = sorted[0];
     const last = sorted[sorted.length - 1];
     const t = (Array.isArray(head.tests) ? head.tests[0] : head.tests) ?? null;
-    const correct = sorted.reduce((n, r) => n + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((n, r) => n + (r.total_questions ?? 0), 0);
     const statuses = sorted.map((r) => r.status);
     let status = statuses.includes("In Progress")
       ? "In progress"
@@ -218,16 +210,14 @@ async function loadStudent(
       dueDate: t?.due_date ?? null,
       section: sectionOf.get(head.test_id) ?? null,
       status,
-      moduleLabel:
+      module:
         isLatest && status === "In progress" && progress.currentModule != null
-          ? `Module ${progress.currentModule} of ${progress.moduleCount}`
+          ? { n: progress.currentModule, of: progress.moduleCount }
           : null,
       assignedVia: assignedVia(head.test_id),
       assignedAt: assignments.get(head.test_id)?.assignedAt ?? null,
       hasSubmission: true,
-      percentage: sorted.length > 1
-        ? total > 0 ? Math.round((correct / total) * 1000) / 10 : null
-        : head.percentage == null ? null : Number(head.percentage),
+      score: attemptScore(sorted, sectionOf.get(head.test_id)).score,
       submittedAt: sorted.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
     };
   });
@@ -244,9 +234,9 @@ async function loadStudent(
         dueDate: t?.due_date ?? null,
         section: sectionOf.get(a.testId) ?? null,
         status: "Not started",
-        percentage: null as number | null,
+        score: null as ScoreDisplay | null,
         submittedAt: null as string | null,
-        moduleLabel: null as string | null,
+        module: null as { n: number; of: number } | null,
         assignedVia: assignedVia(a.testId),
         assignedAt: a.assignedAt,
         hasSubmission: false,
@@ -301,15 +291,10 @@ export default async function TeacherStudentResultsPage({
   const completed = submissions.filter(
     (s) => s.status === "Submitted" || s.status === "Late",
   );
-  const avg =
-    completed.length > 0 && completed.every((s) => s.percentage != null)
-      ? completed.reduce((a, b) => a + (b.percentage ?? 0), 0) / completed.length
-      : completed.length > 0
-      ? completed
-          .filter((s) => s.percentage != null)
-          .reduce((a, b) => a + (b.percentage ?? 0), 0) /
-        Math.max(1, completed.filter((s) => s.percentage != null).length)
-      : null;
+  // Averages use finished attempts only (SAT needs every module in).
+  const avgSat = averageSat(completed.map((s) => s.score?.sat));
+  const pcts = completed.map((s) => s.score?.pct).filter((p): p is number => p != null);
+  const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -342,8 +327,9 @@ export default async function TeacherStudentResultsPage({
         <Stat label="Tests assigned" value={String(assignedCount)} />
         <Stat label="Completed" value={String(new Set(completed.map((s) => s.testId)).size)} />
         <Stat
-          label="Avg score"
-          value={avg == null ? "—" : `${avg.toFixed(1)}%`}
+          label="Avg SAT"
+          value={avgSat == null ? "—" : String(avgSat)}
+          detail={avgPct == null ? undefined : `${avgPct.toFixed(1)}% correct`}
         />
       </div>
 
@@ -430,40 +416,13 @@ export default async function TeacherStudentResultsPage({
                     />
                   </Td>
                   <Td>
-                    <span
-                      className={clsx(
-                        "px-2 py-0.5 rounded-full text-xs font-medium",
-                        statusCls[s.status] ?? "bg-light-bg text-mid-gray",
-                      )}
-                    >
-                      {s.status}
-                    </span>
-                    {s.moduleLabel && (
-                      <div className="text-[11px] text-soft-mute mt-0.5 whitespace-nowrap">
-                        {s.moduleLabel}
-                      </div>
-                    )}
+                    <StatusBadge kind="attempt" status={attemptStatusLabel(s.status)} module={s.module} />
                   </Td>
                   <Td kind="long" priority="lg" className="w-[16%]">
                     <TruncatedText className="text-mid-gray">{s.assignedVia}</TruncatedText>
                   </Td>
                   <Td>
-                    {s.percentage == null ? (
-                      <span className="text-soft-mute text-xs">—</span>
-                    ) : (
-                      <span
-                        className={clsx(
-                          "text-xs font-medium",
-                          s.percentage < 60
-                            ? "text-status-error"
-                            : s.percentage < 80
-                            ? "text-warm-amber"
-                            : "text-status-success",
-                        )}
-                      >
-                        {s.percentage.toFixed(0)}%
-                      </span>
-                    )}
+                    <ScoreCell score={s.score} />
                   </Td>
                   <Td kind="actions" sticky="right">
                     <ExpandToggle label={`More about ${s.testName}`} />
@@ -478,11 +437,12 @@ export default async function TeacherStudentResultsPage({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <div className="bg-surface border border-divider rounded-2xl p-4">
       <p className="text-soft-mute text-xs">{label}</p>
       <p className="text-2xl font-bold text-charcoal mt-1">{value}</p>
+      {detail && <p className="text-soft-mute text-xs">{detail}</p>}
     </div>
   );
 }

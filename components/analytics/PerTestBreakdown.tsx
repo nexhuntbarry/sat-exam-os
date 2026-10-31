@@ -20,8 +20,9 @@ function fmtDate(iso: string): string {
 
 /**
  * One expandable score report per test the student took (newest first). Each
- * row summarizes that attempt's overall %; expanding shows the full per-domain
- * breakdown for THAT test (not the aggregate). No AI.
+ * row shows the shared score display (SAT section score once every module is
+ * in, per-module correct counts, % as small text); expanding shows the full
+ * per-domain breakdown for THAT test (not the aggregate). No AI.
  */
 export default function PerTestBreakdown({
   occasions,
@@ -45,21 +46,34 @@ export default function PerTestBreakdown({
       <div className="space-y-2">
         {items.map(({ o, b }, i) => {
           const tier = tierOf(b.pct);
+          // % correct only for a finished attempt (secondary text).
+          const pct = o.score === undefined ? b.pct : o.score?.pct ?? null;
           return (
             <details key={`${o.label}-${o.date}-${i}`} className="group rounded-xl border border-divider overflow-hidden">
               <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer list-none select-none hover:bg-light-bg/60">
                 <ChevronRight size={15} className="text-soft-mute transition-transform group-open:rotate-90 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-charcoal truncate">{o.label ?? "Test"}</div>
-                  <div className="text-xs text-soft-mute">{fmtDate(o.date)} · {b.correct}/{b.total} correct{o.section ? ` · ${o.section}` : ""}</div>
+                  <div className="text-xs text-soft-mute">
+                    {fmtDate(o.date)}{o.section ? ` · ${o.section}` : ""}
+                    {pct != null && ` · ${pct.toFixed(1)}% correct`}
+                  </div>
                 </div>
-                {o.scaledScore != null && (
-                  <span className="text-sm font-bold text-charcoal tabular-nums whitespace-nowrap">
-                    {o.scaledScore}<span className="text-soft-mute font-medium text-xs">/800</span>
-                  </span>
-                )}
+                <div className="text-right whitespace-nowrap tabular-nums">
+                  {o.score?.sat != null && (
+                    <div className="text-sm font-bold text-charcoal">
+                      {o.score.sat}<span className="text-soft-mute font-medium text-xs">/800</span>
+                    </div>
+                  )}
+                  <div className="text-xs text-mid-gray">
+                    {o.score ? o.score.modules : `${b.correct}/${b.total}`}
+                    {o.score && o.score.notes.length > 0 && (
+                      <span className="text-status-warning" title={o.score.notes.join("\n")}> *</span>
+                    )}
+                  </div>
+                </div>
                 <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${TIER_SOFT[tier]}`}>
-                  {b.pct}% · {TIER_LABEL[tier]}
+                  {TIER_LABEL[tier]}
                 </span>
               </summary>
               <div className="px-3 pb-3 pt-1 bg-light-bg/30">

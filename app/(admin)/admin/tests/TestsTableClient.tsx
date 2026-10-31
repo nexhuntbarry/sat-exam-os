@@ -6,7 +6,6 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import type { ThHTMLAttributes } from "react";
 import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
-import { sectionTitleClass } from "@/lib/section-color";
 import { formatShortDate } from "@/lib/datetime";
 import AssignDialog from "./[id]/AssignDialog";
 import {
@@ -23,6 +22,7 @@ import {
   type Priority,
   type Kind,
 } from "@/components/ui/data-table";
+import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 
 interface AssignOptions {
   allTeachers: { id: string; display_name: string | null; email: string }[];
@@ -55,12 +55,6 @@ type SortKey = "name" | "module" | "status" | "finished" | "due_date" | "created
 type SortDir = "asc" | "desc";
 
 const STATUS_ORDER: Record<string, number> = { Draft: 0, Published: 1, Closed: 2 };
-
-const STATUS_STYLES: Record<string, string> = {
-  Draft: "bg-light-bg text-mid-gray",
-  Published: "bg-warm-amber/15 text-warm-amber",
-  Closed: "bg-status-error/15 text-status-error",
-};
 
 // ── natural sort collator ──────────────────────────────────────────────────────
 const naturalCollator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
@@ -235,16 +229,17 @@ function TestsTable({
               }
             >
               <Td kind="main" sticky="left">
-                <Link href={`/admin/tests/${test.id}`} className="block hover:text-warm-coral-text transition-colors">
+                <Link href={`/admin/tests/${test.id}`} className="block text-charcoal hover:text-warm-coral-text transition-colors">
                   <TwoLineCell
-                    main={
-                      <span className={clsx("font-medium", sectionTitleClass(mod?.section))}>
-                        {test.test_name}
-                      </span>
-                    }
+                    main={test.test_name}
+                    wrapMain
+                    mainClassName="font-medium text-inherit"
                     detail={
-                      test.is_adaptive ? (
-                        <span className="text-[10px] uppercase tracking-wider text-warm-coral-text font-semibold">Adaptive</span>
+                      mod?.section || test.is_adaptive ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <SubjectTag section={mod?.section} />
+                          {test.is_adaptive && <span>Adaptive</span>}
+                        </span>
                       ) : undefined
                     }
                   />
@@ -258,9 +253,7 @@ function TestsTable({
                 )}
               </Td>
               <Td>
-                <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", STATUS_STYLES[test.status] ?? "bg-light-bg text-mid-gray")}>
-                  {test.status}
-                </span>
+                <StatusBadge kind="test" status={test.status as TestStatus} />
               </Td>
               <Td priority="lg" className="text-mid-gray" title="Teachers · Students · Class groups">
                 {assignments}

@@ -6,6 +6,8 @@
 // student's own numbers, so the same result always reads the same way but
 // different students (and different score profiles) get different wording.
 
+import type { ScoreDisplay } from "@/lib/score-display";
+
 export interface AnswerRow {
   is_correct: boolean;
   section: string | null;
@@ -293,8 +295,10 @@ export interface Occasion {
   date: string;
   label?: string;
   rows: AnswerRow[];
-  /** SAT scaled score for this attempt (200–800), when known. */
+  /** SAT section score (200–800) once every module is in; null until then. */
   scaledScore?: number | null;
+  /** The shared score display for this attempt (lib/score-display). */
+  score?: ScoreDisplay | null;
   /** "Math" | "Reading & Writing" — the section this attempt scores. */
   section?: string | null;
 }

@@ -6,6 +6,7 @@ import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { getTestSections, inSubjects } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { formatShortDateTime } from "@/lib/datetime";
+import { attemptScore, averageSat } from "@/lib/score-display";
 import {
   DataRow,
   DataTable,
@@ -73,7 +74,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
       ? db
           .from("submissions")
           .select(
-            "id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, test_id, tests!inner(test_name)",
+            "id, student_id, status, correct_count, total_questions, submitted_at, session_id, adaptive_track, test_id, tests!inner(test_name)",
           )
           .in("student_id", studentIds)
           .order("submitted_at", { ascending: false })
@@ -87,9 +88,9 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
     status: string;
     correct_count: number | null;
     total_questions: number | null;
-    percentage: number | string | null;
     submitted_at: string | null;
     session_id: string | null;
+    adaptive_track: string | null;
     test_id: string;
     tests:
       | { test_name: string }
@@ -128,38 +129,36 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
     attempts.set(key, [...(attempts.get(key) ?? []), s]);
   }
 
-  type Latest = { test_name: string; submitted_at: string | null; percentage: number | null };
-  const perStudent: Record<
-    string,
-    { total: number; completed: number; scores: number[]; latest: Latest | null }
-  > = {};
+  // Averages / latest use finished attempts only, scored with the shared
+  // score display (a graded Module 1 alone is not finished).
+  type Latest = { test_name: string; submitted_at: string | null; sat: number | null };
+  type Slot = { total: number; completed: number; sats: number[]; pcts: number[]; latest: Latest | null };
+  const emptySlot = (): Slot => ({ total: 0, completed: 0, sats: [], pcts: [], latest: null });
+  const perStudent: Record<string, Slot> = {};
   const tested: Record<string, Set<string>> = {};
   const completedTests: Record<string, Set<string>> = {};
   for (const rows of attempts.values()) {
     const head = rows[0];
     const sid = head.student_id;
-    const slot = (perStudent[sid] ??= { total: 0, completed: 0, scores: [], latest: null });
+    const slot = (perStudent[sid] ??= emptySlot());
     (tested[sid] ??= new Set()).add(head.test_id);
-    if (!rows.every((r) => r.status === "Submitted" || r.status === "Late")) continue;
+    const { status, score } = attemptScore(rows, sectionOf.get(head.test_id));
+    if (status !== "Submitted" && status !== "Late") continue;
     (completedTests[sid] ??= new Set()).add(head.test_id);
-    const correct = rows.reduce((n, r) => n + (r.correct_count ?? 0), 0);
-    const total = rows.reduce((n, r) => n + (r.total_questions ?? 0), 0);
-    const pct = rows.length > 1
-      ? total > 0 ? Math.round((correct / total) * 1000) / 10 : null
-      : head.percentage == null ? null : Number(head.percentage);
-    if (pct != null) slot.scores.push(pct);
+    if (score?.sat != null) slot.sats.push(score.sat);
+    if (score?.pct != null) slot.pcts.push(score.pct);
     const submittedAt = rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
     if (!slot.latest || (submittedAt ?? "") > (slot.latest.submitted_at ?? "")) {
       const t = (Array.isArray(head.tests) ? head.tests[0] : head.tests) as
         | { test_name: string }
         | null;
-      slot.latest = { test_name: t?.test_name ?? "—", submitted_at: submittedAt, percentage: pct };
+      slot.latest = { test_name: t?.test_name ?? "—", submitted_at: submittedAt, sat: score?.sat ?? null };
     }
   }
   for (const sid of studentIds) {
     const all = new Set([...classTests, ...(assignedTo[sid] ?? []), ...(tested[sid] ?? [])]);
     if (all.size === 0 && !perStudent[sid]) continue;
-    const slot = (perStudent[sid] ??= { total: 0, completed: 0, scores: [], latest: null });
+    const slot = (perStudent[sid] ??= emptySlot());
     slot.total = all.size;
     slot.completed = completedTests[sid]?.size ?? 0;
   }
@@ -227,18 +226,16 @@ export default async function TeacherClassDetailPage({
               <EmptyRow colSpan={4}>No students in this class yet.</EmptyRow>
             )}
             {students.map((s) => {
-              const stats = perStudent[s.id] ?? { total: 0, completed: 0, scores: [], latest: null };
-              const avg =
-                stats.scores.length > 0
-                  ? stats.scores.reduce((a, b) => a + b, 0) / stats.scores.length
+              const stats = perStudent[s.id] ?? { total: 0, completed: 0, sats: [], pcts: [], latest: null };
+              const avgSat = averageSat(stats.sats);
+              const avgPct =
+                stats.pcts.length > 0
+                  ? stats.pcts.reduce((a, b) => a + b, 0) / stats.pcts.length
                   : null;
-              const avgStr = avg == null ? "—" : `${avg.toFixed(1)}%`;
               const latestName = stats.latest?.test_name ?? null;
               const latestDetail = stats.latest
                 ? [
-                    stats.latest.percentage != null
-                      ? `${stats.latest.percentage.toFixed(0)}%`
-                      : null,
+                    stats.latest.sat != null ? `SAT ${stats.latest.sat}` : null,
                     stats.latest.submitted_at
                       ? formatShortDateTime(stats.latest.submitted_at)
                       : null,
@@ -277,7 +274,14 @@ export default async function TeacherClassDetailPage({
                   <Td>
                     <TwoLineCell
                       main={`${stats.completed}/${stats.total} done`}
-                      detail={avgStr !== "—" ? `Avg ${avgStr}` : undefined}
+                      detail={
+                        avgSat != null ? (
+                          <>
+                            Avg SAT {avgSat}
+                            {avgPct != null && <span className="text-soft-mute"> · {avgPct.toFixed(1)}% correct</span>}
+                          </>
+                        ) : undefined
+                      }
                       mainClassName="text-mid-gray"
                     />
                   </Td>

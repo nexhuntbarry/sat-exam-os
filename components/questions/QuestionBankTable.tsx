@@ -24,6 +24,7 @@ import {
   TruncatedText,
   type RowAction,
 } from "@/components/ui/data-table";
+import { StatusBadge, type QuestionStatus } from "@/components/ui/StatusBadge";
 
 // ────────────────────────────────────────────
 // Types
@@ -107,17 +108,6 @@ interface ApiResponse {
   pages: number;
   limit: number;
 }
-
-// ────────────────────────────────────────────
-// Status pill colors
-// ────────────────────────────────────────────
-
-const statusStyles: Record<string, string> = {
-  Draft: "bg-light-bg text-mid-gray",
-  Approved: "bg-warm-amber/15 text-warm-amber",
-  "Needs Review": "bg-status-warning/15 text-status-warning",
-  Rejected: "bg-status-error/15 text-status-error",
-};
 
 const SAT_DOMAINS = [
   "Information and Ideas",
@@ -538,14 +528,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                     <TruncatedText title={q.domain ?? undefined}>{q.domain ?? "—"}</TruncatedText>
                   </Td>
                   <Td>
-                    <span
-                      className={clsx(
-                        "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
-                        statusStyles[q.parsing_status] ?? "bg-light-bg text-soft-mute"
-                      )}
-                    >
-                      {q.parsing_status}
-                    </span>
+                    <StatusBadge kind="question" status={q.parsing_status as QuestionStatus} />
                   </Td>
                   <Td kind="long" priority="lg">
                     {(!issue && !showNoKey) ? (

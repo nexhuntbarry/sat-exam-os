@@ -1,6 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-access";
+import { getAssignedStudentIds, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -10,14 +10,7 @@ import { StudentResultsTable } from "@/components/analytics/StudentResultsTable"
 import { ExportCsvButton } from "@/components/analytics/ExportCsvButton";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
 import { formatDate, formatDateTime } from "@/lib/datetime";
-import { scaleSectionScore } from "@/lib/scoring";
-
-const MODULE_LABEL: Record<string, string> = {
-  module_1: "Module 1",
-  module_2: "Module 2",
-  module_2_easy: "Module 2 · Easy",
-  module_2_hard: "Module 2 · Hard",
-};
+import { attemptScore, averageSat } from "@/lib/score-display";
 
 async function getResultsData(testId: string, userId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
@@ -114,6 +107,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     sessionGroups.set(key, list);
   }
 
+  const section = (await getTestSections(db, [testId])).get(testId) ?? null;
   const studentRows: StudentResultRow[] = [];
   for (const list of sessionGroups.values()) {
     const sorted = [...list].sort((a, b) => {
@@ -126,44 +120,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     const sp = (Array.isArray(spRaw) ? spRaw[0] : spRaw) as
       | { grade?: string; class_group?: string }
       | null;
-
-    if (sorted.length === 1) {
-      studentRows.push({
-        submissionId: head.id,
-        studentId: head.student_id,
-        attemptNumber: head.attempt_number ?? 1,
-        studentName: u.display_name,
-        email: u.email,
-        grade: sp?.grade ?? null,
-        classGroup: sp?.class_group ?? null,
-        status: head.status,
-        score: head.score != null ? Number(head.score) : null,
-        percentage: head.percentage != null ? Number(head.percentage) : null,
-        scaledScore: head.scaled_score ?? null,
-        correctCount: head.correct_count ?? 0,
-        totalQuestions: head.total_questions ?? 0,
-        timeSpentSeconds: head.time_spent_seconds ?? null,
-        submittedAt: head.submitted_at ?? null,
-        retakePending: pendingSet.has(head.student_id),
-      });
-      continue;
-    }
-    const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
-    const time = sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
-    const pct = total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
-    const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
-      ? "In Progress"
-      : statuses.includes("Late")
-      ? "Late"
-      : statuses[statuses.length - 1] ?? "Submitted";
-    const lastSubmittedAt =
-      sorted
-        .map((r) => r.submitted_at)
-        .filter((d): d is string => !!d)
-        .sort()
-        .pop() ?? null;
+    const attempt = attemptScore(sorted, section);
     studentRows.push({
       // Link to the Module 2 (last) submission so the result detail
       // page can stitch both modules via session_id.
@@ -174,26 +131,21 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
       email: u.email,
       grade: sp?.grade ?? null,
       classGroup: sp?.class_group ?? null,
-      status,
-      score: null,
-      percentage: pct,
-      scaledScore: pct != null ? scaleSectionScore(pct) : null,
-      correctCount: correct,
-      totalQuestions: total,
-      timeSpentSeconds: time,
-      submittedAt: lastSubmittedAt,
+      status: attempt.status,
+      module: attempt.module,
+      score: attempt.score,
+      sat: attempt.score?.sat ?? null,
+      percentage: attempt.score?.pct ?? null,
+      timeSpentSeconds: sorted.some((r) => r.time_spent_seconds != null)
+        ? sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0)
+        : null,
+      submittedAt:
+        sorted
+          .map((r) => r.submitted_at)
+          .filter((d): d is string => !!d)
+          .sort()
+          .pop() ?? null,
       retakePending: pendingSet.has(head.student_id),
-      modules: sorted.map((r) => {
-        const p = r.percentage != null ? Number(r.percentage) : null;
-        return {
-          submissionId: r.id,
-          label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
-          correctCount: r.correct_count ?? 0,
-          totalQuestions: r.total_questions ?? 0,
-          percentage: p,
-          scaledScore: r.scaled_score ?? (p != null ? scaleSectionScore(p) : null),
-        };
-      }),
     });
   }
 
@@ -205,15 +157,18 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     return 0;
   });
 
+  // Averages / highest / lowest use finished attempts only.
   const submitted = studentRows.filter((r) => r.status === "Submitted" || r.status === "Late");
-  const scores = submitted.map((r) => r.percentage ?? 0);
-  const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
+  const scored = submitted.filter((r) => r.sat != null);
+  const avgSat = averageSat(scored.map((r) => r.sat));
+  const pcts = scored.map((r) => r.percentage).filter((p): p is number => p != null);
+  const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
 
-  const highestSub = submitted.length > 0
-    ? submitted.reduce((a, b) => ((a.percentage ?? 0) > (b.percentage ?? 0) ? a : b))
+  const highestSub = scored.length > 0
+    ? scored.reduce((a, b) => ((a.sat ?? 0) > (b.sat ?? 0) ? a : b))
     : null;
-  const lowestSub = submitted.length > 0
-    ? submitted.reduce((a, b) => ((a.percentage ?? 0) < (b.percentage ?? 0) ? a : b))
+  const lowestSub = scored.length > 0
+    ? scored.reduce((a, b) => ((a.sat ?? 0) < (b.sat ?? 0) ? a : b))
     : null;
 
   const avgTime = submitted.length > 0
@@ -238,11 +193,12 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
       totalAssigned: studentIds.size,
       submittedCount: submitted.length,
       notStartedCount: Array.from(studentIds).filter((sid) => !startedStudents.has(sid)).length,
-      inProgressCount: studentRows.filter((r) => r.status === "In Progress").length,
+      inProgressCount: studentRows.filter((r) => r.status === "In progress").length,
       lateCount: studentRows.filter((r) => r.status === "Late").length,
-      avgScore,
-      highestScore: highestSub ? { pct: highestSub.percentage ?? 0, name: highestSub.studentName } : null,
-      lowestScore: lowestSub ? { pct: lowestSub.percentage ?? 0, name: lowestSub.studentName } : null,
+      avgSat,
+      avgPct,
+      highestScore: highestSub ? { sat: highestSub.sat, name: highestSub.studentName } : null,
+      lowestScore: lowestSub ? { sat: lowestSub.sat, name: lowestSub.studentName } : null,
       avgTimeSeconds: avgTime,
     },
     scoreDistribution: buckets,
@@ -322,19 +278,20 @@ export default async function TestResultsPage({
         <StatCard label="In Progress" value={stats.inProgressCount} color="blue" />
         <StatCard label="Late Submissions" value={stats.lateCount} color="amber" />
         <StatCard
-          label="Avg Score"
-          value={stats.avgScore != null ? `${stats.avgScore.toFixed(1)}%` : "—"}
+          label="Avg SAT"
+          value={stats.avgSat ?? "—"}
+          sub={stats.avgPct != null ? `${stats.avgPct.toFixed(1)}% correct` : undefined}
           color="emerald"
         />
         <StatCard
-          label="Highest Score"
-          value={stats.highestScore != null ? `${stats.highestScore.pct.toFixed(1)}%` : "—"}
+          label="Highest SAT"
+          value={stats.highestScore?.sat ?? "—"}
           sub={stats.highestScore?.name}
           color="lime"
         />
         <StatCard
-          label="Lowest Score"
-          value={stats.lowestScore != null ? `${stats.lowestScore.pct.toFixed(1)}%` : "—"}
+          label="Lowest SAT"
+          value={stats.lowestScore?.sat ?? "—"}
           sub={stats.lowestScore?.name}
           color="rose"
         />

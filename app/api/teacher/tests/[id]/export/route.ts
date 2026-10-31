@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
-import { getTeacherTestAccess } from "@/lib/teacher-access";
-import { scaleSectionScore } from "@/lib/scoring";
+import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
+import { attemptScore } from "@/lib/score-display";
 
 // GET /api/teacher/tests/[id]/export
 // CSV of student results, one row per attempt (module rows of a
@@ -170,10 +170,17 @@ export async function GET(
     return n > 1 ? `${base} (${n})` : base;
   });
 
+  // Same score rules as the screens (lib/score-display): SAT section score
+  // only once every module is in, per-module "correct / total", % correct
+  // as a plain number. No per-module SAT. Counts are written "22 / 27" so
+  // Excel/Sheets don't turn them into dates.
+  const twoModules = Boolean(test.is_adaptive || test.module_2_id);
+  const section = (await getTestSections(db, [testId])).get(testId) ?? null;
   const lines: string[] = [
     csvRow([
-      "Student", "Email", "Grade", "Class", "Attempt", "Status", "Correct", "Total",
-      "Percentage", "Est. Scaled Score", "Time Spent", "Submitted At", ...qHeaders,
+      "Student", "Email", "Grade", "Class", "Attempt", "Status", "SAT Score",
+      ...(twoModules ? ["M1 Correct", "M2 Correct"] : ["Correct"]),
+      "% Correct", "Time Spent", "Submitted At", ...qHeaders,
     ]),
   ];
 
@@ -186,21 +193,12 @@ export async function GET(
     const spRaw = head.users.student_profiles ?? null;
     const sp = (Array.isArray(spRaw) ? spRaw[0] : spRaw) as { grade?: string; class_group?: string } | null;
 
-    const correct = sorted.reduce((n, r) => n + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((n, r) => n + (r.total_questions ?? 0), 0);
     const time = sorted.reduce((n, r) => n + (r.time_spent_seconds ?? 0), 0);
-    const pct = sorted.length > 1
-      ? total > 0 ? (correct / total) * 100 : null
-      : head.percentage != null ? Number(head.percentage) : null;
-    const scaled = sorted.length === 1 && head.scaled_score != null
-      ? head.scaled_score
-      : pct != null ? scaleSectionScore(pct) : null;
-    const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
-      ? "In Progress"
-      : statuses.includes("Late")
-      ? "Late"
-      : statuses[statuses.length - 1] ?? "";
+    const { status, score, modules } = attemptScore(sorted, section);
+    const moduleCells = (twoModules ? [1, 2] : [1]).map((n) => {
+      const m = modules[n - 1];
+      return m && m.graded ? `${m.correct ?? 0} / ${m.total ?? 0}` : "";
+    });
     const submittedAt = sorted
       .map((r) => r.submitted_at)
       .filter((d): d is string => !!d)
@@ -214,10 +212,9 @@ export async function GET(
       sp?.class_group ?? "",
       head.attempt_number ?? 1,
       status,
-      correct,
-      total,
-      pct != null ? `${pct.toFixed(1)}%` : "",
-      scaled ?? "",
+      score?.sat ?? "",
+      ...moduleCells,
+      score?.pct ?? "",
       sorted.some((r) => r.time_spent_seconds != null) ? `${Math.floor(time / 60)}m ${time % 60}s` : "",
       submittedAt ? new Date(submittedAt).toISOString() : "",
       ...questionList.map((q) => {

@@ -3,8 +3,6 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
-import { clsx } from "clsx";
-import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatShortDate } from "@/lib/datetime";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
@@ -20,6 +18,7 @@ import {
   ExpandToggle,
   TwoLineCell,
 } from "@/components/ui/data-table";
+import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 
 async function getTeacherTests(user: { userId: string; role: string | null; isQa: boolean }) {
   const db = getServiceClient();
@@ -121,12 +120,6 @@ async function getTeacherTests(user: { userId: string; role: string | null; isQa
   });
 }
 
-const statusStyles: Record<string, string> = {
-  Draft: "bg-light-bg text-mid-gray",
-  Published: "bg-warm-amber/15 text-warm-amber",
-  Closed: "bg-status-error/15 text-status-error",
-};
-
 export default async function TeacherTestsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
@@ -158,7 +151,14 @@ export default async function TeacherTestsPage() {
           const mod = test.modules as unknown as
             | { module_name: string; section: string; module_number: number | null }
             | null;
-          const sectionLabel = mod ? `${mod.section}${mod.module_number ? ` M${mod.module_number}` : ""}` : "Adaptive";
+          const section = mod ? (
+            <span className="inline-flex items-center gap-1.5">
+              <SubjectTag section={mod.section} />
+              {mod.module_number ? <span>M{mod.module_number}</span> : null}
+            </span>
+          ) : (
+            "Adaptive"
+          );
           const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
 
           return (
@@ -169,7 +169,7 @@ export default async function TeacherTestsPage() {
               colSpan={COL_SPAN}
               details={
                 <>
-                  <DetailItem label="Section" priority="md">{sectionLabel}</DetailItem>
+                  <DetailItem label="Section" priority="md">{section}</DetailItem>
                   <DetailItem label="Students" priority="md">{String(test.totalStudents)}</DetailItem>
                   <DetailItem label="Avg Score" priority="md">{test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}</DetailItem>
                   <DetailItem label="Due" priority="lg">{dueLabel}</DetailItem>
@@ -179,18 +179,16 @@ export default async function TeacherTestsPage() {
               <Td kind="main" sticky="left">
                 <Link
                   href={`/teacher/tests/${test.id}`}
-                  className={clsx("font-medium hover:text-warm-coral-text transition-colors", sectionTitleClass(mod?.section))}
+                  className="block text-charcoal hover:text-warm-coral-text transition-colors"
                 >
-                  <TwoLineCell main={test.test_name} mainClassName="font-medium" />
+                  <TwoLineCell main={test.test_name} wrapMain mainClassName="font-medium text-inherit" />
                 </Link>
               </Td>
               <Td priority="md" className="text-mid-gray">
-                {sectionLabel}
+                {section}
               </Td>
               <Td>
-                <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", statusStyles[test.status] ?? "bg-light-bg text-mid-gray")}>
-                  {test.status}
-                </span>
+                <StatusBadge kind="test" status={test.status as TestStatus} />
               </Td>
               <Td priority="md" className="text-mid-gray">{test.totalStudents}</Td>
               <Td className="text-mid-gray">{test.submittedCount}</Td>

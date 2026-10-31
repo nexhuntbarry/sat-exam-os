@@ -1,12 +1,13 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { canManageTestSettings, getTeacherTestAccess } from "@/lib/teacher-access";
+import { canManageTestSettings, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { clsx } from "clsx";
 import { formatDate, formatDateTime, formatShortDateTime, formatShortDate } from "@/lib/datetime";
-import { scaleSectionScore } from "@/lib/scoring";
+import { attemptScore, averageSat, type AttemptScore } from "@/lib/score-display";
+import { ScoreCell } from "@/components/ui/ScoreCell";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import {
@@ -20,13 +21,6 @@ import {
   ExpandToggle,
   TwoLineCell,
 } from "@/components/ui/data-table";
-
-const MODULE_LABEL: Record<string, string> = {
-  module_1: "Module 1",
-  module_2: "Module 2",
-  module_2_easy: "Module 2 · Easy",
-  module_2_hard: "Module 2 · Hard",
-};
 
 async function getTeacherTest(
   testId: string,
@@ -75,6 +69,7 @@ async function getTeacherTest(
 
   return {
     test,
+    section: (await getTestSections(db, [testId])).get(testId) ?? null,
     studentIds,
     submissions: submissions ?? [],
     canManageSettings: await canManageTestSettings(db, user, testId),
@@ -100,123 +95,36 @@ type SubmissionAttempt = {
   key: string;
   studentName: string;
   email: string;
-  status: string;
-  correctCount: number;
-  totalQuestions: number;
-  percentage: number | null;
-  scaledScore: number | null;
+  attempt: AttemptScore;
   timeSpentSeconds: number;
   submittedAt: string | null;
-  isMultiModule: boolean;
-  modules: {
-    submissionId: string;
-    label: string;
-    correctCount: number;
-    totalQuestions: number;
-    percentage: number | null;
-    scaledScore: number | null;
-  }[];
 };
 
 // Two-module attempts produce two submission rows sharing one
-// session_id; collapse them into one attempt with a combined headline
-// plus per-module sub-rows. Legacy single-module rows (session_id NULL)
-// stay as individual attempts.
-function buildSubmissionAttempts(rows: RawSubmission[]): SubmissionAttempt[] {
+// session_id; collapse them into one attempt scored with the shared
+// score display. Legacy single-module rows (session_id NULL) stay as
+// individual attempts.
+function buildSubmissionAttempts(rows: RawSubmission[], section: string | null): SubmissionAttempt[] {
   const bySession = new Map<string, RawSubmission[]>();
-  const singletons: RawSubmission[] = [];
   for (const r of rows) {
-    if (r.session_id) {
-      const list = bySession.get(r.session_id) ?? [];
-      list.push(r);
-      bySession.set(r.session_id, list);
-    } else {
-      singletons.push(r);
-    }
+    const key = r.session_id ?? `solo:${r.id}`;
+    bySession.set(key, [...(bySession.get(key) ?? []), r]);
   }
 
-  const attempts: SubmissionAttempt[] = singletons.map((r) => {
-    const p = r.percentage != null ? Number(r.percentage) : null;
-    return {
-      key: r.id,
-      studentName: r.users.display_name,
-      email: r.users.email,
-      status: r.status,
-      correctCount: r.correct_count ?? 0,
-      totalQuestions: r.total_questions ?? 0,
-      percentage: p,
-      scaledScore: p != null ? scaleSectionScore(p) : null,
-      timeSpentSeconds: r.time_spent_seconds ?? 0,
-      submittedAt: r.submitted_at,
-      isMultiModule: false,
-      modules: [],
-    };
-  });
-
-  for (const [sessionId, list] of bySession) {
-    if (list.length === 1) {
-      const r = list[0];
-      const p = r.percentage != null ? Number(r.percentage) : null;
-      attempts.push({
-        key: r.id,
-        studentName: r.users.display_name,
-        email: r.users.email,
-        status: r.status,
-        correctCount: r.correct_count ?? 0,
-        totalQuestions: r.total_questions ?? 0,
-        percentage: p,
-        scaledScore: p != null ? scaleSectionScore(p) : null,
-        timeSpentSeconds: r.time_spent_seconds ?? 0,
-        submittedAt: r.submitted_at,
-        isMultiModule: false,
-        modules: [],
-      });
-      continue;
-    }
-    const sorted = [...list].sort((a, b) => {
-      const rank = (t: string | null) => (t === "module_1" ? 0 : 1);
-      return rank(a.adaptive_track) - rank(b.adaptive_track);
-    });
-    const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
-    const time = sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
-    const pct =
-      total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
-    const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
-      ? "In Progress"
-      : statuses.includes("Late")
-      ? "Late"
-      : statuses[statuses.length - 1] ?? "Submitted";
-    const lastSubmittedAt =
-      sorted
-        .map((r) => r.submitted_at)
-        .filter((d): d is string => !!d)
-        .sort()
-        .pop() ?? null;
+  const attempts: SubmissionAttempt[] = [];
+  for (const [key, list] of bySession) {
     attempts.push({
-      key: sessionId,
-      studentName: sorted[0].users.display_name,
-      email: sorted[0].users.email,
-      status,
-      correctCount: correct,
-      totalQuestions: total,
-      percentage: pct,
-      scaledScore: pct != null ? scaleSectionScore(pct) : null,
-      timeSpentSeconds: time,
-      submittedAt: lastSubmittedAt,
-      isMultiModule: true,
-      modules: sorted.map((r) => {
-        const p = r.percentage != null ? Number(r.percentage) : null;
-        return {
-          submissionId: r.id,
-          label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
-          correctCount: r.correct_count ?? 0,
-          totalQuestions: r.total_questions ?? 0,
-          percentage: p,
-          scaledScore: p != null ? scaleSectionScore(p) : null,
-        };
-      }),
+      key,
+      studentName: list[0].users.display_name,
+      email: list[0].users.email,
+      attempt: attemptScore(list, section),
+      timeSpentSeconds: list.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0),
+      submittedAt:
+        list
+          .map((r) => r.submitted_at)
+          .filter((d): d is string => !!d)
+          .sort()
+          .pop() ?? null,
     });
   }
 
@@ -229,12 +137,6 @@ function buildSubmissionAttempts(rows: RawSubmission[]): SubmissionAttempt[] {
   });
   return attempts;
 }
-
-const statusStyles: Record<string, string> = {
-  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
-  Submitted: "bg-warm-amber/15 text-warm-amber",
-  Late: "bg-status-warning/15 text-status-warning",
-};
 
 function formatDuration(seconds: number | null) {
   if (!seconds) return "—";
@@ -253,22 +155,21 @@ export default async function TeacherTestDetailPage({
   const data = await getTeacherTest(id, user);
   if (!data) notFound();
 
-  const { test, submissions, canManageSettings } = data;
+  const { test, section, submissions, canManageSettings } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
   // Group two-module session siblings into one attempt before computing
   // counts and averages — otherwise each multi-module attempt would
-  // double-count in submission totals and skew the average percentage.
+  // double-count in submission totals. Averages use finished attempts only.
   const attempts = buildSubmissionAttempts(
     submissions as unknown as RawSubmission[],
+    section,
   );
-  const submitted = attempts.filter(
-    (a) => a.status === "Submitted" || a.status === "Late",
-  );
-  const avgScore = submitted.length > 0
-    ? submitted.reduce((sum, a) => sum + (a.percentage ?? 0), 0) / submitted.length
-    : null;
+  const submitted = attempts.filter((a) => a.attempt.score?.sat != null);
+  const avgSat = averageSat(submitted.map((a) => a.attempt.score?.sat));
+  const pcts = submitted.map((a) => a.attempt.score?.pct).filter((p): p is number => p != null);
+  const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -318,10 +219,9 @@ export default async function TeacherTestDetailPage({
           <div className="text-2xl font-bold text-charcoal">{submitted.length} / {attempts.length}</div>
         </div>
         <div className="bg-surface border border-divider rounded-xl p-4">
-          <div className="text-soft-mute text-xs mb-1">Avg Score</div>
-          <div className="text-2xl font-bold text-warm-amber">
-            {avgScore != null ? `${avgScore.toFixed(1)}%` : "—"}
-          </div>
+          <div className="text-soft-mute text-xs mb-1">Avg SAT</div>
+          <div className="text-2xl font-bold text-warm-amber">{avgSat ?? "—"}</div>
+          {avgPct != null && <div className="text-soft-mute text-xs">{avgPct.toFixed(1)}% correct</div>}
         </div>
         <div className="bg-surface border border-divider rounded-xl p-4">
           <div className="text-soft-mute text-xs mb-1">Due Date</div>
@@ -367,34 +267,22 @@ export default async function TeacherTestDetailPage({
                 <Th kind="main" sticky="left">Student</Th>
                 <Th>Status</Th>
                 <Th>Score</Th>
-                <Th priority="md">Correct</Th>
                 <Th priority="md">Time</Th>
                 <Th priority="lg">Submitted</Th>
               </HeadRow>
             </thead>
             <tbody>
               {attempts.map((a) => {
-                const scoreMain = a.percentage != null ? `${a.percentage.toFixed(1)}%` : "—";
-                const scoreDetail = a.scaledScore != null ? `${a.scaledScore}/800` : undefined;
-                const correctMain = a.totalQuestions > 0 ? `${a.correctCount}/${a.totalQuestions}` : "—";
                 const submittedLabel = a.submittedAt ? formatShortDateTime(a.submittedAt) : "—";
                 const submittedTitle = a.submittedAt ? formatDateTime(a.submittedAt) : undefined;
-
-                const moduleScoreBreakdown = a.isMultiModule && a.modules.length > 0
-                  ? a.modules.map((m) => `${m.label}: ${m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}${m.scaledScore != null ? ` · ${m.scaledScore}/800` : ""}`).join(" | ")
-                  : undefined;
-                const moduleCorrectBreakdown = a.isMultiModule && a.modules.length > 0
-                  ? a.modules.map((m) => `${m.label}: ${m.correctCount}/${m.totalQuestions}`).join(" | ")
-                  : undefined;
 
                 return (
                   <DataRow
                     key={a.key}
                     expandBelow="lg"
-                    colSpan={6}
+                    colSpan={5}
                     details={
                       <>
-                        <DetailItem label="Correct" priority="md">{correctMain}{moduleCorrectBreakdown ? ` (${moduleCorrectBreakdown})` : ""}</DetailItem>
                         <DetailItem label="Time" priority="md">{formatDuration(a.timeSpentSeconds)}</DetailItem>
                         <DetailItem label="Submitted" priority="lg">{submittedLabel}</DetailItem>
                       </>
@@ -408,23 +296,10 @@ export default async function TeacherTestDetailPage({
                       />
                     </Td>
                     <Td>
-                      <span className={clsx("px-2 py-0.5 rounded-full text-xs font-medium", statusStyles[a.status] ?? "bg-light-bg text-mid-gray")}>
-                        {a.status}
-                      </span>
+                      <StatusBadge kind="attempt" status={a.attempt.status} module={a.attempt.module} />
                     </Td>
                     <Td>
-                      <TwoLineCell
-                        main={scoreMain}
-                        detail={scoreDetail ?? moduleScoreBreakdown}
-                        mainClassName="text-mid-gray"
-                      />
-                    </Td>
-                    <Td priority="md" className="text-mid-gray">
-                      <TwoLineCell
-                        main={correctMain}
-                        detail={moduleCorrectBreakdown}
-                        mainClassName="text-mid-gray"
-                      />
+                      <ScoreCell score={a.attempt.score} />
                     </Td>
                     <Td priority="md" className="text-mid-gray">
                       {formatDuration(a.timeSpentSeconds)}

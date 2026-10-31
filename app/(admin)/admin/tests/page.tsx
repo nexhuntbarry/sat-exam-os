@@ -91,7 +91,7 @@ export default async function TestsPage() {
   const [tests, assignOptions] = await Promise.all([getTests(viewerIsQa), getAssignOptions(viewerIsQa)]);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageIntro tKey="admin.tests" />
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-charcoal">Tests</h1>
@@ -104,23 +104,21 @@ export default async function TestsPage() {
         </Link>
       </div>
 
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {tests.length === 0 ? (
-          <div className="py-16 text-center space-y-3">
-            <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
-            <p className="text-soft-mute text-sm">
-              No tests yet.{" "}
-              <Link href="/admin/tests/new" className="text-warm-coral-text hover:underline">
-                Create your first test
-              </Link>
-            </p>
-          </div>
-        ) : (
-          <Suspense fallback={<div className="py-8 text-center text-soft-mute text-sm">Loading…</div>}>
-            <TestsTableClient tests={tests} assignOptions={assignOptions} />
-          </Suspense>
-        )}
-      </div>
+      {tests.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-divider py-16 text-center space-y-3">
+          <ClipboardList size={40} className="text-charcoal/20 mx-auto" />
+          <p className="text-soft-mute text-sm">
+            No tests yet.{" "}
+            <Link href="/admin/tests/new" className="text-warm-coral-text hover:underline">
+              Create your first test
+            </Link>
+          </p>
+        </div>
+      ) : (
+        <Suspense fallback={<div className="py-8 text-center text-soft-mute text-sm">Loading…</div>}>
+          <TestsTableClient tests={tests} assignOptions={assignOptions} />
+        </Suspense>
+      )}
     </div>
   );
 }

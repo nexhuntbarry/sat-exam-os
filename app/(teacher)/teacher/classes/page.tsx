@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { Users, MapPin, GraduationCap } from "lucide-react";
+import { Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import PageIntro from "@/components/shared/PageIntro";
+import { DataRow, DataTable, HeadRow, Td, Th, TwoLineCell } from "@/components/ui/data-table";
 
 export const dynamic = "force-dynamic";
 
@@ -57,7 +58,7 @@ export default async function TeacherClassesPage() {
   const classes = await getMyClasses(user.userId);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="space-y-6">
       <PageIntro tKey="teacher.classes" />
       <div>
         <h1 className="text-2xl font-bold text-charcoal flex items-center gap-2">
@@ -70,42 +71,37 @@ export default async function TeacherClassesPage() {
       </div>
 
       {classes.length === 0 ? (
-        <div className="bg-surface border border-divider rounded-2xl py-16 text-center space-y-2">
+        <div className="rounded-2xl border border-dashed border-divider py-16 text-center space-y-2">
           <Users size={36} className="text-charcoal/20 mx-auto" />
           <p className="text-soft-mute text-sm">
             No classes assigned yet. Ask your admin to add you to a group.
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {classes.map((c) => (
-            <Link
-              key={c.id}
-              href={`/teacher/classes/${c.id}`}
-              className="bg-surface border border-divider rounded-2xl p-5 hover:border-warm-coral/40 hover:shadow-sm transition-all"
-            >
-              <div className="text-charcoal font-semibold">{c.name}</div>
-              <div className="mt-2 flex flex-wrap gap-3 text-soft-mute text-xs">
-                {c.campus && (
-                  <span className="inline-flex items-center gap-1">
-                    <MapPin size={11} />
-                    {c.campus}
-                  </span>
-                )}
-                {c.grade && (
-                  <span className="inline-flex items-center gap-1">
-                    <GraduationCap size={11} />
-                    {c.grade}
-                  </span>
-                )}
-                <span className="inline-flex items-center gap-1">
-                  <Users size={11} />
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Class</Th>
+              <Th>Grade</Th>
+              <Th>Students</Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {classes.map((c) => (
+              <DataRow key={c.id} href={`/teacher/classes/${c.id}`}>
+                <Td kind="main" sticky="left">
+                  <Link href={`/teacher/classes/${c.id}`} className="block text-charcoal hover:text-warm-coral-text transition-colors">
+                    <TwoLineCell main={c.name} detail={c.campus ?? undefined} wrapMain mainClassName="font-medium text-inherit" />
+                  </Link>
+                </Td>
+                <Td className="text-mid-gray">{c.grade ?? "—"}</Td>
+                <Td className="text-mid-gray">
                   {c.studentCount} {c.studentCount === 1 ? "student" : "students"}
-                </span>
-              </div>
-            </Link>
-          ))}
-        </div>
+                </Td>
+              </DataRow>
+            ))}
+          </tbody>
+        </DataTable>
       )}
     </div>
   );

@@ -1,4 +1,5 @@
 import { scaleSectionScore } from "@/lib/scoring";
+import { studentTestProgress, type ProgressSubmission } from "@/lib/test-progress";
 
 // One score display everywhere (support f83c766b): SAT section score first,
 // per-module correct counts second. No per-module SAT estimate (the real SAT
@@ -70,4 +71,28 @@ export function scoreDisplay(modules: ScoreModule[], section: string | null | un
 export function averageSat(scores: (number | null | undefined)[]): number | null {
   const xs = scores.filter((x): x is number => x != null);
   return xs.length > 0 ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+}
+
+export interface AttemptScore {
+  score: ScoreDisplay | null;
+  status: "Not started" | "In progress" | "Submitted" | "Late";
+  /** Module being taken while In progress, for the status badge. */
+  module: { n: number; of: number } | null;
+  /** Per-module counts behind `score` (CSV columns). */
+  modules: ScoreModule[];
+}
+
+/** One attempt's submission rows (a two-module attempt's rows share a
+ *  session_id; legacy single-module rows have no track) → its score cell
+ *  and where it stands. A graded Module 1 with no Module 2 yet is in
+ *  progress, not finished. */
+export function attemptScore(rows: ProgressSubmission[], section: string | null | undefined): AttemptScore {
+  const p = studentTestProgress(rows, rows.some((r) => Boolean(r.adaptive_track)));
+  const late = p.status === "Submitted" && rows.some((r) => r.status === "Late");
+  return {
+    score: scoreDisplay(p.modules, section),
+    status: late ? "Late" : p.status,
+    module: p.currentModule ? { n: p.currentModule, of: p.moduleCount } : null,
+    modules: p.modules,
+  };
 }

@@ -7,8 +7,11 @@ import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatShortDate } from "@/lib/datetime";
-import { scaleSectionScore } from "@/lib/scoring";
 import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
+import { getTestSections } from "@/lib/teacher-access";
+import { attemptScore } from "@/lib/score-display";
+import { ScoreCell } from "@/components/ui/ScoreCell";
+import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { getTranslations } from "next-intl/server";
 import {
   DataTable,
@@ -47,7 +50,6 @@ type TestAttemptModule = {
   correctCount: number;
   totalQuestions: number;
   percentage: number | null;
-  scaledScore: number | null;
   status: string;
 };
 
@@ -55,7 +57,6 @@ type TestAttempt = {
   id: string;
   status: string;
   percentage: number | null;
-  scaledScore: number | null;
   correctCount: number;
   totalQuestions: number;
   detailSubmissionId: string;
@@ -118,7 +119,6 @@ function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
           correctCount: r.correct_count ?? 0,
           totalQuestions: r.total_questions ?? 0,
           percentage: p,
-          scaledScore: p != null ? scaleSectionScore(p) : null,
           status: r.status,
         };
       });
@@ -140,7 +140,6 @@ function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
         id: sorted[0].session_id ?? sorted[0].id,
         status,
         percentage: pct,
-        scaledScore: pct != null ? scaleSectionScore(pct) : null,
         correctCount: correct,
         totalQuestions: total,
         // Link to the Module 2 (last) submission so the result page can
@@ -160,7 +159,6 @@ function buildLatestAttempt(rows: TestSubmissionRow[]): TestAttempt | null {
     id: first.id,
     status: first.status,
     percentage: p,
-    scaledScore: p != null ? scaleSectionScore(p) : null,
     correctCount: first.correct_count ?? 0,
     totalQuestions: first.total_questions ?? 0,
     detailSubmissionId: first.id,
@@ -186,7 +184,7 @@ async function getStudentTests(studentId: string) {
 
   const testIds = Array.from(matchedTestIds);
 
-  const [{ data: tests }, { data: submissions }] = await Promise.all([
+  const [{ data: tests }, { data: submissions }, sectionOf] = await Promise.all([
     db.from("tests")
       .select(`
         id, test_name, status, due_date, time_limit_minutes, time_limit_minutes_module_2, is_untimed, is_adaptive, module_2_id,
@@ -202,6 +200,7 @@ async function getStudentTests(studentId: string) {
       .eq("student_id", studentId)
       .in("test_id", testIds)
       .order("attempt_number", { ascending: false }),
+    getTestSections(db, testIds),
   ]);
 
   // Group submissions per test, then collapse two-module session
@@ -243,7 +242,12 @@ async function getStudentTests(studentId: string) {
     if (needsModule2) testStatus = "In Progress";
     // Latest submit time of the latest attempt, for "most recent first".
     const lastSubmittedAt = latestRows.reduce<string>((m, r) => (r.submitted_at && r.submitted_at > m ? r.submitted_at : m), "");
-    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt };
+    // Same score display as everywhere else: SAT once every module is in,
+    // per-module counts, unfinished modules as "—".
+    const score = latestRows.length > 0
+      ? attemptScore(latestRows.map((r) => ({ ...r, student_id: studentId })), sectionOf.get(t.id)).score
+      : null;
+    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score };
   });
 }
 
@@ -375,17 +379,12 @@ export default async function StudentTestsPage() {
                     : t("status.inProgress")
                   : t("status.notStarted");
 
-              const statusClass =
+              const badgeStatus: AttemptStatus =
                 test.testStatus === "Submitted"
-                  ? "bg-warm-amber/15 text-warm-amber"
+                  ? "Submitted"
                   : test.testStatus === "In Progress"
-                  ? "bg-warm-coral/15 text-warm-coral-text"
-                  : "bg-light-bg text-mid-gray";
-
-              // Score: only for fully submitted tests
-              const showScore =
-                test.testStatus === "Submitted" &&
-                test.attempt?.percentage != null;
+                  ? "In progress"
+                  : "Not started";
 
               // Action: Continue covers resume + continue-to-module-2
               const continueHref =
@@ -422,14 +421,7 @@ export default async function StudentTestsPage() {
                     </Link>
                   </Td>
                   <Td>
-                    <span
-                      className={clsx(
-                        "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
-                        statusClass,
-                      )}
-                    >
-                      {statusLabel}
-                    </span>
+                    <StatusBadge kind="attempt" status={badgeStatus} label={statusLabel} />
                   </Td>
                   {hasDueDates && (
                     <Td className="text-soft-mute">
@@ -437,18 +429,7 @@ export default async function StudentTestsPage() {
                     </Td>
                   )}
                   <Td>
-                    {showScore && test.attempt ? (
-                      <TwoLineCell
-                        main={
-                          test.attempt.scaledScore != null
-                            ? <span className="font-semibold text-charcoal">{test.attempt.scaledScore}<span className="text-soft-mute font-normal">/800</span></span>
-                            : <span className="text-soft-mute">—</span>
-                        }
-                        detail={`${test.attempt.percentage!.toFixed(1)}%`}
-                      />
-                    ) : (
-                      <span className="text-soft-mute">—</span>
-                    )}
+                    <ScoreCell score={test.score} />
                   </Td>
                   <Td kind="actions" sticky="right">
                     {test.testStatus === "Submitted" ? (

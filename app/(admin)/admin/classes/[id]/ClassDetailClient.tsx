@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, UserPlus, ArrowLeft, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, Eye } from "lucide-react";
+import { UserMinus, UserPlus, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, Eye } from "lucide-react";
 import { formatShortDate } from "@/lib/datetime";
 import {
   DataRow,
@@ -20,6 +20,8 @@ import {
   TwoLineCell,
 } from "@/components/ui/data-table";
 import { Portal } from "@/components/ui/Portal";
+import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
+import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 
 export interface AssignedTest {
   id: string;
@@ -30,7 +32,9 @@ export interface AssignedTest {
   status: string | null;
   submitted: number;
   total: number;
+  /** % correct, secondary to avgSat. */
   avgScore: number | null;
+  avgSat: number | null;
 }
 
 interface ClassGroup {
@@ -228,18 +232,13 @@ export default function ClassDetailClient({
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      <div className="flex items-center gap-4">
-        <a
-          href="/admin/classes"
-          className="text-soft-mute hover:text-charcoal transition-colors"
-        >
-          <ArrowLeft size={20} />
-        </a>
-        <div className="flex-1 min-w-0">
-          {renaming ? (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
+    <div className="space-y-6">
+      <DetailHeader
+        back={{ href: "/admin/classes", label: "Classes" }}
+        title={
+          renaming ? (
+            <span className="block space-y-1">
+              <span className="flex items-center gap-2">
                 <input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
@@ -257,44 +256,61 @@ export default function ClassDetailClient({
                 </button>
                 <button
                   onClick={() => { setRenaming(false); setNewName(classGroup.name); setRenameError(null); }}
-                  className="px-3 py-1.5 rounded-xl border border-divider text-mid-gray text-sm"
+                  className="px-3 py-1.5 rounded-xl border border-divider text-mid-gray text-sm font-normal"
                 >
                   Cancel
                 </button>
-              </div>
-              {renameError && <p className="text-status-error text-xs">{renameError}</p>}
-            </div>
+              </span>
+              {renameError && <span className="block text-status-error text-xs font-normal">{renameError}</span>}
+            </span>
           ) : (
-            <h1 className="text-2xl font-bold text-charcoal flex items-center gap-2">
-              <span className="truncate">{classGroup.name}</span>
-              <button
-                onClick={() => { setNewName(classGroup.name); setRenaming(true); }}
-                className="p-1.5 rounded-lg text-soft-mute hover:text-charcoal hover:bg-light-bg"
-                aria-label="Rename class"
-                title="Rename class"
-              >
-                <Pencil size={14} />
-              </button>
-            </h1>
-          )}
-          <p className="text-soft-mute text-sm">
+            classGroup.name
+          )
+        }
+        summary={
+          <>
             {classGroup.campus && `${classGroup.campus} · `}
             {classGroup.grade && `Grade ${classGroup.grade} · `}
             {members.length} member{members.length !== 1 ? "s" : ""}
-          </p>
-        </div>
-        <button
-          onClick={() => {
-            setDeleteOpen(true);
-            setDeleteText("");
-            setDeleteError(null);
-          }}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-status-error/10 hover:bg-status-error/20 text-status-error text-sm font-medium transition-colors"
-        >
-          <Trash2 size={14} />
-          Delete class
-        </button>
-      </div>
+          </>
+        }
+        actions={
+          <>
+            <button
+              onClick={() => { setNewName(classGroup.name); setRenaming(true); }}
+              disabled={renaming}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl bg-light-bg hover:bg-divider text-charcoal font-semibold text-sm transition-colors disabled:opacity-50"
+              title="Rename class"
+            >
+              <Pencil size={14} />
+              Rename
+            </button>
+            <RowActionsMenu
+              label="More class actions"
+              items={[
+                {
+                  label: "Delete class…",
+                  icon: Trash2,
+                  tone: "danger",
+                  onSelect: () => {
+                    setDeleteOpen(true);
+                    setDeleteText("");
+                    setDeleteError(null);
+                  },
+                },
+              ]}
+            />
+          </>
+        }
+      />
+
+      <StatCards
+        items={[
+          { label: "Students", value: members.length },
+          { label: "Teachers", value: assignedTeachers.length },
+          { label: "Assigned tests", value: assignedTests.length },
+        ]}
+      />
 
       {/* Delete-class double-confirm modal */}
       {deleteOpen && (
@@ -480,7 +496,8 @@ export default function ClassDetailClient({
           <thead>
             <HeadRow>
               <Th kind="main" sticky="left">Test</Th>
-              <Th>Section</Th>
+              <Th>Status</Th>
+              <Th>Subject</Th>
               <Th priority="lg">Dates</Th>
               <Th>Progress</Th>
               <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
@@ -488,41 +505,47 @@ export default function ClassDetailClient({
           </thead>
           <tbody>
             {assignedTests.length === 0 && (
-              <EmptyRow colSpan={5}>No tests assigned to this class yet.</EmptyRow>
+              <EmptyRow colSpan={6}>No tests assigned to this class yet. Assign one from a test&rsquo;s page.</EmptyRow>
             )}
             {assignedTests.map((t) => {
-              const openStr = t.openDate ? formatShortDate(t.openDate) : "—";
-              const dueStr = t.dueDate ? formatShortDate(t.dueDate) : "—";
-              const datesDetail = `${openStr} → ${dueStr}`;
+              const openStr = t.openDate ? `Opens ${formatShortDate(t.openDate)}` : "Open now";
+              const dueStr = t.dueDate ? `Due ${formatShortDate(t.dueDate)}` : null;
+              const datesDetail = dueStr ? `${openStr} · ${dueStr}` : openStr;
               return (
                 <DataRow
                   key={t.id}
                   href={`/admin/tests/${t.id}`}
                   expandBelow="lg"
-                  colSpan={5}
+                  colSpan={6}
                   details={
                     <DetailItem label="Dates" priority="lg">{datesDetail}</DetailItem>
                   }
                 >
                   <Td kind="main" sticky="left">
-                    <TwoLineCell
-                      main={t.name}
-                      detail={t.status ?? undefined}
-                      mainClassName="font-medium text-charcoal"
-                    />
+                    <TwoLineCell main={t.name} wrapMain mainClassName="font-medium text-charcoal" />
                   </Td>
-                  <Td className="text-mid-gray">{t.section ?? "—"}</Td>
+                  <Td>
+                    {t.status ? <StatusBadge kind="test" status={t.status as TestStatus} /> : <span className="text-soft-mute">—</span>}
+                  </Td>
+                  <Td className="text-mid-gray">{t.section ? <SubjectTag section={t.section} /> : "—"}</Td>
                   <Td priority="lg">
                     <TwoLineCell
-                      main={`Open: ${openStr}`}
-                      detail={`Due: ${dueStr}`}
+                      main={openStr}
+                      detail={dueStr ?? undefined}
                       mainClassName="text-mid-gray"
                     />
                   </Td>
                   <Td>
                     <TwoLineCell
                       main={`${t.submitted}/${t.total} submitted`}
-                      detail={t.avgScore !== null ? `Avg ${t.avgScore.toFixed(1)}%` : undefined}
+                      detail={
+                        t.avgSat !== null ? (
+                          <>
+                            Avg SAT {t.avgSat}
+                            {t.avgScore !== null && <span className="text-soft-mute"> · {t.avgScore.toFixed(1)}% correct</span>}
+                          </>
+                        ) : undefined
+                      }
                       mainClassName="text-charcoal"
                     />
                   </Td>
@@ -579,6 +602,7 @@ export default function ClassDetailClient({
                     <TwoLineCell
                       main={u?.display_name ?? "—"}
                       detail={u?.email}
+                      wrapMain
                       mainClassName="font-medium text-charcoal"
                     />
                   </Td>

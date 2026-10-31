@@ -1,3 +1,4 @@
+import { StatusBadge } from "@/components/ui/StatusBadge";
 import { getServiceClient } from "@/lib/supabase";
 
 async function getCounts() {
@@ -27,12 +28,6 @@ async function getCounts() {
 
 export default async function StatusPills() {
   const { statusCounts, autoApprovedCount } = await getCounts();
-  const styles: Record<string, string> = {
-    Approved: "bg-status-success/10 text-status-success border-status-success/20 hover:bg-status-success/20",
-    Draft: "bg-light-bg text-soft-mute border-divider hover:bg-divider",
-    "Needs Review": "bg-status-warning/10 text-status-warning border-status-warning/20 hover:bg-status-warning/20",
-    Rejected: "bg-status-error/10 text-status-error border-status-error/20 hover:bg-status-error/20",
-  };
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
       <span className="text-soft-mute mr-1">Review queue:</span>
@@ -40,10 +35,10 @@ export default async function StatusPills() {
         <a
           key={status}
           href={`/admin/questions?status=${encodeURIComponent(status)}`}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border font-medium transition-colors ${styles[status]}`}
+          className="flex items-center gap-2 px-2 py-1 rounded-lg border border-divider bg-surface hover:bg-light-bg transition-colors"
         >
-          <span>{status}</span>
-          <span className="text-xs font-mono">{count}</span>
+          <StatusBadge kind="question" status={status} />
+          <span className="text-xs font-mono text-mid-gray">{count}</span>
         </a>
       ))}
       {autoApprovedCount > 0 && (

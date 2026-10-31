@@ -678,7 +678,8 @@
       "tests": "測驗數",
       "students": "學生數",
       "submissions": "提交數",
-      "avgScore": "平均分數"
+      "avgScore": "平均 SAT",
+      "pctCorrect": "答對率 {pct}%"
     }
   },
   "teacherAnalysis": {

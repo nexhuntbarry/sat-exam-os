@@ -4,7 +4,7 @@ import { ClipboardList } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
 import { scopeUsers } from "@/lib/qa";
-import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { getTeacherTestScope, getTestSections, seesAllStudents } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { StatCard } from "@/components/analytics/StatCard";
 import {
@@ -12,14 +12,7 @@ import {
   type CrossTestResultRow,
 } from "@/components/analytics/CrossTestResultsTable";
 import PageIntro from "@/components/shared/PageIntro";
-import { scaleSectionScore } from "@/lib/scoring";
-
-const MODULE_LABEL: Record<string, string> = {
-  module_1: "Module 1",
-  module_2: "Module 2",
-  module_2_easy: "Module 2 · Easy",
-  module_2_hard: "Module 2 · Hard",
-};
+import { attemptScore, averageSat } from "@/lib/score-display";
 
 async function getCrossTestResults(teacherId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
@@ -36,16 +29,15 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
 
   const testIds = Array.from(visibleTestIds);
 
-  // 2. Get test metadata
-  const { data: tests } = await db
-    .from("tests")
-    .select(`id, test_name, modules!module_id(section, module_name)`)
-    .in("id", testIds);
+  // 2. Get test metadata (section covers adaptive tests too)
+  const [{ data: tests }, sectionOf] = await Promise.all([
+    db.from("tests").select("id, test_name").in("id", testIds),
+    getTestSections(db, testIds),
+  ]);
 
   const testMap = new Map<string, { name: string; section: string | null }>();
   for (const t of tests ?? []) {
-    const m = t.modules as unknown as { section: string; module_name: string };
-    testMap.set(t.id, { name: t.test_name, section: m?.section ?? null });
+    testMap.set(t.id, { name: t.test_name, section: sectionOf.get(t.id) ?? null });
   }
 
   // 3. Get all submissions for these tests
@@ -112,43 +104,7 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
     const u = head.users as unknown as { display_name: string; email: string };
     const meta = testMap.get(head.test_id) ?? { name: "(unknown test)", section: null };
 
-    if (sorted.length === 1) {
-      rows.push({
-        submissionId: head.id,
-        testId: head.test_id,
-        testName: meta.name,
-        section: meta.section,
-        studentId: head.student_id,
-        studentName: u.display_name,
-        email: u.email,
-        classGroup: classMap.get(head.student_id) ?? null,
-        status: head.status,
-        score: head.score != null ? Number(head.score) : null,
-        percentage: head.percentage != null ? Number(head.percentage) : null,
-        scaledScore: head.scaled_score ?? null,
-        correctCount: head.correct_count ?? 0,
-        totalQuestions: head.total_questions ?? 0,
-        timeSpentSeconds: head.time_spent_seconds ?? null,
-        submittedAt: head.submitted_at ?? null,
-      });
-      continue;
-    }
-    const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
-    const time = sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
-    const pct = total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
-    const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
-      ? "In Progress"
-      : statuses.includes("Late")
-      ? "Late"
-      : statuses[statuses.length - 1] ?? "Submitted";
-    const lastSubmittedAt =
-      sorted
-        .map((r) => r.submitted_at)
-        .filter((d): d is string => !!d)
-        .sort()
-        .pop() ?? null;
+    const attempt = attemptScore(sorted, meta.section);
     rows.push({
       // Link to the Module 2 (last) submission so the result detail
       // page can stitch both modules via session_id.
@@ -160,25 +116,20 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
       studentName: u.display_name,
       email: u.email,
       classGroup: classMap.get(head.student_id) ?? null,
-      status,
-      score: null,
-      percentage: pct,
-      scaledScore: pct != null ? scaleSectionScore(pct) : null,
-      correctCount: correct,
-      totalQuestions: total,
-      timeSpentSeconds: time,
-      submittedAt: lastSubmittedAt,
-      modules: sorted.map((r) => {
-        const p = r.percentage != null ? Number(r.percentage) : null;
-        return {
-          submissionId: r.id,
-          label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
-          correctCount: r.correct_count ?? 0,
-          totalQuestions: r.total_questions ?? 0,
-          percentage: p,
-          scaledScore: r.scaled_score ?? (p != null ? scaleSectionScore(p) : null),
-        };
-      }),
+      status: attempt.status,
+      module: attempt.module,
+      score: attempt.score,
+      sat: attempt.score?.sat ?? null,
+      percentage: attempt.score?.pct ?? null,
+      timeSpentSeconds: sorted.some((r) => r.time_spent_seconds != null)
+        ? sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0)
+        : null,
+      submittedAt:
+        sorted
+          .map((r) => r.submitted_at)
+          .filter((d): d is string => !!d)
+          .sort()
+          .pop() ?? null,
     });
   }
 
@@ -257,14 +208,13 @@ export default async function TeacherResultsPage() {
     );
   }
 
-  // Aggregate stats across submitted/late only
+  // Aggregate stats across finished attempts only
   const completed = data.rows.filter(
     (r) => r.status === "Submitted" || r.status === "Late"
   );
-  const avgPct =
-    completed.length > 0
-      ? completed.reduce((sum, r) => sum + (r.percentage ?? 0), 0) / completed.length
-      : null;
+  const avgSat = averageSat(completed.map((r) => r.sat));
+  const pcts = completed.map((r) => r.percentage).filter((p): p is number => p != null);
+  const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
 
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -280,7 +230,8 @@ export default async function TeacherResultsPage() {
         <StatCard label={t("stats.submissions")} value={completed.length} color="lime" />
         <StatCard
           label={t("stats.avgScore")}
-          value={avgPct != null ? `${avgPct.toFixed(1)}%` : "—"}
+          value={avgSat ?? "—"}
+          sub={avgPct != null ? t("stats.pctCorrect", { pct: avgPct.toFixed(1) }) : undefined}
           color="emerald"
         />
       </div>

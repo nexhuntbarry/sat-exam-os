@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { clsx } from "clsx";
 import { ArrowUpDown, ChevronUp, ChevronDown, Search } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { scaleSectionScore } from "@/lib/scoring";
+import type { ScoreDisplay } from "@/lib/score-display";
+import { ScoreCell } from "@/components/ui/ScoreCell";
+import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate } from "@/lib/datetime";
 import {
   DataTable,
@@ -27,30 +28,17 @@ export interface CrossTestResultRow {
   studentName: string;
   email: string;
   classGroup: string | null;
-  status: string;
-  score: number | null;
+  status: AttemptStatus;
+  /** Module being taken while In progress. */
+  module: { n: number; of: number } | null;
+  /** Shared score display (lib/score-display). */
+  score: ScoreDisplay | null;
+  /** SAT section score once every module is in (sort key). */
+  sat: number | null;
+  /** % correct of a finished attempt (secondary only). */
   percentage: number | null;
-  scaledScore: number | null;
-  correctCount: number;
-  totalQuestions: number;
   timeSpentSeconds: number | null;
   submittedAt: string | null;
-  // Present only for two-module attempts; renders a per-module split
-  // under the combined Score / Correct cells.
-  modules?: {
-    submissionId: string;
-    label: string;
-    correctCount: number;
-    totalQuestions: number;
-    percentage: number | null;
-    scaledScore: number | null;
-  }[];
-}
-
-function effectiveScaled(row: { scaledScore: number | null; percentage: number | null }): number | null {
-  if (row.scaledScore != null) return row.scaledScore;
-  if (row.percentage != null) return scaleSectionScore(Number(row.percentage));
-  return null;
 }
 
 interface Props {
@@ -59,19 +47,11 @@ interface Props {
   classOptions: string[];
 }
 
-const statusStyles: Record<string, string> = {
-  Submitted: "bg-warm-amber/15 text-warm-amber",
-  Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
-  Expired: "bg-status-error/15 text-status-error",
-};
-
 type SortKey =
   | "studentName"
   | "testName"
   | "status"
-  | "percentage"
-  | "correctCount"
+  | "sat"
   | "timeSpentSeconds"
   | "submittedAt";
 
@@ -144,8 +124,8 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
   const selectCls =
     "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
-  // Student + class + test + status + score + correct + time + submitted + action = 9
-  const COL_COUNT = 9;
+  // Student + class + test + status + score + time + submitted + action = 8
+  const COL_COUNT = 8;
 
   return (
     <div className="space-y-4">
@@ -210,13 +190,8 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
               </button>
             </Th>
             <Th>
-              <button className="flex items-center gap-1" onClick={() => toggleSort("percentage")}>
-                {t("columns.score")} <SortIcon k="percentage" />
-              </button>
-            </Th>
-            <Th priority="md">
-              <button className="flex items-center gap-1" onClick={() => toggleSort("correctCount")}>
-                {t("columns.correct")} <SortIcon k="correctCount" />
+              <button className="flex items-center gap-1" onClick={() => toggleSort("sat")}>
+                {t("columns.score")} <SortIcon k="sat" />
               </button>
             </Th>
             <Th priority="md">
@@ -237,7 +212,6 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
             <EmptyRow colSpan={COL_COUNT}>{t("noResults")}</EmptyRow>
           )}
           {sorted.map((row) => {
-            const s = effectiveScaled(row);
             return (
               <DataRow
                 key={row.submissionId}
@@ -246,9 +220,6 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                 details={
                   <>
                     <DetailItem label={t("columns.class")} priority="md">{row.classGroup ?? "—"}</DetailItem>
-                    <DetailItem label={t("columns.correct")} priority="md">
-                      {row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}
-                    </DetailItem>
                     <DetailItem label={t("columns.time")} priority="md">{fmtTime(row.timeSpentSeconds)}</DetailItem>
                     <DetailItem label={t("columns.submitted")} priority="lg">
                       {row.submittedAt
@@ -273,58 +244,10 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                   />
                 </Td>
                 <Td>
-                  <span
-                    className={clsx(
-                      "px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap",
-                      statusStyles[row.status] ?? "bg-light-bg text-mid-gray"
-                    )}
-                  >
-                    {row.status}
-                  </span>
+                  <StatusBadge kind="attempt" status={row.status} module={row.module} />
                 </Td>
                 <Td>
-                  <span
-                    className={clsx(
-                      "font-semibold tabular-nums",
-                      row.percentage != null && row.percentage >= 70
-                        ? "text-warm-amber"
-                        : row.percentage != null && row.percentage >= 50
-                          ? "text-status-warning"
-                          : row.percentage != null
-                            ? "text-status-error"
-                            : "text-soft-mute"
-                    )}
-                  >
-                    {row.percentage != null ? `${Number(row.percentage).toFixed(1)}%` : "—"}
-                  </span>
-                  {s != null && (
-                    <span className="block text-warm-coral-text text-xs tabular-nums" title="Estimated SAT scaled score (200-800)">
-                      {s}/800
-                    </span>
-                  )}
-                  {row.modules && row.modules.length > 1 && (
-                    <div className="text-soft-mute text-[11px] mt-0.5 leading-snug font-normal">
-                      {row.modules.map((m) => (
-                        <div key={m.submissionId}>
-                          {m.label}:{" "}
-                          {m.percentage != null ? `${m.percentage.toFixed(1)}%` : "—"}
-                          {m.scaledScore != null && ` · ${m.scaledScore}/800`}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </Td>
-                <Td priority="md" className="text-mid-gray tabular-nums">
-                  <div>{row.totalQuestions > 0 ? `${row.correctCount}/${row.totalQuestions}` : "—"}</div>
-                  {row.modules && row.modules.length > 1 && (
-                    <div className="text-soft-mute text-[11px] mt-0.5 leading-snug">
-                      {row.modules.map((m) => (
-                        <div key={m.submissionId}>
-                          {m.label}: {m.correctCount}/{m.totalQuestions}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <ScoreCell score={row.score} />
                 </Td>
                 <Td priority="md" className="text-mid-gray whitespace-nowrap">{fmtTime(row.timeSpentSeconds)}</Td>
                 <Td priority="lg" className="text-soft-mute whitespace-nowrap">

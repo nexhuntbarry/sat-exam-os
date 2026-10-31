@@ -20,6 +20,7 @@ import {
   TwoLineCell,
   TruncatedText,
 } from "@/components/ui/data-table";
+import { StatusBadge } from "@/components/ui/StatusBadge";
 
 interface Search {
   status?: "open" | "resolved" | "all";
@@ -65,11 +66,6 @@ export default async function BugReportsPage({
   };
   const reports = (rows ?? []) as unknown as Row[];
 
-  const pill = (status: string) =>
-    status === "open"
-      ? "bg-status-warning/15 text-status-warning"
-      : "bg-warm-amber/15 text-warm-amber";
-
   return (
     <div className="space-y-4">
       <PageIntro tKey="admin.bugReports" />
@@ -105,7 +101,7 @@ export default async function BugReportsPage({
         <tbody>
           {reports.length === 0 && (
             <EmptyRow colSpan={6}>
-              No bug reports {filter !== "all" ? `with status "${filter}"` : ""}.
+              {filter === "open" ? "No open bug reports." : filter === "resolved" ? "No resolved bug reports yet." : "No bug reports yet."}
             </EmptyRow>
           )}
           {reports.map((r) => {
@@ -135,6 +131,7 @@ export default async function BugReportsPage({
                     <TwoLineCell
                       main={`Q${qNum ?? "?"}`}
                       detail={`${moduleName} · ${qStatus}`}
+                      wrapMain
                       mainClassName="font-medium text-inherit"
                     />
                   </Link>
@@ -144,6 +141,7 @@ export default async function BugReportsPage({
                     <TwoLineCell
                       main={note.headline}
                       detail={note.detail ?? ""}
+                      wrapMain
                     />
                   ) : (
                     <span className="text-soft-mute text-xs">No audit flag</span>
@@ -167,9 +165,7 @@ export default async function BugReportsPage({
                   </span>
                 </Td>
                 <Td>
-                  <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${pill(r.status)}`}>
-                    {r.status}
-                  </span>
+                  <StatusBadge kind="report" status={r.status === "open" ? "Open" : "Resolved"} />
                 </Td>
                 <Td kind="actions" sticky="right">
                   <RowActions>
