@@ -427,7 +427,7 @@ export default async function TestDetailPage({
             <thead>
               <HeadRow>
                 <Th kind="main" sticky="left">Student</Th>
-                <Th priority="lg">Assigned via</Th>
+                <Th priority="xl">Assigned via</Th>
                 <Th>Status</Th>
                 <Th aria-sort={sortDir === -1 ? "descending" : sortDir === 1 ? "ascending" : "none"}>
                   <Link href={scoreSortHref} scroll={false} className="inline-flex items-center gap-1 hover:text-charcoal">
@@ -435,7 +435,7 @@ export default async function TestDetailPage({
                     {sortDir === -1 ? <ChevronDown size={12} /> : sortDir === 1 ? <ChevronUp size={12} /> : <ChevronsUpDown size={12} className="opacity-50" />}
                   </Link>
                 </Th>
-                <Th kind="long" priority="lg" className="w-[18%]">{tv("column")}</Th>
+                <Th kind="long" priority="xl" className="w-[18%]">{tv("column")}</Th>
                 <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
               </HeadRow>
             </thead>
@@ -458,12 +458,12 @@ export default async function TestDetailPage({
                   <DataRow
                     key={st.id}
                     href={primary?.href}
-                    expandBelow="lg"
+                    expandBelow="xl"
                     colSpan={6}
                     details={
                       <>
-                        <DetailItem label="Assigned via" priority="lg">{assignedVia || "Not assigned (has work)"}</DetailItem>
-                        <DetailItem label={tv("column")} priority="lg">
+                        <DetailItem label="Assigned via" priority="xl">{assignedVia || "Not assigned (has work)"}</DetailItem>
+                        <DetailItem label={tv("column")} priority="xl">
                           {visLabel ?? "—"}
                         </DetailItem>
                       </>
@@ -476,7 +476,7 @@ export default async function TestDetailPage({
                         mainClassName="font-medium text-charcoal"
                       />
                     </Td>
-                    <Td priority="lg" className="text-mid-gray">
+                    <Td priority="xl" className="text-mid-gray">
                       {assignedVia || (
                         <span className="italic text-soft-mute">Not assigned (has work)</span>
                       )}
@@ -491,7 +491,7 @@ export default async function TestDetailPage({
                     <Td>
                       <ScoreCell score={scoreOf.get(st.id) ?? null} />
                     </Td>
-                    <Td kind="long" priority="lg">
+                    <Td kind="long" priority="xl">
                       {effective ? (
                         <span className={effective.answers ? "text-status-success text-xs" : "text-soft-mute text-xs"}>
                           {visLabel}
