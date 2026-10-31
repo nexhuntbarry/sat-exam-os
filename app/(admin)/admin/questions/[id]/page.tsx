@@ -109,7 +109,7 @@ export default async function QuestionDetailPage({
           </Link>
         )}
       </div>
-      <QuestionReviewPanel question={question} nav={nav} />
+      <QuestionReviewPanel key={question.id} question={question} nav={nav} />
     </div>
   );
 }

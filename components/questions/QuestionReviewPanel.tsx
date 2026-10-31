@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
-import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle, Crop, Trash2, Eye, BookOpen, FileCheck } from "lucide-react";
+import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle, Crop, Trash2, Eye, BookOpen, FileCheck, FileSearch } from "lucide-react";
 import PDFViewer from "./PDFViewer";
 import EditableMath from "./EditableMath";
+import ReextractPanel, { type ReextractPatch, type ReextractProposal } from "./ReextractPanel";
 import ImageCropDialog from "./ImageCropDialog";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
@@ -160,6 +161,10 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
 
   const [cropIndex, setCropIndex] = useState<number | null>(null);
   const [imageBusy, setImageBusy] = useState(false);
+  // "Re-extract from PDF": the AI's fresh read of this question, shown next
+  // to the saved copy until the reviewer applies or closes it.
+  const [reextracting, setReextracting] = useState(false);
+  const [reextract, setReextract] = useState<ReextractProposal | null>(null);
 
   // Delete or replace one extracted image (reviewer cleanup of bad crops).
   async function editImage(index: number, action: "delete" | "replace", png?: Blob) {
@@ -427,6 +432,34 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   }
 
   // Use admin-only proxy route (handles private-blob auth) instead of raw URL
+  async function runReextract() {
+    setReextracting(true);
+    setReextract(null);
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/reextract`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.ok) setReextract(json.proposal);
+      else showToast(json.message ?? json.error ?? "Couldn't read the PDF", false);
+    } catch {
+      showToast("Couldn't read the PDF", false);
+    } finally {
+      setReextracting(false);
+    }
+  }
+
+  function applyReextract(patch: ReextractPatch) {
+    setQ((prev) => ({
+      ...prev,
+      question_text: patch.question_text ?? prev.question_text,
+      choices: patch.choices
+        ? prev.choices.map((c) => (patch.choices![c.label] !== undefined ? { ...c, text: patch.choices![c.label]! } : c))
+        : prev.choices,
+      correct_answer: patch.correct_answer ?? prev.correct_answer,
+    }));
+    setReextract(null);
+    showToast("Applied to the editor. Review it, then Save.");
+  }
+
   const pdfUrl = q.modules?.pdf_url ? `/api/admin/modules/${q.module_id}/pdf` : null;
   const pageNum = q.page_number ?? 1;
 
@@ -790,9 +823,23 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       {viewMode === "edit" && <div className="grid grid-cols-2 gap-6 min-h-[640px]">
         {/* Left: PDF */}
         <div className="flex flex-col gap-2">
-          <p className="text-xs text-soft-mute font-medium uppercase tracking-wide">
-            PDF · Page {pageNum}
-          </p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-soft-mute font-medium uppercase tracking-wide">
+              PDF · Page {pageNum}
+            </p>
+            {pdfUrl && q.page_number != null && (
+              <button
+                type="button"
+                onClick={() => void runReextract()}
+                disabled={reextracting}
+                title="Read this question again from the PDF page and compare it with the saved copy"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-divider bg-surface px-2.5 py-1 text-xs font-medium text-charcoal hover:bg-light-bg disabled:opacity-60"
+              >
+                <FileSearch size={13} />
+                {reextracting ? "Reading the PDF… (about 10–30 s)" : "Re-extract from PDF"}
+              </button>
+            )}
+          </div>
           {pdfUrl ? (
             <PDFViewer url={pdfUrl} page={pageNum} className="flex-1 min-h-[600px] w-full rounded-xl border border-divider" />
           ) : (
@@ -804,6 +851,14 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
 
         {/* Right: Editable form */}
         <div className="flex flex-col gap-4 overflow-y-auto max-h-[780px] pr-1">
+          {reextract && (
+            <ReextractPanel
+              current={{ question_text: q.question_text, choices: q.choices, correct_answer: q.correct_answer }}
+              proposal={reextract}
+              onApply={applyReextract}
+              onClose={() => setReextract(null)}
+            />
+          )}
           {/* Question text */}
           <div>
             <label className="block text-xs text-soft-mute mb-1">Question Text</label>
