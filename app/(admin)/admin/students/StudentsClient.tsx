@@ -13,6 +13,7 @@ import {
   ColumnsPicker,
   DataRow,
   DataTable,
+  ClampText,
   DetailItem,
   EmptyRow,
   ExpandToggle,
@@ -511,7 +512,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
             </Th>
             {cols.isVisible("status") && <Th>Status</Th>}
             {cols.isVisible("class") && <Th kind="long" priority="md" className="w-[16%]">Class</Th>}
-            {cols.isVisible("gradeSchool") && <Th kind="long" priority="lg" className="w-[22%]">Grade &amp; school</Th>}
+            {cols.isVisible("gradeSchool") && <Th kind="long" priority="lg" className="w-[26%]">Grade &amp; school</Th>}
             {cols.isVisible("parent") && <Th kind="long" priority="xl" className="w-[18%]">Parent</Th>}
             {cols.isVisible("activity") && <Th priority="lg">Activity</Th>}
             <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
@@ -621,7 +622,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
                 )}
                 {cols.isVisible("gradeSchool") && (
                   <Td kind="long" priority="lg" className="text-mid-gray">
-                    <TruncatedText>{gradeSchool}</TruncatedText>
+                    <ClampText>{gradeSchool}</ClampText>
                   </Td>
                 )}
                 {cols.isVisible("parent") && (

@@ -37,6 +37,7 @@ import {
   ExpandToggle,
   RowActions,
   RowButton,
+  RowMenuSlot,
   TwoLineCell,
 } from "@/components/ui/data-table";
 
@@ -435,7 +436,7 @@ export default async function TestDetailPage({
                     {sortDir === -1 ? <ChevronDown size={12} /> : sortDir === 1 ? <ChevronUp size={12} /> : <ChevronsUpDown size={12} className="opacity-50" />}
                   </Link>
                 </Th>
-                <Th kind="long" priority="xl" className="w-[18%]">{tv("column")}</Th>
+                <Th priority="xl">{tv("column")}</Th>
                 <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
               </HeadRow>
             </thead>
@@ -491,10 +492,18 @@ export default async function TestDetailPage({
                     <Td>
                       <ScoreCell score={scoreOf.get(st.id) ?? null} />
                     </Td>
-                    <Td kind="long" priority="xl">
+                    <Td priority="xl">
                       {effective ? (
-                        <span className={effective.answers ? "text-status-success text-xs" : "text-soft-mute text-xs"}>
-                          {visLabel}
+                        // One line: dot + one word; the source is in the hover.
+                        <span title={visLabel ?? undefined} className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs">
+                          <span
+                            aria-hidden
+                            className={effective.answers ? "h-2 w-2 shrink-0 rounded-full bg-status-success" : "h-2 w-2 shrink-0 rounded-full bg-soft-mute"}
+                          />
+                          <span aria-hidden className={effective.answers ? "text-charcoal" : "text-soft-mute"}>
+                            {effective.answers ? tv("visible") : tv("hidden")}
+                          </span>
+                          <span className="sr-only">{visLabel}</span>
                         </span>
                       ) : (
                         <span className="text-soft-mute text-xs">—</span>
@@ -504,7 +513,7 @@ export default async function TestDetailPage({
                       <RowActions>
                       <ExpandToggle label={`More about ${st.name}`} />
                       {primary && <RowButton label={primary.label} icon={primary.icon} href={primary.href} />}
-                      {st.individual && (
+                      {st.individual ? (
                         <RemoveStudentButton
                           testId={test.id}
                           studentId={st.id}
@@ -513,6 +522,8 @@ export default async function TestDetailPage({
                           hasGradedSubmission={st.hasGradedSubmission}
                           visibleViaGroup={st.visibleViaGroup}
                         />
+                      ) : (
+                        <RowMenuSlot />
                       )}
                       </RowActions>
                     </Td>

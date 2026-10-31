@@ -75,7 +75,8 @@ export function RowActionsMenu({
     }
   }
 
-  if (actions.length === 0) return null;
+  // Keep the slot so buttons line up with rows that do have a ⋯.
+  if (actions.length === 0) return <RowMenuSlot />;
 
   const itemCls = (a: RowAction) =>
     cn(
@@ -158,4 +159,10 @@ export function RowActionsMenu({
         )}
     </>
   );
+}
+
+/** Empty ⋯-sized slot for rows without a menu, so the row buttons line up
+ *  across the table (support cb57e703). */
+export function RowMenuSlot() {
+  return <span aria-hidden className="inline-block h-8 w-8 align-middle" />;
 }
