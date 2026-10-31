@@ -31,7 +31,7 @@ async function getReviewData(testId: string, studentId: string) {
   // Assigned but not released (or hidden for this student) → friendly
   // locked screen, not a 404 (L-01).
   const visibility = await getAnswerVisibility(db, testId, studentId, "class_review");
-  if (!visibility.answers) return { locked: true as const, test };
+  if (!visibility.answers) return { locked: true as const, test, taking: visibility.source === "exam_in_progress" };
 
   // Modules to show in the walkthrough:
   //  - adaptive: Module 1 + both Module 2 tracks (teacher can flip
@@ -148,7 +148,11 @@ export default async function StudentTestReviewPage({
       <div className="max-w-3xl mx-auto py-16 text-center space-y-3">
         <Eye size={24} className="text-soft-mute mx-auto" />
         <p className="text-charcoal font-semibold">Review isn&rsquo;t available yet</p>
-        <p className="text-soft-mute text-sm">Your teacher hasn&rsquo;t released the class review for {data.test.test_name}.</p>
+        <p className="text-soft-mute text-sm">
+          {data.taking
+            ? <>You&rsquo;re still taking {data.test.test_name}. The class review opens after you submit.</>
+            : <>Your teacher hasn&rsquo;t released the class review for {data.test.test_name}.</>}
+        </p>
         <Link href={`/student/tests/${data.test.id}`} className="text-warm-coral-text text-sm hover:underline">Back to test</Link>
       </div>
     );

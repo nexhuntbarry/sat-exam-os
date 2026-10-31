@@ -7,6 +7,8 @@
 // Priority (highest first):
 //   1. Retake pending or in progress → hidden. Restores automatically once
 //      the retake is submitted (the stored override is left untouched).
+//      Class review is also closed while any module is still being taken
+//      (first attempt included): it shows every module's answer key.
 //   2. Per-student override "hide" → hidden everywhere, class review too.
 //   3. Per-student override "show" → visible once the student has
 //      submitted; explanations per the override's own checkbox.
@@ -25,7 +27,8 @@ export type VisibilitySource =
   | "class_review"
   | "student"
   | "not_submitted"
-  | "retake_pending";
+  | "retake_pending"
+  | "exam_in_progress";
 
 export interface TestVisibilityFlags {
   show_answers_after_submission: boolean | null;
@@ -47,6 +50,8 @@ export interface VisibilityInput {
   hasSubmitted: boolean;
   /** Unconsumed retake grant, or a later attempt still in progress. */
   retakePending: boolean;
+  /** Any submission on this test not finished yet (taking it right now). */
+  examInProgress?: boolean;
 }
 
 export interface VisibilityDecision {
@@ -66,6 +71,7 @@ export function decideAnswerVisibility(
   context: VisibilityContext,
 ): VisibilityDecision {
   if (input.retakePending) return HIDDEN("retake_pending");
+  if (context === "class_review" && input.examInProgress) return HIDDEN("exam_in_progress");
 
   const mode = input.override?.mode ?? "follow";
   if (mode === "hide") return HIDDEN("student");
@@ -223,6 +229,7 @@ export async function loadAnswerVisibilityInputs(
         override: overrides.get(k) ?? null,
         hasSubmitted: submitted.length > 0,
         retakePending: grants.has(k) || retakeInProgress,
+        examInProgress: subs.some((s) => !DONE.has(s.status)),
       });
     }
   }

@@ -100,6 +100,21 @@ check(
   [true, true, "class_review"],
 );
 check(
+  "first attempt in progress, class review unlocked -> review closed",
+  pick(decideAnswerVisibility(input({ hasSubmitted: false, examInProgress: true, test: testFlags({ review_unlocked: true }) }), "class_review")),
+  [false, false, "exam_in_progress"],
+);
+check(
+  "Module 1 submitted, Module 2 in progress + student Show -> class review closed",
+  pick(decideAnswerVisibility(input({ hasSubmitted: true, examInProgress: true, override: ov("show"), test: testFlags({ review_unlocked: true }) }), "class_review")),
+  [false, false, "exam_in_progress"],
+);
+check(
+  "Module 2 in progress -> own results page unchanged (Module 1 result)",
+  pick(decideAnswerVisibility(input({ hasSubmitted: true, examInProgress: true, test: testFlags({ show_answers_after_submission: true }) }), "results")),
+  [true, true, "test"],
+);
+check(
   "retake pending + student Show -> hidden",
   pick(decideAnswerVisibility(input({ retakePending: true, override: ov("show") }), "results")),
   [false, false, "retake_pending"],
