@@ -778,7 +778,11 @@
     "changedBy": "{name} 於 {date} 修改",
     "saveFailed": "儲存失敗，請再試一次。",
     "networkError": "無法連線到伺服器，請檢查網路後再試一次。",
-    "saving": "儲存中…"
+    "saving": "儲存中…",
+    "modeFollowShort": "依測驗",
+    "modeShowShort": "顯示",
+    "modeHideShort": "隱藏",
+    "explanationsShort": "解析"
   },
   "studentDetail": {
     "colTest": "測驗",
@@ -812,6 +816,10 @@
     "removeBody": "{name} 將不再看到「{test}」。學生尚未開始作答，不會遺失任何作答紀錄。",
     "removing": "取消中…",
     "removeFailed": "無法取消指派。",
-    "cancel": "取消"
+    "cancel": "取消",
+    "moreActions": "更多操作",
+    "suspend": "停權",
+    "reactivate": "恢復帳號",
+    "deleteStudent": "刪除學生"
   }
 }

@@ -778,7 +778,11 @@
     "changedBy": "Changed by {name} · {date}",
     "saveFailed": "Couldn't save that change. Please try again.",
     "networkError": "Couldn't reach the server. Check your connection and try again.",
-    "saving": "Saving…"
+    "saving": "Saving…",
+    "modeFollowShort": "Follow test",
+    "modeShowShort": "Show",
+    "modeHideShort": "Hide",
+    "explanationsShort": "explanations"
   },
   "studentDetail": {
     "colTest": "Test",
@@ -812,6 +816,10 @@
     "removeBody": "{name} will no longer see “{test}”. They haven’t started it, so no work is lost.",
     "removing": "Removing…",
     "removeFailed": "Couldn’t remove the assignment.",
-    "cancel": "Cancel"
+    "cancel": "Cancel",
+    "moreActions": "More actions",
+    "suspend": "Suspend",
+    "reactivate": "Reactivate",
+    "deleteStudent": "Delete student"
   }
 }

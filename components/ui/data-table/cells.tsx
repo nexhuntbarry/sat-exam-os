@@ -20,6 +20,26 @@ export function TruncatedText({
   );
 }
 
+/** Main content (names, titles) that must stay complete: wraps onto at most
+ *  two lines instead of truncating; anything longer is clamped with the full
+ *  text on hover. */
+export function ClampText({
+  children,
+  title,
+  className,
+}: {
+  children: ReactNode;
+  title?: string;
+  className?: string;
+}) {
+  const hover = title ?? (typeof children === "string" || typeof children === "number" ? String(children) : undefined);
+  return (
+    <span className={cn("block min-w-0 line-clamp-2 whitespace-normal break-words", className)} title={hover}>
+      {children}
+    </span>
+  );
+}
+
 /** Two-line cell: main value on top, small muted detail below. Both lines
  *  truncate. Wrap it in a Link yourself if the row should navigate. */
 export function TwoLineCell({

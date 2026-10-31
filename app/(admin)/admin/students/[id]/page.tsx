@@ -10,8 +10,7 @@ import { studentTestProgress } from "@/lib/test-progress";
 import { getTestSections } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
-import DeleteStudentButton from "./DeleteStudentButton";
-import StudentStatusButton from "./StudentStatusButton";
+import StudentActionsMenu from "./StudentActionsMenu";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
@@ -92,6 +91,18 @@ type SubmissionRow = {
   modules: { module_name: string; section: string; module_number: number | null } | null;
 };
 
+type TestMeta = {
+  id: string;
+  test_name: string;
+  due_date: string | null;
+  is_adaptive: boolean | null;
+  module_id: string | null;
+  module_2_id: string | null;
+  module_1_id: string | null;
+  module_2_easy_id: string | null;
+  module_2_hard_id: string | null;
+};
+
 type SessionGroupModule = {
   label: string;
   submissionId: string;
@@ -119,6 +130,7 @@ type SessionGroup = {
   detailSubmissionId: string;
   isMultiModule: boolean;
   modules: SessionGroupModule[];
+  moduleNames: { label: string; name: string }[];
 };
 
 const MODULE_LABEL: Record<string, string> = {
@@ -175,6 +187,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
     detailSubmissionId: r.id,
     isMultiModule: false,
     modules: [],
+    moduleNames: [],
   });
 
   const groups: SessionGroup[] = singletons.map(toGroup);
@@ -238,6 +251,9 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
       detailSubmissionId: sorted[sorted.length - 1].id,
       isMultiModule: true,
       modules: sorted.map(toModuleView),
+      moduleNames: sorted
+        .filter((r) => r.modules?.module_name)
+        .map((r, i) => ({ label: `M${i + 1}`, name: r.modules!.module_name })),
     });
   }
 
@@ -290,14 +306,47 @@ export default async function AdminStudentDetailPage({
   );
   const [{ data: testMeta }, sectionOf, { data: classGroups }] = await Promise.all([
     allTestIds.length > 0
-      ? db.from("tests").select("id, test_name, due_date, is_adaptive, module_2_id").in("id", allTestIds)
-      : Promise.resolve({ data: [] as { id: string; test_name: string; due_date: string | null; is_adaptive: boolean | null; module_2_id: string | null }[] }),
+      ? db
+          .from("tests")
+          .select("id, test_name, due_date, is_adaptive, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
+          .in("id", allTestIds)
+      : Promise.resolve({ data: [] as TestMeta[] }),
     getTestSections(db, allTestIds),
     classGroupIds.length > 0
       ? db.from("class_groups").select("id, name").in("id", classGroupIds)
       : Promise.resolve({ data: [] as { id: string; name: string }[] }),
   ]);
-  const testById = new Map((testMeta ?? []).map((t) => [t.id as string, t]));
+  const testById = new Map(((testMeta ?? []) as TestMeta[]).map((t) => [t.id, t]));
+  // Full module names for the Test column ("M1: [Test #25] … Module 1").
+  const moduleSlots = (t: TestMeta | undefined): { label: string; id: string | null }[] =>
+    !t
+      ? []
+      : t.is_adaptive
+      ? [
+          { label: "M1", id: t.module_1_id },
+          { label: "M2 Easy", id: t.module_2_easy_id },
+          { label: "M2 Hard", id: t.module_2_hard_id },
+        ]
+      : [
+          { label: "M1", id: t.module_id },
+          { label: "M2", id: t.module_2_id },
+        ];
+  const moduleIds = Array.from(
+    new Set(
+      Array.from(testById.values())
+        .flatMap((t) => moduleSlots(t).map((m) => m.id))
+        .filter((x): x is string => Boolean(x)),
+    ),
+  );
+  const { data: moduleRows } =
+    moduleIds.length > 0
+      ? await db.from("modules").select("id, module_name").in("id", moduleIds)
+      : { data: [] as { id: string; module_name: string }[] };
+  const moduleName = new Map((moduleRows ?? []).map((m) => [m.id as string, m.module_name as string]));
+  const moduleNamesOf = (testId: string) =>
+    moduleSlots(testById.get(testId))
+      .filter((m) => m.id && moduleName.has(m.id))
+      .map((m) => ({ label: m.label, name: moduleName.get(m.id!)! }));
   const className = new Map((classGroups ?? []).map((c) => [c.id as string, c.name as string]));
   const progressOf = new Map(
     allTestIds.map((testId) => {
@@ -415,6 +464,9 @@ export default async function AdminStudentDetailPage({
       attemptNumber: g.attemptNumber,
       detailSubmissionId: g.detailSubmissionId,
       isMultiModule: g.isMultiModule,
+      // An adaptive attempt lists the Module 2 the student actually got.
+      moduleNames:
+        g.isMultiModule && g.moduleNames.length > 1 ? g.moduleNames : moduleNamesOf(g.testId),
       modules: g.modules.map((m) => ({
         label: m.label,
         submissionId: m.submissionId,
@@ -446,6 +498,7 @@ export default async function AdminStudentDetailPage({
       detailSubmissionId: null,
       isMultiModule: false,
       modules: [],
+      moduleNames: moduleNamesOf(a.testId),
       visibility: null,
       // Only an individual assignment can be undone per student; a class
       // assignment would need the whole class unassigned.
@@ -466,7 +519,7 @@ export default async function AdminStudentDetailPage({
   ];
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
         <Link href="/admin/students" className="text-soft-mute hover:text-charcoal transition-colors">
           <ArrowLeft size={20} />
@@ -509,21 +562,17 @@ export default async function AdminStudentDetailPage({
             notes: profile?.notes ?? null,
           }}
         />
-        <StudentStatusButton
-          studentId={student.id}
-          studentName={student.display_name ?? student.email}
-          status={student.account_status}
-        />
-        <DeleteStudentButton
-          studentId={student.id}
-          studentName={student.display_name ?? student.email}
-          email={student.email}
-        />
         {occasions.length > 0 && (
           <Link href={`/report?student=${student.id}`} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-sm font-medium text-charcoal hover:bg-light-bg transition-colors">
             Download PDF report
           </Link>
         )}
+        <StudentActionsMenu
+          studentId={student.id}
+          studentName={student.display_name ?? student.email}
+          email={student.email}
+          status={student.account_status}
+        />
       </div>
 
       {/* Profile card */}

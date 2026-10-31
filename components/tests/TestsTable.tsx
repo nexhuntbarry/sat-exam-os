@@ -21,6 +21,7 @@ import {
   RowActionsMenu,
   TwoLineCell,
   TruncatedText,
+  ClampText,
 } from "@/components/ui/data-table";
 
 export interface SessionGroupModuleData {
@@ -65,6 +66,8 @@ export interface TestRow {
   detailSubmissionId: string | null;
   isMultiModule: boolean;
   modules: SessionGroupModuleData[];
+  /** Two-module tests: each module's full name, e.g. {label:"M1", name:"…Module 1"}. */
+  moduleNames: { label: string; name: string }[];
   visibility: VisibilityRowData | null;
   /** Currently assigned individually. */
   assignedDirect: boolean;
@@ -103,6 +106,24 @@ function sectionShort(section: string | null): string | null {
   return section;
 }
 
+/** "Visible (student override)" plus "Changed by … · date" when overridden. */
+function useVisibilityText(vis: VisibilityRowData) {
+  const tv = useTranslations("answerVisibility");
+  const label = answerVisibilityLabel(tv, {
+    answers: vis.effectiveAnswers,
+    explanations: vis.effectiveExplanations,
+    source: vis.effectiveSource,
+  });
+  const changedBy =
+    vis.updatedBy && vis.updatedAt
+      ? tv("changedBy", { name: vis.updaterName ?? "—", date: formatDateTime(vis.updatedAt) })
+      : null;
+  return { label, changedBy };
+}
+
+// One line: coloured dot (green = visible, grey = hidden) + the short picker.
+// The effective state and who changed it are in the hover tooltip and the
+// expanded row, so the cell never grows taller than the picker.
 function VisibilityCell({
   testId,
   studentId,
@@ -113,46 +134,39 @@ function VisibilityCell({
   vis: VisibilityRowData;
 }) {
   const tv = useTranslations("answerVisibility");
-  const effective = {
-    answers: vis.effectiveAnswers,
-    explanations: vis.effectiveExplanations,
-    source: vis.effectiveSource,
-  };
-  const label = answerVisibilityLabel(tv, effective);
-  const changedByText =
-    vis.updatedBy && vis.updatedAt
-      ? tv("changedBy", {
-          name: vis.updaterName ?? "—",
-          date: formatDateTime(vis.updatedAt),
-        })
-      : null;
-
+  const { label, changedBy } = useVisibilityText(vis);
   return (
-    <div className="flex items-start gap-1.5">
-      <div
+    <div
+      className="inline-flex items-center gap-1.5 whitespace-nowrap"
+      title={changedBy ? `${label}\n${changedBy}` : label}
+    >
+      <span
+        aria-label={label}
         className={clsx(
-          "mt-1 w-2 h-2 rounded-full flex-shrink-0",
+          "w-2 h-2 rounded-full flex-shrink-0",
           vis.effectiveAnswers ? "bg-status-success" : "bg-soft-mute",
         )}
       />
-      <div className="space-y-1 min-w-0">
-        {vis.isControlRow && (
-          <StudentAnswerVisibilityControl
-            testId={testId}
-            studentId={studentId}
-            initialMode={vis.initialMode}
-            initialShowExplanations={vis.initialShowExplanations}
-          />
-        )}
-        <div className="text-[11px] text-soft-mute leading-tight">
-          {label}
-        </div>
-        {changedByText && (
-          <div className="text-[10px] text-soft-mute leading-snug">{changedByText}</div>
-        )}
-      </div>
+      {vis.isControlRow ? (
+        <StudentAnswerVisibilityControl
+          compact
+          testId={testId}
+          studentId={studentId}
+          initialMode={vis.initialMode}
+          initialShowExplanations={vis.initialShowExplanations}
+        />
+      ) : (
+        <span className="text-[11px] text-soft-mute">
+          {vis.effectiveAnswers ? tv("visible") : tv("hidden")}
+        </span>
+      )}
     </div>
   );
+}
+
+function VisibilityDetail({ vis }: { vis: VisibilityRowData }) {
+  const { label, changedBy } = useVisibilityText(vis);
+  return <>{changedBy ? `${label} · ${changedBy}` : label}</>;
 }
 
 function RemoveAssignmentDialog({
@@ -258,19 +272,21 @@ export default function TestsTable({
   }
 
   const COLS = 8;
+  // Wider than the default main column so full test names fit on 1–2 lines.
+  const TEST_COL = "w-[42%] min-w-[15rem]";
 
   return (
     <>
     <DataTable>
       <thead>
         <HeadRow>
-          <Th kind="main" sticky="left">{t("colTest")}</Th>
+          <Th kind="main" sticky="left" className={TEST_COL}>{t("colTest")}</Th>
           <Th>{t("colStatus")}</Th>
           <Th kind="long" priority="lg" className="w-[14%]">{t("colAssignedVia")}</Th>
           <Th priority="md">{t("colDates")}</Th>
           <Th>{t("colResult")}</Th>
           <Th priority="md">{t("colSubmitted")}</Th>
-          <Th kind="long" priority="lg" className="w-[18%]">{tv("column")}</Th>
+          <Th priority="lg">{tv("column")}</Th>
           <Th kind="actions" sticky="right"><span className="sr-only">{t("actions")}</span></Th>
         </HeadRow>
       </thead>
@@ -284,7 +300,8 @@ export default function TestsTable({
             ...(g.assignedDirect ? [t("individually")] : []),
             ...g.assignedClasses,
           ].join(", ") || t("notAssigned");
-          const dueText = `${t("due")} ${g.dueDate ? formatShortDate(g.dueDate) : "—"}`;
+          // No due date: show just the assigned date, not "Due —".
+          const dueText = g.dueDate ? `${t("due")} ${formatShortDate(g.dueDate)}` : null;
           const assignedText = `${t("assigned")} ${g.assignedAt ? formatShortDate(g.assignedAt) : "—"}`;
           const sectionLabel = sectionShort(g.section);
           const isDone = g.status === "Submitted" || g.status === "Late";
@@ -297,15 +314,27 @@ export default function TestsTable({
                 details={
                   <>
                     <DetailItem label={t("colAssignedVia")} priority="lg">{assignedVia}</DetailItem>
-                    <DetailItem label={t("colDates")} priority="md">{`${dueText} · ${assignedText}`}</DetailItem>
+                    <DetailItem label={t("colDates")} priority="md">
+                      {dueText ? `${dueText} · ${assignedText}` : assignedText}
+                    </DetailItem>
                     <DetailItem label={t("colSubmitted")} priority="md">
                       {submittedTitle ? `${submittedTitle} · ${formatDuration(g.timeSeconds)}` : "—"}
                     </DetailItem>
+                    {g.visibility && (
+                      <DetailItem label={tv("column")} priority="lg">
+                        <div className="space-y-1">
+                          <VisibilityCell testId={g.testId} studentId={studentId} vis={g.visibility} />
+                          <div className="text-xs text-soft-mute">
+                            <VisibilityDetail vis={g.visibility} />
+                          </div>
+                        </div>
+                      </DetailItem>
+                    )}
                   </>
                 }
               >
                 {/* Test */}
-                <Td kind="main" sticky="left">
+                <Td kind="main" sticky="left" className={TEST_COL}>
                   <div className="flex items-start gap-1">
                     {canExpand ? (
                       <button
@@ -333,20 +362,19 @@ export default function TestsTable({
                         href={`/admin/tests/${g.testId}`}
                         className="block min-w-0 hover:text-warm-coral-text transition-colors"
                       >
-                        <TruncatedText className="font-medium text-charcoal">
+                        <ClampText className="font-medium text-charcoal leading-snug">
                           {g.testName}
-                        </TruncatedText>
+                        </ClampText>
                       </Link>
-                      {(sectionLabel || g.isMultiModule || g.moduleCount > 1) && (
-                        <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-mid-gray">
-                          {sectionLabel && <span className="font-medium">{sectionLabel}</span>}
-                          {(g.isMultiModule || g.moduleCount > 1) && (
-                            <span className="inline-block px-1.5 py-0 rounded text-[10px] font-medium bg-light-bg text-mid-gray border border-divider leading-5">
-                              {t("twoModules")}
-                            </span>
-                          )}
-                        </div>
+                      {sectionLabel && (
+                        <div className="mt-0.5 text-[11px] font-medium text-mid-gray">{sectionLabel}</div>
                       )}
+                      {g.moduleNames.length > 1 &&
+                        g.moduleNames.map((m) => (
+                          <div key={m.label} className="text-[11px] text-soft-mute leading-snug break-words">
+                            {m.label}: {m.name}
+                          </div>
+                        ))}
                     </div>
                   </div>
                 </Td>
@@ -379,13 +407,22 @@ export default function TestsTable({
                 </Td>
                 {/* Dates */}
                 <Td priority="md">
-                  <TwoLineCell
-                    main={dueText}
-                    detail={assignedText}
-                    mainTitle={g.dueDate ? formatDateTime(g.dueDate) : undefined}
-                    detailTitle={g.assignedAt ? formatDateTime(g.assignedAt) : undefined}
-                    mainClassName="text-mid-gray"
-                  />
+                  {dueText ? (
+                    <TwoLineCell
+                      main={dueText}
+                      detail={assignedText}
+                      mainTitle={g.dueDate ? formatDateTime(g.dueDate) : undefined}
+                      detailTitle={g.assignedAt ? formatDateTime(g.assignedAt) : undefined}
+                      mainClassName="text-mid-gray"
+                    />
+                  ) : (
+                    <span
+                      className="text-mid-gray whitespace-nowrap"
+                      title={g.assignedAt ? formatDateTime(g.assignedAt) : undefined}
+                    >
+                      {assignedText}
+                    </span>
+                  )}
                 </Td>
                 {/* Result */}
                 <Td>
@@ -413,7 +450,7 @@ export default function TestsTable({
                   )}
                 </Td>
                 {/* Answers */}
-                <Td kind="long" priority="lg" className="align-top">
+                <Td priority="lg">
                   {g.visibility ? (
                     <VisibilityCell
                       testId={g.testId}

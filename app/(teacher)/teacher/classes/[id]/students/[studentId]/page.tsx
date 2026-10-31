@@ -28,6 +28,7 @@ import {
   Td,
   Th,
   TruncatedText,
+  ClampText,
   TwoLineCell,
 } from "@/components/ui/data-table";
 
@@ -382,7 +383,7 @@ export default async function TeacherStudentResultsPage({
             )}
             {tests.map((s) => {
               const isDone = s.status === "Submitted" || s.status === "Late";
-              const dueStr = s.dueDate ? formatShortDate(s.dueDate) : "—";
+              const dueStr = s.dueDate ? formatShortDate(s.dueDate) : null;
               const assignedStr = s.assignedAt ? formatShortDate(s.assignedAt) : "—";
               const submittedStr = s.submittedAt
                 ? formatShortDateTime(s.submittedAt)
@@ -400,7 +401,7 @@ export default async function TeacherStudentResultsPage({
                   details={
                     <>
                       <DetailItem label="Dates" priority="lg">
-                        {`Due: ${dueStr} · Assigned: ${assignedStr} · Submitted: ${submittedStr}`}
+                        {`${dueStr ? `Due: ${dueStr} · ` : ""}Assigned: ${assignedStr} · Submitted: ${submittedStr}`}
                       </DetailItem>
                       <DetailItem label="Assigned via" priority="lg">
                         {s.assignedVia}
@@ -410,18 +411,20 @@ export default async function TeacherStudentResultsPage({
                 >
                   <Td kind="main" sticky="left">
                     <TwoLineCell
-                      main={<TruncatedText>{s.testName}</TruncatedText>}
+                      main={<ClampText>{s.testName}</ClampText>}
                       detail={s.section ?? undefined}
                       mainClassName="font-medium text-charcoal"
                     />
                   </Td>
                   <Td priority="lg">
                     <TwoLineCell
-                      main={`Due: ${dueStr}`}
+                      main={dueStr ? `Due: ${dueStr}` : `Assigned ${assignedStr}`}
                       detail={
                         submittedFull
                           ? <span title={submittedFull}>{`Submitted ${submittedStr}`}</span>
-                          : `Assigned ${assignedStr}`
+                          : dueStr
+                          ? `Assigned ${assignedStr}`
+                          : undefined
                       }
                       mainClassName="text-mid-gray"
                     />

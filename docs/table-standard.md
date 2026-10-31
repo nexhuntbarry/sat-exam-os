@@ -13,7 +13,9 @@ One standard for every list/table in the app. Kit: `components/ui/data-table`
    name / phone or email; Activity = last sign-in / registered date. Short
    pairs can share one line: Grade & school = `11 · Herricks High School`.
 3. **Widths by type** (`kind` on `Th`/`Td`):
-   - `main` names/titles: wide, flexible (default 30%), truncates.
+   - `main` names/titles: wide, flexible (default 30%). The name stays
+     complete: it wraps onto up to two lines (`ClampText`) rather than
+     truncating. Only secondary long text truncates.
    - `short` status, grade, dates, counts: shrinks to content, `nowrap`.
    - `long` free text: flexible (default 20%), truncated with "…" and the full
      text in a hover `title` (`TruncatedText`). Never wraps or widens the table.
@@ -66,6 +68,7 @@ scrolling. Mostly 5–7 columns; merge or demote the rest.
 | `ExpandToggle` | Chevron button for the details row (only renders below `expandBelow`). |
 | `EmptyRow` | "No results" row: `colSpan` + children. |
 | `TwoLineCell` | `main`, `detail`, optional `mainTitle`/`detailTitle`/`mainClassName`. |
+| `ClampText` | Main name/title: wraps to at most 2 lines, full text on hover. |
 | `TruncatedText` | One truncated line with hover title (`title` prop if children isn't a string). |
 | `RowActionsMenu` | ⋯ menu. `label` (aria name, e.g. ``Actions for ${name}``) and `items: RowAction[]` (false/null allowed). `RowAction = { label, icon?, href? \| onSelect?, tone?: "danger", disabled? }`. Portal + fixed position, keyboard and Esc/outside-click close. `onSelect` runs after the menu closes. |
 | `RowButton` | Visible row action. `label`, `href` (Server Components OK) or `onClick` (client only), `icon` as an element (`<Check size={13} />`), `tone` (`primary`\|`default`\|`danger`), `disabled`, `title`. Never wraps. |
