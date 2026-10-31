@@ -537,7 +537,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
               ? formatShortDateTime(student.last_sign_in_at)
               : null;
             const activityMain = lastSignIn ?? (
-              student.clerk_user_id ? "Never signed in" : <span className="text-status-warning">never (pending)</span>
+              student.clerk_user_id ? "Never signed in" : <span className="text-soft-mute">Not signed up yet</span>
             );
             const registered = `Registered ${formatShortDate(student.created_at)}`;
             const activityTitle = `${lastSignIn ? `Last sign-in ${formatDateTime(student.last_sign_in_at)}` : "Never signed in"} · Registered ${formatDateTime(student.created_at)}`;
