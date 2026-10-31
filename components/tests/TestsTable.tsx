@@ -286,7 +286,7 @@ export default function TestsTable({
           <Th priority="md">{t("colDates")}</Th>
           <Th>{t("colResult")}</Th>
           <Th priority="md">{t("colSubmitted")}</Th>
-          <Th priority="lg">{tv("column")}</Th>
+          <Th priority="xl">{tv("column")}</Th>
           <Th kind="actions" sticky="right"><span className="sr-only">{t("actions")}</span></Th>
         </HeadRow>
       </thead>
@@ -310,7 +310,7 @@ export default function TestsTable({
             <Fragment key={g.key}>
               <DataRow
                 colSpan={COLS}
-                expandBelow="lg"
+                expandBelow="xl"
                 details={
                   <>
                     <DetailItem label={t("colAssignedVia")} priority="lg">{assignedVia}</DetailItem>
@@ -321,7 +321,7 @@ export default function TestsTable({
                       {submittedTitle ? `${submittedTitle} · ${formatDuration(g.timeSeconds)}` : "—"}
                     </DetailItem>
                     {g.visibility && (
-                      <DetailItem label={tv("column")} priority="lg">
+                      <DetailItem label={tv("column")} priority="xl">
                         <div className="space-y-1">
                           <VisibilityCell testId={g.testId} studentId={studentId} vis={g.visibility} />
                           <div className="text-xs text-soft-mute">
@@ -450,7 +450,7 @@ export default function TestsTable({
                   )}
                 </Td>
                 {/* Answers */}
-                <Td priority="lg">
+                <Td priority="xl">
                   {g.visibility ? (
                     <VisibilityCell
                       testId={g.testId}
