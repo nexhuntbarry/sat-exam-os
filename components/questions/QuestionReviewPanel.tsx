@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { clsx } from "clsx";
 import { CheckCircle2, XCircle, AlertCircle, Save, KeyRound, Sparkles, Bug, ChevronLeft, ChevronRight, ArrowRightCircle, Crop, Trash2, Eye, BookOpen, FileCheck } from "lucide-react";
 import PDFViewer from "./PDFViewer";
+import EditableMath from "./EditableMath";
 import ImageCropDialog from "./ImageCropDialog";
 import ConfidenceBadge from "./ConfidenceBadge";
 import MathMarkdown from "@/components/MathMarkdown";
@@ -94,6 +95,25 @@ const statusStyles: Record<string, string> = {
   Rejected: "bg-status-error/15 text-status-error",
 };
 
+/** The fields Save writes — what "unsaved changes" compares. */
+function editableFields(q: Question) {
+  return {
+    question_text: q.question_text,
+    choices: q.choices,
+    correct_answer: q.correct_answer,
+    explanation: q.explanation,
+    difficulty: q.difficulty,
+    domain: q.domain,
+    skill: q.skill,
+    concept: q.concept,
+    question_type: q.question_type,
+    has_image: q.has_image,
+    has_table: q.has_table,
+    has_formula: q.has_formula,
+    page_number: q.page_number,
+  };
+}
+
 export default function QuestionReviewPanel({ question: initial, nav }: QuestionReviewPanelProps) {
   const router = useRouter();
 
@@ -107,6 +127,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   }
 
   async function approveAndNext() {
+    if (!(await saveIfDirty())) return;
     setActionLoading("approve-next");
     try {
       const res = await fetch(`/api/admin/questions/${q.id}/approve`, { method: "POST" });
@@ -124,6 +145,11 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   }
   const [q, setQ] = useState<Question>(initial);
   const [saving, setSaving] = useState(false);
+  // Last saved copy of the editable fields; anything different is unsaved.
+  const [saved, setSaved] = useState(() => JSON.stringify(editableFields(initial)));
+  const dirty = JSON.stringify(editableFields(q)) !== saved;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   type ViewMode = "edit" | "test" | "results";
@@ -158,6 +184,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
         image_alts: json.image_alts,
         ...(json.has_image === false ? { has_image: false } : {}),
       }));
+      if (json.has_image === false) setSaved((prev) => JSON.stringify({ ...JSON.parse(prev), has_image: false }));
       showToast(action === "delete" ? "Image deleted" : "Image cropped");
       return true;
     } catch {
@@ -185,39 +212,83 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
     setTimeout(() => setToast(null), 3000);
   }
 
-  async function handleSave() {
+  // Save the editable fields. Returns false (and says so) when it failed, so
+  // callers that save before moving on can stop instead of dropping edits.
+  const qRef = useRef(q);
+  qRef.current = q;
+  const handleSave = useCallback(async (): Promise<boolean> => {
+    const fields = editableFields(qRef.current);
     setSaving(true);
     try {
-      const res = await fetch(`/api/admin/questions/${q.id}`, {
+      const res = await fetch(`/api/admin/questions/${qRef.current.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question_text: q.question_text,
-          choices: q.choices,
-          correct_answer: q.correct_answer,
-          explanation: q.explanation,
-          difficulty: q.difficulty,
-          domain: q.domain,
-          skill: q.skill,
-          concept: q.concept,
-          question_type: q.question_type,
-          has_image: q.has_image,
-          has_table: q.has_table,
-          has_formula: q.has_formula,
-          page_number: q.page_number,
-        }),
+        body: JSON.stringify(fields),
       });
       if (res.ok) {
-        showToast("Saved successfully");
-      } else {
-        showToast("Save failed", false);
+        setSaved(JSON.stringify(fields));
+        showToast("Saved");
+        return true;
       }
+      const json = await res.json().catch(() => ({}));
+      showToast(json.error ?? "Save failed — your edits are still here", false);
+      return false;
+    } catch {
+      showToast("Save failed — check your connection; your edits are still here", false);
+      return false;
     } finally {
       setSaving(false);
     }
+  }, []);
+
+  /** Save pending edits before an action that leaves or changes status. */
+  async function saveIfDirty(): Promise<boolean> {
+    return dirtyRef.current ? handleSave() : true;
   }
 
+  /** Navigate within the app, saving pending edits first. */
+  async function go(href: string) {
+    if (await saveIfDirty()) router.push(href);
+  }
+
+  // Ctrl/⌘+S saves; closing or reloading the tab with unsaved edits asks
+  // first; clicking a link elsewhere on the page (sidebar, breadcrumbs) with
+  // unsaved edits asks first too.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (dirtyRef.current) void handleSave();
+      }
+    }
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      if (!dirtyRef.current) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    function onClick(e: MouseEvent) {
+      if (!dirtyRef.current || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey) return;
+      const a = (e.target as HTMLElement | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!a || a.target === "_blank" || a.hasAttribute("download")) return;
+      const url = new URL(a.href, location.href);
+      if (url.origin !== location.origin || url.pathname === location.pathname) return;
+      if (!window.confirm("You have unsaved changes on this question. Leave without saving?")) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    document.addEventListener("click", onClick, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      document.removeEventListener("click", onClick, true);
+    };
+  }, [handleSave]);
+
   async function handleAction(action: "approve" | "reject" | "needs-review") {
+    if (!(await saveIfDirty())) return;
     setActionLoading(action);
     try {
       const res = await fetch(`/api/admin/questions/${q.id}/${action}`, {
@@ -238,6 +309,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   }
 
   async function handleResolveMismatch(trust: "ai" | "official") {
+    if (!(await saveIfDirty())) return;
     setActionLoading(`resolve-${trust}`);
     try {
       const res = await fetch(`/api/admin/questions/${q.id}/resolve-mismatch`, {
@@ -255,6 +327,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           parsing_status: json.data.parsing_status,
           parsing_notes: json.data.parsing_notes,
         }));
+        setSaved((prev) => JSON.stringify({ ...JSON.parse(prev), correct_answer: json.data.correct_answer }));
         showToast(
           trust === "ai" ? "Approved using AI's answer" : "Approved using answer key",
         );
@@ -365,7 +438,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       {nav && (
         <div className="flex items-center justify-between rounded-xl border border-divider bg-surface px-3 py-2 text-sm">
           <button
-            onClick={() => nav.prevId && router.push(`/admin/questions/${nav.prevId}`)}
+            onClick={() => nav.prevId && void go(`/admin/questions/${nav.prevId}`)}
             disabled={!nav.prevId}
             className="inline-flex items-center gap-1 text-mid-gray hover:text-charcoal disabled:opacity-30 transition-colors"
           >
@@ -379,10 +452,39 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                 : "All questions reviewed"}
           </span>
           <button
-            onClick={() => nav.nextId ? router.push(`/admin/questions/${nav.nextId}`) : router.push(`/admin/modules/${nav.moduleId}/review`)}
+            onClick={() => void go(nav.nextId ? `/admin/questions/${nav.nextId}` : `/admin/modules/${nav.moduleId}/review`)}
             className="inline-flex items-center gap-1 text-mid-gray hover:text-charcoal transition-colors"
           >
             {nav.nextId ? (nav.nextModuleName ? "Next module to review" : "Next") : "Back to module"} <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* Unsaved changes bar */}
+      {dirty && (
+        <div
+          role="status"
+          className="sticky bottom-3 z-40 order-last mx-auto flex items-center gap-3 rounded-xl border border-warm-coral/30 bg-surface px-4 py-2.5 text-sm shadow-lg"
+        >
+          <span className="h-2 w-2 rounded-full bg-warm-coral" aria-hidden />
+          <span className="font-medium text-charcoal">Unsaved changes</span>
+          <span className="hidden text-xs text-soft-mute sm:inline">Saved automatically when you approve, flag or move on</span>
+          <button
+            type="button"
+            onClick={() => setQ((prev) => ({ ...prev, ...JSON.parse(saved) }))}
+            disabled={saving}
+            className="rounded-lg px-2.5 py-1 text-xs font-medium text-mid-gray hover:bg-light-bg hover:text-charcoal disabled:opacity-50"
+          >
+            Discard
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-warm-coral px-3 py-1 text-xs font-semibold text-white hover:bg-warm-coral-dark disabled:opacity-50"
+          >
+            <Save size={13} />
+            {saving ? "Saving…" : "Save (⌘S)"}
           </button>
         </div>
       )}
@@ -414,12 +516,18 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
         {/* Action buttons */}
         <div className="flex items-center gap-2">
           <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface hover:bg-light-bg text-charcoal text-sm font-medium transition-colors disabled:opacity-50"
+            onClick={() => void handleSave()}
+            disabled={saving || !dirty}
+            title="Save (Ctrl/⌘+S)"
+            className={clsx(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
+              dirty
+                ? "bg-warm-coral text-white hover:bg-warm-coral-dark ring-2 ring-warm-coral/30"
+                : "bg-surface hover:bg-light-bg text-charcoal",
+            )}
           >
             <Save size={14} />
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving..." : dirty ? "Save changes" : "Saved"}
           </button>
           <button
             onClick={() => handleAction("approve")}
@@ -699,20 +807,12 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           {/* Question text */}
           <div>
             <label className="block text-xs text-soft-mute mb-1">Question Text</label>
-            <MathMarkdown
-              className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-xl px-3 py-2.5 mb-2"
-            >
-              {q.question_text}
-            </MathMarkdown>
-            <details className="text-xs text-soft-mute">
-              <summary className="cursor-pointer">Edit raw</summary>
-              <textarea
-                value={q.question_text}
-                onChange={(e) => setQ((prev) => ({ ...prev, question_text: e.target.value }))}
-                rows={5}
-                className="w-full mt-1 bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-none"
-              />
-            </details>
+            <EditableMath
+              label="Question text"
+              value={q.question_text}
+              rows={8}
+              onChange={(v) => setQ((prev) => ({ ...prev, question_text: v }))}
+            />
           </div>
 
           {/* Inline PDF page — FALLBACK only shown when no extracted crop
@@ -865,9 +965,13 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                         </span>
                         <div className="flex-1 flex flex-col gap-1">
                           {(c.text || !c.image_url) && (
-                            <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 [&_p]:my-0">
-                              {c.text}
-                            </MathMarkdown>
+                            <EditableMath
+                              label={`Choice ${c.label}`}
+                              value={c.text}
+                              rows={2}
+                              className="rounded-lg py-1.5"
+                              onChange={(v) => updateChoice(c.label, v)}
+                            />
                           )}
                           {c.image_url && (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -877,15 +981,16 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                               className="max-w-full md:max-w-xs rounded-lg border border-divider bg-white"
                             />
                           )}
-                          <details className="text-[11px] text-soft-mute">
-                            <summary className="cursor-pointer">Edit raw</summary>
-                            <input
-                              type="text"
+                          {c.image_url && (
+                            <EditableMath
+                              label={`Choice ${c.label} text (optional, shown with the graph)`}
                               value={c.text}
-                              onChange={(e) => updateChoice(c.label, e.target.value)}
-                              className="w-full mt-1 bg-light-bg border border-divider rounded-lg px-2 py-1 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50"
+                              rows={2}
+                              className="rounded-lg py-1"
+                              emptyText="Graph choice · click to add text"
+                              onChange={(v) => updateChoice(c.label, v)}
                             />
-                          </details>
+                          )}
                         </div>
                       </div>
                     );
@@ -913,7 +1018,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                 value={q.correct_answer ?? ""}
                 onChange={(e) => setQ((prev) => ({ ...prev, correct_answer: e.target.value || null }))}
                 className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50"
-                placeholder="Edit raw"
+                placeholder="e.g. B or 3/4"
               />
             </div>
             <div>
@@ -935,20 +1040,14 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                 <span className="text-soft-mute/70">({q.explanation.length} chars)</span>
               )}
             </label>
-            {q.explanation && (
-              <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-xl px-3 py-2.5 mb-2 leading-relaxed">
-                {q.explanation}
-              </MathMarkdown>
-            )}
-            <details className="text-xs text-soft-mute">
-              <summary className="cursor-pointer">Edit raw</summary>
-              <textarea
-                value={q.explanation ?? ""}
-                onChange={(e) => setQ((prev) => ({ ...prev, explanation: e.target.value || null }))}
-                rows={8}
-                className="w-full mt-1 bg-light-bg border border-divider rounded-xl px-3 py-2.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50 resize-y leading-relaxed"
-              />
-            </details>
+            <EditableMath
+              label="Explanation"
+              value={q.explanation ?? ""}
+              rows={10}
+              className="leading-relaxed"
+              emptyText="No explanation yet · click to write one"
+              onChange={(v) => setQ((prev) => ({ ...prev, explanation: v || null }))}
+            />
           </div>
 
           {/* Metadata */}
