@@ -282,7 +282,7 @@ export default function TestsTable({
         <HeadRow>
           <Th kind="main" sticky="left" className={TEST_COL}>{t("colTest")}</Th>
           <Th>{t("colStatus")}</Th>
-          <Th kind="long" priority="lg" className="w-[14%]">{t("colAssignedVia")}</Th>
+          <Th kind="long" priority="xl" className="w-[14%]">{t("colAssignedVia")}</Th>
           <Th priority="md">{t("colDates")}</Th>
           <Th>{t("colResult")}</Th>
           <Th priority="md">{t("colSubmitted")}</Th>
@@ -313,7 +313,7 @@ export default function TestsTable({
                 expandBelow="xl"
                 details={
                   <>
-                    <DetailItem label={t("colAssignedVia")} priority="lg">{assignedVia}</DetailItem>
+                    <DetailItem label={t("colAssignedVia")} priority="xl">{assignedVia}</DetailItem>
                     <DetailItem label={t("colDates")} priority="md">
                       {dueText ? `${dueText} · ${assignedText}` : assignedText}
                     </DetailItem>
@@ -402,7 +402,7 @@ export default function TestsTable({
                   )}
                 </Td>
                 {/* Assigned via */}
-                <Td kind="long" priority="lg" className="w-[14%]">
+                <Td kind="long" priority="xl" className="w-[14%]">
                   <TruncatedText className="text-mid-gray">{assignedVia}</TruncatedText>
                 </Td>
                 {/* Dates */}
