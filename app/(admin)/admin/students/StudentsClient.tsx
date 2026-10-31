@@ -32,7 +32,7 @@ import { Portal } from "@/components/ui/Portal";
 
 const COLUMNS: ColumnDef[] = [
   { key: "student", label: "Student", locked: true },
-  { key: "status", label: "Status", locked: true },
+  { key: "status", label: "Status" },
   { key: "class", label: "Class" },
   { key: "gradeSchool", label: "Grade & school" },
   { key: "parent", label: "Parent" },
@@ -509,7 +509,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
                 "Student"
               )}
             </Th>
-            <Th>Status</Th>
+            {cols.isVisible("status") && <Th>Status</Th>}
             {cols.isVisible("class") && <Th kind="long" priority="md" className="w-[16%]">Class</Th>}
             {cols.isVisible("gradeSchool") && <Th kind="long" priority="lg" className="w-[22%]">Grade &amp; school</Th>}
             {cols.isVisible("parent") && <Th kind="long" priority="xl" className="w-[18%]">Parent</Th>}
@@ -609,9 +609,11 @@ export default function StudentsClient({ students, classGroups }: Props) {
                     </Link>
                   </span>
                 </Td>
-                <Td>
-                  <StatusBadge kind="student" status={studentStatusLabel(student.account_status)} />
-                </Td>
+                {cols.isVisible("status") && (
+                  <Td>
+                    <StatusBadge kind="student" status={studentStatusLabel(student.account_status)} />
+                  </Td>
+                )}
                 {cols.isVisible("class") && (
                   <Td kind="long" priority="md" className="text-mid-gray">
                     <TruncatedText>{classes}</TruncatedText>
