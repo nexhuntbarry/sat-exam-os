@@ -138,6 +138,7 @@ interface Filters {
   hasFormula: boolean | null;
   /** Approved rows tagged "[live-fix]" by an automatic tool (from the review-queue pill). */
   liveFix: boolean;
+  autoApproved: boolean;
 }
 
 const DEFAULT_FILTERS: Filters = {
@@ -153,6 +154,7 @@ const DEFAULT_FILTERS: Filters = {
   hasTable: null,
   hasFormula: null,
   liveFix: false,
+  autoApproved: false,
 };
 
 function buildQueryString(filters: Filters, page: number): string {
@@ -169,6 +171,7 @@ function buildQueryString(filters: Filters, page: number): string {
   if (filters.hasTable !== null) params.set("hasTable", String(filters.hasTable));
   if (filters.hasFormula !== null) params.set("hasFormula", String(filters.hasFormula));
   if (filters.liveFix) params.set("liveFix", "true");
+  if (filters.autoApproved) params.set("autoApproved", "true");
   params.set("page", String(page));
   return params.toString();
 }
@@ -196,6 +199,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
     moduleId: initialModuleId ?? searchParams.get("moduleId") ?? "",
     status: searchParams.get("status") ?? "",
     liveFix: searchParams.get("liveFix") === "true",
+    autoApproved: searchParams.get("autoApproved") === "true",
   });
   const [page, setPage] = useState(1);
   const [filtersOpen, setFiltersOpen] = useState(false);
