@@ -791,6 +791,27 @@
     "expandModules": "展開模組明細",
     "collapseModules": "收起模組明細",
     "viewDetail": "查看詳情",
-    "noTests": "此學生尚未參加任何測驗。"
+    "noTests": "此學生尚未被指派任何測驗。",
+    "colAssignedVia": "指派方式",
+    "colDates": "日期",
+    "actions": "操作",
+    "individually": "個別指派",
+    "notAssigned": "未指派",
+    "due": "截止",
+    "assigned": "指派",
+    "statusNotStarted": "未開始",
+    "statusInProgress": "進行中",
+    "statusSubmitted": "已交卷",
+    "statusLate": "逾時交卷",
+    "moduleOf": "第 {n} / {m} 模組",
+    "openTest": "開啟測驗",
+    "moreAbout": "{test} 更多資訊",
+    "actionsFor": "{test} 的操作",
+    "removeAssignment": "取消指派",
+    "removeTitle": "取消指派？",
+    "removeBody": "{name} 將不再看到「{test}」。學生尚未開始作答，不會遺失任何作答紀錄。",
+    "removing": "取消中…",
+    "removeFailed": "無法取消指派。",
+    "cancel": "取消"
   }
 }

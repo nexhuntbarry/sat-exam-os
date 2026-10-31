@@ -791,6 +791,27 @@
     "expandModules": "Show module breakdown",
     "collapseModules": "Hide module breakdown",
     "viewDetail": "View detail",
-    "noTests": "This student hasn't taken any tests yet."
+    "noTests": "No tests assigned to this student yet.",
+    "colAssignedVia": "Assigned via",
+    "colDates": "Dates",
+    "actions": "Actions",
+    "individually": "Individually",
+    "notAssigned": "Not assigned",
+    "due": "Due",
+    "assigned": "Assigned",
+    "statusNotStarted": "Not started",
+    "statusInProgress": "In progress",
+    "statusSubmitted": "Submitted",
+    "statusLate": "Late",
+    "moduleOf": "Module {n} of {m}",
+    "openTest": "Open test",
+    "moreAbout": "More about {test}",
+    "actionsFor": "Actions for {test}",
+    "removeAssignment": "Remove assignment",
+    "removeTitle": "Remove assignment?",
+    "removeBody": "{name} will no longer see “{test}”. They haven’t started it, so no work is lost.",
+    "removing": "Removing…",
+    "removeFailed": "Couldn’t remove the assignment.",
+    "cancel": "Cancel"
   }
 }

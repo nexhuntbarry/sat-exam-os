@@ -27,6 +27,10 @@ export interface StudentTestProgress {
   score: number | null;
   /** Row to open for a finished attempt's detail (the Module 2 row when there is one). */
   detailSubmissionId: string | null;
+  /** Module the student is on while In progress (1 or 2), else null. */
+  currentModule: number | null;
+  /** Modules in the latest attempt (2 for a two-module test, 1 otherwise / legacy). */
+  moduleCount: number;
 }
 
 const graded = (s: string) => s === "Submitted" || s === "Late";
@@ -40,7 +44,9 @@ export function studentTestProgress(
   subs: ProgressSubmission[],
   twoModules: boolean,
 ): StudentTestProgress {
-  if (subs.length === 0) return { status: "Not started", score: null, detailSubmissionId: null };
+  if (subs.length === 0) {
+    return { status: "Not started", score: null, detailSubmissionId: null, currentModule: null, moduleCount: twoModules ? 2 : 1 };
+  }
   // Latest attempt = the session of the most recently started row.
   const latest = [...subs].sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""))[0];
   const attempt = latest.session_id ? subs.filter((s) => s.session_id === latest.session_id) : [latest];
@@ -51,10 +57,21 @@ export function studentTestProgress(
     ? attempt.some((s) => isModule2Track(s.adaptive_track) && graded(s.status)) &&
       attempt.some((s) => !isModule2Track(s.adaptive_track) && graded(s.status))
     : attempt.some((s) => graded(s.status));
+  const moduleCount = twoModules && !legacy ? 2 : 1;
   const gradedRows = attempt.filter((s) => graded(s.status));
   if (!done) {
     const started = attempt.some((s) => s.status === "In Progress") || gradedRows.length > 0;
-    return { status: started ? "In progress" : "Not started", score: null, detailSubmissionId: null };
+    // On Module 2 once its row exists or Module 1 is graded (handoff pending).
+    const onModule2 =
+      moduleCount === 2 &&
+      attempt.some((s) => isModule2Track(s.adaptive_track) || (!isModule2Track(s.adaptive_track) && graded(s.status)));
+    return {
+      status: started ? "In progress" : "Not started",
+      score: null,
+      detailSubmissionId: null,
+      currentModule: started ? (onModule2 ? 2 : 1) : null,
+      moduleCount,
+    };
   }
   const correct = gradedRows.reduce((n, s) => n + (s.correct_count ?? 0), 0);
   const total = gradedRows.reduce((n, s) => n + (s.total_questions ?? 0), 0);
@@ -63,6 +80,8 @@ export function studentTestProgress(
     status: "Submitted",
     score: total > 0 ? (correct / total) * 100 : null,
     detailSubmissionId: detail.id ?? null,
+    currentModule: null,
+    moduleCount,
   };
 }
 

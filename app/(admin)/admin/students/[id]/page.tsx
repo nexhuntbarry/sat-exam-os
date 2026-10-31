@@ -4,7 +4,10 @@ import { ArrowLeft, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { isQaEmail } from "@/lib/qa";
+import { getQaTestIds, isQaEmail, onSide } from "@/lib/qa";
+import { getStudentAssignments } from "@/lib/student-exam";
+import { studentTestProgress } from "@/lib/test-progress";
+import { getTestSections } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import EditStudentButton from "./EditStudentButton";
 import DeleteStudentButton from "./DeleteStudentButton";
@@ -21,6 +24,7 @@ import {
 } from "@/lib/answer-visibility";
 import TestsTable, {
   type TestRow,
+  type TestRowStatus,
   type VisibilityRowData,
 } from "@/components/tests/TestsTable";
 
@@ -56,7 +60,7 @@ async function getStudentSubmissions(studentId: string) {
   const { data } = await db
     .from("submissions")
     .select(
-      `id, test_id, status, score, correct_count, total_questions, percentage,
+      `id, test_id, student_id, status, score, correct_count, total_questions, percentage,
        started_at, submitted_at, time_spent_seconds, attempt_number,
        scaled_score, scaled_section, session_id, adaptive_track,
        tests!inner(test_name),
@@ -70,6 +74,7 @@ async function getStudentSubmissions(studentId: string) {
 type SubmissionRow = {
   id: string;
   test_id: string;
+  student_id: string;
   status: string;
   score: number | null;
   correct_count: number | null;
@@ -108,6 +113,8 @@ type SessionGroup = {
   scaledScore: number | null;
   timeSeconds: number;
   submittedAt: string | null;
+  /** Earliest started_at of the attempt's rows. */
+  startedAt: string | null;
   attemptNumber: number | null;
   detailSubmissionId: string;
   isMultiModule: boolean;
@@ -163,6 +170,7 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
       (r.percentage != null ? scaleSectionScore(Number(r.percentage)) : null),
     timeSeconds: r.time_spent_seconds ?? 0,
     submittedAt: r.submitted_at,
+    startedAt: r.started_at,
     attemptNumber: r.attempt_number,
     detailSubmissionId: r.id,
     isMultiModule: false,
@@ -219,6 +227,11 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
       scaledScore: scaled,
       timeSeconds: time,
       submittedAt: lastSubmittedAt,
+      startedAt:
+        sorted
+          .map((r) => r.started_at)
+          .filter((d): d is string => !!d)
+          .sort()[0] ?? null,
       attemptNumber: sorted[0].attempt_number,
       // Detail page link routes to the Module 2 (last) submission so
       // the result view can stitch both modules via session_id.
@@ -257,9 +270,55 @@ export default async function AdminStudentDetailPage({
 
   const groups = buildSessionGroups(submissions);
 
+  // Every test assigned to the student (directly or via a class group,
+  // same resolution as the student's own My Tests), on the viewer's QA side.
+  const db = getServiceClient();
+  const [assignments, qaTests] = await Promise.all([
+    getStudentAssignments(db, id),
+    getQaTestIds(),
+  ]);
+  for (const testId of Array.from(assignments.keys())) {
+    if (!onSide(testId, qaTests, me?.isQa ?? false)) assignments.delete(testId);
+  }
+  const subsByTest = new Map<string, SubmissionRow[]>();
+  for (const s of submissions) {
+    subsByTest.set(s.test_id, [...(subsByTest.get(s.test_id) ?? []), s]);
+  }
+  const allTestIds = Array.from(new Set([...assignments.keys(), ...subsByTest.keys()]));
+  const classGroupIds = Array.from(
+    new Set(Array.from(assignments.values()).flatMap((a) => a.classGroupIds)),
+  );
+  const [{ data: testMeta }, sectionOf, { data: classGroups }] = await Promise.all([
+    allTestIds.length > 0
+      ? db.from("tests").select("id, test_name, due_date, is_adaptive, module_2_id").in("id", allTestIds)
+      : Promise.resolve({ data: [] as { id: string; test_name: string; due_date: string | null; is_adaptive: boolean | null; module_2_id: string | null }[] }),
+    getTestSections(db, allTestIds),
+    classGroupIds.length > 0
+      ? db.from("class_groups").select("id, name").in("id", classGroupIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+  ]);
+  const testById = new Map((testMeta ?? []).map((t) => [t.id as string, t]));
+  const className = new Map((classGroups ?? []).map((c) => [c.id as string, c.name as string]));
+  const progressOf = new Map(
+    allTestIds.map((testId) => {
+      const t = testById.get(testId);
+      const twoModules = Boolean(t?.module_2_id || t?.is_adaptive);
+      return [testId, studentTestProgress(subsByTest.get(testId) ?? [], twoModules)];
+    }),
+  );
+  // Latest attempt per test carries the test-level progress status.
+  const latestGroupKey = new Map<string, string>();
+  const latestStart = new Map<string, string>();
+  for (const g of groups) {
+    const cur = latestStart.get(g.testId);
+    if (!latestGroupKey.has(g.testId) || (g.startedAt ?? "") > (cur ?? "")) {
+      latestGroupKey.set(g.testId, g.key);
+      latestStart.set(g.testId, g.startedAt ?? "");
+    }
+  }
+
   // Per-test answer visibility for this student (same server-side decision
   // the student's pages enforce) + who last changed the override.
-  const db = getServiceClient();
   const testIds = Array.from(new Set(groups.map((g) => g.testId)));
   const visibilityInputs = await loadAnswerVisibilityInputs(db, testIds, [id]);
   const updaterIds = Array.from(
@@ -282,8 +341,9 @@ export default async function AdminStudentDetailPage({
   for (const g of groups) if (!controlRowKey.has(g.testId)) controlRowKey.set(g.testId, g.key);
   const breakdownRows = await getStudentBreakdownRows(id);
   const occasions = await getStudentProgressOccasions(id);
-  const submittedCount = groups.filter(
-    (g) => g.status === "Submitted" || g.status === "Late",
+  const assignedCount = assignments.size;
+  const completedCount = Array.from(progressOf.values()).filter(
+    (p) => p.status === "Submitted",
   ).length;
 
   // Latest section scores (groups are already sorted by submittedAt desc)
@@ -299,8 +359,21 @@ export default async function AdminStudentDetailPage({
       ? latestMathScore + latestRWScore
       : null;
 
-  // Build serializable rows for TestsTable
-  const testRows: TestRow[] = groups.map((g) => {
+  const assignmentFields = (testId: string) => {
+    const a = assignments.get(testId);
+    const t = testById.get(testId);
+    return {
+      assignedDirect: a?.direct ?? false,
+      assignedClasses: (a?.classGroupIds ?? []).map((cg) => className.get(cg) ?? "Class"),
+      assignedAt: a?.assignedAt ?? null,
+      dueDate: (t?.due_date as string | null | undefined) ?? null,
+      moduleCount: progressOf.get(testId)?.moduleCount ?? 1,
+    };
+  };
+
+  // Build serializable rows for TestsTable: one per attempt taken, plus one
+  // per assigned test the student hasn't started.
+  const attemptRows: TestRow[] = groups.map((g) => {
     const input = visibilityInputs.get(visibilityKey(g.testId, id));
     const isControlRow = controlRowKey.get(g.testId) === g.key;
     let visibility: VisibilityRowData | null = null;
@@ -320,12 +393,19 @@ export default async function AdminStudentDetailPage({
           (ov?.updated_by && updaterName.get(ov.updated_by)) || null,
       };
     }
+    const progress = progressOf.get(g.testId);
+    const isLatest = latestGroupKey.get(g.testId) === g.key;
+    let status: TestRowStatus =
+      g.status === "In Progress" ? "In progress" : g.status === "Late" ? "Late" : "Submitted";
+    if (isLatest && progress && progress.status !== "Submitted") status = progress.status;
     return {
       key: g.key,
       testId: g.testId,
       testName: g.testName,
       section: g.section,
-      status: g.status,
+      status,
+      currentModule: isLatest && status === "In progress" ? progress?.currentModule ?? null : null,
+      ...assignmentFields(g.testId),
       correct: g.correct,
       total: g.total,
       percentage: g.percentage,
@@ -343,8 +423,47 @@ export default async function AdminStudentDetailPage({
         percentage: m.percentage,
       })),
       visibility,
+      removable: false,
     };
   });
+  const notStartedRows: TestRow[] = Array.from(assignments.values())
+    .filter((a) => !subsByTest.has(a.testId))
+    .map((a) => ({
+      key: `assigned-${a.testId}`,
+      testId: a.testId,
+      testName: (testById.get(a.testId)?.test_name as string | undefined) ?? "—",
+      section: sectionOf.get(a.testId) ?? null,
+      status: "Not started" as const,
+      currentModule: null,
+      ...assignmentFields(a.testId),
+      correct: 0,
+      total: 0,
+      percentage: null,
+      scaledScore: null,
+      timeSeconds: 0,
+      submittedAt: null,
+      attemptNumber: null,
+      detailSubmissionId: null,
+      isMultiModule: false,
+      modules: [],
+      visibility: null,
+      // Only an individual assignment can be undone per student; a class
+      // assignment would need the whole class unassigned.
+      removable: a.direct && a.classGroupIds.length === 0,
+    }));
+  // Not started / in progress first (soonest due first), then finished
+  // attempts, most recent first.
+  const isOpen = (r: TestRow) => r.status === "Not started" || r.status === "In progress";
+  const testRows: TestRow[] = [
+    ...[...notStartedRows, ...attemptRows.filter(isOpen)].sort(
+      (a, b) =>
+        (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") ||
+        a.testName.localeCompare(b.testName),
+    ),
+    ...attemptRows
+      .filter((r) => !isOpen(r))
+      .sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? "")),
+  ];
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -456,17 +575,28 @@ export default async function AdminStudentDetailPage({
           </p>
         </div>
         <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Tests completed</p>
-          <p className="text-3xl font-bold text-charcoal mt-1">{submittedCount}</p>
+          <p className="text-soft-mute text-xs">Tests</p>
+          <p className="text-charcoal mt-1 whitespace-nowrap">
+            <span className="text-xs text-soft-mute">Assigned</span>{" "}
+            <span className="text-3xl font-bold">{assignedCount}</span>
+          </p>
+          <p className="text-charcoal whitespace-nowrap">
+            <span className="text-xs text-soft-mute">Completed</span>{" "}
+            <span className="text-xl font-bold">{completedCount}</span>
+          </p>
         </div>
       </div>
 
       {/* Submissions table */}
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
         <div className="px-5 py-4 border-b border-divider">
-          <h2 className="text-charcoal font-semibold">Tests taken</h2>
+          <h2 className="text-charcoal font-semibold">Tests</h2>
         </div>
-        <TestsTable rows={testRows} studentId={id} />
+        <TestsTable
+          rows={testRows}
+          studentId={id}
+          studentName={student.display_name ?? student.email}
+        />
       </div>
 
       {/* Strengths/weaknesses + progress for this student. */}

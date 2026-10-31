@@ -4,7 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 
 // POST /api/admin/tests/[id]/remove-students
-// Body: { studentIds: string[]; deleteSubmissions?: boolean }
+// Body: { studentIds: string[]; deleteSubmissions?: boolean; onlyIfNotStarted?: boolean }
 //
 // Inverse of add-students: drops the supplied ids from the test's
 // `test_assignments.student_ids` so the test disappears from those
@@ -16,6 +16,10 @@ import { forbidCrossSide } from "@/lib/qa";
 // UI can say so instead of claiming the test is gone. Their submissions
 // are never deleted: they can keep working on the test, so wiping their
 // progress would only lose work.
+//
+// With `onlyIfNotStarted` (the student page's "Remove assignment"), the
+// request is refused (409) if any of the students has a submission for
+// this test, so nothing they started is ever unassigned from there.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -24,7 +28,7 @@ export async function POST(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id: testId } = await params;
-  let body: { studentIds?: string[]; deleteSubmissions?: boolean };
+  let body: { studentIds?: string[]; deleteSubmissions?: boolean; onlyIfNotStarted?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -42,6 +46,23 @@ export async function POST(
   if (crossSide) return crossSide;
 
   const db = getServiceClient();
+  if (body.onlyIfNotStarted) {
+    const { count, error: countError } = await db
+      .from("submissions")
+      .select("id", { count: "exact", head: true })
+      .eq("test_id", testId)
+      .in("student_id", incoming);
+    if (countError) {
+      console.error("[remove-students] submission check error:", countError);
+      return NextResponse.json({ error: "Failed to remove students" }, { status: 500 });
+    }
+    if ((count ?? 0) > 0) {
+      return NextResponse.json(
+        { error: "This student has already started this test, so the assignment can't be removed here." },
+        { status: 409 },
+      );
+    }
+  }
   const { data: assignment } = await db
     .from("test_assignments")
     .select("id, student_ids, class_group_ids")

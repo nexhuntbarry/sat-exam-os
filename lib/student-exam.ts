@@ -130,24 +130,52 @@ function assignmentMatches(
   return sIds.includes(studentId) || classGroupIds.some((cg) => cgIds.includes(cg));
 }
 
+/** How one test reaches a student. */
+export interface StudentAssignment {
+  testId: string;
+  /** Listed in test_assignments.student_ids. */
+  direct: boolean;
+  /** The student's class groups listed in class_group_ids. */
+  classGroupIds: string[];
+  /** test_assignments.created_at (earliest row for the test). */
+  assignedAt: string | null;
+}
+
 /**
- * Every test id assigned to the student, directly (student_ids) or via
- * one of their class groups (class_group_ids). QA-side filtering is the
- * caller's job.
+ * Every test assigned to the student, directly (student_ids) or via one
+ * of their class groups (class_group_ids), with how it was assigned.
+ * QA-side filtering is the caller's job.
  */
+export async function getStudentAssignments(
+  db: SupabaseClient,
+  studentId: string,
+): Promise<Map<string, StudentAssignment>> {
+  const [classGroupIds, { data: allAssignments, error }] = await Promise.all([
+    studentClassGroupIds(db, studentId),
+    db.from("test_assignments").select("test_id, student_ids, class_group_ids, created_at"),
+  ]);
+  if (error) throw new Error(`test_assignments lookup failed: ${error.message}`);
+  const out = new Map<string, StudentAssignment>();
+  for (const a of allAssignments ?? []) {
+    if (!assignmentMatches(a, studentId, classGroupIds)) continue;
+    const testId = a.test_id as string;
+    const cur = out.get(testId) ?? { testId, direct: false, classGroupIds: [], assignedAt: null };
+    cur.direct ||= ((a.student_ids as string[] | null) ?? []).includes(studentId);
+    const cg = (a.class_group_ids as string[] | null) ?? [];
+    for (const g of classGroupIds) if (cg.includes(g) && !cur.classGroupIds.includes(g)) cur.classGroupIds.push(g);
+    const created = (a.created_at as string | null) ?? null;
+    if (created && (!cur.assignedAt || created < cur.assignedAt)) cur.assignedAt = created;
+    out.set(testId, cur);
+  }
+  return out;
+}
+
+/** Every test id assigned to the student (see getStudentAssignments). */
 export async function getAssignedTestIds(
   db: SupabaseClient,
   studentId: string,
 ): Promise<Set<string>> {
-  const [classGroupIds, { data: allAssignments }] = await Promise.all([
-    studentClassGroupIds(db, studentId),
-    db.from("test_assignments").select("test_id, student_ids, class_group_ids"),
-  ]);
-  const ids = new Set<string>();
-  for (const a of allAssignments ?? []) {
-    if (assignmentMatches(a, studentId, classGroupIds)) ids.add(a.test_id);
-  }
-  return ids;
+  return new Set((await getStudentAssignments(db, studentId)).keys());
 }
 
 /** Is this one test assigned to the student? (Same rule as above.) */

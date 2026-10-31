@@ -1,16 +1,17 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, ClipboardList, Eye } from "lucide-react";
+import { ArrowLeft, ClipboardList, Eye, FileText } from "lucide-react";
 import { clsx } from "clsx";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import {
-  getStudentAssignedTestIds,
   getTeacherSubjectsForStudent,
   getTestSections,
   inSubjects,
 } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
+import { getStudentAssignments } from "@/lib/student-exam";
+import { studentTestProgress } from "@/lib/test-progress";
 import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
@@ -36,7 +37,8 @@ export const dynamic = "force-dynamic";
 const statusCls: Record<string, string> = {
   Submitted: "bg-warm-amber/15 text-warm-amber",
   Late: "bg-status-warning/15 text-status-warning",
-  "In Progress": "bg-warm-coral/15 text-warm-coral-text",
+  "In progress": "bg-warm-coral/15 text-warm-coral-text",
+  "Not started": "bg-light-bg text-mid-gray",
   Expired: "bg-light-bg text-mid-gray",
 };
 
@@ -80,7 +82,9 @@ async function loadStudent(
   // class_group (class_group_members check). That's the gate. We show the
   // tests this student took in the subject(s) the teacher teaches this
   // class (same subject rule as getTeacherTestAccess / the results API),
-  // without requiring the teacher to be on test_assignments.teacher_ids.
+  // without requiring the teacher to be on test_assignments.teacher_ids,
+  // plus every test assigned to the student in those subjects (started or
+  // not).
   const subjects = isAdmin
     ? null
     : (await getTeacherSubjectsForStudent(db, teacherId, studentId, classGroupId)).subjects;
@@ -88,9 +92,9 @@ async function loadStudent(
   const { data: subs } = await db
     .from("submissions")
     .select(
-      `id, test_id, status, score, percentage, correct_count, total_questions,
+      `id, test_id, student_id, status, score, percentage, correct_count, total_questions,
        started_at, submitted_at, session_id, adaptive_track,
-       tests!inner(id, test_name, due_date)`,
+       tests!inner(id, test_name, due_date, is_adaptive, module_2_id)`,
     )
     .eq("student_id", studentId)
     .order("submitted_at", { ascending: false, nullsFirst: false })
@@ -99,6 +103,7 @@ async function loadStudent(
   type SubRow = {
     id: string;
     test_id: string;
+    student_id: string;
     status: string;
     score: number | string | null;
     percentage: number | string | null;
@@ -109,18 +114,70 @@ async function loadStudent(
     session_id: string | null;
     adaptive_track: string | null;
     tests:
-      | { id: string; test_name: string; due_date: string | null }
-      | { id: string; test_name: string; due_date: string | null }[]
+      | TestMeta
+      | TestMeta[]
       | null;
   };
+  type TestMeta = {
+    id: string;
+    test_name: string;
+    due_date: string | null;
+    is_adaptive: boolean | null;
+    module_2_id: string | null;
+  };
   const rows = (subs ?? []) as unknown as SubRow[];
-  const qaTests = await getQaTestIds();
-  const [sectionOf, assignedTestIds] = await Promise.all([
-    getTestSections(db, Array.from(new Set(rows.map((r) => r.test_id)))),
-    getStudentAssignedTestIds(db, studentId, isQa),
+  const [qaTests, assignments] = await Promise.all([
+    getQaTestIds(),
+    getStudentAssignments(db, studentId),
   ]);
+  const sectionOf = await getTestSections(
+    db,
+    Array.from(new Set([...rows.map((r) => r.test_id), ...assignments.keys()])),
+  );
   const visible = (testId: string) =>
     onSide(testId, qaTests, isQa) && inSubjects(sectionOf.get(testId) ?? null, subjects);
+  for (const testId of Array.from(assignments.keys())) {
+    if (!visible(testId)) assignments.delete(testId);
+  }
+
+  const subsByTest = new Map<string, SubRow[]>();
+  for (const r of rows) {
+    if (visible(r.test_id)) subsByTest.set(r.test_id, [...(subsByTest.get(r.test_id) ?? []), r]);
+  }
+  const [{ data: assignedMeta }, { data: classGroups }] = await Promise.all([
+    assignments.size > 0
+      ? db
+          .from("tests")
+          .select("id, test_name, due_date, is_adaptive, module_2_id")
+          .in("id", Array.from(assignments.keys()))
+      : Promise.resolve({ data: [] as TestMeta[] }),
+    (() => {
+      const ids = Array.from(new Set(Array.from(assignments.values()).flatMap((a) => a.classGroupIds)));
+      return ids.length > 0
+        ? db.from("class_groups").select("id, name").in("id", ids)
+        : Promise.resolve({ data: [] as { id: string; name: string }[] });
+    })(),
+  ]);
+  const testById = new Map<string, TestMeta>(
+    ((assignedMeta ?? []) as TestMeta[]).map((t) => [t.id, t]),
+  );
+  for (const r of rows) {
+    const t = Array.isArray(r.tests) ? r.tests[0] : r.tests;
+    if (t && !testById.has(r.test_id)) testById.set(r.test_id, t);
+  }
+  const className = new Map((classGroups ?? []).map((c) => [c.id as string, c.name as string]));
+  const progressOf = (testId: string) => {
+    const t = testById.get(testId);
+    return studentTestProgress(subsByTest.get(testId) ?? [], Boolean(t?.module_2_id || t?.is_adaptive));
+  };
+  const assignedVia = (testId: string) => {
+    const a = assignments.get(testId);
+    if (!a) return "Not assigned";
+    return [
+      ...(a.direct ? ["Individually"] : []),
+      ...a.classGroupIds.map((g) => className.get(g) ?? "Class"),
+    ].join(", ");
+  };
 
   // One row per attempt: two-module attempts are two submissions sharing
   // a session_id.
@@ -140,11 +197,19 @@ async function loadStudent(
     const correct = sorted.reduce((n, r) => n + (r.correct_count ?? 0), 0);
     const total = sorted.reduce((n, r) => n + (r.total_questions ?? 0), 0);
     const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
-      ? "In Progress"
+    let status = statuses.includes("In Progress")
+      ? "In progress"
       : statuses.includes("Late")
       ? "Late"
       : last.status;
+    // The latest attempt takes the test-level progress (e.g. Module 1 in,
+    // Module 2 not yet started is still In progress).
+    const startedAt = sorted.map((r) => r.started_at ?? "").sort()[0] ?? "";
+    const isLatest = !(subsByTest.get(head.test_id) ?? []).some(
+      (r) => (r.started_at ?? "") > startedAt && !sorted.includes(r),
+    );
+    const progress = progressOf(head.test_id);
+    if (isLatest && progress.status !== "Submitted") status = progress.status;
     return {
       // Detail page stitches both modules via session_id from the last one.
       id: last.id,
@@ -153,6 +218,13 @@ async function loadStudent(
       dueDate: t?.due_date ?? null,
       section: sectionOf.get(head.test_id) ?? null,
       status,
+      moduleLabel:
+        isLatest && status === "In progress" && progress.currentModule != null
+          ? `Module ${progress.currentModule} of ${progress.moduleCount}`
+          : null,
+      assignedVia: assignedVia(head.test_id),
+      assignedAt: assignments.get(head.test_id)?.assignedAt ?? null,
+      hasSubmission: true,
       percentage: sorted.length > 1
         ? total > 0 ? Math.round((correct / total) * 1000) / 10 : null
         : head.percentage == null ? null : Number(head.percentage),
@@ -160,16 +232,45 @@ async function loadStudent(
     };
   });
 
+  // Assigned tests (directly or via a class) the student hasn't started.
+  const notStarted = Array.from(assignments.values())
+    .filter((a) => !subsByTest.has(a.testId))
+    .map((a) => {
+      const t = testById.get(a.testId);
+      return {
+        id: `assigned-${a.testId}`,
+        testId: a.testId,
+        testName: t?.test_name ?? "—",
+        dueDate: t?.due_date ?? null,
+        section: sectionOf.get(a.testId) ?? null,
+        status: "Not started",
+        percentage: null as number | null,
+        submittedAt: null as string | null,
+        moduleLabel: null as string | null,
+        assignedVia: assignedVia(a.testId),
+        assignedAt: a.assignedAt,
+        hasSubmission: false,
+      };
+    });
+  // Not started / in progress first (soonest due first), then finished
+  // attempts, most recent first.
+  const isOpen = (s: { status: string }) => s.status === "Not started" || s.status === "In progress";
+  const tests = [
+    ...[...notStarted, ...submissions.filter(isOpen)].sort(
+      (a, b) =>
+        (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") ||
+        a.testName.localeCompare(b.testName),
+    ),
+    ...submissions
+      .filter((s) => !isOpen(s))
+      .sort((a, b) => (b.submittedAt ?? "").localeCompare(a.submittedAt ?? "")),
+  ];
+
   // Assigned = tests assigned to the student (directly or via a class)
   // plus any they took, in the teacher's subject(s).
-  const assignedSections = await getTestSections(db, Array.from(assignedTestIds));
-  const assigned = new Set<string>();
-  for (const id of assignedTestIds) {
-    if (inSubjects(assignedSections.get(id) ?? null, subjects)) assigned.add(id);
-  }
-  for (const a of submissions) assigned.add(a.testId);
+  const assigned = new Set<string>([...assignments.keys(), ...subsByTest.keys()]);
 
-  return { group, student, submissions, subjects, assignedCount: assigned.size };
+  return { group, student, submissions, tests, subjects, assignedCount: assigned.size };
 }
 
 export default async function TeacherStudentResultsPage({
@@ -188,7 +289,7 @@ export default async function TeacherStudentResultsPage({
   ) notFound();
   const data = await loadStudent(id, studentId, me.userId, me.role === "admin", me.isQa);
   if (!data) notFound();
-  const { group, student, submissions, subjects, assignedCount } = data;
+  const { group, student, submissions, tests, subjects, assignedCount } = data;
   // Only the subject(s) this teacher teaches the class.
   const breakdownRows = (await getStudentBreakdownRows(studentId)).filter((r) =>
     inSubjects(r.section, subjects),
@@ -261,7 +362,7 @@ export default async function TeacherStudentResultsPage({
       <section>
         <div className="flex items-center gap-2 mb-3">
           <ClipboardList size={15} className="text-charcoal" />
-          <h2 className="text-charcoal font-semibold">Test history</h2>
+          <h2 className="text-charcoal font-semibold">Tests</h2>
         </div>
         <DataTable>
           <thead>
@@ -269,19 +370,21 @@ export default async function TeacherStudentResultsPage({
               <Th kind="main" sticky="left">Test</Th>
               <Th priority="lg">Dates</Th>
               <Th>Status</Th>
+              <Th kind="long" priority="lg" className="w-[16%]">Assigned via</Th>
               <Th>Score</Th>
               <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
             </HeadRow>
           </thead>
           <tbody>
-            {submissions.length === 0 && (
-              <EmptyRow colSpan={5}>
+            {tests.length === 0 && (
+              <EmptyRow colSpan={6}>
                 No tests assigned to this student under your account yet.
               </EmptyRow>
             )}
-            {submissions.map((s) => {
+            {tests.map((s) => {
               const isDone = s.status === "Submitted" || s.status === "Late";
               const dueStr = s.dueDate ? formatShortDate(s.dueDate) : "—";
+              const assignedStr = s.assignedAt ? formatShortDate(s.assignedAt) : "—";
               const submittedStr = s.submittedAt
                 ? formatShortDateTime(s.submittedAt)
                 : "—";
@@ -293,11 +396,16 @@ export default async function TeacherStudentResultsPage({
                 <DataRow
                   key={s.id}
                   expandBelow="lg"
-                  colSpan={5}
+                  colSpan={6}
                   details={
-                    <DetailItem label="Dates" priority="lg">
-                      {`Due: ${dueStr} · Submitted: ${submittedStr}`}
-                    </DetailItem>
+                    <>
+                      <DetailItem label="Dates" priority="lg">
+                        {`Due: ${dueStr} · Assigned: ${assignedStr} · Submitted: ${submittedStr}`}
+                      </DetailItem>
+                      <DetailItem label="Assigned via" priority="lg">
+                        {s.assignedVia}
+                      </DetailItem>
+                    </>
                   }
                 >
                   <Td kind="main" sticky="left">
@@ -312,8 +420,8 @@ export default async function TeacherStudentResultsPage({
                       main={`Due: ${dueStr}`}
                       detail={
                         submittedFull
-                          ? <span title={submittedFull}>{submittedStr}</span>
-                          : submittedStr
+                          ? <span title={submittedFull}>{`Submitted ${submittedStr}`}</span>
+                          : `Assigned ${assignedStr}`
                       }
                       mainClassName="text-mid-gray"
                     />
@@ -327,6 +435,14 @@ export default async function TeacherStudentResultsPage({
                     >
                       {s.status}
                     </span>
+                    {s.moduleLabel && (
+                      <div className="text-[11px] text-soft-mute mt-0.5 whitespace-nowrap">
+                        {s.moduleLabel}
+                      </div>
+                    )}
+                  </Td>
+                  <Td kind="long" priority="lg" className="w-[16%]">
+                    <TruncatedText className="text-mid-gray">{s.assignedVia}</TruncatedText>
                   </Td>
                   <Td>
                     {s.percentage == null ? (
@@ -351,7 +467,12 @@ export default async function TeacherStudentResultsPage({
                     <RowActionsMenu
                       label={`Actions for ${s.testName}`}
                       items={[
-                        isDone && {
+                        {
+                          label: "Open test",
+                          icon: <FileText size={14} />,
+                          href: `/teacher/tests/${s.testId}`,
+                        },
+                        isDone && s.hasSubmission && {
                           label: "View detail",
                           icon: <Eye size={14} />,
                           href: `/teacher/tests/${s.testId}/results/${s.id}`,

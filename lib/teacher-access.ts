@@ -396,35 +396,3 @@ export async function getTeacherSubjectsForStudent(
 export function inSubjects(section: string | null | undefined, subjects: string[] | null): boolean {
   return subjects === null || (!!section && subjects.includes(section));
 }
-
-/**
- * Tests assigned to a student: test_assignments listing them in student_ids
- * or any of their class groups in class_group_ids. QA-filtered.
- */
-export async function getStudentAssignedTestIds(
-  db: SupabaseClient,
-  studentId: string,
-  viewerIsQa: boolean,
-): Promise<Set<string>> {
-  const [{ data: memberships, error: memberError }, { data: assignments, error: assignError }] =
-    await Promise.all([
-      db.from("class_group_members").select("class_group_id").eq("student_id", studentId),
-      db.from("test_assignments").select("test_id, student_ids, class_group_ids"),
-    ]);
-  if (memberError) throw new Error(`class_group_members lookup failed: ${memberError.message}`);
-  if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
-  const groups = new Set((memberships ?? []).map((m) => m.class_group_id as string));
-  const qaTests = await getQaTestIds();
-  const out = new Set<string>();
-  for (const a of assignments ?? []) {
-    const testId = a.test_id as string;
-    if (!onSide(testId, qaTests, viewerIsQa)) continue;
-    if (
-      ((a.student_ids as string[] | null) ?? []).includes(studentId) ||
-      ((a.class_group_ids as string[] | null) ?? []).some((g) => groups.has(g))
-    ) {
-      out.add(testId);
-    }
-  }
-  return out;
-}
