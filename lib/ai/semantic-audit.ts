@@ -28,6 +28,7 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 import { logUsage } from "./parse-pdf";
+import { applyLiveHold, liveQuestionIds } from "@/lib/live-questions";
 
 // How many questions to send to Claude per call. Small enough that the model
 // gives each question real attention and the JSON stays reliable; large enough
@@ -163,6 +164,17 @@ export async function runSemanticAudit(
   const byNumber = new Map<number, QuestionRow>();
   for (const r of rows) byNumber.set(r.original_question_number, r);
 
+  // Live-test rows stay Approved (lib/live-questions.ts). If the lookup
+  // fails, treat every Approved row as live rather than risk a demotion.
+  const approvedIds = rows.filter((r) => r.parsing_status === "Approved").map((r) => r.id);
+  let live: Set<string>;
+  try {
+    live = await liveQuestionIds(db, approvedIds);
+  } catch (e) {
+    summary.errors.push(`live lookup: ${e instanceof Error ? e.message : String(e)}`);
+    live = new Set(approvedIds);
+  }
+
   for (let i = 0; i < rows.length; i += AUDIT_CHUNK_SIZE) {
     const chunk = rows.slice(i, i + AUDIT_CHUNK_SIZE);
     const payload = chunk.map((r) => ({
@@ -252,13 +264,19 @@ export async function runSemanticAudit(
         const note = `Semantic audit: ${detail}`;
         const base = stripPriorAuditNote(row.parsing_notes);
         const newNotes = base ? `${base}; ${note}` : note;
-        const { error: upErr } = await db
-          .from("questions")
-          .update({
+        const { update } = applyLiveHold(
+          row,
+          {
             parsing_status: "Needs Review",
             parsing_notes: newNotes,
             updated_at: new Date().toISOString(),
-          })
+          },
+          "Semantic audit found a problem",
+          live,
+        );
+        const { error: upErr } = await db
+          .from("questions")
+          .update(update)
           .eq("id", row.id);
         if (upErr) {
           summary.errors.push(`update q${v.question_number}: ${upErr.message}`);

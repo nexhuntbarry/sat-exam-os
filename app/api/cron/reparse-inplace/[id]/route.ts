@@ -19,6 +19,7 @@ import {
   enforceStemIntegrity,
 } from "@/lib/parse-guards";
 import { autoPromoteModule } from "@/lib/auto-promote";
+import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 
 export const maxDuration = 800;
 
@@ -58,7 +59,7 @@ export async function POST(
   // Existing rows (preserve ids) + any official answers already on file.
   const { data: existing } = await db
     .from("questions")
-    .select("id, original_question_number, official_answer")
+    .select("id, original_question_number, official_answer, parsing_status, parsing_notes, correct_answer")
     .eq("module_id", id);
   const idByNum = new Map<number, string>();
   const officialByNum = new Map<number, string>();
@@ -66,6 +67,13 @@ export async function POST(
     idByNum.set(r.original_question_number, r.id);
     if (r.official_answer) officialByNum.set(r.original_question_number, r.official_answer as string);
   }
+  // Approved rows in a live test are not overwritten (that would clear their
+  // figures and answer mid-exam) — they're only tagged for re-check.
+  const existingById = new Map((existing ?? []).map((r) => [r.id as string, r as LiveHoldRow]));
+  const live = await liveQuestionIds(
+    db,
+    (existing ?? []).filter((r) => r.parsing_status === "Approved").map((r) => r.id as string),
+  );
 
   // Fill any missing official answers by extracting the key from the PDF.
   let keyEntries = officialByNum.size;
@@ -147,7 +155,16 @@ export async function POST(
       updated_at: new Date().toISOString(),
     };
     const existingId = idByNum.get(q.original_question_number);
-    if (existingId) {
+    const cur = existingId ? existingById.get(existingId) : undefined;
+    if (existingId && cur && live.has(existingId) && cur.parsing_status === "Approved") {
+      const { update } = applyLiveHold(
+        cur,
+        { parsing_status: "Draft", parsing_notes: "Re-parse not applied to this question.", updated_at: new Date().toISOString() },
+        "Module re-parsed",
+        live,
+      );
+      await db.from("questions").update(update).eq("id", existingId);
+    } else if (existingId) {
       await db.from("questions").update(fields).eq("id", existingId);
       updated++;
     } else {
@@ -172,7 +189,7 @@ export async function POST(
   let reconciled = 0;
   const { data: rows } = await db
     .from("questions")
-    .select("id, original_question_number, question_type, correct_answer, official_answer")
+    .select("id, original_question_number, question_type, correct_answer, official_answer, parsing_status, parsing_notes")
     .eq("module_id", id)
     .not("official_answer", "is", null);
   let keyCompared = 0;
@@ -190,15 +207,18 @@ export async function POST(
     if (!agree) {
       if (isMc && ai) keyDisagreeNums.push(r.original_question_number as number);
       reconciled++;
-      await db
-        .from("questions")
-        .update({
+      const { update } = applyLiveHold(
+        r as LiveHoldRow,
+        {
           correct_answer: off,
           parsing_status: "Needs Review",
           parsing_notes: `Re-parse: official key=${off}, solver said ${ai ?? "?"} — verify`,
           updated_at: new Date().toISOString(),
-        })
-        .eq("id", r.id);
+        },
+        "Official key disagrees with the stored answer",
+        live,
+      );
+      await db.from("questions").update(update).eq("id", r.id);
     }
   }
 

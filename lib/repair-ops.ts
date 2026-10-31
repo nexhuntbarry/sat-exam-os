@@ -11,6 +11,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import katex from "katex";
 import { getServiceClient } from "@/lib/supabase";
+import { holdLiveDemotion } from "@/lib/live-questions";
 import {
   applyChoiceImages,
   choiceHasContent,
@@ -268,14 +269,17 @@ export async function repairMathForQuestion(
     };
     if (q.explanation) update.explanation = q.explanation;
     if (q.choices && q.choices.length > 0) update.choices = keepImageChoices(q.choices, row.choices);
+    const hold = await holdLiveDemotion(db, row.id, update, "Math formatting repaired");
     const { error: upErr } = await db
       .from("questions")
-      .update(update)
+      .update(hold.update)
       .eq("id", row.id);
     if (upErr) return { ok: false, message: upErr.message };
     return {
       ok: true,
-      message: `Math repaired (${ladder[attempt]}). Status moved to Draft — re-review before approve.`,
+      message: hold.held
+        ? `Math repaired (${ladder[attempt]}). Kept Approved because it's in a live test — marked for re-check.`
+        : `Math repaired (${ladder[attempt]}). Status moved to Draft — re-review before approve.`,
     };
   }
   return {
@@ -405,14 +409,17 @@ export async function repairTableForQuestion(
     };
     if (q.explanation) update.explanation = q.explanation;
     if (q.choices && q.choices.length > 0) update.choices = keepImageChoices(q.choices, row.choices);
+    const hold = await holdLiveDemotion(db, row.id, update, "Table rebuilt as Markdown");
     const { error: upErr } = await db
       .from("questions")
-      .update(update)
+      .update(hold.update)
       .eq("id", row.id);
     if (upErr) return { ok: false, message: upErr.message };
     return {
       ok: true,
-      message: `Table rebuilt as Markdown (${ladder[attempt]}). Status moved to Draft — re-review before approve.`,
+      message: hold.held
+        ? `Table rebuilt as Markdown (${ladder[attempt]}). Kept Approved because it's in a live test — marked for re-check.`
+        : `Table rebuilt as Markdown (${ladder[attempt]}). Status moved to Draft — re-review before approve.`,
     };
   }
   return {
@@ -589,10 +596,11 @@ export async function repairImageForQuestion(
   }
   update.parsing_notes = notes.join("; ");
   if (notes.length > 1) update.parsing_status = "Needs Review";
-  await db.from("questions").update(update).eq("id", row.id);
+  const hold = await holdLiveDemotion(db, row.id, update, "Figure re-cropped and flagged");
+  await db.from("questions").update(hold.update).eq("id", row.id);
   return {
     ok: true,
-    message: `Figure re-cropped (${urls.length} region${urls.length === 1 ? "" : "s"}${nChoiceImgs ? `, ${nChoiceImgs} choice graph${nChoiceImgs === 1 ? "" : "s"}` : ""}).${notes.length > 1 ? ` ${notes.slice(1).join("; ")}` : ""}`,
+    message: `Figure re-cropped (${urls.length} region${urls.length === 1 ? "" : "s"}${nChoiceImgs ? `, ${nChoiceImgs} choice graph${nChoiceImgs === 1 ? "" : "s"}` : ""}).${notes.length > 1 ? ` ${notes.slice(1).join("; ")}` : ""}${hold.held ? " Kept Approved because it's in a live test — marked for re-check." : ""}`,
     needsReview: notes.length > 1,
   };
 }
@@ -911,7 +919,8 @@ export async function repairChoicesForQuestion(
       update.parsing_status = "Needs Review";
       update.parsing_notes = base && !base.toLowerCase().includes(note.toLowerCase()) ? `${base}; ${note}` : base || note;
     }
-    await db.from("questions").update(update).eq("id", row.id);
+    const hold = await holdLiveDemotion(db, row.id, update, "Choices copied from the PDF text layer");
+    await db.from("questions").update(hold.update).eq("id", row.id);
   }
   return {
     ok: true,

@@ -215,15 +215,19 @@ async function autoResolveBugReport(
     try {
       const r = await op.run();
       parts.push(`${op.label}: ${r.message}`);
-      if (r.ok) {
-        touched = true;
-        lastStatus = "Draft";
-      }
+      if (r.ok) touched = true;
     } catch (e) {
       parts.push(
         `${op.label} fix crashed: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
+  }
+
+  // Repairs normally demote to Draft / Needs Review, but a question in a
+  // live test keeps Approved (lib/live-questions.ts) — report what's stored.
+  if (touched) {
+    const { data: cur } = await db.from("questions").select("parsing_status").eq("id", questionId).maybeSingle();
+    if (cur?.parsing_status) lastStatus = cur.parsing_status as string;
   }
 
   // Answer-key correctness has no safe automatic fix — always leave the

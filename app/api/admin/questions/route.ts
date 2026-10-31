@@ -65,6 +65,10 @@ export async function GET(req: Request) {
   const autoApproved = searchParams.get("autoApproved");
   if (autoApproved === "true") query = query.is("reviewed_by", null);
 
+  // Re-check queue: questions an automatic tool changed while they were in
+  // a live test (kept Approved, tagged "[live-fix]" — lib/live-questions.ts).
+  if (searchParams.get("liveFix") === "true") query = query.ilike("parsing_notes", "[live-fix]%");
+
   query = query
     .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);

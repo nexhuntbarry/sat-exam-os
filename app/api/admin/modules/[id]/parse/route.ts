@@ -14,6 +14,7 @@ import {
 import { extractAndUploadQuestionImages, isRedundantTableRegion } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
+import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
 import { recoverMissingFigures, recoverBrokenChoices, repairChoicesForQuestion } from "@/lib/repair-ops";
 import {
@@ -735,6 +736,10 @@ export async function POST(
         .select("id, original_question_number, question_type, correct_answer, official_answer, parsing_notes, parsing_status")
         .eq("module_id", id)
         .not("official_answer", "is", null);
+      const live = await liveQuestionIds(
+        db,
+        (solvedRows ?? []).filter((r) => r.parsing_status === "Approved").map((r) => r.id as string),
+      );
 
       for (const row of solvedRows ?? []) {
         const aiAns = row.correct_answer as string | null;
@@ -750,16 +755,19 @@ export async function POST(
           const hint = `Mismatch: AI answered ${aiAns}, official ${officialAns}`;
           const existingNotes = (row.parsing_notes as string | null) ?? "";
           const newNotes = existingNotes ? `${existingNotes}; ${hint}` : hint;
-          await db
-            .from("questions")
-            .update({
+          const { update } = applyLiveHold(
+            row as LiveHoldRow,
+            {
               correct_answer: officialAns,
               mismatch_with_official: true,
               parsing_status: "Needs Review",
               parsing_notes: newNotes,
               updated_at: new Date().toISOString(),
-            })
-            .eq("id", row.id);
+            },
+            "Solver answer disagrees with the official key",
+            live,
+          );
+          await db.from("questions").update(update).eq("id", row.id);
         } else {
           // Already correct — clear the "Pending AI answer" placeholder
           // note since we've now confirmed the answer matches official.

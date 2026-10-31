@@ -1,5 +1,6 @@
 import type { getServiceClient } from "@/lib/supabase";
 import { checkChoiceAlignment, type PdfTextChoices } from "@/lib/pdf-text-choices";
+import { applyLiveHold, liveQuestionIds } from "@/lib/live-questions";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -145,6 +146,7 @@ export async function enforceCompleteness(
   }[];
 
   const reasons: Record<string, number> = {};
+  const liveIds = await liveQuestionIds(db, rows.filter((r) => r.parsing_status === "Approved").map((r) => r.id));
   let demoted = 0;
   for (const q of rows) {
     if (q.parsing_status === "Needs Review" || q.parsing_status === "Rejected") continue; // already flagged
@@ -169,19 +171,22 @@ export async function enforceCompleteness(
     if (placeholder) problems.push(`parser placeholder text (${placeholder})`);
     if (problems.length === 0) continue;
 
-    demoted++;
     for (const p of problems) reasons[p] = (reasons[p] ?? 0) + 1;
     const base = (q.parsing_notes || "").trim();
     // Plain-language reason for the review page's reviewer-flag banner.
     const note = `Needs review: incomplete question (completeness gate) — ${problems.join(", ")}`;
-    await db
-      .from("questions")
-      .update({
+    const hold = applyLiveHold(
+      q,
+      {
         parsing_status: "Needs Review",
         parsing_notes: base && !base.toLowerCase().includes("completeness gate") ? `${base}; ${note}` : note,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", q.id);
+      },
+      "Looks incomplete",
+      liveIds,
+    );
+    if (!hold.held) demoted++;
+    await db.from("questions").update(hold.update).eq("id", q.id);
   }
   console.log(`[completeness-gate] module=${moduleId} checked=${rows.length} demoted=${demoted} reasons=${JSON.stringify(reasons)}`);
   return { checked: rows.length, demoted, reasons };
@@ -237,21 +242,28 @@ export async function enforceChoiceAlignment(
   }[];
   const live = rows.filter((r) => r.parsing_status !== "Rejected");
   const issues = checkChoiceAlignment(live, pdfText);
+  const liveIds = await liveQuestionIds(
+    db,
+    live.filter((r) => r.parsing_status === "Approved" && issues.has(r.original_question_number)).map((r) => r.id),
+  );
   let demoted = 0;
   for (const q of live) {
     const issue = issues.get(q.original_question_number);
     if (!issue) continue;
     const base = (q.parsing_notes || "").trim();
     if (q.parsing_status === "Needs Review" && base.toLowerCase().includes("choice misalignment")) continue;
-    demoted++;
-    await db
-      .from("questions")
-      .update({
+    const hold = applyLiveHold(
+      q,
+      {
         parsing_status: "Needs Review",
         parsing_notes: base && !base.toLowerCase().includes("choice misalignment") ? `${base}; ${issue.note}` : issue.note,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", q.id);
+      },
+      "Choices may not match the stem",
+      liveIds,
+    );
+    if (!hold.held) demoted++;
+    await db.from("questions").update(hold.update).eq("id", q.id);
   }
   console.log(`[choice-alignment-gate] module=${moduleId} checked=${live.length} demoted=${demoted}`);
   return { checked: live.length, demoted };
@@ -321,19 +333,24 @@ export async function flagQuestionsForReview(
     q = q.in("original_question_number", numbers);
   }
   const { data } = await q;
+  const rows = (data ?? []) as { id: string; parsing_status: string; parsing_notes: string | null }[];
+  const liveIds = await liveQuestionIds(db, rows.filter((r) => r.parsing_status === "Approved").map((r) => r.id));
   let flagged = 0;
-  for (const r of (data ?? []) as { id: string; parsing_status: string; parsing_notes: string | null }[]) {
+  for (const r of rows) {
     const base = (r.parsing_notes || "").trim();
     if (r.parsing_status === "Needs Review" && base.includes(note)) continue;
     flagged++;
-    await db
-      .from("questions")
-      .update({
+    const { update } = applyLiveHold(
+      r,
+      {
         parsing_status: "Needs Review",
         parsing_notes: base && !base.includes(note) ? `${base}; ${note}` : note,
         updated_at: new Date().toISOString(),
-      })
-      .eq("id", r.id);
+      },
+      "Flagged by an automatic check",
+      liveIds,
+    );
+    await db.from("questions").update(update).eq("id", r.id);
   }
   return flagged;
 }

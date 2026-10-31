@@ -5,6 +5,7 @@ import { forbidQa } from "@/lib/qa";
 import { explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
 import { findApproveBlocker } from "@/lib/parse-guards";
+import { LIVE_FIX_TAG, stripLiveFixNote } from "@/lib/live-questions";
 
 // Answer-key edits may regenerate the explanation (AI) — allow headroom.
 export const maxDuration = 60;
@@ -77,7 +78,7 @@ export async function PATCH(
   // Capture the prior answer so we can tell whether the key actually changed.
   const { data: prior } = await db
     .from("questions")
-    .select("correct_answer, question_text, choices, question_type")
+    .select("correct_answer, question_text, choices, question_type, parsing_status, parsing_notes")
     .eq("id", id)
     .maybeSingle();
 
@@ -96,6 +97,14 @@ export async function PATCH(
         { status: 400 },
       );
     }
+  }
+
+  // Saving it as Approved means a person checked it: clear the live-test
+  // re-check tag.
+  const resultStatus = "parsing_status" in update ? update.parsing_status : prior?.parsing_status;
+  const resultNotes = "parsing_notes" in update ? (update.parsing_notes as string | null) : prior?.parsing_notes;
+  if (resultStatus === "Approved" && typeof resultNotes === "string" && resultNotes.startsWith(LIVE_FIX_TAG)) {
+    update.parsing_notes = stripLiveFixNote(resultNotes);
   }
 
   const { data, error } = await db

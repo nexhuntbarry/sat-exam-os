@@ -24,6 +24,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { stripRedundantEquationFiguresForModule } from "@/lib/repair-ops";
 import { incompleteGraphChoices, stemFigureMissing } from "@/lib/parse-guards";
+import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -265,7 +266,7 @@ async function recoverMissingChoices(
   const { data, error } = await db
     .from("questions")
     .select(
-      "id, original_question_number, question_text, source_pdf_url, choices",
+      "id, original_question_number, question_text, source_pdf_url, choices, parsing_status, parsing_notes",
     )
     .eq("module_id", moduleId)
     .eq("question_type", "Multiple Choice")
@@ -276,6 +277,7 @@ async function recoverMissingChoices(
       q.source_pdf_url &&
       (!Array.isArray(q.choices) || q.choices.length === 0),
   );
+  const live = await liveQuestionIds(db, candidates.map((q) => q.id as string));
   let patched = 0;
   for (const q of candidates) {
     try {
@@ -299,15 +301,21 @@ async function recoverMissingChoices(
       });
       const choices = result.object.choices;
       if (choices.length < 2) continue;
-      const { error: upErr } = await db
-        .from("questions")
-        .update({
+      const { update } = applyLiveHold(
+        q as LiveHoldRow,
+        {
           choices,
           parsing_status: "Needs Review",
           parsing_notes:
             "Choices re-extracted by post-parse-cleanup. Verify correct_answer still maps to the right letter before promoting to Approved.",
           updated_at: new Date().toISOString(),
-        })
+        },
+        "Missing choices re-extracted",
+        live,
+      );
+      const { error: upErr } = await db
+        .from("questions")
+        .update(update)
         .eq("id", q.id);
       if (!upErr) patched++;
     } catch (e) {
@@ -736,6 +744,7 @@ async function normalizeAnswerLettersAndFlagContradictions(
     throw new Error(
       `normalizeAnswerLettersAndFlagContradictions select: ${error.message}`,
     );
+  const live = await liveQuestionIds(db, (data ?? []).map((q) => q.id as string));
   let touched = 0;
   for (const q of data ?? []) {
     if (q.question_type !== "Multiple Choice") continue;
@@ -770,9 +779,15 @@ async function normalizeAnswerLettersAndFlagContradictions(
     }
     if (Object.keys(update).length === 0) continue;
     update.updated_at = new Date().toISOString();
+    const hold = applyLiveHold(
+      q as LiveHoldRow,
+      update,
+      contradicts ? "Explanation contradicts the answer key" : "Answer letter normalized",
+      live,
+    );
     const { error: upErr } = await db
       .from("questions")
-      .update(update)
+      .update(hold.update)
       .eq("id", q.id);
     if (!upErr) touched++;
   }
@@ -1369,21 +1384,29 @@ async function auditAndDemote(
     .eq("module_id", moduleId)
     .in("parsing_status", ["Approved", "Draft"]);
   if (error) throw new Error(`auditAndDemote select: ${error.message}`);
+  const rows = (data ?? []) as Array<AuditRow & { parsing_status: string }>;
+  const live = await liveQuestionIds(db, rows.filter((r) => r.parsing_status === "Approved").map((r) => r.id));
   let demoted = 0;
-  for (const row of (data ?? []) as Array<AuditRow & { parsing_status: string }>) {
+  for (const row of rows) {
     const failed = CHECKS.filter((c) => c.failed(row)).map((c) => c.id);
     if (failed.length === 0) continue;
     const note = `Demoted by post-parse-cleanup: failed checks → ${failed.join(", ")}`;
-    const { error: upErr } = await db
-      .from("questions")
-      .update({
+    const hold = applyLiveHold(
+      row,
+      {
         parsing_status: "Needs Review",
         parsing_notes: note,
         reviewed_at: null,
         updated_at: new Date().toISOString(),
-      })
+      },
+      "Failed an automatic check",
+      live,
+    );
+    const { error: upErr } = await db
+      .from("questions")
+      .update(hold.update)
       .eq("id", row.id);
-    if (!upErr) demoted++;
+    if (!upErr && !hold.held) demoted++;
   }
   return demoted;
 }
