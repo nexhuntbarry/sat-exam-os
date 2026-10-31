@@ -128,7 +128,9 @@ async function getReviewData(testId: string, studentId: string) {
     groups.get(key)!.questions.push(q);
   }
 
-  return { test, showExplanations: visibility.explanations, sections: Array.from(groups.values()), myAnswers, mySubmissionByQuestion };
+  // Module 1 first, then Module 2 (query order is by question number, which interleaves modules).
+  const sections = Array.from(groups.values()).sort((a, b) => moduleIds.indexOf(a.moduleId) - moduleIds.indexOf(b.moduleId));
+  return { test, showExplanations: visibility.explanations, sections, myAnswers, mySubmissionByQuestion };
 }
 
 export default async function StudentTestReviewPage({

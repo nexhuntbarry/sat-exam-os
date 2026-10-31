@@ -69,7 +69,9 @@ async function getTeacherReview(
     if (!groups.has(q.module_id)) groups.set(q.module_id, { moduleId: q.module_id, title: label, questions: [] });
     groups.get(q.module_id)!.questions.push(q);
   }
-  return { test, sections: Array.from(groups.values()) };
+  // Module 1 first, then Module 2 (query order is by question number, which interleaves modules).
+  const sections = Array.from(groups.values()).sort((a, b) => moduleIds.indexOf(a.moduleId) - moduleIds.indexOf(b.moduleId));
+  return { test, sections };
 }
 
 export default async function TeacherTestReviewPage({
