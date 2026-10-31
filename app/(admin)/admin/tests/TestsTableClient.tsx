@@ -5,7 +5,7 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import type { ThHTMLAttributes } from "react";
-import { ChevronUp, ChevronDown, ChevronsUpDown, Eye } from "lucide-react";
+import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { sectionTitleClass } from "@/lib/section-color";
 import { formatShortDate } from "@/lib/datetime";
 import AssignDialog from "./[id]/AssignDialog";
@@ -18,9 +18,8 @@ import {
   DetailItem,
   EmptyRow,
   ExpandToggle,
-  RowActionsMenu,
+  RowActions,
   TwoLineCell,
-  type RowAction,
   type Priority,
   type Kind,
 } from "@/components/ui/data-table";
@@ -220,13 +219,10 @@ function TestsTable({
           const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
           const createdLabel = formatShortDate(test.created_at);
 
-          const actions: RowAction[] = [
-            { label: "View detail", icon: Eye, href: `/admin/tests/${test.id}` },
-          ];
-
           return (
             <DataRow
               key={test.id}
+              href={`/admin/tests/${test.id}`}
               expandBelow="xl"
               colSpan={COL_SPAN}
               details={
@@ -279,6 +275,7 @@ function TestsTable({
                 {createdLabel}
               </Td>
               <Td kind="actions" sticky="right">
+                <RowActions>
                 <ExpandToggle label={`More about ${test.test_name}`} />
                 <AssignDialog
                   variant="menu"
@@ -289,7 +286,7 @@ function TestsTable({
                   allClassGroups={assignOptions.allClassGroups}
                   allTeachers={assignOptions.allTeachers}
                 />
-                <RowActionsMenu label={`Actions for ${test.test_name}`} items={actions} />
+                </RowActions>
               </Td>
             </DataRow>
           );

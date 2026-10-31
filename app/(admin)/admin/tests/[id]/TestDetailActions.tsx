@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Send, Lock, Trash2, AlertTriangle, RotateCcw, MoreHorizontal, ClipboardList } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
 
 interface Props {
   testId: string;
@@ -171,6 +172,7 @@ export default function TestDetailActions({ testId, testName, status, submission
       </div>
 
       {closeOpen && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="p-5 border-b border-divider flex items-start gap-3">
@@ -201,9 +203,11 @@ export default function TestDetailActions({ testId, testName, status, submission
             </div>
           </div>
         </div>
+        </Portal>
       )}
 
       {deleteOpen && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="p-5 border-b border-divider flex items-start gap-3">
@@ -259,6 +263,7 @@ export default function TestDetailActions({ testId, testName, status, submission
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </>
   );

@@ -17,9 +17,9 @@ import {
   DetailItem,
   EmptyRow,
   ExpandToggle,
-  RowActionsMenu,
+  RowActions,
+  RowButton,
   TwoLineCell,
-  type RowAction,
 } from "@/components/ui/data-table";
 
 async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?: string) {
@@ -377,18 +377,19 @@ export default async function TestSubmissionsPage({
                 ? a.modules.map((m) => `${m.label}: ${m.correctCount}/${m.totalQuestions}`).join(" | ")
                 : undefined;
 
-              const rowActions: (RowAction | false)[] = [
-                (a.status === "Submitted" || a.status === "Late")
-                  ? { label: "View detail", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}/results/${a.detailSubmissionId}` }
-                  : false,
-                (a.status === "In Progress" && !!a.partialDetailSubmissionId)
-                  ? { label: "View partial", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId!}` }
-                  : false,
-              ];
+              // Rule 4: viewing the attempt is the visible action (and the
+              // row link); Grant retake is in ⋯.
+              const primary =
+                a.status === "Submitted" || a.status === "Late"
+                  ? { label: "View detail", href: `/teacher/tests/${test.id}/results/${a.detailSubmissionId}` }
+                  : a.status === "In Progress" && a.partialDetailSubmissionId
+                  ? { label: "View partial", href: `/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId}` }
+                  : null;
 
               return (
                 <DataRow
                   key={a.key}
+                  href={primary?.href}
                   expandBelow="2xl"
                   colSpan={COL_SPAN}
                   details={
@@ -444,8 +445,9 @@ export default async function TestSubmissionsPage({
                     #{a.attemptNumber}
                   </Td>
                   <Td kind="actions" sticky="right">
+                    <RowActions>
                     <ExpandToggle label={`More about ${a.studentDisplayName}`} />
-                    <RowActionsMenu label={`Actions for ${a.studentDisplayName}`} items={rowActions} />
+                    {primary && <RowButton label={primary.label} icon={<Eye size={13} />} href={primary.href} />}
                     {(a.status === "Submitted" || a.status === "Late") && (
                       <GrantRetakeButton
                         testId={test.id}
@@ -454,6 +456,7 @@ export default async function TestSubmissionsPage({
                         alreadyPending={pendingByStudent.has(a.studentId)}
                       />
                     )}
+                    </RowActions>
                   </Td>
                 </DataRow>
               );

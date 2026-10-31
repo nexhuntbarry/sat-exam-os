@@ -19,9 +19,8 @@ import {
   Td,
   DataRow,
   EmptyRow,
-  RowActionsMenu,
+  RowButton,
   TwoLineCell,
-  type RowAction,
 } from "@/components/ui/data-table";
 
 const MODULE_LABEL: Record<string, string> = {
@@ -284,12 +283,10 @@ export default async function StudentResultsPage() {
                 ? r.modules.map((m) => `${m.label}: ${m.correctCount}/${m.totalQuestions}`).join(" | ")
                 : undefined;
 
-              const actions: RowAction[] = [
-                { label: "View result", icon: <Eye size={14} />, href: `/student/tests/${r.testId}/result?submission=${r.detailSubmissionId}` },
-              ];
+              const resultHref = `/student/tests/${r.testId}/result?submission=${r.detailSubmissionId}`;
 
               return (
-                <DataRow key={r.key} colSpan={7}>
+                <DataRow key={r.key} href={resultHref} colSpan={7}>
                   <Td kind="main" sticky="left">
                     <TwoLineCell
                       main={r.testName}
@@ -325,7 +322,7 @@ export default async function StudentResultsPage() {
                     {r.submittedAt ? formatShortDate(r.submittedAt) : "—"}
                   </Td>
                   <Td kind="actions" sticky="right">
-                    <RowActionsMenu label={`Actions for ${r.testName}`} items={actions} />
+                    <RowButton label="View result" href={resultHref} icon={<Eye size={13} />} />
                   </Td>
                 </DataRow>
               );

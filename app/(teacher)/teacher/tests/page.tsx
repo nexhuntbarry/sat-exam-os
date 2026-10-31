@@ -2,7 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { ClipboardList, Eye } from "lucide-react";
+import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
@@ -18,9 +18,7 @@ import {
   DetailItem,
   EmptyRow,
   ExpandToggle,
-  RowActionsMenu,
   TwoLineCell,
-  type RowAction,
 } from "@/components/ui/data-table";
 
 async function getTeacherTests(user: { userId: string; role: string | null; isQa: boolean }) {
@@ -163,13 +161,10 @@ export default async function TeacherTestsPage() {
           const sectionLabel = mod ? `${mod.section}${mod.module_number ? ` M${mod.module_number}` : ""}` : "Adaptive";
           const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
 
-          const actions: RowAction[] = [
-            { label: "View detail", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}` },
-          ];
-
           return (
             <DataRow
               key={test.id}
+              href={`/teacher/tests/${test.id}`}
               expandBelow="lg"
               colSpan={COL_SPAN}
               details={
@@ -207,7 +202,6 @@ export default async function TeacherTestsPage() {
               </Td>
               <Td kind="actions" sticky="right">
                 <ExpandToggle label={`More about ${test.test_name}`} />
-                <RowActionsMenu label={`Actions for ${test.test_name}`} items={actions} />
               </Td>
             </DataRow>
           );

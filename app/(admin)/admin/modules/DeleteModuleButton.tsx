@@ -3,15 +3,19 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
+import { RowActionsMenu } from "@/components/ui/data-table";
 
 export default function DeleteModuleButton({
   moduleId,
   moduleName,
   onDeleted,
+  variant = "icon",
 }: {
   moduleId: string;
   moduleName: string;
   onDeleted?: () => void;
+  /** "menu": a row ⋯ menu with "Delete…" (modules list, table rule 4). */
+  variant?: "icon" | "menu";
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -35,6 +39,15 @@ export default function DeleteModuleButton({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (variant === "menu") {
+    return (
+      <RowActionsMenu
+        label={`Actions for ${moduleName}`}
+        items={[{ label: busy ? "Deleting…" : "Delete…", icon: <Trash2 size={14} />, tone: "danger", disabled: busy, onSelect: handleDelete }]}
+      />
+    );
   }
 
   return (

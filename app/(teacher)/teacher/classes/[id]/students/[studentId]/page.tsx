@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, ClipboardList, Eye, FileText } from "lucide-react";
+import { ArrowLeft, ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
@@ -25,7 +25,6 @@ import {
   EmptyRow,
   ExpandToggle,
   HeadRow,
-  RowActionsMenu,
   Td,
   Th,
   TruncatedText,
@@ -395,6 +394,7 @@ export default async function TeacherStudentResultsPage({
               return (
                 <DataRow
                   key={s.id}
+                  href={isDone && s.hasSubmission ? `/teacher/tests/${s.testId}/results/${s.id}` : `/teacher/tests/${s.testId}`}
                   expandBelow="lg"
                   colSpan={6}
                   details={
@@ -464,21 +464,6 @@ export default async function TeacherStudentResultsPage({
                   </Td>
                   <Td kind="actions" sticky="right">
                     <ExpandToggle label={`More about ${s.testName}`} />
-                    <RowActionsMenu
-                      label={`Actions for ${s.testName}`}
-                      items={[
-                        {
-                          label: "Open test",
-                          icon: <FileText size={14} />,
-                          href: `/teacher/tests/${s.testId}`,
-                        },
-                        isDone && s.hasSubmission && {
-                          label: "View detail",
-                          icon: <Eye size={14} />,
-                          href: `/teacher/tests/${s.testId}/results/${s.id}`,
-                        },
-                      ]}
-                    />
                   </Td>
                 </DataRow>
               );

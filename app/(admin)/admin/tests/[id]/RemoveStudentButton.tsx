@@ -3,6 +3,8 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { UserMinus, X } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
+import { RowActionsMenu } from "@/components/ui/data-table";
 
 interface Props {
   testId: string;
@@ -78,16 +80,14 @@ export default function RemoveStudentButton({
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        title={`Remove ${studentName} from this test`}
-        className="flex items-center gap-1 text-xs text-soft-mute hover:text-status-error transition-colors"
-      >
-        <UserMinus size={13} />
-        Remove
-      </button>
+      {/* Row ⋯ menu (table standard rule 4: risky actions live in ⋯). */}
+      <RowActionsMenu
+        label={`Actions for ${studentName}`}
+        items={[{ label: "Remove from test…", icon: <UserMinus size={14} />, tone: "danger", onSelect: () => setOpen(true) }]}
+      />
 
       {open && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="flex items-center justify-between p-5 border-b border-divider">
@@ -149,6 +149,7 @@ export default function RemoveStudentButton({
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </>
   );

@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { clsx } from "clsx";
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Eye, Filter } from "lucide-react";
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Filter } from "lucide-react";
 import ConfidenceBadge from "./ConfidenceBadge";
 import BulkActions from "./BulkActions";
 import MathMarkdown from "@/components/MathMarkdown";
@@ -16,7 +16,10 @@ import {
   DataRow,
   DetailItem,
   EmptyRow,
+  ExpandToggle,
+  RowActions,
   RowActionsMenu,
+  RowButton,
   TwoLineCell,
   TruncatedText,
   type RowAction,
@@ -473,13 +476,9 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
               const qNum = q.original_question_number ?? "—";
               const moduleName = q.modules?.module_name ?? "—";
 
+              // Rule 4: Approve is the visible action until approved; the
+              // row opens View / Edit; Reject is in ⋯.
               const actions: (RowAction | false)[] = [
-                { label: "View / Edit", icon: Eye, href: `${detailBase}/${q.id}` },
-                q.parsing_status !== "Approved" && {
-                  label: "Approve",
-                  icon: CheckCircle2,
-                  onSelect: () => handleStatusChange(q.id, "approve"),
-                },
                 q.parsing_status !== "Rejected" && {
                   label: "Reject",
                   icon: XCircle,
@@ -491,6 +490,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
               return (
                 <DataRow
                   key={q.id}
+                  href={`${detailBase}/${q.id}`}
                   tone={selectedIds.has(q.id) ? "warning" : "default"}
                   expandBelow="2xl"
                   colSpan={COL_COUNT}
@@ -578,7 +578,18 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                     <ConfidenceBadge score={q.ai_confidence_score} />
                   </Td>
                   <Td kind="actions" sticky="right">
-                    <RowActionsMenu label={`Actions for Q${qNum}`} items={actions} />
+                    <RowActions>
+                      <ExpandToggle label={`More about Q${qNum}`} />
+                      {q.parsing_status !== "Approved" && (
+                        <RowButton
+                          label="Approve"
+                          tone="primary"
+                          icon={<CheckCircle2 size={13} />}
+                          onClick={() => handleStatusChange(q.id, "approve")}
+                        />
+                      )}
+                      <RowActionsMenu label={`Actions for Q${qNum}`} items={actions} />
+                    </RowActions>
                   </Td>
                 </DataRow>
               );

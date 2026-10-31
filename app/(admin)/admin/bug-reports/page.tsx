@@ -15,6 +15,8 @@ import {
   DataRow,
   DetailItem,
   EmptyRow,
+  ExpandToggle,
+  RowActions,
   TwoLineCell,
   TruncatedText,
 } from "@/components/ui/data-table";
@@ -115,6 +117,7 @@ export default async function BugReportsPage({
             return (
               <DataRow
                 key={r.id}
+                href={`/admin/questions/${r.question_id}`}
                 expandBelow="lg"
                 details={
                   <>
@@ -169,7 +172,10 @@ export default async function BugReportsPage({
                   </span>
                 </Td>
                 <Td kind="actions" sticky="right">
-                  {r.status === "open" ? <ResolveButton reportId={r.id} /> : null}
+                  <RowActions>
+                    <ExpandToggle label="Show reviewer note" />
+                    {r.status === "open" ? <ResolveButton reportId={r.id} /> : null}
+                  </RowActions>
                 </Td>
               </DataRow>
             );

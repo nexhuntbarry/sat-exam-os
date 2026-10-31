@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RefreshCw, Check } from "lucide-react";
+import { RowActionsMenu } from "@/components/ui/data-table";
 
 interface Props {
   testId: string;
@@ -53,15 +54,11 @@ export default function GrantRetakeButton({
     }
   }
 
+  // Less frequent action, so it lives in the row's ⋯ menu (table rule 4).
   return (
-    <button
-      onClick={grant}
-      disabled={busy}
-      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-warm-coral/10 hover:bg-warm-coral/20 text-warm-coral-text text-xs font-medium transition-colors disabled:opacity-40"
-      title="Lets this student start one fresh attempt"
-    >
-      <RefreshCw size={11} />
-      {busy ? "…" : "Grant retake"}
-    </button>
+    <RowActionsMenu
+      label={`Actions for ${studentName}`}
+      items={[{ label: busy ? "Granting retake…" : "Grant retake…", icon: <RefreshCw size={14} />, disabled: busy, onSelect: grant }]}
+    />
   );
 }

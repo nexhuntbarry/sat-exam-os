@@ -15,7 +15,10 @@ import {
   DataRow,
   DetailItem,
   EmptyRow,
+  ExpandToggle,
+  RowActions,
   RowActionsMenu,
+  RowButton,
   TwoLineCell,
   type RowAction,
 } from "@/components/ui/data-table";
@@ -212,12 +215,10 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
 
             const canView = row.status === "Submitted" || row.status === "Late";
 
+            // Rule 4: View results is the visible action (and the row
+            // link); Allow retake is in ⋯.
+            const resultHref = canView ? `/teacher/tests/${testId}/results/${row.submissionId}` : undefined;
             const actions: (RowAction | false)[] = [
-              canView && {
-                label: "View results",
-                icon: Eye,
-                href: `/teacher/tests/${testId}/results/${row.submissionId}`,
-              },
               canView && !row.retakePending && {
                 label: grantingFor === row.studentId ? "Granting…" : "Allow retake",
                 icon: RotateCcw,
@@ -229,6 +230,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
             return (
               <DataRow
                 key={row.submissionId}
+                href={resultHref}
                 expandBelow="lg"
                 colSpan={COL_COUNT}
                 details={
@@ -309,6 +311,8 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                     : "—"}
                 </Td>
                 <Td kind="actions" sticky="right">
+                  <RowActions>
+                  <ExpandToggle label={`More about ${row.studentName}`} />
                   {canView && row.retakePending && (
                     <span
                       className="inline-flex items-center gap-1 text-status-success text-xs whitespace-nowrap"
@@ -321,7 +325,9 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                   {row.attemptNumber > 1 && (
                     <span className="text-xs text-soft-mute mr-1">#{row.attemptNumber}</span>
                   )}
+                  {resultHref && <RowButton label="View results" icon={<Eye size={13} />} href={resultHref} />}
                   <RowActionsMenu label={`Actions for ${row.studentName}`} items={actions} />
+                  </RowActions>
                 </Td>
               </DataRow>
             );

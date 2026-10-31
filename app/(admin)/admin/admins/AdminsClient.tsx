@@ -12,12 +12,15 @@ import {
   EmptyRow,
   ExpandToggle,
   HeadRow,
+  RowActions,
   RowActionsMenu,
+  RowButton,
   Td,
   Th,
   TwoLineCell,
   type RowAction,
 } from "@/components/ui/data-table";
+import { Portal } from "@/components/ui/Portal";
 
 interface Admin {
   id: string;
@@ -82,6 +85,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
     "w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors";
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
       <div className="bg-surface border border-divider rounded-2xl p-6 w-full max-w-sm shadow-2xl space-y-4">
         <div className="flex items-center justify-between">
@@ -197,6 +201,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
         )}
       </div>
     </div>
+    </Portal>
   );
 }
 
@@ -212,7 +217,8 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
 
   const isSuper = canInvite;
 
-  async function callAction(adminId: string, action: "approve" | "suspend") {
+  async function callAction(adminId: string, action: "approve" | "suspend", name?: string) {
+    if (action === "suspend" && !confirm(`Suspend ${name ?? "this admin"}? They will lose access until reactivated.`)) return;
     setActingId(`${adminId}:${action}`);
     try {
       const res = await fetch(`/api/admin/admins/${adminId}/${action}`, {
@@ -323,21 +329,18 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
             const activityDetail = `Joined ${formatShortDate(a.created_at)}`;
             const activityTitle = `${lastSignInFull ? `Last sign-in ${lastSignInFull}` : "Never signed in"} · Joined ${formatDateTime(a.created_at)}`;
 
-            const actions: (RowAction | false)[] = isSuper && !isMe
+            // Rule 4: Approve (pending) / Reactivate (suspended) are visible
+            // buttons; Suspend and Delete stay in ⋯.
+            const canAct = isSuper && !isMe;
+            const actions: (RowAction | false)[] = canAct
               ? [
-                  a.account_status === "approved"
-                    ? {
-                        label: "Suspend…",
-                        icon: Pause,
-                        disabled: actingId === `${a.id}:suspend`,
-                        onSelect: () => callAction(a.id, "suspend"),
-                      }
-                    : {
-                        label: a.account_status === "pending" ? "Approve" : "Reactivate",
-                        icon: Check,
-                        disabled: actingId === `${a.id}:approve`,
-                        onSelect: () => callAction(a.id, "approve"),
-                      },
+                  a.account_status === "approved" && {
+                    label: "Suspend…",
+                    icon: Pause,
+                    tone: "danger",
+                    disabled: actingId === `${a.id}:suspend`,
+                    onSelect: () => callAction(a.id, "suspend", name),
+                  },
                   {
                     label: "Delete…",
                     icon: Trash2,
@@ -418,8 +421,19 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
                   </span>
                 </Td>
                 <Td kind="actions" sticky="right">
-                  <ExpandToggle label={`More about ${name}`} />
-                  <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                  <RowActions>
+                    <ExpandToggle label={`More about ${name}`} />
+                    {canAct && a.account_status !== "approved" && (
+                      <RowButton
+                        label={a.account_status === "pending" ? "Approve" : "Reactivate"}
+                        tone={a.account_status === "pending" ? "primary" : "default"}
+                        icon={<Check size={13} />}
+                        disabled={actingId === `${a.id}:approve`}
+                        onClick={() => callAction(a.id, "approve")}
+                      />
+                    )}
+                    <RowActionsMenu label={`Actions for ${name}`} items={actions} />
+                  </RowActions>
                 </Td>
               </DataRow>
             );
@@ -429,6 +443,7 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
 
       {/* Delete-admin double-confirm */}
       {deleteTarget && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="p-5 border-b border-divider flex items-start gap-3">
@@ -483,6 +498,7 @@ export default function AdminsClient({ admins, currentUserId, canInvite }: Props
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </div>
   );

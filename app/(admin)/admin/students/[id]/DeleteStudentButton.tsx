@@ -3,16 +3,25 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2, AlertTriangle } from "lucide-react";
+import { Portal } from "@/components/ui/Portal";
 
 interface Props {
   studentId: string;
   studentName: string;
   email: string;
+  /** Controlled mode (Students list ⋯ menu): no trigger button is rendered. */
+  open?: boolean;
+  onClose?: () => void;
+  /** Controlled mode: called after a successful delete instead of navigating. */
+  onDeleted?: () => void;
 }
 
-export default function DeleteStudentButton({ studentId, studentName, email }: Props) {
+export default function DeleteStudentButton({ studentId, studentName, email, open: openProp, onClose, onDeleted }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const [openState, setOpenState] = useState(false);
+  const open = controlled ? openProp : openState;
+  const setOpen = (v: boolean) => (controlled ? !v && onClose?.() : setOpenState(v));
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,7 +40,8 @@ export default function DeleteStudentButton({ studentId, studentName, email }: P
         setError(j.error ?? "Failed to delete");
         return;
       }
-      router.push("/admin/students");
+      if (onDeleted) onDeleted();
+      else router.push("/admin/students");
     } catch {
       setError("Network error");
     } finally {
@@ -41,6 +51,7 @@ export default function DeleteStudentButton({ studentId, studentName, email }: P
 
   return (
     <>
+      {!controlled && (
       <button
         onClick={() => {
           setOpen(true);
@@ -52,8 +63,10 @@ export default function DeleteStudentButton({ studentId, studentName, email }: P
         <Trash2 size={14} />
         Delete student
       </button>
+      )}
 
       {open && (
+        <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
             <div className="p-5 border-b border-divider flex items-start gap-3">
@@ -99,6 +112,7 @@ export default function DeleteStudentButton({ studentId, studentName, email }: P
             </div>
           </div>
         </div>
+        </Portal>
       )}
     </>
   );

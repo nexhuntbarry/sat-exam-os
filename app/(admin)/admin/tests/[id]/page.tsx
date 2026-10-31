@@ -30,9 +30,9 @@ import {
   DetailItem,
   EmptyRow,
   ExpandToggle,
-  RowActionsMenu,
+  RowActions,
+  RowButton,
   TwoLineCell,
-  type RowAction,
 } from "@/components/ui/data-table";
 
 async function getTest(id: string, viewerIsQa: boolean) {
@@ -437,17 +437,18 @@ export default async function TestDetailPage({
                 const effective = input ? summarizeAnswerVisibility(input) : null;
                 const visLabel = effective ? answerVisibilityLabel(tv, effective) : null;
 
-                const rowActions: (RowAction | false)[] = [
-                  st.progress.detailSubmissionId
-                    ? { label: "View result", icon: <Eye size={14} />, href: `/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}` }
-                    : st.submissionCount > 0
-                    ? { label: "View submissions", icon: <FileText size={14} />, href: submissionsHref }
-                    : false,
-                ];
+                // Rule 4: the student's work is the visible action (and the
+                // row link); removing them from the test is in ⋯.
+                const primary = st.progress.detailSubmissionId
+                  ? { label: "View result", icon: <Eye size={13} />, href: `/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}` }
+                  : st.submissionCount > 0
+                  ? { label: "Submissions", icon: <FileText size={13} />, href: submissionsHref }
+                  : null;
 
                 return (
                   <DataRow
                     key={st.id}
+                    href={primary?.href}
                     expandBelow="lg"
                     colSpan={6}
                     details={
@@ -494,8 +495,9 @@ export default async function TestDetailPage({
                       )}
                     </Td>
                     <Td kind="actions" sticky="right">
+                      <RowActions>
                       <ExpandToggle label={`More about ${st.name}`} />
-                      <RowActionsMenu label={`Actions for ${st.name}`} items={rowActions} />
+                      {primary && <RowButton label={primary.label} icon={primary.icon} href={primary.href} />}
                       {st.individual && (
                         <RemoveStudentButton
                           testId={test.id}
@@ -506,6 +508,7 @@ export default async function TestDetailPage({
                           visibleViaGroup={st.visibleViaGroup}
                         />
                       )}
+                      </RowActions>
                     </Td>
                   </DataRow>
                 );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { Portal } from "@/components/ui/Portal";
 
 interface Rect { x: number; y: number; w: number; h: number }
 
@@ -68,6 +69,7 @@ export default function ImageCropDialog({
   const ready = rect && rect.w > 8 && rect.h > 8;
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" role="dialog" aria-label="Crop image">
       <div className="bg-surface rounded-2xl p-4 max-w-4xl w-full max-h-full overflow-auto space-y-3">
         <div className="text-sm text-charcoal font-medium">Drag a box around the part to keep</div>
@@ -104,5 +106,6 @@ export default function ImageCropDialog({
         </div>
       </div>
     </div>
+    </Portal>
   );
 }

@@ -15,6 +15,8 @@ import {
   DataRow,
   DetailItem,
   EmptyRow,
+  ExpandToggle,
+  RowActions,
   TwoLineCell,
 } from "@/components/ui/data-table";
 
@@ -175,6 +177,7 @@ export default async function ModulesPage({
               return (
                 <DataRow
                   key={mod.id}
+                  href={`/admin/modules/${mod.id}`}
                   expandBelow="lg"
                   details={
                     <>
@@ -229,7 +232,10 @@ export default async function ModulesPage({
                   </Td>
                   <Td priority="lg" className="text-soft-mute">{formatShortDate(mod.created_at)}</Td>
                   <Td kind="actions" sticky="right">
-                    <DeleteModuleButton moduleId={mod.id} moduleName={mod.module_name} />
+                    <RowActions>
+                      <ExpandToggle label={`More about ${mod.module_name}`} />
+                      <DeleteModuleButton moduleId={mod.id} moduleName={mod.module_name} variant="menu" />
+                    </RowActions>
                   </Td>
                 </DataRow>
               );
