@@ -31,6 +31,17 @@ export interface StudentTestProgress {
   currentModule: number | null;
   /** Modules in the latest attempt (2 for a two-module test, 1 otherwise / legacy). */
   moduleCount: number;
+  /** Latest attempt per module, Module 1 first. `graded` false = not finished
+   *  yet (counts are then null). Empty when Not started. */
+  modules: ModuleResult[];
+}
+
+export interface ModuleResult {
+  number: number;
+  graded: boolean;
+  correct: number | null;
+  /** Questions actually scored (Needs Review questions are left out). */
+  total: number | null;
 }
 
 const graded = (s: string) => s === "Submitted" || s === "Late";
@@ -45,7 +56,7 @@ export function studentTestProgress(
   twoModules: boolean,
 ): StudentTestProgress {
   if (subs.length === 0) {
-    return { status: "Not started", score: null, detailSubmissionId: null, currentModule: null, moduleCount: twoModules ? 2 : 1 };
+    return { status: "Not started", score: null, detailSubmissionId: null, currentModule: null, moduleCount: twoModules ? 2 : 1, modules: [] };
   }
   // Latest attempt = the session of the most recently started row.
   const latest = [...subs].sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""))[0];
@@ -59,6 +70,14 @@ export function studentTestProgress(
     : attempt.some((s) => graded(s.status));
   const moduleCount = twoModules && !legacy ? 2 : 1;
   const gradedRows = attempt.filter((s) => graded(s.status));
+  const moduleRow = (n: number) =>
+    attempt.find((s) => (n === 2) === isModule2Track(s.adaptive_track) && graded(s.status));
+  const modules: ModuleResult[] = (moduleCount === 2 ? [1, 2] : [1]).map((n) => {
+    const r = moduleCount === 2 ? moduleRow(n) : gradedRows[0];
+    return r
+      ? { number: n, graded: true, correct: r.correct_count ?? 0, total: r.total_questions ?? 0 }
+      : { number: n, graded: false, correct: null, total: null };
+  });
   if (!done) {
     const started = attempt.some((s) => s.status === "In Progress") || gradedRows.length > 0;
     // On Module 2 once its row exists or Module 1 is graded (handoff pending).
@@ -71,6 +90,7 @@ export function studentTestProgress(
       detailSubmissionId: null,
       currentModule: started ? (onModule2 ? 2 : 1) : null,
       moduleCount,
+      modules: started ? modules : [],
     };
   }
   const correct = gradedRows.reduce((n, s) => n + (s.correct_count ?? 0), 0);
@@ -82,6 +102,7 @@ export function studentTestProgress(
     detailSubmissionId: detail.id ?? null,
     currentModule: null,
     moduleCount,
+    modules,
   };
 }
 

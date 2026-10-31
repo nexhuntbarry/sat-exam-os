@@ -1,10 +1,12 @@
 import { getServiceClient } from "@/lib/supabase";
-import { studentTestProgress, summarizeTestProgress } from "@/lib/test-progress";
+import { studentTestProgress, summarizeTestProgress, type StudentTestProgress } from "@/lib/test-progress";
+import { scaleSectionScore } from "@/lib/scoring";
+import { getTestSections } from "@/lib/teacher-access";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { ChevronLeft, ChevronDown, Eye, FileText } from "lucide-react";
+import { ChevronLeft, ChevronDown, ChevronUp, ChevronsUpDown, Eye, FileText } from "lucide-react";
 import TestDetailActions from "./TestDetailActions";
 import EditTestButton from "./EditTestButton";
 import RemoveStudentButton from "./RemoveStudentButton";
@@ -173,20 +175,50 @@ const progressStyles: Record<string, string> = {
   "Not started": "bg-light-bg text-mid-gray",
 };
 
+// Questions per module on a full SAT; fewer scored means some were left
+// out (Needs Review questions aren't shown to students or scored).
+const FULL_MODULE: Record<string, number> = { "Reading & Writing": 27, Math: 22 };
+
+/** Score cell for one student: SAT estimate on top (finished attempts only),
+ *  per-module correct counts below, review notes in the hover title. */
+function scoreView(p: StudentTestProgress, section: string | null) {
+  if (p.modules.length === 0) return null;
+  const two = p.modules.length > 1;
+  const full = section ? FULL_MODULE[section] : undefined;
+  const notes: string[] = [];
+  const parts = p.modules.map((m) => {
+    const tag = two ? `M${m.number} ` : "";
+    if (!m.graded) return `${tag}—`;
+    const missing = full != null && m.total != null ? full - m.total : 0;
+    if (missing > 0) {
+      notes.push(
+        `${two ? `M${m.number}: ` : ""}${missing} question${missing === 1 ? "" : "s"} in review, not scored`,
+      );
+    }
+    return `${tag}${m.correct}/${m.total}`;
+  });
+  const sat = p.status === "Submitted" && p.score != null ? scaleSectionScore(p.score) : null;
+  return { sat, modules: parts.join(" · "), pct: p.score, notes };
+}
+
 export default async function TestDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ sort?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user || user.role !== "admin") redirect("/sign-in");
 
   const { id } = await params;
+  const { sort } = await searchParams;
   if (!onSide(id, await getQaTestIds(), user.isQa)) notFound();
   const test = await getTest(id, user.isQa);
   if (!test) notFound();
 
   const db = getServiceClient();
+  const section = (await getTestSections(db, [test.id])).get(test.id) ?? null;
 
   // Effective answer visibility for every student in the Students table
   // (individual + class-assigned + unassigned-with-work) — the same decision
@@ -279,6 +311,22 @@ export default async function TestDetailPage({
   })();
 
   const { assignment, progress } = test;
+
+  // Score column: SAT estimate per student; header click sorts by it
+  // (?sort=score high→low, ?sort=score-asc low→high, unfinished last).
+  const scoreOf = new Map(assignment.students.map((st) => [st.id, scoreView(st.progress, section)]));
+  const satOf = (sid: string) => scoreOf.get(sid)?.sat ?? null;
+  const sortDir = sort === "score" ? -1 : sort === "score-asc" ? 1 : 0;
+  const students = sortDir
+    ? [...assignment.students].sort((a, b) => {
+        const x = satOf(a.id), y = satOf(b.id);
+        if (x == null || y == null) return x == null && y == null ? a.name.localeCompare(b.name) : x == null ? 1 : -1;
+        return (x - y) * sortDir || a.name.localeCompare(b.name);
+      })
+    : assignment.students;
+  const finishedSats = assignment.students.map((st) => satOf(st.id)).filter((x): x is number => x != null);
+  const avgSat = finishedSats.length > 0 ? Math.round(finishedSats.reduce((a, b) => a + b, 0) / finishedSats.length) : null;
+  const scoreSortHref = `/admin/tests/${id}?sort=${sort === "score" ? "score-asc" : "score"}`;
   const submissionsHref = `/admin/tests/${test.id}/submissions`;
 
   const settings: { label: string; value: string }[] = [
@@ -378,9 +426,12 @@ export default async function TestDetailPage({
           </div>
         </div>
         <div>
-          <div className="text-soft-mute text-xs">Avg score</div>
-          <div className="text-warm-amber font-semibold">
-            {progress.avgScore !== null ? `${progress.avgScore.toFixed(1)}%` : "—"}
+          <div className="text-soft-mute text-xs">Avg SAT</div>
+          <div className="text-charcoal font-semibold">
+            {avgSat ?? "—"}
+            {progress.avgScore !== null && (
+              <span className="ml-1.5 text-xs font-normal text-soft-mute">{progress.avgScore.toFixed(1)}%</span>
+            )}
           </div>
         </div>
         <div>
@@ -425,13 +476,18 @@ export default async function TestDetailPage({
                 <Th kind="main" sticky="left">Student</Th>
                 <Th priority="lg">Assigned via</Th>
                 <Th>Status</Th>
-                <Th>Score</Th>
+                <Th aria-sort={sortDir === -1 ? "descending" : sortDir === 1 ? "ascending" : "none"}>
+                  <Link href={scoreSortHref} scroll={false} className="inline-flex items-center gap-1 hover:text-charcoal">
+                    Score
+                    {sortDir === -1 ? <ChevronDown size={12} /> : sortDir === 1 ? <ChevronUp size={12} /> : <ChevronsUpDown size={12} className="opacity-50" />}
+                  </Link>
+                </Th>
                 <Th kind="long" priority="lg" className="w-[18%]">{tv("column")}</Th>
                 <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
               </HeadRow>
             </thead>
             <tbody>
-              {assignment.students.map((st) => {
+              {students.map((st) => {
                 const assignedVia = [st.individual ? "Individual" : null, ...st.groups].filter(Boolean).join(" · ");
                 const input = visibilityInputs.get(visibilityKey(test.id, st.id));
                 const effective = input ? summarizeAnswerVisibility(input) : null;
@@ -482,8 +538,25 @@ export default async function TestDetailPage({
                         {st.progress.status}
                       </span>
                     </Td>
-                    <Td className="text-charcoal">
-                      {st.progress.score !== null ? `${st.progress.score.toFixed(1)}%` : "—"}
+                    <Td>
+                      {(() => {
+                        const sv = scoreOf.get(st.id);
+                        if (!sv) return <span className="text-soft-mute">—</span>;
+                        const title = [sv.pct != null ? `${sv.pct.toFixed(1)}% correct` : null, ...sv.notes]
+                          .filter(Boolean)
+                          .join("\n");
+                        return (
+                          <div title={title || undefined}>
+                            {sv.sat != null && (
+                              <div className="text-base font-bold text-charcoal leading-tight">{sv.sat}</div>
+                            )}
+                            <div className="text-xs text-mid-gray whitespace-nowrap">
+                              {sv.modules}
+                              {sv.notes.length > 0 && <span className="text-status-warning"> *</span>}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </Td>
                     <Td kind="long" priority="lg">
                       {effective ? (
