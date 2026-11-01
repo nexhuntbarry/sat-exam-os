@@ -25,8 +25,10 @@ type SessionRow = {
   correct_count: number | null;
   total_questions: number | null;
   scaled_score: number | null;
+  session_id: string | null;
   adaptive_track: string | null;
   time_spent_seconds: number | null;
+  started_at: string | null;
 };
 
 async function getResult(testId: string, studentId: string, submissionId?: string) {
@@ -76,7 +78,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     const { data: rows } = await db
       .from("submissions")
       .select(
-        "id, status, percentage, correct_count, total_questions, scaled_score, adaptive_track, time_spent_seconds, started_at",
+        "id, status, percentage, correct_count, total_questions, scaled_score, session_id, adaptive_track, time_spent_seconds, started_at",
       )
       .eq("session_id", submissionWithSession.session_id)
       .order("started_at", { ascending: true });

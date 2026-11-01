@@ -15,6 +15,7 @@
 //   4. Follow: results page uses the test's show-answers/explanations
 //      flags (submitted students only); class review uses review_unlocked.
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { studentTestProgress } from "@/lib/test-progress";
 
 export type StudentAnswerMode = "follow" | "show" | "hide";
 export const STUDENT_ANSWER_MODES: readonly StudentAnswerMode[] = ["follow", "show", "hide"];
@@ -50,7 +51,7 @@ export interface VisibilityInput {
   hasSubmitted: boolean;
   /** Unconsumed retake grant, or a later attempt still in progress. */
   retakePending: boolean;
-  /** Any submission on this test not finished yet (taking it right now). */
+  /** Taking it right now: a module still open, or Module 1 in and Module 2 not started yet. */
   examInProgress?: boolean;
 }
 
@@ -146,7 +147,7 @@ export async function loadAnswerVisibilityInputs(
   if (tIds.length === 0 || sIds.length === 0) return out;
 
   const missingTests = tIds.filter((id) => !knownTests?.has(id));
-  const [testsRes, subsRes, grantsRes, overridesRes] = await Promise.all([
+  const [testsRes, subsRes, grantsRes, overridesRes, shapeRes] = await Promise.all([
     missingTests.length > 0
       ? db
           .from("tests")
@@ -155,7 +156,7 @@ export async function loadAnswerVisibilityInputs(
       : Promise.resolve({ data: [], error: null }),
     db
       .from("submissions")
-      .select("test_id, student_id, status, attempt_number")
+      .select("test_id, student_id, status, attempt_number, session_id, adaptive_track, started_at")
       .in("test_id", tIds)
       .in("student_id", sIds),
     db
@@ -169,10 +170,19 @@ export async function loadAnswerVisibilityInputs(
       .select("test_id, student_id, mode, show_explanations, updated_by, updated_at")
       .in("test_id", tIds)
       .in("student_id", sIds),
+    // Module structure, to tell "Module 1 in, Module 2 not started" apart from finished.
+    db.from("tests").select("id, module_2_id, is_adaptive").in("id", tIds),
   ]);
   if (testsRes.error) throw new Error(`answer visibility: tests lookup failed: ${testsRes.error.message}`);
   if (subsRes.error) throw new Error(`answer visibility: submissions lookup failed: ${subsRes.error.message}`);
   if (grantsRes.error) throw new Error(`answer visibility: retake grants lookup failed: ${grantsRes.error.message}`);
+  if (shapeRes.error) throw new Error(`answer visibility: test modules lookup failed: ${shapeRes.error.message}`);
+  const twoModules = new Map(
+    ((shapeRes.data ?? []) as { id: string; module_2_id: string | null; is_adaptive: boolean | null }[]).map((t) => [
+      t.id,
+      Boolean(t.module_2_id) || t.is_adaptive === true,
+    ]),
+  );
   if (overridesRes.error && !isMissingTable(overridesRes.error)) {
     throw new Error(`answer visibility: overrides lookup failed: ${overridesRes.error.message}`);
   }
@@ -182,7 +192,15 @@ export async function loadAnswerVisibilityInputs(
     tests.set(t.id, t);
   }
 
-  type Sub = { test_id: string; student_id: string; status: string; attempt_number: number | null };
+  type Sub = {
+    test_id: string;
+    student_id: string;
+    status: string;
+    attempt_number: number | null;
+    session_id: string | null;
+    adaptive_track: string | null;
+    started_at: string | null;
+  };
   const subsByPair = new Map<string, Sub[]>();
   for (const s of (subsRes.data ?? []) as Sub[]) {
     const k = visibilityKey(s.test_id, s.student_id);
@@ -229,7 +247,9 @@ export async function loadAnswerVisibilityInputs(
         override: overrides.get(k) ?? null,
         hasSubmitted: submitted.length > 0,
         retakePending: grants.has(k) || retakeInProgress,
-        examInProgress: subs.some((s) => !DONE.has(s.status)),
+        examInProgress:
+          subs.some((s) => !DONE.has(s.status)) ||
+          (subs.length > 0 && studentTestProgress(subs, twoModules.get(testId) ?? false).status === "In progress"),
       });
     }
   }
