@@ -49,7 +49,7 @@ function assignmentText(
     names.length === 0 ? null : `${label}: ${names.slice(0, 30).join(", ")}${names.length > 30 ? `, +${names.length - 30} more` : ""}`;
   const hover = [list("Students", a.studentNames), list("Classes", classNames), list("Teachers", teacherNames)].filter(Boolean).join("\n");
   // Non-breaking inside each part, so a narrow column wraps between parts.
-  return { assignments: parts.length ? parts.map((p) => p!.replace(/ /g, "\u00a0")).join(" · ") : "—", assignmentNames: hover || undefined };
+  return { assignments: parts.length ? parts.map((p) => p!.replace(/ /g, "\u00a0")).join("\u00a0· ") : "—", assignmentNames: hover || undefined };
 }
 
 // ── types ──────────────────────────────────────────────────────────────────────
@@ -201,9 +201,9 @@ function TestsTable({
       <thead>
         <HeadRow>
           <SortTh kind="main" sticky="left" className="w-[22%]" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
-          <SortTh kind="long" priority="md" className="w-[34%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
+          <SortTh kind="long" priority="md" className="w-[30%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
           <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
-          <Th priority="lg">Assignments</Th>
+          <Th priority="lg" className="min-w-[9.5rem]">Assignments</Th>
           <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
           <SortTh priority="xl" label="Due" sortKey="due_date" active={sortKey === "due_date"} dir={sortDir} onSort={onSort} />
           <SortTh priority="2xl" label="Created" sortKey="created_at" active={sortKey === "created_at"} dir={sortDir} onSort={onSort} />
@@ -271,7 +271,7 @@ function TestsTable({
                   />
                 </Link>
               </Td>
-              <Td priority="md" className="w-[34%] max-w-0 whitespace-normal">
+              <Td priority="md" className="w-[30%] max-w-0 whitespace-normal">
                 {moduleList}
               </Td>
               <Td>
