@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { hasKeyDoubt } from "@/lib/key-doubt";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { clsx } from "clsx";
@@ -67,6 +68,7 @@ function issueSummary(
     return !t.trim() || /partially|no text|placeholder|not visible|garbled|table partially/i.test(t);
   });
 
+  if (hasKeyDoubt(n)) return { label: "AI thinks the answer key is wrong", tone: "warn" };
   if (questionType === "Multiple Choice" && ch.length > 0 && ch.length < 4) return { label: "Missing answer choices", tone: "warn" };
   if (brokenChoice) return { label: "Broken / unreadable choice", tone: "warn" };
   if (/self-contradictory|not a choice|cos R|mis-parsed|bad question/i.test(n)) return { label: "Question looks mis-parsed", tone: "warn" };

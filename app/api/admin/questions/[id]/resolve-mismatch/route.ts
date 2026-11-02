@@ -5,7 +5,7 @@ import { forbidQa } from "@/lib/qa";
 import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
 import { findApproveBlocker } from "@/lib/parse-guards";
-import { stripLiveFixNote } from "@/lib/live-questions";
+import { clearReviewTags } from "@/lib/key-doubt";
 
 export const maxDuration = 60;
 
@@ -92,7 +92,7 @@ export async function POST(
       .map((s) => s.trim())
       .filter((s) => s && !/^Mismatch:/i.test(s))
       .join("; ");
-    update.parsing_notes = stripLiveFixNote(cleaned);
+    update.parsing_notes = clearReviewTags(cleaned);
   }
 
   // Determine the answer we're settling on.

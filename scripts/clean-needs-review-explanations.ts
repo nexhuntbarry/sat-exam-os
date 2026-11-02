@@ -68,7 +68,8 @@ async function main() {
   const { data } = await db
     .from("questions")
     .select("id, original_question_number, question_text, choices, correct_answer, explanation, mismatch_with_official, parsing_notes, has_image, image_urls, question_type")
-    .eq("parsing_status", "Needs Review");
+    .eq("parsing_status", "Needs Review")
+    .or("parsing_notes.is.null,parsing_notes.not.ilike.*AI thinks the answer key may be wrong*") /* admin decides key doubts */;
   const rows = data ?? [];
 
   const caveat = /still needs review|incomplete|cut off|truncat|duplicate|same value|blind|no figure|not fully|blank choice|figure\/choices/i;

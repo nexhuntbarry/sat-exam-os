@@ -65,6 +65,7 @@ async function main() {
       "id, original_question_number, module_id, parsing_status, parsing_notes, has_image, image_urls, source_pdf_url, modules!inner(module_name)",
     )
     .eq("parsing_status", "Needs Review")
+    .or("parsing_notes.is.null,parsing_notes.not.ilike.*AI thinks the answer key may be wrong*") /* admin decides key doubts */
     .order("module_id")
     .order("original_question_number");
   if (moduleArg) q = q.eq("module_id", moduleArg.split("=")[1]);

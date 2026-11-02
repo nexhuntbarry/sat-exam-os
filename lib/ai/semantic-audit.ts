@@ -29,6 +29,8 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { logUsage } from "./parse-pdf";
 import { applyLiveHold, liveQuestionIds } from "@/lib/live-questions";
+import { answersMatch } from "@/lib/grade-submission";
+import { keyDoubtNote, stripKeyDoubtNote } from "@/lib/key-doubt";
 
 // How many questions to send to Claude per call. Small enough that the model
 // gives each question real attention and the JSON stays reliable; large enough
@@ -62,6 +64,16 @@ const VerdictSchema = z.object({
         .describe(
           "For Multiple Choice: true if there are four distinct, plausible options. For non-MCQ: always true.",
         ),
+      suspected_answer: z
+        .string()
+        .nullable()
+        .describe(
+          "Solve the question yourself. ONLY if you are confident the stored correct_answer is wrong AND the question is fully answerable from the text you were given (no figure needed), the answer you believe is right (choice letter for Multiple Choice, value otherwise). Otherwise null.",
+        ),
+      suspected_reason: z
+        .string()
+        .nullable()
+        .describe("One sentence on why the stored answer is wrong, when suspected_answer is set; else null."),
       issues: z
         .array(z.string())
         .describe(
@@ -83,6 +95,8 @@ For EACH question return a verdict on four dimensions. Be strict but fair — on
 
 4. choices_ok — Only meaningful for Multiple Choice. Flag (false) if there are fewer than four options, options are duplicated, or an option is empty/garbled. A choice with graph_image_attached=true IS a graph shown to the student as an image — its empty text is correct, not an empty option. For Student Produced Response / non-MCQ, choices_ok=true.
 
+5. suspected_answer — Solve the question yourself, independently of the stored answer and explanation. If you are confident the stored correct_answer is wrong (e.g. a transition that contradicts the logic of the passage, an arithmetic result that differs), give the answer you believe is right and a one-sentence reason. Leave it null when the stored answer is right, when you are unsure, or when the question depends on a figure you cannot see. Do not set it just because the explanation is weak.
+
 Put a concise note in issues[] for every dimension you flag. If a question is completely fine, all four booleans are true and issues is [].
 
 Return a verdict for EVERY question number you are given, in any order.`;
@@ -94,6 +108,8 @@ export interface SemanticAuditSummary {
   figureIssues: number;
   explanationIssues: number;
   choiceIssues: number;
+  /** Rows where the audit's own solve disagreed with the stored key. */
+  keyDoubts: number;
   errors: string[];
 }
 
@@ -109,6 +125,7 @@ interface QuestionRow {
   image_urls: unknown;
   parsing_status: string | null;
   parsing_notes: string | null;
+  reviewed_at: string | null;
 }
 
 // The question's OWN figure — graph choices are reported per choice
@@ -125,6 +142,16 @@ function stripPriorAuditNote(notes: string | null): string {
     .map((s) => s.trim())
     .filter((s) => s && !s.startsWith("Semantic audit:"))
     .join("; ");
+}
+
+// The audit's own solve disagrees with the stored key. A human who approved
+// the row after it was flagged has already decided, so don't re-raise it.
+function keyDoubt(r: QuestionRow, v: { suspected_answer: string | null; suspected_reason: string | null }): string | null {
+  const s = v.suspected_answer?.trim();
+  if (!s || !r.correct_answer) return null;
+  if (answersMatch(s, r.correct_answer)) return null;
+  if (r.parsing_status === "Approved" && r.reviewed_at) return null;
+  return keyDoubtNote(r.correct_answer, s, v.suspected_reason ?? "the AI's own solve reached a different answer");
 }
 
 /**
@@ -144,13 +171,14 @@ export async function runSemanticAudit(
     figureIssues: 0,
     explanationIssues: 0,
     choiceIssues: 0,
+    keyDoubts: 0,
     errors: [],
   };
 
   const { data, error } = await db
     .from("questions")
     .select(
-      "id, original_question_number, question_text, choices, correct_answer, explanation, question_type, has_image, image_urls, parsing_status, parsing_notes",
+      "id, original_question_number, question_text, choices, correct_answer, explanation, question_type, has_image, image_urls, parsing_status, parsing_notes, reviewed_at",
     )
     .eq("module_id", moduleId)
     .order("original_question_number");
@@ -255,15 +283,20 @@ export async function runSemanticAudit(
           summary.choiceIssues++;
           problems.push("choices");
         }
-        if (problems.length === 0) continue;
+        const doubt = keyDoubt(row, v);
+        if (doubt) summary.keyDoubts++;
+        if (problems.length === 0 && !doubt) continue;
 
         summary.flagged++;
         const detail = v.issues.length
-          ? v.issues.join(", ")
+          ? v.issues.join(", ").replace(/;/g, ",")
           : problems.join(", ");
-        const note = `Semantic audit: ${detail}`;
-        const base = stripPriorAuditNote(row.parsing_notes);
-        const newNotes = base ? `${base}; ${note}` : note;
+        const notes = [
+          stripKeyDoubtNote(stripPriorAuditNote(row.parsing_notes)),
+          problems.length ? `Semantic audit: ${detail}` : "",
+          doubt ?? "",
+        ].filter(Boolean);
+        const newNotes = notes.join("; ");
         const { update } = applyLiveHold(
           row,
           {
@@ -271,7 +304,7 @@ export async function runSemanticAudit(
             parsing_notes: newNotes,
             updated_at: new Date().toISOString(),
           },
-          "Semantic audit found a problem",
+          doubt ? "AI thinks the answer key may be wrong" : "Semantic audit found a problem",
           live,
         );
         const { error: upErr } = await db
@@ -290,7 +323,7 @@ export async function runSemanticAudit(
   }
 
   console.log(
-    `[semantic-audit] module=${moduleId} audited=${summary.audited} flagged=${summary.flagged} latex=${summary.latexIssues} figure=${summary.figureIssues} explanation=${summary.explanationIssues} choices=${summary.choiceIssues} errors=${summary.errors.length}`,
+    `[semantic-audit] module=${moduleId} audited=${summary.audited} flagged=${summary.flagged} latex=${summary.latexIssues} figure=${summary.figureIssues} explanation=${summary.explanationIssues} choices=${summary.choiceIssues} keyDoubts=${summary.keyDoubts} errors=${summary.errors.length}`,
   );
   return summary;
 }

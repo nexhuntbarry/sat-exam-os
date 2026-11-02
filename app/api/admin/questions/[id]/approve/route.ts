@@ -3,7 +3,7 @@ import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { findApproveBlocker } from "@/lib/parse-guards";
-import { LIVE_FIX_TAG, stripLiveFixNote } from "@/lib/live-questions";
+import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
 
 // POST /api/admin/questions/[id]/approve
 export async function POST(
@@ -34,9 +34,10 @@ export async function POST(
     reviewed_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
-  // A person approving it clears the live-test re-check tag.
-  if (current?.parsing_notes?.startsWith(LIVE_FIX_TAG)) {
-    update.parsing_notes = stripLiveFixNote(current.parsing_notes);
+  // A person approving it clears the live-test re-check tag and any
+  // "AI thinks the answer key may be wrong" doubt.
+  if (hasReviewTags(current?.parsing_notes)) {
+    update.parsing_notes = clearReviewTags(current?.parsing_notes);
   }
 
   const { data, error } = await db

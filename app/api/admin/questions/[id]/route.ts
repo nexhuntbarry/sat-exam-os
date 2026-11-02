@@ -5,7 +5,7 @@ import { forbidQa } from "@/lib/qa";
 import { explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
 import { findApproveBlocker } from "@/lib/parse-guards";
-import { LIVE_FIX_TAG, stripLiveFixNote } from "@/lib/live-questions";
+import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
 
 // Answer-key edits may regenerate the explanation (AI) — allow headroom.
 export const maxDuration = 60;
@@ -103,8 +103,8 @@ export async function PATCH(
   // re-check tag.
   const resultStatus = "parsing_status" in update ? update.parsing_status : prior?.parsing_status;
   const resultNotes = "parsing_notes" in update ? (update.parsing_notes as string | null) : prior?.parsing_notes;
-  if (resultStatus === "Approved" && typeof resultNotes === "string" && resultNotes.startsWith(LIVE_FIX_TAG)) {
-    update.parsing_notes = stripLiveFixNote(resultNotes);
+  if (resultStatus === "Approved" && hasReviewTags(resultNotes)) {
+    update.parsing_notes = clearReviewTags(resultNotes);
   }
 
   const { data, error } = await db

@@ -142,7 +142,9 @@ export async function consensusResolve(
     .select("id, original_question_number, question_text, choices, question_type, parsing_notes, official_answer, section, has_image, image_urls")
     .eq("module_id", moduleId)
     .eq("parsing_status", "Needs Review")
-    .is("official_answer", null);
+    .is("official_answer", null)
+    // The audit doubted this key — an admin decides, not another AI vote.
+    .or("parsing_notes.is.null,parsing_notes.not.ilike.*AI thinks the answer key may be wrong*");
   // Only computational/verifiable questions (Math). R&W "consensus" on reading
   // interpretation is not reliable enough to auto-settle.
   const targets = (data ?? []).filter((q) => (q.section ?? "Math") === "Math") as unknown as QRow[];

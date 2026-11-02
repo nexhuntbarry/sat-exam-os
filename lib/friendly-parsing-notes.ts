@@ -17,6 +17,8 @@
 //              regex IDs, or backtrace-style fragments
 //   action   — optional "what to do next" hint
 
+import { parseKeyDoubt } from "@/lib/key-doubt";
+
 export interface NoteAction {
   /** Button label shown to the admin. */
   label: string;
@@ -190,6 +192,19 @@ const RAW = (s: string) => s.replace(/\s+/g, " ").trim();
 export function friendlyParsingNote(raw: string | null): FriendlyNote | null {
   if (!raw) return null;
   const text = RAW(raw);
+
+  // ── The audit's own solve disagrees with the answer key ───────────
+  // Top priority: a wrong key mis-grades every student who answers it.
+  const doubt = parseKeyDoubt(text);
+  if (doubt) {
+    return {
+      tone: "error",
+      headline: "Moved to Needs Review: the AI thinks the answer key may be wrong",
+      detail: `Current answer: ${doubt.stored} · AI suggests: ${doubt.suggested}. Why: ${doubt.reason}.`,
+      action:
+        "Check the official answer (PDF / College Board key). If the current answer is right, click Approve. If it's wrong, change the answer — students who already took it are re-graded automatically.",
+    };
+  }
 
   // ── Demoted by post-parse-cleanup / audit-auto-approved ───────────
   const demote = text.match(

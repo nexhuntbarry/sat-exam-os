@@ -3,7 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { findApproveBlocker } from "@/lib/parse-guards";
-import { LIVE_FIX_TAG, stripLiveFixNote } from "@/lib/live-questions";
+import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
 
 // POST /api/admin/questions/bulk-approve
 // Body: { question_ids: string[] } OR { filter: { moduleId?, minConfidence? } }
@@ -52,15 +52,15 @@ export async function POST(req: Request) {
     return { clean, blocked };
   }
 
-  // Approving clears the live-test re-check tag on the approved rows.
+  // Approving clears the live-test re-check tag and key doubts on the approved rows.
   async function clearLiveFixTags(
     rows: { id: string; parsing_notes: string | null }[],
     approvedIds: string[],
   ) {
     const approved = new Set(approvedIds);
     for (const r of rows) {
-      if (!approved.has(r.id) || !r.parsing_notes?.startsWith(LIVE_FIX_TAG)) continue;
-      await db.from("questions").update({ parsing_notes: stripLiveFixNote(r.parsing_notes) }).eq("id", r.id);
+      if (!approved.has(r.id) || !hasReviewTags(r.parsing_notes)) continue;
+      await db.from("questions").update({ parsing_notes: clearReviewTags(r.parsing_notes) }).eq("id", r.id);
     }
   }
 

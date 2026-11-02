@@ -12,7 +12,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { normalizeMath } from "@/lib/math/normalize-math";
 
 type Node = { type: string; tagName?: string; value?: string; properties?: { className?: string[] }; children?: Node[] };
-const proc = unified().use(remarkParse).use(remarkMath).use(remarkGfm).use(remarkRehype, { allowDangerousHtml: true }).use(rehypeRaw).use(rehypeKatex, { strict: "ignore", throwOnError: false });
+const proc = unified().use(remarkParse).use(remarkMath).use(remarkGfm).use(remarkRehype, { allowDangerousHtml: true }).use(rehypeRaw).use(rehypeKatex, { strict: "ignore" as const, throwOnError: false });
 
 export function problems(src: string): string[] {
   const tree = proc.runSync(proc.parse(normalizeMath(src))) as Node;

@@ -15,7 +15,7 @@ const Schema = z.object({ explanation: z.string().min(30) });
 const UNSETTLED = /verifier disagreed|contradicts the stored|needs human|placeholder|truncat|3 solves agreed on .* but/i;
 
 async function main() {
-  const { data } = await db.from("questions").select("id, original_question_number, question_text, choices, correct_answer, explanation, mismatch_with_official, has_image, image_urls, question_type, parsing_notes").eq("parsing_status", "Needs Review");
+  const { data } = await db.from("questions").select("id, original_question_number, question_text, choices, correct_answer, explanation, mismatch_with_official, has_image, image_urls, question_type, parsing_notes").eq("parsing_status", "Needs Review").or("parsing_notes.is.null,parsing_notes.not.ilike.*AI thinks the answer key may be wrong*") /* admin decides key doubts */;
   const cands = (data ?? []).filter((q) => {
     if (q.mismatch_with_official || !q.correct_answer) return false;
     if (!META.test((q.explanation as string | null) ?? "")) return false;
