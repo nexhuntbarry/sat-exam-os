@@ -201,7 +201,7 @@ function TestsTable({
       <thead>
         <HeadRow>
           <SortTh kind="main" sticky="left" className="w-[18%]" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
-          <SortTh kind="long" priority="md" className="w-[36%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
+          <SortTh kind="long" priority="md" className="w-[36%] xl:min-w-[19.5rem]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
           <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
           <Th priority="lg" className="xl:min-w-[9.5rem]">Assignments</Th>
           <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
