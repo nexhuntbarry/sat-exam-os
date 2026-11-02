@@ -460,7 +460,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
               <Th kind="long" className="w-[16%]">Q# · Module</Th>
               <Th kind="main">Text</Th>
               <Th priority="md">Difficulty</Th>
-              <Th kind="long" priority="lg">Domain</Th>
+              <Th kind="long" priority="2xl">Domain</Th>
               <Th>Status</Th>
               <Th kind="long" priority="lg" className="w-[18%]">Issue</Th>
               <Th priority="2xl">Conf.</Th>
@@ -498,7 +498,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                   details={
                     <>
                       <DetailItem label="Difficulty" priority="md">{q.difficulty ?? "—"}</DetailItem>
-                      <DetailItem label="Domain" priority="lg">{q.domain ?? "—"}</DetailItem>
+                      <DetailItem label="Domain" priority="2xl">{q.domain ?? "—"}</DetailItem>
                       <DetailItem label="Issue" priority="lg">
                         {issue ? issue.label : showNoKey ? "no answer key" : "—"}
                       </DetailItem>
@@ -535,7 +535,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                     </Link>
                   </Td>
                   <Td priority="md" className="text-mid-gray">{q.difficulty ?? "—"}</Td>
-                  <Td kind="long" priority="lg">
+                  <Td kind="long" priority="2xl">
                     <TruncatedText title={q.domain ?? undefined}>{q.domain ?? "—"}</TruncatedText>
                   </Td>
                   <Td>
