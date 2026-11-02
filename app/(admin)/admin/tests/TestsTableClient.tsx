@@ -48,7 +48,8 @@ function assignmentText(
   const list = (label: string, names: string[]) =>
     names.length === 0 ? null : `${label}: ${names.slice(0, 30).join(", ")}${names.length > 30 ? `, +${names.length - 30} more` : ""}`;
   const hover = [list("Students", a.studentNames), list("Classes", classNames), list("Teachers", teacherNames)].filter(Boolean).join("\n");
-  return { assignments: parts.length ? parts.join(" · ") : "—", assignmentNames: hover || undefined };
+  // Non-breaking inside each part, so a narrow column wraps between parts.
+  return { assignments: parts.length ? parts.map((p) => p!.replace(/ /g, "\u00a0")).join(" · ") : "—", assignmentNames: hover || undefined };
 }
 
 // ── types ──────────────────────────────────────────────────────────────────────
@@ -204,8 +205,8 @@ function TestsTable({
           <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
           <Th priority="lg">Assignments</Th>
           <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
-          <SortTh priority="lg" label="Due" sortKey="due_date" active={sortKey === "due_date"} dir={sortDir} onSort={onSort} />
-          <SortTh priority="xl" label="Created" sortKey="created_at" active={sortKey === "created_at"} dir={sortDir} onSort={onSort} />
+          <SortTh priority="xl" label="Due" sortKey="due_date" active={sortKey === "due_date"} dir={sortDir} onSort={onSort} />
+          <SortTh priority="2xl" label="Created" sortKey="created_at" active={sortKey === "created_at"} dir={sortDir} onSort={onSort} />
           <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
         </HeadRow>
       </thead>
@@ -242,14 +243,14 @@ function TestsTable({
             <DataRow
               key={test.id}
               href={`/admin/tests/${test.id}`}
-              expandBelow="xl"
+              expandBelow="2xl"
               colSpan={COL_SPAN}
               details={
                 <>
                   <DetailItem label="Module" priority="md">{moduleList}</DetailItem>
                   <DetailItem label="Assignments" priority="lg">{assignments}</DetailItem>
-                  <DetailItem label="Due" priority="lg">{dueLabel}</DetailItem>
-                  <DetailItem label="Created" priority="xl">{createdLabel}</DetailItem>
+                  <DetailItem label="Due" priority="xl">{dueLabel}</DetailItem>
+                  <DetailItem label="Created" priority="2xl">{createdLabel}</DetailItem>
                 </>
               }
             >
@@ -282,10 +283,10 @@ function TestsTable({
               <Td className="text-mid-gray">
                 {test.submissions.done} / {test.submissions.total}
               </Td>
-              <Td priority="lg" className="text-soft-mute">
+              <Td priority="xl" className="text-soft-mute">
                 {dueLabel}
               </Td>
-              <Td priority="xl" className="text-soft-mute">
+              <Td priority="2xl" className="text-soft-mute">
                 {createdLabel}
               </Td>
               <Td kind="actions" sticky="right">
