@@ -29,12 +29,20 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     db.from("submissions").select("test_id, student_id, status, session_id, adaptive_track, started_at").in("test_id", testIds),
   ]);
 
-  const assignMap: Record<string, { teacherIds: string[]; studentIds: string[]; classGroupIds: string[] }> = {};
+  // Student names for the Assignments hover.
+  const assignedStudentIds = [...new Set((assignments ?? []).flatMap((a) => (a.student_ids ?? []) as string[]))];
+  const { data: studentUsers } = assignedStudentIds.length > 0
+    ? await db.from("users").select("id, display_name, email").in("id", assignedStudentIds)
+    : { data: [] as { id: string; display_name: string | null; email: string }[] };
+  const studentName = new Map((studentUsers ?? []).map((u) => [u.id, u.display_name || u.email]));
+
+  const assignMap: Record<string, TestRow["assignment"]> = {};
   for (const a of assignments ?? []) {
     assignMap[a.test_id] = {
       teacherIds: (a.teacher_ids ?? []) as string[],
       studentIds: (a.student_ids ?? []) as string[],
       classGroupIds: (a.class_group_ids ?? []) as string[],
+      studentNames: ((a.student_ids ?? []) as string[]).map((id) => studentName.get(id) ?? "Unknown student"),
     };
   }
 
@@ -69,7 +77,7 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     is_adaptive: t.is_adaptive,
     modules: t.modules,
     module_2: (t as { module_2?: unknown }).module_2 ?? null,
-    assignment: assignMap[t.id] ?? { teacherIds: [], studentIds: [], classGroupIds: [] },
+    assignment: assignMap[t.id] ?? { teacherIds: [], studentIds: [], classGroupIds: [], studentNames: [] },
     submissions: subMap[t.id] ?? { done: 0, total: 0 },
   }));
 }

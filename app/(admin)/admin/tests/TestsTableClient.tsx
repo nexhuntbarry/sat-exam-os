@@ -29,6 +29,28 @@ interface AssignOptions {
   allClassGroups: { id: string; name: string; campus: string | null; grade: string | null }[];
 }
 
+// "13 students · 1 class · 1 teacher" (zeros left out), names for the hover.
+function assignmentText(
+  a: TestRow["assignment"],
+  opts: AssignOptions,
+): { assignments: string; assignmentNames: string | undefined } {
+  const n = (count: number, one: string, many: string) => (count === 0 ? null : `${count} ${count === 1 ? one : many}`);
+  const parts = [
+    n(a.studentIds.length, "student", "students"),
+    n(a.classGroupIds.length, "class", "classes"),
+    n(a.teacherIds.length, "teacher", "teachers"),
+  ].filter(Boolean);
+  const classNames = a.classGroupIds.map((id) => opts.allClassGroups.find((g) => g.id === id)?.name ?? "Unknown class");
+  const teacherNames = a.teacherIds.map((id) => {
+    const t = opts.allTeachers.find((x) => x.id === id);
+    return t ? t.display_name || t.email : "Unknown teacher";
+  });
+  const list = (label: string, names: string[]) =>
+    names.length === 0 ? null : `${label}: ${names.slice(0, 30).join(", ")}${names.length > 30 ? `, +${names.length - 30} more` : ""}`;
+  const hover = [list("Students", a.studentNames), list("Classes", classNames), list("Teachers", teacherNames)].filter(Boolean).join("\n");
+  return { assignments: parts.length ? parts.join(" · ") : "—", assignmentNames: hover || undefined };
+}
+
 // ── types ──────────────────────────────────────────────────────────────────────
 
 interface TestMod {
@@ -47,7 +69,7 @@ export interface TestRow {
   modules: unknown;
   /** Linear two-module tests: the Module 2 (tests.module_2_id). */
   module_2?: unknown;
-  assignment: { teacherIds: string[]; studentIds: string[]; classGroupIds: string[] };
+  assignment: { teacherIds: string[]; studentIds: string[]; classGroupIds: string[]; studentNames: string[] };
   submissions: { done: number; total: number };
 }
 
@@ -177,8 +199,8 @@ function TestsTable({
     <DataTable>
       <thead>
         <HeadRow>
-          <SortTh kind="main" sticky="left" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
-          <SortTh kind="long" priority="md" className="w-[16%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
+          <SortTh kind="main" sticky="left" className="w-[22%]" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
+          <SortTh kind="long" priority="md" className="w-[34%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
           <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
           <Th priority="lg">Assignments</Th>
           <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
@@ -195,21 +217,24 @@ function TestsTable({
           const mod = test.modules as TestMod | null;
           const mod2 = (test.module_2 ?? null) as Pick<TestMod, "module_name" | "module_number"> | null;
 
-          const moduleMain = mod && mod2
-            ? `${mod.module_name} + ${mod2.module_name}`
+          // One line per module, like the student detail page:
+          // "M1: [Test #19] … Module 1" / "M2: … Module 2".
+          const moduleLines = mod && mod2
+            ? [{ label: "M1", name: mod.module_name }, { label: "M2", name: mod2.module_name }]
             : mod
-            ? mod.module_name
-            : null;
-          const moduleDetail = mod && mod2
-            ? `${mod.section} · M1 + M2`
-            : mod
-            ? `${mod.section}${mod.module_number ? ` · M${mod.module_number}` : ""}`
-            : null;
-          const moduleLabel = mod
-            ? moduleMain + (moduleDetail ? ` (${moduleDetail})` : "")
-            : "Adaptive · multi-module";
+            ? [{ label: `M${mod.module_number ?? 1}`, name: mod.module_name }]
+            : [];
+          const moduleList = moduleLines.length > 0 ? (
+            moduleLines.map((m) => (
+              <div key={m.label} className="text-[11px] text-soft-mute leading-snug break-words">
+                {m.label}: {m.name}
+              </div>
+            ))
+          ) : (
+            <span className="text-[11px] text-soft-mute">Adaptive · multi-module</span>
+          );
 
-          const assignments = `${test.assignment.teacherIds.length}T · ${test.assignment.studentIds.length}S · ${test.assignment.classGroupIds.length}C`;
+          const { assignments, assignmentNames } = assignmentText(test.assignment, assignOptions);
           const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
           const createdLabel = formatShortDate(test.created_at);
 
@@ -221,7 +246,7 @@ function TestsTable({
               colSpan={COL_SPAN}
               details={
                 <>
-                  <DetailItem label="Module" priority="md">{moduleLabel}</DetailItem>
+                  <DetailItem label="Module" priority="md">{moduleList}</DetailItem>
                   <DetailItem label="Assignments" priority="lg">{assignments}</DetailItem>
                   <DetailItem label="Due" priority="lg">{dueLabel}</DetailItem>
                   <DetailItem label="Created" priority="xl">{createdLabel}</DetailItem>
@@ -245,17 +270,13 @@ function TestsTable({
                   />
                 </Link>
               </Td>
-              <Td kind="long" priority="md" className="text-mid-gray">
-                {mod ? (
-                  <TwoLineCell main={moduleMain ?? "—"} detail={moduleDetail ?? undefined} mainClassName="text-mid-gray" />
-                ) : (
-                  <span className="text-soft-mute italic">Adaptive · multi-module</span>
-                )}
+              <Td priority="md" className="w-[34%] max-w-0 whitespace-normal">
+                {moduleList}
               </Td>
               <Td>
                 <StatusBadge kind="test" status={test.status as TestStatus} />
               </Td>
-              <Td priority="lg" className="text-mid-gray" title="Teachers · Students · Class groups">
+              <Td priority="lg" className="text-mid-gray whitespace-normal" title={assignmentNames}>
                 {assignments}
               </Td>
               <Td className="text-mid-gray">
