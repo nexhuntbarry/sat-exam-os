@@ -203,7 +203,7 @@ function TestsTable({
           <SortTh kind="main" sticky="left" className="w-[22%]" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
           <SortTh kind="long" priority="md" className="w-[30%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
           <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
-          <Th priority="lg" className="min-w-[9.5rem]">Assignments</Th>
+          <Th priority="lg" className="xl:min-w-[9.5rem]">Assignments</Th>
           <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
           <SortTh priority="xl" label="Due" sortKey="due_date" active={sortKey === "due_date"} dir={sortDir} onSort={onSort} />
           <SortTh priority="2xl" label="Created" sortKey="created_at" active={sortKey === "created_at"} dir={sortDir} onSort={onSort} />
