@@ -462,7 +462,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
               <Th priority="md">Difficulty</Th>
               <Th kind="long" priority="lg">Domain</Th>
               <Th>Status</Th>
-              <Th kind="long" priority="lg">Issue</Th>
+              <Th kind="long" priority="lg" className="w-[18%]">Issue</Th>
               <Th priority="2xl">Conf.</Th>
               <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
             </HeadRow>
