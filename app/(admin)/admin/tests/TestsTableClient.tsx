@@ -200,8 +200,8 @@ function TestsTable({
     <DataTable>
       <thead>
         <HeadRow>
-          <SortTh kind="main" sticky="left" className="w-[22%]" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
-          <SortTh kind="long" priority="md" className="w-[30%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
+          <SortTh kind="main" sticky="left" className="w-[18%]" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
+          <SortTh kind="long" priority="md" className="w-[36%]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
           <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
           <Th priority="lg" className="xl:min-w-[9.5rem]">Assignments</Th>
           <SortTh label="Finished" sortKey="finished" active={sortKey === "finished"} dir={sortDir} onSort={onSort} />
@@ -271,7 +271,7 @@ function TestsTable({
                   />
                 </Link>
               </Td>
-              <Td priority="md" className="w-[30%] max-w-0 whitespace-normal">
+              <Td priority="md" className="w-[36%] max-w-0 whitespace-normal">
                 {moduleList}
               </Td>
               <Td>
