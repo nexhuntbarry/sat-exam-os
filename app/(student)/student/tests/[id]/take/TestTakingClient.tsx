@@ -280,9 +280,49 @@ export default function TestTakingClient({
   // Acks can arrive out of order (keepalive flush vs. a save in flight);
   // an older one must never move the synced markers backwards.
   function markSynced(seq: number, builtAt: number) {
-    if (seq < savedSeqRef.current || builtAt < syncedAtRef.current) return;
+    if (seq < savedSeqRef.current || builtAt < syncedAtRef.current) return false;
     savedSeqRef.current = seq;
     syncedAtRef.current = builtAt;
+    persistLocal();
+    return true;
+  }
+
+  // Only the answers changed on this device since the last confirmed save.
+  // Sending the whole map let a device that had been offline (or left
+  // open) write its old answers back over ones the student changed on
+  // another device in the meantime (D-20261102-1).
+  function answerDelta(): Record<string, string | null> {
+    const since = syncedAtRef.current;
+    const out: Record<string, string | null> = {};
+    for (const [qid, at] of Object.entries(answeredAtRef.current)) {
+      if (at >= since) out[qid] = answersRef.current[qid] ?? null;
+    }
+    return out;
+  }
+
+  // After a save, take the server's copy for every question not changed
+  // here since that save was built, so this device shows answers the
+  // student picked on another device instead of its own older ones.
+  function adoptServerAnswers(server: unknown, builtAt: number) {
+    if (!server || typeof server !== "object") return;
+    const serverAnswers = server as Record<string, string>;
+    const validIds = new Set(questions.map((q) => q.id));
+    const next = { ...answersRef.current };
+    let changed = false;
+    for (const qid of new Set([...Object.keys(next), ...Object.keys(serverAnswers)])) {
+      if (!validIds.has(qid) || (answeredAtRef.current[qid] ?? 0) >= builtAt) continue;
+      const value = serverAnswers[qid];
+      if (typeof value === "string" && value !== next[qid]) {
+        next[qid] = value;
+        changed = true;
+      } else if (value === undefined && qid in next) {
+        delete next[qid];
+        changed = true;
+      }
+    }
+    if (!changed) return;
+    answersRef.current = next;
+    setAnswers(next);
     persistLocal();
   }
 
@@ -331,20 +371,22 @@ export default function TestTakingClient({
     setSaveStatus("saving");
     let ok = false;
     let retryable = true;
+    let serverAnswers: unknown = undefined;
     try {
       const res = await fetchWithAuthRetry(saveUrl, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        // answersMode "merge" lets the server merge instead of replace;
-        // the full map is still sent so a server that ignores it is fine.
+        // Only changed answers; answersMode "merge" overlays them on the
+        // server's copy.
         body: JSON.stringify({
-          answers: answersRef.current,
+          answers: answerDelta(),
           answersMode: "merge",
           metadata: buildMetadata(),
           ...nextSaveOrder(),
         }),
       });
       ok = isJsonOk(res);
+      if (ok) serverAnswers = (await res.json().catch(() => null))?.answers;
       if (res.status === 401) setSessionExpired(true);
       // 409 time_up (past the deadline grace) and 400 "not in progress"
       // never succeed on retry; 409 save_conflict is transient and does.
@@ -358,7 +400,7 @@ export default function TestTakingClient({
     saveInFlightRef.current = false;
     if (submittedRef.current) return;
     if (ok) {
-      markSynced(seq, builtAt);
+      if (markSynced(seq, builtAt)) adoptServerAnswers(serverAnswers, builtAt);
       saveRetryCountRef.current = 0;
       setSessionExpired(false);
       if (hasUnsavedChanges()) scheduleSave(0);
@@ -398,12 +440,13 @@ export default function TestTakingClient({
     lastFlushedSeqRef.current = seq;
     const builtAt = Date.now();
     const metadata = buildMetadata();
-    let body = JSON.stringify({ answers: answersRef.current, answersMode: "merge", metadata, ...order });
+    const answers = answerDelta();
+    let body = JSON.stringify({ answers, answersMode: "merge", metadata, ...order });
     if (new TextEncoder().encode(body).length > KEEPALIVE_MAX_BYTES) {
       // Annotations are the only unbounded field; drop them rather than
       // the answers. The regular save sends them when the page survives.
       const { annotations: _annotations, ...rest } = metadata;
-      body = JSON.stringify({ answers: answersRef.current, answersMode: "merge", metadata: rest, ...order });
+      body = JSON.stringify({ answers, answersMode: "merge", metadata: rest, ...order });
     }
     try {
       fetch(saveUrl, {
@@ -447,6 +490,8 @@ export default function TestTakingClient({
       if (!(qid in merged) || (unsynced && merged[qid] !== value)) {
         merged[qid] = value;
         recovered = true;
+        // Saves send only changed answers, so mark it unsynced to send it.
+        if (!unsynced) answeredAtRef.current[qid] = syncedAt + 1;
       }
     }
     if (recovered) {
@@ -667,7 +712,7 @@ export default function TestTakingClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          answers: answersRef.current,
+          answers: answerDelta(),
           answersMode: "merge",
           metadata: buildMetadata(),
         }),

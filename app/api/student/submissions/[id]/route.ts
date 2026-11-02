@@ -272,7 +272,9 @@ export async function PATCH(
       return NextResponse.json({ error: "Failed to save" }, { status: 500 });
     }
     if (written && written.length > 0) {
-      return NextResponse.json({ success: true });
+      // The merged answers, so a device that was offline can show answers
+      // the student changed on another device since.
+      return NextResponse.json({ success: true, answers: updates.answers ?? submission.answers ?? {} });
     }
     // Lost the race (another save bumped the version, or the row was
     // finalized) — loop re-reads and re-applies on fresh state.
