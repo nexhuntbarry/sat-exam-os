@@ -28,15 +28,26 @@ export default function TestTimer({ initialSeconds, onExpire, onWarning }: TestT
     if (prev > 60 && secondsLeft <= 60 && secondsLeft > 0) onWarningRef.current?.(1);
   }, [secondsLeft]);
 
-  // Count down to a fixed wall-clock deadline instead of decrementing
-  // per tick: throttled background tabs and sleeping laptops skip ticks,
-  // and a slow clock would let the student work past the server's
-  // deadline (saves are rejected 60s after it).
+  // Count elapsed wall-clock time instead of decrementing per tick:
+  // throttled background tabs and sleeping laptops skip ticks, and a slow
+  // clock would let the student work past the server's deadline (saves
+  // are rejected 60s after it). A clock that steps backwards (NTP
+  // correction) is never sleep, so that step uses the monotonic clock;
+  // a fixed wall-clock deadline handed the student the 10 minutes back
+  // (D-20261103-1).
   useEffect(() => {
-    const deadline = Date.now() + initialSeconds * 1000;
+    let elapsedMs = 0;
+    let lastWall = Date.now();
+    let lastMono = performance.now();
     let expired = false;
     function tick() {
-      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      const wall = Date.now();
+      const mono = performance.now();
+      const wallDelta = wall - lastWall;
+      elapsedMs += wallDelta >= 0 ? wallDelta : Math.max(0, mono - lastMono);
+      lastWall = wall;
+      lastMono = mono;
+      const remaining = Math.max(0, Math.ceil((initialSeconds * 1000 - elapsedMs) / 1000));
       setSecondsLeft(remaining);
       if (remaining <= 0 && !expired) {
         expired = true;

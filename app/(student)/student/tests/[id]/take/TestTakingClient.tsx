@@ -223,6 +223,7 @@ export default function TestTakingClient({
   const answeredAtRef = useRef<Record<string, number>>({});
   const metaChangedAtRef = useRef(0);
   const syncedAtRef = useRef(0);
+  const lastStampRef = useRef(0);
   const lastFlushedSeqRef = useRef(-1);
   // A keepalive flush can run alongside a save already in flight, and the
   // older request may reach the server last. Each request carries a
@@ -275,6 +276,16 @@ export default function TestTakingClient({
     } catch {
       // Storage full / disabled — the server copy is still the primary.
     }
+  }
+
+  // Change/save timestamps compared against syncedAt. Never goes
+  // backwards: when the computer's clock is corrected back (NTP sync),
+  // a raw Date.now() put new answers "before" the last save, so they
+  // were left out of every save and markSynced refused the acks — a
+  // save loop that lost the answers (D-20261103-1).
+  function stamp() {
+    lastStampRef.current = Math.max(Date.now(), lastStampRef.current + 1);
+    return lastStampRef.current;
   }
 
   // Acks can arrive out of order (keepalive flush vs. a save in flight);
@@ -366,7 +377,7 @@ export default function TestTakingClient({
       return;
     }
     const seq = changeSeqRef.current;
-    const builtAt = Date.now();
+    const builtAt = stamp();
     saveInFlightRef.current = true;
     setSaveStatus("saving");
     let ok = false;
@@ -438,7 +449,7 @@ export default function TestTakingClient({
     const order = nextSaveOrder();
     const seq = changeSeqRef.current;
     lastFlushedSeqRef.current = seq;
-    const builtAt = Date.now();
+    const builtAt = stamp();
     const metadata = buildMetadata();
     const answers = answerDelta();
     let body = JSON.stringify({ answers, answersMode: "merge", metadata, ...order });
@@ -482,16 +493,29 @@ export default function TestTakingClient({
     const localAnswers = local.answers ?? {};
     const answeredAt = local.answeredAt ?? {};
     answeredAtRef.current = { ...answeredAt };
+    lastStampRef.current = Math.max(
+      syncedAt,
+      local.metaChangedAt ?? 0,
+      ...Object.values(answeredAt).filter((v): v is number => typeof v === "number"),
+    );
     const merged = { ...answersRef.current };
     let recovered = false;
     for (const [qid, value] of Object.entries(localAnswers)) {
       if (!validIds.has(qid) || typeof value !== "string") continue;
+      // Only answers that never reached the server. A saved answer the
+      // server no longer has was erased on another device; putting the
+      // device copy back resurrected it (D-20261103-2).
       const unsynced = (answeredAt[qid] ?? 0) > syncedAt;
-      if (!(qid in merged) || (unsynced && merged[qid] !== value)) {
+      if (unsynced && merged[qid] !== value) {
         merged[qid] = value;
         recovered = true;
-        // Saves send only changed answers, so mark it unsynced to send it.
-        if (!unsynced) answeredAtRef.current[qid] = syncedAt + 1;
+      }
+    }
+    // Erased here but the erase never reached the server.
+    for (const [qid, at] of Object.entries(answeredAt)) {
+      if (validIds.has(qid) && at > syncedAt && !(qid in localAnswers) && qid in merged) {
+        delete merged[qid];
+        recovered = true;
       }
     }
     if (recovered) {
@@ -542,7 +566,7 @@ export default function TestTakingClient({
       metaMountedRef.current = true;
       return;
     }
-    metaChangedAtRef.current = Date.now();
+    metaChangedAtRef.current = stamp();
     markChanged(AUTO_SAVE_DEBOUNCE_MS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flagged, crossedOut, currentIndex, annotations, tabSwitchCount]);
@@ -678,7 +702,7 @@ export default function TestTakingClient({
   function handleAnswer(questionId: string, answer: string) {
     const next = { ...answersRef.current, [questionId]: answer };
     answersRef.current = next;
-    answeredAtRef.current = { ...answeredAtRef.current, [questionId]: Date.now() };
+    answeredAtRef.current = { ...answeredAtRef.current, [questionId]: stamp() };
     setAnswers(next);
     // A choice click saves right away; SPR typing is debounced.
     const isMcq = questions.find((q) => q.id === questionId)?.question_type === "Multiple Choice";
@@ -785,12 +809,12 @@ export default function TestTakingClient({
       setStuckNote(null);
       return;
     }
-    const startedAt = Date.now();
+    const startedAt = performance.now();
     let stopped = false;
     let checking = false;
     const tick = async () => {
       if (stopped || checking) return;
-      if (Date.now() - startedAt >= SUBMIT_STUCK_MS) setSubmitStuck(true);
+      if (performance.now() - startedAt >= SUBMIT_STUCK_MS) setSubmitStuck(true);
       checking = true;
       const landed = await checkSubmitLanded();
       checking = false;
