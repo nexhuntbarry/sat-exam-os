@@ -599,6 +599,8 @@ export default function TestTakingClient({
       // the page survives, and the device backup keeps them otherwise.
       metaSent = false;
       body = JSON.stringify({ answers, answersMode: "merge", metadata, ...order });
+      // Still unsaved after this flush's ack, so the next save sends them.
+      changeSeqRef.current += 1;
     }
     try {
       fetch(saveUrl, {
