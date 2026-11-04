@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import {
+  applyQuestionMeta,
   mergeAnswers,
   moduleDeadlineMs,
+  moduleRemainingSeconds,
   moduleStartedAtIso,
   moduleTimeLimitMinutes,
   isModule2Track,
@@ -11,6 +13,10 @@ import {
   scopeToStudentQuestionSet,
   stampModule2Start,
 } from "@/lib/student-exam";
+
+function pickQuestionMeta(meta: Record<string, unknown>) {
+  return { flagged: meta.flagged ?? [], crossed_out: meta.crossed_out ?? {}, annotations: meta.annotations ?? {} };
+}
 
 // GET /api/student/submissions/[id] — get submission state for resume
 export async function GET(
@@ -30,7 +36,9 @@ export async function GET(
   if (new URL(req.url).searchParams.get("status") === "1") {
     const { data: row } = await db
       .from("submissions")
-      .select("status, submitted_at, adaptive_track, session_id")
+      .select(
+        "status, submitted_at, adaptive_track, session_id, started_at, metadata, tests!inner(time_limit_minutes, time_limit_minutes_module_2, is_untimed)",
+      )
       .eq("id", id)
       .eq("student_id", user.userId)
       .maybeSingle();
@@ -51,7 +59,13 @@ export async function GET(
       const ageMs = row.submitted_at ? Date.now() - new Date(row.submitted_at).getTime() : Infinity;
       ready = (count ?? 0) > 0 || ageMs > 15_000;
     }
-    return NextResponse.json({ data: { status: row.status, ready } });
+    // The take page asks this before auto-submitting at 0:00, so time an
+    // admin added mid-exam is honoured (D-20261104-3).
+    const remainingSeconds =
+      row.status === "In Progress"
+        ? moduleRemainingSeconds(row, row.tests as unknown as Parameters<typeof moduleRemainingSeconds>[1])
+        : null;
+    return NextResponse.json({ data: { status: row.status, ready, remainingSeconds } });
   }
 
   const { data: submission, error } = await db
@@ -147,6 +161,7 @@ export async function PATCH(
     answers?: Record<string, string | null>;
     answersMode?: string;
     metadata?: Record<string, unknown>;
+    questionMeta?: Record<string, unknown>;
     clientId?: unknown;
     clientSeq?: unknown;
   };
@@ -224,7 +239,7 @@ export async function PATCH(
       const applied = seqByClient[clientId];
       if (typeof applied === "number" && clientSeq <= applied) {
         // The server already holds a newer save from this device.
-        return NextResponse.json({ success: true, stale: true });
+        return NextResponse.json({ success: true, stale: true, remainingSeconds: moduleRemainingSeconds(submission, timing) });
       }
     }
 
@@ -241,6 +256,9 @@ export async function PATCH(
     updates.metadata = {
       ...savedMeta,
       ...(clientMetadata ?? {}),
+      ...(body.questionMeta && typeof body.questionMeta === "object"
+        ? applyQuestionMeta(savedMeta, body.questionMeta)
+        : {}),
       answers_version: version + 1,
       ...(clientId && clientSeq != null
         ? { client_save_seq: { ...seqByClient, [clientId]: clientSeq } }
@@ -274,7 +292,13 @@ export async function PATCH(
     if (written && written.length > 0) {
       // The merged answers, so a device that was offline can show answers
       // the student changed on another device since.
-      return NextResponse.json({ success: true, answers: updates.answers ?? submission.answers ?? {} });
+      return NextResponse.json({
+        success: true,
+        answers: updates.answers ?? submission.answers ?? {},
+        remainingSeconds: moduleRemainingSeconds(submission, timing),
+        // Same for flags / cross-outs / highlights.
+        questionMeta: pickQuestionMeta(updates.metadata as Record<string, unknown>),
+      });
     }
     // Lost the race (another save bumped the version, or the row was
     // finalized) — loop re-reads and re-applies on fresh state.

@@ -100,6 +100,55 @@ interface LocalBackup {
   /** Stable per-device id + last write order sent, so the server can drop out-of-order saves. */
   clientId?: string;
   lastClientSeq?: number;
+  /** Per-question flag/cross-out/highlight state the server last confirmed (questionMetaSnapshot). */
+  metaBase?: Record<string, string>;
+}
+
+// Per-question flag / cross-out / highlight state, serialized so two
+// copies compare with ===. Keys are sorted: Postgres jsonb reorders them.
+type QuestionMeta = { flagged: boolean; crossed: string[]; annos: Record<string, unknown> | null };
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stableJson(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
+const EMPTY_QUESTION_META = stableJson({ flagged: false, crossed: [], annos: null });
+function questionMetaSnapshot(
+  flagged: Iterable<string>,
+  crossed: Record<string, Iterable<string>>,
+  annos: Record<string, unknown>,
+): Record<string, string> {
+  const flaggedSet = new Set(flagged);
+  const ids = new Set([...flaggedSet, ...Object.keys(crossed), ...Object.keys(annos)]);
+  const out: Record<string, string> = {};
+  for (const qid of ids) {
+    const a = annos[qid];
+    const meta: QuestionMeta = {
+      flagged: flaggedSet.has(qid),
+      crossed: [...(crossed[qid] ?? [])].sort(),
+      annos: a && typeof a === "object" && Object.keys(a).length ? (a as Record<string, unknown>) : null,
+    };
+    const json = stableJson(meta);
+    if (json !== EMPTY_QUESTION_META) out[qid] = json;
+  }
+  return out;
+}
+function snapshotFromMetadata(meta: Record<string, unknown> | null | undefined): Record<string, string> {
+  const m = meta ?? {};
+  const crossed: Record<string, string[]> = {};
+  if (m.crossed_out && typeof m.crossed_out === "object") {
+    for (const [qid, labels] of Object.entries(m.crossed_out as Record<string, unknown>)) {
+      if (Array.isArray(labels)) crossed[qid] = labels.filter((l): l is string => typeof l === "string");
+    }
+  }
+  return questionMetaSnapshot(
+    Array.isArray(m.flagged) ? (m.flagged as unknown[]).filter((x): x is string => typeof x === "string") : [],
+    crossed,
+    m.annotations && typeof m.annotations === "object" ? (m.annotations as Record<string, unknown>) : {},
+  );
 }
 
 function newClientId() {
@@ -224,6 +273,11 @@ export default function TestTakingClient({
   const metaChangedAtRef = useRef(0);
   const syncedAtRef = useRef(0);
   const lastStampRef = useRef(0);
+  // Flag / cross-out / highlight state the server holds as far as this
+  // device knows; saves send only questions that differ from it.
+  const metaBaseRef = useRef<Record<string, string> | null>(null);
+  if (metaBaseRef.current === null) metaBaseRef.current = snapshotFromMetadata(initialMetadata);
+  const [serverRemaining, setServerRemaining] = useState<{ seconds: number } | null>(null);
   const lastFlushedSeqRef = useRef(-1);
   // A keepalive flush can run alongside a save already in flight, and the
   // older request may reach the server last. Each request carries a
@@ -256,6 +310,76 @@ export default function TestTakingClient({
     };
   }
 
+  // What saves send as metadata: flags / cross-outs / highlights go per
+  // question in questionMetaDelta() instead (D-20261104-1).
+  function serverMetadata(): Record<string, unknown> {
+    return { tab_switches: tabSwitchRef.current, current_index: currentIndexRef.current };
+  }
+
+  function currentQuestionMeta() {
+    return questionMetaSnapshot(flaggedRef.current, crossedOutRef.current, annotationsRef.current);
+  }
+
+  function questionMetaDelta(): { delta: Record<string, QuestionMeta>; built: Record<string, string> } {
+    const built = currentQuestionMeta();
+    const base = metaBaseRef.current ?? {};
+    const delta: Record<string, QuestionMeta> = {};
+    for (const qid of new Set([...Object.keys(built), ...Object.keys(base)])) {
+      const now = built[qid] ?? EMPTY_QUESTION_META;
+      if (now !== (base[qid] ?? EMPTY_QUESTION_META)) delta[qid] = JSON.parse(now) as QuestionMeta;
+    }
+    return { delta, built };
+  }
+
+  // After a save: take the server's flags / cross-outs / highlights for
+  // every question not changed here since the save was built, so this
+  // device shows what the student did on another device.
+  function adoptServerQuestionMeta(server: unknown, built: Record<string, string>) {
+    if (!server || typeof server !== "object") {
+      metaBaseRef.current = built;
+      persistLocal();
+      return;
+    }
+    const serverSnap = snapshotFromMetadata({
+      flagged: (server as Record<string, unknown>).flagged,
+      crossed_out: (server as Record<string, unknown>).crossed_out,
+      annotations: (server as Record<string, unknown>).annotations,
+    });
+    metaBaseRef.current = serverSnap;
+    const current = currentQuestionMeta();
+    const validIds = new Set(questions.map((q) => q.id));
+    const adopt: string[] = [];
+    for (const qid of new Set([...Object.keys(current), ...Object.keys(serverSnap)])) {
+      if (!validIds.has(qid)) continue;
+      const now = current[qid] ?? EMPTY_QUESTION_META;
+      if (now !== (built[qid] ?? EMPTY_QUESTION_META)) continue; // changed here since
+      if (now !== (serverSnap[qid] ?? EMPTY_QUESTION_META)) adopt.push(qid);
+    }
+    if (adopt.length) applyQuestionMetaLocally(adopt, serverSnap);
+    persistLocal();
+  }
+
+  function applyQuestionMetaLocally(qids: string[], source: Record<string, string>) {
+    const nextFlagged = new Set(flaggedRef.current);
+    const nextCrossed: Record<string, Set<string>> = { ...crossedOutRef.current };
+    const nextAnnos: QuestionAnnos = { ...annotationsRef.current };
+    for (const qid of qids) {
+      const m = JSON.parse(source[qid] ?? EMPTY_QUESTION_META) as QuestionMeta;
+      if (m.flagged) nextFlagged.add(qid);
+      else nextFlagged.delete(qid);
+      if (m.crossed.length) nextCrossed[qid] = new Set(m.crossed);
+      else delete nextCrossed[qid];
+      if (m.annos) nextAnnos[qid] = m.annos as QuestionAnnos[string];
+      else delete nextAnnos[qid];
+    }
+    flaggedRef.current = nextFlagged;
+    crossedOutRef.current = nextCrossed;
+    annotationsRef.current = nextAnnos;
+    setFlagged(nextFlagged);
+    setCrossedOut(nextCrossed);
+    setAnnotations(nextAnnos);
+  }
+
   function persistLocal() {
     if (submittedRef.current) return;
     const meta = buildMetadata();
@@ -270,6 +394,7 @@ export default function TestTakingClient({
       syncedAt: syncedAtRef.current,
       clientId: clientIdRef.current ?? undefined,
       lastClientSeq: lastClientSeqRef.current,
+      metaBase: metaBaseRef.current ?? undefined,
     };
     try {
       localStorage.setItem(backupKey(submissionId), JSON.stringify(backup));
@@ -383,6 +508,9 @@ export default function TestTakingClient({
     let ok = false;
     let retryable = true;
     let serverAnswers: unknown = undefined;
+    let serverQuestionMeta: unknown = undefined;
+    let remainingSeconds: unknown = undefined;
+    const { delta: questionMeta, built: metaBuilt } = questionMetaDelta();
     try {
       const res = await fetchWithAuthRetry(saveUrl, {
         method: "PATCH",
@@ -392,12 +520,18 @@ export default function TestTakingClient({
         body: JSON.stringify({
           answers: answerDelta(),
           answersMode: "merge",
-          metadata: buildMetadata(),
+          metadata: serverMetadata(),
+          questionMeta,
           ...nextSaveOrder(),
         }),
       });
       ok = isJsonOk(res);
-      if (ok) serverAnswers = (await res.json().catch(() => null))?.answers;
+      if (ok) {
+        const body = await res.json().catch(() => null);
+        serverAnswers = body?.answers;
+        serverQuestionMeta = body?.questionMeta;
+        remainingSeconds = body?.remainingSeconds;
+      }
       if (res.status === 401) setSessionExpired(true);
       // 409 time_up (past the deadline grace) and 400 "not in progress"
       // never succeed on retry; 409 save_conflict is transient and does.
@@ -411,7 +545,11 @@ export default function TestTakingClient({
     saveInFlightRef.current = false;
     if (submittedRef.current) return;
     if (ok) {
-      if (markSynced(seq, builtAt)) adoptServerAnswers(serverAnswers, builtAt);
+      if (markSynced(seq, builtAt)) {
+        adoptServerAnswers(serverAnswers, builtAt);
+        adoptServerQuestionMeta(serverQuestionMeta, metaBuilt);
+      }
+      if (typeof remainingSeconds === "number") setServerRemaining({ seconds: remainingSeconds });
       saveRetryCountRef.current = 0;
       setSessionExpired(false);
       if (hasUnsavedChanges()) scheduleSave(0);
@@ -450,14 +588,17 @@ export default function TestTakingClient({
     const seq = changeSeqRef.current;
     lastFlushedSeqRef.current = seq;
     const builtAt = stamp();
-    const metadata = buildMetadata();
+    const metadata = serverMetadata();
     const answers = answerDelta();
-    let body = JSON.stringify({ answers, answersMode: "merge", metadata, ...order });
+    const { delta: questionMeta, built: metaBuilt } = questionMetaDelta();
+    let metaSent = true;
+    let body = JSON.stringify({ answers, answersMode: "merge", metadata, questionMeta, ...order });
     if (new TextEncoder().encode(body).length > KEEPALIVE_MAX_BYTES) {
-      // Annotations are the only unbounded field; drop them rather than
-      // the answers. The regular save sends them when the page survives.
-      const { annotations: _annotations, ...rest } = metadata;
-      body = JSON.stringify({ answers, answersMode: "merge", metadata: rest, ...order });
+      // Highlights are the only unbounded field; drop the per-question
+      // changes rather than the answers. The regular save sends them when
+      // the page survives, and the device backup keeps them otherwise.
+      metaSent = false;
+      body = JSON.stringify({ answers, answersMode: "merge", metadata, ...order });
     }
     try {
       fetch(saveUrl, {
@@ -468,7 +609,7 @@ export default function TestTakingClient({
       })
         .then((res) => {
           if (!isJsonOk(res) || submittedRef.current) return;
-          markSynced(seq, builtAt);
+          if (markSynced(seq, builtAt) && metaSent) adoptServerQuestionMeta(null, metaBuilt);
           if (!hasUnsavedChanges() && !saveInFlightRef.current) setSaveStatus("saved");
         })
         .catch(() => {});
@@ -522,8 +663,36 @@ export default function TestTakingClient({
       answersRef.current = merged;
       setAnswers(merged);
     }
+    if (local.metaBase && typeof local.metaBase === "object") {
+      // Only questions whose flag / cross-out / highlight changed on this
+      // device and never reached the server go back on top of the server
+      // copy; the rest of the device copy may be stale (D-20261104-1).
+      const localSnap = snapshotFromMetadata({
+        flagged: local.flagged,
+        crossed_out: local.crossedOut,
+        annotations: local.annotations,
+      });
+      const pending = [...new Set([...Object.keys(localSnap), ...Object.keys(local.metaBase)])].filter(
+        (qid) =>
+          validIds.has(qid) &&
+          (localSnap[qid] ?? EMPTY_QUESTION_META) !== (local.metaBase![qid] ?? EMPTY_QUESTION_META),
+      );
+      if (pending.length) {
+        metaChangedAtRef.current = stamp();
+        applyQuestionMetaLocally(pending, localSnap);
+      }
+    }
     if ((local.metaChangedAt ?? 0) > syncedAt) {
       metaChangedAtRef.current = local.metaChangedAt;
+      if (
+        typeof local.currentIndex === "number" &&
+        local.currentIndex >= 0 &&
+        local.currentIndex < questions.length
+      ) {
+        setCurrentIndex(local.currentIndex);
+      }
+    }
+    if (!local.metaBase && (local.metaChangedAt ?? 0) > syncedAt) {
       if (Array.isArray(local.flagged)) {
         setFlagged(new Set(local.flagged.filter((id) => validIds.has(id))));
       }
@@ -544,13 +713,6 @@ export default function TestTakingClient({
         }
         annotationsRef.current = restoredAnnos;
         setAnnotations(restoredAnnos);
-      }
-      if (
-        typeof local.currentIndex === "number" &&
-        local.currentIndex >= 0 &&
-        local.currentIndex < questions.length
-      ) {
-        setCurrentIndex(local.currentIndex);
       }
     }
     if (recovered) markChanged(0);
@@ -738,7 +900,8 @@ export default function TestTakingClient({
         body: JSON.stringify({
           answers: answerDelta(),
           answersMode: "merge",
-          metadata: buildMetadata(),
+          metadata: serverMetadata(),
+          questionMeta: questionMetaDelta().delta,
         }),
         signal: controller.signal,
       });
@@ -957,7 +1120,35 @@ export default function TestTakingClient({
 
   const [autoSubmitting, setAutoSubmitting] = useState(false);
 
-  function handleTimerExpire() {
+  // Before auto-submitting at 0:00, ask the server how much time is left:
+  // an admin may have added time while this page was open, and submitting
+  // on the old clock took it away from the student (D-20261104-3). If the
+  // check fails, submit as before (the server deadline still applies).
+  async function fetchServerRemaining(): Promise<number | null> {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5000);
+      const res = await fetch(`${saveUrl}?status=1`, { cache: "no-store", signal: controller.signal });
+      clearTimeout(timer);
+      if (!isJsonOk(res)) return null;
+      const body = await res.json().catch(() => null);
+      return typeof body?.data?.remainingSeconds === "number" ? body.data.remainingSeconds : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const expiryCheckRef = useRef(false);
+  async function handleTimerExpire() {
+    if (expiryCheckRef.current || submittedRef.current) return;
+    expiryCheckRef.current = true;
+    const remaining = await fetchServerRemaining();
+    expiryCheckRef.current = false;
+    if (remaining != null && remaining > 2) {
+      setServerRemaining({ seconds: remaining });
+      if (remaining > 90) setTimeWarningVisible(false);
+      return;
+    }
     setAutoSubmitting(true);
     handleSubmit();
   }
@@ -972,6 +1163,12 @@ export default function TestTakingClient({
   const [timeWarning, setTimeWarning] = useState<string | null>(null);
   const [timeWarningVisible, setTimeWarningVisible] = useState(false);
   function handleTimerWarning(minutesLeft: 5 | 1) {
+    // Pick up time an admin added, even if the student isn't answering.
+    void fetchServerRemaining().then((seconds) => {
+      if (seconds == null) return;
+      setServerRemaining({ seconds });
+      if (seconds > minutesLeft * 60 + 30) setTimeWarningVisible(false);
+    });
     setTimeWarning(minutesLeft === 1 ? "1 minute remaining in this module." : "5 minutes remaining in this module.");
     setTimeWarningVisible(true);
   }
@@ -1121,6 +1318,7 @@ export default function TestTakingClient({
                   initialSeconds={timeRemainingSeconds}
                   onExpire={handleTimerExpire}
                   onWarning={handleTimerWarning}
+                  serverRemaining={serverRemaining}
                 />
                 <button
                   onClick={() => setTimerHidden(true)}

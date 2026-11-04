@@ -9,15 +9,22 @@ interface TestTimerProps {
   onExpire: () => void;
   /** Called once when the countdown crosses 5 and 1 minute(s) left. */
   onWarning?: (minutesLeft: 5 | 1) => void;
+  /**
+   * Server's seconds left, sent after a save or before auto-submit. A new
+   * object (even with the same value) re-applies it; small drift is ignored.
+   */
+  serverRemaining?: { seconds: number } | null;
 }
 
-export default function TestTimer({ initialSeconds, onExpire, onWarning }: TestTimerProps) {
+export default function TestTimer({ initialSeconds, onExpire, onWarning, serverRemaining }: TestTimerProps) {
   const [secondsLeft, setSecondsLeft] = useState(initialSeconds);
   const onExpireRef = useRef(onExpire);
   onExpireRef.current = onExpire;
   const onWarningRef = useRef(onWarning);
   onWarningRef.current = onWarning;
   const prevSecondsRef = useRef(initialSeconds);
+  const elapsedMsRef = useRef(0);
+  const tickRef = useRef<() => void>(() => {});
 
   // Fire on the crossing only, so a reload with < 5 min left doesn't
   // re-announce the 5-minute warning.
@@ -36,7 +43,6 @@ export default function TestTimer({ initialSeconds, onExpire, onWarning }: TestT
   // a fixed wall-clock deadline handed the student the 10 minutes back
   // (D-20261103-1).
   useEffect(() => {
-    let elapsedMs = 0;
     let lastWall = Date.now();
     let lastMono = performance.now();
     let expired = false;
@@ -44,17 +50,19 @@ export default function TestTimer({ initialSeconds, onExpire, onWarning }: TestT
       const wall = Date.now();
       const mono = performance.now();
       const wallDelta = wall - lastWall;
-      elapsedMs += wallDelta >= 0 ? wallDelta : Math.max(0, mono - lastMono);
+      elapsedMsRef.current += wallDelta >= 0 ? wallDelta : Math.max(0, mono - lastMono);
       lastWall = wall;
       lastMono = mono;
-      const remaining = Math.max(0, Math.ceil((initialSeconds * 1000 - elapsedMs) / 1000));
+      const remaining = Math.max(0, Math.ceil((initialSeconds * 1000 - elapsedMsRef.current) / 1000));
       setSecondsLeft(remaining);
-      if (remaining <= 0 && !expired) {
+      // Not latched for good: time added by an admin re-arms the timer.
+      if (remaining > 0) expired = false;
+      else if (!expired) {
         expired = true;
-        clearInterval(interval);
         onExpireRef.current();
       }
     }
+    tickRef.current = tick;
     const interval = setInterval(tick, 1000);
     function onVisible() {
       if (document.visibilityState === "visible") tick();
@@ -68,6 +76,17 @@ export default function TestTimer({ initialSeconds, onExpire, onWarning }: TestT
       window.removeEventListener("focus", tick);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The server is the authority on time left (an admin can add time
+  // mid-exam, D-20261104-3); adopt its value when it drifts by > 3 s.
+  useEffect(() => {
+    if (!serverRemaining) return;
+    const shown = (initialSeconds * 1000 - elapsedMsRef.current) / 1000;
+    if (Math.abs(shown - serverRemaining.seconds) <= 3) return;
+    elapsedMsRef.current = (initialSeconds - serverRemaining.seconds) * 1000;
+    prevSecondsRef.current = Math.max(prevSecondsRef.current, serverRemaining.seconds);
+    tickRef.current();
+  }, [serverRemaining, initialSeconds]);
 
   const hours = Math.floor(secondsLeft / 3600);
   const minutes = Math.floor((secondsLeft % 3600) / 60);

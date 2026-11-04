@@ -111,6 +111,23 @@ export function moduleDeadlineMs(
   return start + limit * 60_000 + DEADLINE_GRACE_SECONDS * 1000;
 }
 
+/**
+ * Seconds left on this module's clock (no grace), or null when untimed.
+ * Read from the test's current limit, so an admin adding time mid-exam
+ * shows up here; the take page re-syncs its timer from it.
+ */
+export function moduleRemainingSeconds(
+  sub: ModuleClockRow,
+  test: ModuleTiming,
+  now = Date.now(),
+): number | null {
+  const limit = moduleTimeLimitMinutes(test, sub.adaptive_track);
+  if (limit == null) return null;
+  const startIso = moduleStartedAtIso(sub);
+  if (!startIso) return limit * 60;
+  return Math.max(0, Math.floor((new Date(startIso).getTime() + limit * 60_000 - now) / 1000));
+}
+
 /** Student's class group ids. */
 async function studentClassGroupIds(db: SupabaseClient, studentId: string) {
   const { data: membership } = await db
@@ -213,6 +230,43 @@ export function mergeAnswers(
 
 // metadata keys only the server may write: the Module 2 clock and the
 // optimistic-concurrency version for answers.
+/** One question's flag / crossed-out choices / highlights, as the take page sends them. */
+export interface QuestionMetaPatch {
+  flagged: boolean;
+  crossed: string[];
+  annos: Record<string, unknown> | null;
+}
+
+/**
+ * Apply per-question flag / cross-out / highlight changes onto the saved
+ * metadata. The take page used to send these whole, so a laptop that came
+ * back online after the student moved to another computer wrote its old
+ * flags and cross-outs back over the new ones (D-20261104-1). Now only
+ * questions changed on that device are sent, and only those are replaced.
+ */
+export function applyQuestionMeta(
+  saved: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Pick<Record<string, unknown>, "flagged" | "crossed_out" | "annotations"> {
+  const flagged = new Set(Array.isArray(saved.flagged) ? (saved.flagged as unknown[]).filter((x): x is string => typeof x === "string") : []);
+  const crossed: Record<string, unknown> =
+    saved.crossed_out && typeof saved.crossed_out === "object" ? { ...(saved.crossed_out as Record<string, unknown>) } : {};
+  const annos: Record<string, unknown> =
+    saved.annotations && typeof saved.annotations === "object" ? { ...(saved.annotations as Record<string, unknown>) } : {};
+  for (const [qid, raw] of Object.entries(patch).slice(0, 500)) {
+    if (!raw || typeof raw !== "object") continue;
+    const p = raw as Partial<QuestionMetaPatch>;
+    if (p.flagged) flagged.add(qid);
+    else flagged.delete(qid);
+    const labels = Array.isArray(p.crossed) ? p.crossed.filter((l): l is string => typeof l === "string").slice(0, 10) : [];
+    if (labels.length) crossed[qid] = labels;
+    else delete crossed[qid];
+    if (p.annos && typeof p.annos === "object" && Object.keys(p.annos).length) annos[qid] = p.annos;
+    else delete annos[qid];
+  }
+  return { flagged: [...flagged], crossed_out: crossed, annotations: annos };
+}
+
 const SERVER_OWNED_METADATA_KEYS = ["module_2_started_at", "answers_version"];
 
 /** Drop server-owned keys from client-supplied metadata. */

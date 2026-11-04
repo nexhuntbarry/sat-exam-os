@@ -8,6 +8,7 @@ import {
   isModule2Track,
   mergeAnswers,
   moduleStartedAtIso,
+  applyQuestionMeta,
   sanitizeClientMetadata,
   stampModule2Start,
 } from "@/lib/student-exam";
@@ -41,6 +42,7 @@ export async function POST(
   // last DB-persisted answers.
   let inlineAnswers: Record<string, string | null> | null = null;
   let inlineMetadata: Record<string, unknown> | null = null;
+  let inlineQuestionMeta: Record<string, unknown> | null = null;
   let mergeMode = false;
   try {
     const body = (await req.clone().json()) as
@@ -48,6 +50,7 @@ export async function POST(
           answers?: Record<string, string | null>;
           answersMode?: string;
           metadata?: Record<string, unknown>;
+          questionMeta?: Record<string, unknown>;
         }
       | undefined;
     if (body?.answers && typeof body.answers === "object") {
@@ -56,6 +59,9 @@ export async function POST(
     mergeMode = body?.answersMode === "merge";
     if (body?.metadata && typeof body.metadata === "object") {
       inlineMetadata = sanitizeClientMetadata(body.metadata);
+    }
+    if (body?.questionMeta && typeof body.questionMeta === "object") {
+      inlineQuestionMeta = body.questionMeta;
     }
   } catch {
     /* No body / non-JSON → fall back to DB-stored answers. */
@@ -138,14 +144,18 @@ export async function POST(
       answersOverride,
       // Fold inline metadata in here so we don't need the separate PATCH
       // the UI used to send before submit.
-      extraUpdates: inlineMetadata
-        ? {
-            metadata: {
-              ...((submissionMetadata ?? {}) as Record<string, unknown>),
-              ...inlineMetadata,
-            },
-          }
-        : undefined,
+      extraUpdates:
+        inlineMetadata || inlineQuestionMeta
+          ? {
+              metadata: {
+                ...((submissionMetadata ?? {}) as Record<string, unknown>),
+                ...(inlineMetadata ?? {}),
+                ...(inlineQuestionMeta
+                  ? applyQuestionMeta((submissionMetadata ?? {}) as Record<string, unknown>, inlineQuestionMeta)
+                  : {}),
+              },
+            }
+          : undefined,
       db,
     });
   } catch (e) {
