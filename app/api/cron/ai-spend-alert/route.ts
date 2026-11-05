@@ -97,14 +97,19 @@ export async function GET(req: Request) {
     );
   }
 
+  // ?test=1 (still behind CRON_SECRET) sends the email even when all is well,
+  // to confirm delivery end to end.
+  const test = new URL(req.url).searchParams.get("test") === "1";
   const to = process.env.ALERT_EMAIL;
   let emailed = false;
-  if (alerts.length > 0 && to) {
+  if ((alerts.length > 0 || test) && to) {
     await sendEmail({
       to,
-      subject: `SAT Exam OS: AI spend alert`,
+      subject: `${test ? "[Test] " : ""}SAT Exam OS: AI spend alert`,
       html: [
-        `<p>${alerts.map((a) => a.replace(/</g, "&lt;")).join("</p><p>")}</p>`,
+        alerts.length > 0
+          ? `<p>${alerts.map((a) => a.replace(/</g, "&lt;")).join("</p><p>")}</p>`
+          : `<p>Test email: no alert right now. Real alerts come from this address.</p>`,
         `<p>Last 24 hours: ${usd(last24h)}<br>This month: ${usd(monthToDate)}</p>`,
         `<p>Details: https://sat.nexhunt.xyz/admin/ai-usage</p>`,
       ].join(""),
