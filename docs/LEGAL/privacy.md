@@ -44,6 +44,7 @@ Data is stored on:
 - **Supabase** — PostgreSQL database with row-level security capabilities
 - **Vercel** — Application hosting and deployment infrastructure
 - **Vercel Blob** — PDF file storage
+- **Clerk** — Sign-in and account authentication (name, email, login sessions)
 
 We implement reasonable technical safeguards including HTTPS, access controls, and service-role key management.
 

@@ -7,6 +7,13 @@ const nextConfig: NextConfig = {
   // pdfjs-dist + @napi-rs/canvas + sharp ship native bindings that must be
   // resolved at runtime, not bundled by Turbopack/Webpack.
   serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas", "sharp"],
+  // /terms, /privacy and /disclaimer read docs/LEGAL/*.md at request time
+  // (the root layout uses Clerk, so they can't be prerendered).
+  outputFileTracingIncludes: {
+    "/terms": ["./docs/LEGAL/terms.md"],
+    "/privacy": ["./docs/LEGAL/privacy.md"],
+    "/disclaimer": ["./docs/LEGAL/disclaimer.md"],
+  },
   async headers() {
     // CSP allowlist:
     // - 'self'                  → same-origin scripts/styles/img/connect.

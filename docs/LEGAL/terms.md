@@ -32,7 +32,7 @@ The Platform collects student data including: name, email, parent contact inform
 
 ## 5. Data Hosting
 
-All data is hosted on **Supabase** (database) and **Vercel** (application infrastructure). Data is stored in accordance with these providers' security and compliance standards.
+All data is hosted on **Supabase** (database) and **Vercel** (application infrastructure). Sign-in is handled by **Clerk**. Data is stored in accordance with these providers' security and compliance standards.
 
 ## 6. Intellectual Property
 

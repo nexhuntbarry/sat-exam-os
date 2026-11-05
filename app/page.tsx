@@ -168,18 +168,15 @@ function Footer() {
         </p>
 
         <div className="flex items-center gap-4 text-xs text-soft-mute">
-          <a
-            href="/docs/LEGAL/terms.md"
-            className="hover:text-mid-gray transition-colors"
-          >
+          <Link href="/terms" className="hover:text-mid-gray transition-colors">
             Terms
-          </a>
-          <a
-            href="/docs/LEGAL/privacy.md"
-            className="hover:text-mid-gray transition-colors"
-          >
+          </Link>
+          <Link href="/privacy" className="hover:text-mid-gray transition-colors">
             Privacy
-          </a>
+          </Link>
+          <Link href="/disclaimer" className="hover:text-mid-gray transition-colors">
+            Disclaimer
+          </Link>
           <span>© {new Date().getFullYear()} SAT Exam OS</span>
         </div>
       </div>
