@@ -19,6 +19,18 @@ function fmtTime(seconds: number | null | undefined) {
   return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
 }
 
+// One-line preview: drop Markdown table rows (a data table rendered in full
+// made a single row taller than the screen) and join the remaining lines.
+function preview(text: string) {
+  const flat = text
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("|"))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return flat.length > 110 ? flat.slice(0, 110) + "…" : flat;
+}
+
 function missedColor(pct: number) {
   return pct >= 50 ? "bg-status-error" : pct >= 30 ? "bg-status-warning" : "bg-status-success";
 }
@@ -115,9 +127,9 @@ export default function QuestionAnalyticsPage() {
       <div>
         <h1 className="text-2xl font-bold text-charcoal">Question Analytics</h1>
         <p className="text-soft-mute text-sm mt-1">
-          {data.submittedAttempts} student{data.submittedAttempts === 1 ? "" : "s"} submitted. Missed = answered wrong or
-          left blank. Avg time and changed answer are recorded for tests taken from Nov 6, 2026 on. Click a question
-          to see each student&rsquo;s answer, time, answer changes and skips.
+          {`${data.submittedAttempts} student${data.submittedAttempts === 1 ? "" : "s"} submitted. `}
+          Missed = answered wrong or left blank. Avg time and changed answer are recorded for tests taken from
+          Nov 6, 2026 on. Click a question to see each student&rsquo;s answer, time, answer changes and skips.
         </p>
       </div>
 
@@ -182,7 +194,7 @@ function QuestionRow({
         <div className="w-10 shrink-0 text-charcoal text-sm font-semibold font-mono">Q{q.questionNumber}</div>
         <div className="flex-1 min-w-0">
           <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-0 [&_p]:truncate">
-            {q.questionText.length > 110 ? q.questionText.slice(0, 110) + "…" : q.questionText}
+            {preview(q.questionText)}
           </MathMarkdown>
           {q.domain && <div className="text-soft-mute text-xs mt-0.5">{q.domain}</div>}
         </div>
