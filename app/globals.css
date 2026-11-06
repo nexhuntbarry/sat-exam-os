@@ -67,6 +67,11 @@ html {
   padding: 0.15rem 0.5rem 0;
   pointer-events: none;
 }
+/* Paper has no scrolling: drop the hint and the scroll shadow. */
+@media print {
+  .mathmd-table-scroll { overflow: visible; background: none; }
+  .mathmd-table-scroll::after { content: none; }
+}
 .mathmd table {
   border-collapse: collapse;
   margin: 0;

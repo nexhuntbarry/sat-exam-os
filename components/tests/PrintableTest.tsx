@@ -47,7 +47,7 @@ export default function PrintableTest({
 
       {modules.map((m, mi) => (
         <section key={mi} className={mi > 0 ? "break-before-page pt-2" : ""}>
-          <header className="border-b-2 border-charcoal pb-3 mb-5">
+          <div className="border-b-2 border-charcoal pb-3 mb-5">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h1 className="text-xl font-bold">{testName}</h1>
@@ -66,7 +66,7 @@ export default function PrintableTest({
                 </div>
               )}
             </div>
-          </header>
+          </div>
 
           {m.questions.length === 0 && (
             <p className="text-sm text-soft-mute">No approved questions in this module yet.</p>
