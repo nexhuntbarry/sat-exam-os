@@ -169,6 +169,7 @@ async function getActiveSubmission(testId: string, studentId: string, startModul
       id: submission.id,
       answers: (submission.answers ?? {}) as Record<string, string>,
       metadata: submissionMetadata,
+      startedAt: submission.started_at as string,
     },
     test: {
       id: test.id,
@@ -230,6 +231,7 @@ export default async function TestTakingPage({
       key={data.submission.id}
       testId={id}
       submissionId={data.submission.id}
+      attemptStartedAt={data.submission.startedAt}
       initialAnswers={data.submission.answers}
       initialMetadata={data.submission.metadata}
       test={data.test}

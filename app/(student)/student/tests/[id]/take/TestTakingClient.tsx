@@ -43,6 +43,8 @@ interface Question {
 interface Props {
   testId: string;
   submissionId: string;
+  /** Server start time of this attempt; an admin reset sets a new one. */
+  attemptStartedAt: string;
   initialAnswers: Record<string, string>;
   initialMetadata: Record<string, unknown>;
   test: {
@@ -102,6 +104,8 @@ interface LocalBackup {
   lastClientSeq?: number;
   /** Per-question flag/cross-out/highlight state the server last confirmed (questionMetaSnapshot). */
   metaBase?: Record<string, string>;
+  /** attemptStartedAt when this backup was written. A different value means the attempt was reset. */
+  attemptStartedAt?: string;
 }
 
 // Per-question flag / cross-out / highlight state, serialized so two
@@ -181,6 +185,7 @@ function isJsonOk(res: Response) {
 export default function TestTakingClient({
   testId,
   submissionId,
+  attemptStartedAt,
   initialAnswers,
   initialMetadata,
   test,
@@ -395,6 +400,7 @@ export default function TestTakingClient({
       clientId: clientIdRef.current ?? undefined,
       lastClientSeq: lastClientSeqRef.current,
       metaBase: metaBaseRef.current ?? undefined,
+      attemptStartedAt,
     };
     try {
       localStorage.setItem(backupKey(submissionId), JSON.stringify(backup));
@@ -624,7 +630,16 @@ export default function TestTakingClient({
   // answers, with local winning for questions changed after the last
   // confirmed save (those never reached the server).
   useEffect(() => {
-    const local = readBackup(submissionId);
+    let local = readBackup(submissionId);
+    // An admin reset keeps the submission id but starts the attempt over.
+    // The device copy belongs to the old attempt: restoring it brought the
+    // wiped answers, flags and position back and re-saved them (D-20261106-2).
+    if (local?.attemptStartedAt && local.attemptStartedAt !== attemptStartedAt) {
+      try {
+        localStorage.removeItem(backupKey(submissionId));
+      } catch {}
+      local = null;
+    }
     // Keep this device's save-order identity across reloads, so a keepalive
     // from the page we just left can't overwrite this page's newer saves.
     clientIdRef.current = local?.clientId ?? newClientId();
