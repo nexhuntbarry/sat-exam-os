@@ -572,7 +572,7 @@
       },
       "analysis": {
         "title": "Question Analysis",
-        "body": "Aggregated error rates across all your assigned tests. Find the questions and domains your class struggles with most, then prep the next class review around them."
+        "body": "Pick a test to see each question in order: what share of students missed it, and each student's answer, time on the question, answer changes and skips."
       },
       "help": {
         "title": "Quick Start",
@@ -686,19 +686,11 @@
     "title": "Question Analysis",
     "emptyBody": "You have no tests yet. Once a test is assigned (build one in Teaching Mode or wait for your admin) and students submit, cross-test question analytics will appear here.",
     "createCta": "Open Teaching Mode",
-    "subtitleShort": "Cross-test hardest-questions view.",
-    "subtitleLong": "Cross-test hardest-questions view across all your tests.",
-    "noSubmissions": "No submissions yet. Once students submit, hardest-question analytics will appear.",
-    "stats": {
-      "tests": "Tests",
-      "submissions": "Submissions",
-      "uniqueQuestions": "Unique Questions",
-      "overallErrorRate": "Overall Error Rate"
-    },
-    "worstDomains": "Worst Domains",
-    "noDomainData": "No domain data available.",
-    "domainAttempts": "{attempts} attempts · {correct} correct",
-    "hardestOverall": "Hardest Questions Overall"
+    "subtitleLong": "Open a test to see every question in order: how many students missed it, and what each student did on it.",
+    "colTest": "Test",
+    "colSubmitted": "Students submitted",
+    "colLastSubmitted": "Last submission",
+    "open": "Question analytics"
   },
   "analyticsTable": {
     "allTests": "All Tests",

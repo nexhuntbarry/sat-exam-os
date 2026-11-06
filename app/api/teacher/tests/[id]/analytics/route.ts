@@ -3,8 +3,48 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { parseActivity, summarizeActivity, type ActivitySummary } from "@/lib/question-activity";
+
+export interface StudentQuestionRow {
+  name: string;
+  answer: string | null;
+  correct: boolean;
+  /** Recorded on the take page; null for attempts from before it existed. */
+  activity: ActivitySummary | null;
+}
+
+export interface AnalyticsQuestion {
+  questionId: string;
+  questionNumber: number;
+  questionText: string;
+  correctAnswer: string;
+  domain: string | null;
+  difficulty: string | null;
+  /** Students who were served this question in a graded module. */
+  taken: number;
+  correct: number;
+  /** Wrong answer or left blank. */
+  missed: number;
+  blank: number;
+  avgTimeSeconds: number | null;
+  /** Students with recorded activity on this question (newer attempts). */
+  tracked: number;
+  /** Of those, how many changed their answer at least once. */
+  changed: number;
+  classReview: boolean;
+  students: StudentQuestionRow[];
+}
+
+export interface AnalyticsModule {
+  /** "Module 1", "Module 2 · Easier"…; null for a single-module test. */
+  label: string | null;
+  questions: AnalyticsQuestion[];
+}
 
 // GET /api/teacher/tests/[id]/analytics
+// Every question of the test, grouped by module in question order, with how
+// many students missed it and what each student did on it.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -22,295 +62,147 @@ export async function GET(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Fetch test questions (via question_ids or module)
   const { data: test } = await db
     .from("tests")
-    .select(
-      "id, test_name, module_id, module_2_id, question_ids, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id",
-    )
+    .select("id, module_id, module_2_id, question_ids, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id")
     .eq("id", testId)
     .single();
-
   if (!test) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  // Get questions for this test. Adaptive tests pull from every
-  // module slot since the analytics dashboard surfaces all questions
-  // students might have seen across Module 1 + the chosen Module 2.
-  let questionQuery = db
-    .from("questions")
-    .select("id, original_question_number, question_text, correct_answer, difficulty, domain, skill, explanation, question_type")
-    .order("original_question_number", { ascending: true });
+  const slots: { moduleId: string | null; label: string | null }[] = test.is_adaptive
+    ? [
+        { moduleId: test.module_1_id, label: "Module 1" },
+        { moduleId: test.module_2_easy_id, label: "Module 2 · Easier" },
+        { moduleId: test.module_2_hard_id, label: "Module 2 · Harder" },
+      ]
+    : test.module_2_id
+      ? [
+          { moduleId: test.module_id, label: "Module 1" },
+          { moduleId: test.module_2_id, label: "Module 2" },
+        ]
+      : [{ moduleId: test.module_id, label: null }];
 
-  const qIds = test.question_ids as string[] | null;
-  if (!test.is_adaptive && qIds && qIds.length > 0) {
-    questionQuery = questionQuery.in("id", qIds);
-  } else if (test.is_adaptive) {
-    const adaptiveModuleIds = [
-      test.module_1_id,
-      test.module_2_easy_id,
-      test.module_2_hard_id,
-    ].filter((x): x is string => Boolean(x));
-    if (adaptiveModuleIds.length === 0) {
-      return NextResponse.json({ questions: [], summary: null });
-    }
-    questionQuery = questionQuery.in("module_id", adaptiveModuleIds);
-  } else if (test.module_2_id) {
-    // Non-adaptive 2-module test → pull questions from both modules.
-    questionQuery = questionQuery.in(
-      "module_id",
-      [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x)),
-    );
-  } else {
-    if (!test.module_id) {
-      return NextResponse.json({ questions: [], summary: null });
-    }
-    questionQuery = questionQuery.eq("module_id", test.module_id);
-  }
+  // The question set students were shown and graded on, per module.
+  const moduleQuestions = await Promise.all(
+    slots.map(async (slot) => {
+      if (!slot.moduleId) return [];
+      const { data } = await scopeToStudentQuestionSet(
+        db
+          .from("questions")
+          .select("id, original_question_number, question_text, correct_answer, difficulty, domain")
+          .eq("module_id", slot.moduleId),
+        test,
+      ).order("original_question_number", { ascending: true });
+      return data ?? [];
+    }),
+  );
+  const questionIds = moduleQuestions.flat().map((q) => q.id as string);
 
-  const { data: questions } = await questionQuery;
-  if (!questions || questions.length === 0) {
-    return NextResponse.json({ questions: [], summary: null });
-  }
-
-  const questionIds = questions.map((q) => q.id);
-
-  // Every submission row in scope (any status) — the Avg Class Score below
-  // must match the Results page, which groups all rows into attempts first.
-  let submissionIdsQuery = db
+  // Graded module rows in scope (class teachers: their own students only).
+  let submissionQuery = db
     .from("submissions")
-    .select("id, session_id, adaptive_track, status, correct_count, total_questions, percentage")
+    .select("id, student_id, status, session_id, adaptive_track, correct_count, total_questions, percentage, metadata, users!inner(display_name, email)")
     .eq("test_id", testId);
   if (access.mode === "class" && access.studentAllowlist) {
-    submissionIdsQuery = submissionIdsQuery.in(
-      "student_id",
-      Array.from(access.studentAllowlist),
-    );
+    submissionQuery = submissionQuery.in("student_id", Array.from(access.studentAllowlist));
   }
-  submissionIdsQuery = scopeIds(submissionIdsQuery, "student_id", await getQaUserIds(), user.isQa);
-  const { data: submissionRows } = await submissionIdsQuery;
+  submissionQuery = scopeIds(submissionQuery, "student_id", await getQaUserIds(), user.isQa);
+  const { data: submissionRows } = await submissionQuery;
+  const graded = (submissionRows ?? []).filter((s) => s.status === "Submitted" || s.status === "Late");
 
-  // Per-question stats use graded (Submitted/Late) module rows.
-  const subIds = (submissionRows ?? [])
-    .filter((s) => s.status === "Submitted" || s.status === "Late")
-    .map((s) => s.id as string);
+  const subInfo = new Map(
+    graded.map((s) => {
+      const u = s.users as unknown as { display_name: string | null; email: string | null } | null;
+      return [
+        s.id as string,
+        {
+          name: u?.display_name ?? u?.email ?? "Student",
+          activity: parseActivity((s.metadata as Record<string, unknown> | null)?.question_activity),
+        },
+      ];
+    }),
+  );
 
-  // Attempts, exactly as the Results page builds them: group module rows by
-  // session_id; an attempt with any In Progress module isn't submitted; its
-  // score is combined correct/total (single-module: the row's percentage).
-  const attemptRows = new Map<string, NonNullable<typeof submissionRows>>();
-  for (const s of submissionRows ?? []) {
-    const key = (s.session_id as string | null) ?? `solo:${s.id}`;
-    attemptRows.set(key, [...(attemptRows.get(key) ?? []), s]);
+  type AnswerRow = { submission_id: string; question_id: string; student_answer: string | null; is_correct: boolean | null; time_spent_seconds: number | null };
+  const answerRows: AnswerRow[] = [];
+  const subIds = [...subInfo.keys()];
+  // Chunked: .in() with hundreds of ids makes a long URL.
+  for (let i = 0; i < subIds.length && questionIds.length > 0; i += 100) {
+    const { data } = await db
+      .from("answer_records")
+      .select("submission_id, question_id, student_answer, is_correct, time_spent_seconds")
+      .in("submission_id", subIds.slice(i, i + 100))
+      .in("question_id", questionIds);
+    answerRows.push(...((data ?? []) as AnswerRow[]));
   }
-  const attemptPcts: number[] = [];
-  for (const list of attemptRows.values()) {
-    const rank = (t: unknown) => (t === "module_1" ? 0 : 1);
-    const rows = [...list].sort((a, b) => rank(a.adaptive_track) - rank(b.adaptive_track));
-    const statuses = rows.map((r) => r.status as string);
-    if (statuses.includes("In Progress")) continue;
-    const status = statuses.includes("Late") ? "Late" : statuses[statuses.length - 1];
-    if (status !== "Submitted" && status !== "Late") continue;
-    if (rows.length === 1) {
-      attemptPcts.push(rows[0].percentage != null ? Number(rows[0].percentage) : 0);
-      continue;
-    }
-    const correct = rows.reduce((n, r) => n + ((r.correct_count as number | null) ?? 0), 0);
-    const total = rows.reduce((n, r) => n + ((r.total_questions as number | null) ?? 0), 0);
-    attemptPcts.push(total > 0 ? Math.round((correct / total) * 1000) / 10 : 0);
-  }
-  const totalSubmissions = attemptPcts.length;
+  const byQuestion = new Map<string, AnswerRow[]>();
+  for (const r of answerRows) byQuestion.set(r.question_id, [...(byQuestion.get(r.question_id) ?? []), r]);
 
-  if (subIds.length === 0) {
-    return NextResponse.json({
-      questions: questions.map((q) => ({
-        questionId: q.id,
-        questionNumber: q.original_question_number,
-        questionText: q.question_text,
-        correctAnswer: q.correct_answer,
-        difficulty: q.difficulty,
-        domain: q.domain,
-        skill: q.skill,
-        explanation: q.explanation,
-        totalSubmissions: 0,
-        correctCount: 0,
-        wrongCount: 0,
-        blankCount: 0,
-        flaggedCount: 0,
-        avgTimeSeconds: null,
-        choiceDistribution: {},
-        mostSelectedWrong: null,
-        classReview: false,
-        wrongStudents: [],
-      })),
-      summary: null,
-    });
-  }
-
-  type RawAnswerRecord = {
-    question_id: string;
-    student_answer: string | null;
-    correct_answer: string | null;
-    is_correct: boolean | null;
-    time_spent_seconds: number | null;
-    submissions: { student_id: string; users: { display_name: string } } | null;
-  };
-
-  const { data: rawAnswerRecords } = await db
-    .from("answer_records")
-    .select("question_id, student_answer, correct_answer, is_correct, time_spent_seconds, submissions!inner(student_id, users!inner(display_name))")
-    .in("submission_id", subIds)
-    .in("question_id", questionIds);
-
-  const answerRecords = (rawAnswerRecords ?? []) as unknown as RawAnswerRecord[];
-
-  // Fetch flagged question counts from submissions.answers jsonb
-  const { data: submissionsWithAnswers } = await db
-    .from("submissions")
-    .select("id, answers")
-    .in("id", subIds);
-
-  // Count flagged per question
-  const flaggedCount: Record<string, number> = {};
-  for (const sub of submissionsWithAnswers ?? []) {
-    const ans = sub.answers as Record<string, { flagged?: boolean }>;
-    for (const [qid, val] of Object.entries(ans)) {
-      if (val?.flagged) {
-        flaggedCount[qid] = (flaggedCount[qid] ?? 0) + 1;
-      }
-    }
-  }
-
-  // Fetch teacher notes (class_review flags)
+  // This teacher's "teach in class" marks (Teaching Mode reads them).
   const { data: notes } = await db
     .from("test_teacher_notes")
-    .select("question_id, note_type, note_body")
+    .select("question_id, note_body")
     .eq("test_id", testId)
     .eq("teacher_id", user.userId)
     .eq("note_type", "class_review")
     .is("student_id", null);
+  const classReview = new Set((notes ?? []).filter((n) => n.note_body === "true").map((n) => n.question_id as string));
 
-  const classReviewSet = new Set(
-    (notes ?? [])
-      .filter((n) => n.note_body === "true" && n.question_id)
-      .map((n) => n.question_id as string)
-  );
+  const modules: AnalyticsModule[] = slots
+    .map((slot, i) => ({
+      label: slot.label,
+      questions: moduleQuestions[i].map((q): AnalyticsQuestion => {
+        const rows = byQuestion.get(q.id as string) ?? [];
+        const students: StudentQuestionRow[] = rows
+          .map((r) => {
+            const info = subInfo.get(r.submission_id);
+            return {
+              name: info?.name ?? "Student",
+              answer: r.student_answer,
+              correct: Boolean(r.is_correct),
+              activity: summarizeActivity(info?.activity[q.id as string]),
+            };
+          })
+          .sort((a, b) => Number(a.correct) - Number(b.correct) || a.name.localeCompare(b.name));
+        const correct = students.filter((s) => s.correct).length;
+        // Only real recorded times: the old even split says nothing per question.
+        const tracked = students.filter((s) => s.activity);
+        const times = tracked.map((s) => s.activity!.seconds);
+        return {
+          questionId: q.id as string,
+          questionNumber: q.original_question_number as number,
+          questionText: q.question_text as string,
+          correctAnswer: (q.correct_answer as string | null) ?? "",
+          domain: q.domain as string | null,
+          difficulty: q.difficulty as string | null,
+          taken: students.length,
+          correct,
+          missed: students.length - correct,
+          blank: students.filter((s) => !s.answer).length,
+          avgTimeSeconds: times.length ? times.reduce((a, b) => a + b, 0) / times.length : null,
+          tracked: tracked.length,
+          changed: tracked.filter((s) => s.activity!.changes > 0).length,
+          classReview: classReview.has(q.id as string),
+          students,
+        };
+      }),
+    }))
+    .filter((m) => m.questions.length > 0);
 
-  // Aggregate per question
-  const arMap: Record<string, {
-    answered: number;
-    correctCount: number;
-    wrongCount: number;
-    blankCount: number;
-    totalTime: number;
-    timeCount: number;
-    choiceDist: Record<string, number>;
-    wrongStudentNames: Set<string>;
-  }> = {};
-
-  for (const ar of answerRecords) {
-    const qid = ar.question_id;
-    if (!arMap[qid]) {
-      arMap[qid] = { answered: 0, correctCount: 0, wrongCount: 0, blankCount: 0, totalTime: 0, timeCount: 0, choiceDist: {}, wrongStudentNames: new Set() };
+  // Attempts, exactly as the Results page builds them: group module rows by
+  // session_id; an attempt with any In Progress module isn't submitted.
+  const attempts = new Map<string, NonNullable<typeof submissionRows>>();
+  for (const s of submissionRows ?? []) {
+    const key = (s.session_id as string | null) ?? `solo:${s.id}`;
+    attempts.set(key, [...(attempts.get(key) ?? []), s]);
+  }
+  let submittedAttempts = 0;
+  for (const rows of attempts.values()) {
+    const statuses = rows.map((r) => r.status as string);
+    if (!statuses.includes("In Progress") && statuses.some((st) => st === "Submitted" || st === "Late")) {
+      submittedAttempts++;
     }
-    const entry = arMap[qid];
-    entry.answered++;
-    const displayName = ar.submissions?.users?.display_name ?? null;
-    if (ar.is_correct) {
-      entry.correctCount++;
-    } else if (!ar.student_answer) {
-      entry.blankCount++;
-    } else {
-      entry.wrongCount++;
-      if (displayName) entry.wrongStudentNames.add(displayName);
-    }
-    if (ar.time_spent_seconds != null) {
-      entry.totalTime += ar.time_spent_seconds;
-      entry.timeCount++;
-    }
-    const choice = ar.student_answer ?? "blank";
-    entry.choiceDist[choice] = (entry.choiceDist[choice] ?? 0) + 1;
   }
 
-  // Build output
-  const questionRows = questions.map((q) => {
-    const agg = arMap[q.id];
-    const choiceDist = agg?.choiceDist ?? {};
-    const correctAns = q.correct_answer ?? "";
-
-    // Most selected wrong answer
-    let mostSelectedWrong: string | null = null;
-    let maxWrongCount = 0;
-    for (const [choice, cnt] of Object.entries(choiceDist)) {
-      if (choice !== correctAns && choice !== "blank" && cnt > maxWrongCount) {
-        maxWrongCount = cnt;
-        mostSelectedWrong = choice;
-      }
-    }
-
-    return {
-      questionId: q.id,
-      questionNumber: q.original_question_number,
-      questionText: q.question_text,
-      correctAnswer: correctAns,
-      difficulty: q.difficulty,
-      domain: q.domain,
-      skill: q.skill,
-      explanation: q.explanation,
-      // Students who were served this question (an adaptive Module 2
-      // question is only seen on one track).
-      totalSubmissions: agg?.answered ?? 0,
-      correctCount: agg?.correctCount ?? 0,
-      wrongCount: agg?.wrongCount ?? 0,
-      blankCount: agg?.blankCount ?? 0,
-      flaggedCount: flaggedCount[q.id] ?? 0,
-      avgTimeSeconds: agg?.timeCount ? agg.totalTime / agg.timeCount : null,
-      choiceDistribution: choiceDist,
-      mostSelectedWrong,
-      classReview: classReviewSet.has(q.id),
-      wrongStudents: Array.from(agg?.wrongStudentNames ?? []).sort(),
-    };
-  });
-
-  // Summary cards
-  const answeredRows = questionRows.filter((q) => q.totalSubmissions > 0);
-  const sorted = [...answeredRows].sort((a, b) => {
-    const ar = a.totalSubmissions > 0 ? a.correctCount / a.totalSubmissions : 0;
-    const br = b.totalSubmissions > 0 ? b.correctCount / b.totalSubmissions : 0;
-    return ar - br;
-  });
-
-  const hardest = sorted[0] ?? null;
-  const easiest = sorted[sorted.length - 1] ?? null;
-  const mostFlagged = [...questionRows].sort((a, b) => b.flaggedCount - a.flaggedCount)[0] ?? null;
-  // Avg Class Score = mean of each submitted attempt's combined %, the same
-  // number the Results page shows.
-  const avgClassScore =
-    attemptPcts.length > 0
-      ? attemptPcts.reduce((a, b) => a + b, 0) / attemptPcts.length
-      : null;
-  // A different metric: share of all answered questions that were correct
-  // (weights attempts by how many questions they answered).
-  const answeredTotal = answeredRows.reduce((n, q) => n + q.totalSubmissions, 0);
-  const answeredCorrectPct =
-    answeredTotal > 0
-      ? (answeredRows.reduce((n, q) => n + q.correctCount, 0) / answeredTotal) * 100
-      : null;
-
-  return NextResponse.json({
-    questions: questionRows,
-    summary: {
-      hardestQuestion: hardest
-        ? { questionNumber: hardest.questionNumber, correctRate: hardest.correctCount / (hardest.totalSubmissions || 1) * 100 }
-        : null,
-      easiestQuestion: easiest
-        ? { questionNumber: easiest.questionNumber, correctRate: easiest.correctCount / (easiest.totalSubmissions || 1) * 100 }
-        : null,
-      mostFlaggedQuestion: mostFlagged
-        ? { questionNumber: mostFlagged.questionNumber, flaggedCount: mostFlagged.flaggedCount }
-        : null,
-      avgClassScore,
-      answeredCorrectPct,
-      totalSubmissions,
-    },
-  });
+  return NextResponse.json({ modules, submittedAttempts });
 }

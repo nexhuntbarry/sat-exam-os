@@ -572,7 +572,7 @@
       },
       "analysis": {
         "title": "題目分析",
-        "body": "跨所有指派測驗的題目錯誤率彙整。找出班上最常答錯的題目與領域，作為下次課堂講解的素材。"
+        "body": "選一份測驗，依題號查看每題的答錯比例，以及每位學生的答案、作答時間、是否改過答案、是否先跳過再回來。"
       },
       "help": {
         "title": "快速入門",
@@ -686,19 +686,11 @@
     "title": "題目分析",
     "emptyBody": "您尚未指派任何測驗。在「教學模式」建立 Draft 測驗，或請管理員指派 — 學生作答後，跨測驗題目分析將出現在這裡。",
     "createCta": "前往教學模式",
-    "subtitleShort": "跨測驗最難題目分析。",
-    "subtitleLong": "跨所有測驗的最難題目分析。",
-    "noSubmissions": "尚未有學生提交。一旦有提交，難題分析將顯示在此。",
-    "stats": {
-      "tests": "測驗",
-      "submissions": "提交",
-      "uniqueQuestions": "不重複題目",
-      "overallErrorRate": "整體錯誤率"
-    },
-    "worstDomains": "最弱題型",
-    "noDomainData": "尚無領域資料。",
-    "domainAttempts": "{attempts} 次作答 · {correct} 答對",
-    "hardestOverall": "整體最難題目"
+    "subtitleLong": "點開測驗，依題號查看每一題有多少學生答錯，以及每位學生的作答情況。",
+    "colTest": "測驗",
+    "colSubmitted": "已提交學生",
+    "colLastSubmitted": "最近提交",
+    "open": "題目分析"
   },
   "analyticsTable": {
     "allTests": "全部測驗",

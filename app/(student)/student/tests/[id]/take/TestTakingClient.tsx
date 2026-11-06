@@ -23,6 +23,15 @@ import QuestionErrorBoundary from "@/components/tests/QuestionErrorBoundary";
 import QuestionNavigator from "@/components/tests/QuestionNavigator";
 import SubmitModal from "@/components/tests/SubmitModal";
 import ReportProblemButton from "@/components/tests/ReportProblemButton";
+import {
+  type ActivityMap,
+  addTime,
+  mergeActivity,
+  parseActivity,
+  recordAnswer,
+  recordArrive,
+  recordLeave,
+} from "@/lib/question-activity";
 
 interface Question {
   id: string;
@@ -106,6 +115,8 @@ interface LocalBackup {
   metaBase?: Record<string, string>;
   /** attemptStartedAt when this backup was written. A different value means the attempt was reset. */
   attemptStartedAt?: string;
+  /** Per-question time / visits / answer history (lib/question-activity). */
+  activity?: ActivityMap;
 }
 
 // Per-question flag / cross-out / highlight state, serialized so two
@@ -291,6 +302,41 @@ export default function TestTakingClient({
   const clientIdRef = useRef<string | null>(null);
   const lastClientSeqRef = useRef(0);
 
+  // Per-question activity for teacher analytics (lib/question-activity):
+  // time on screen, visits, answers gone through. Refs only, so it never
+  // re-renders the exam; it rides the saves that happen anyway.
+  const activityRef = useRef<ActivityMap | null>(null);
+  if (activityRef.current === null) {
+    activityRef.current = parseActivity(
+      initialMetadata.question_activity,
+      new Set(questions.map((q) => q.id)),
+    );
+  }
+  // The question on screen and when its current visible stretch began.
+  const viewRef = useRef<{ qid: string; since: number | null } | null>(null);
+
+  function closeActivitySpan() {
+    const v = viewRef.current;
+    if (v?.since == null) return;
+    addTime(activityRef.current!, v.qid, performance.now() - v.since);
+    v.since = null;
+  }
+  function openActivitySpan() {
+    const v = viewRef.current;
+    if (v && v.since == null && document.visibilityState === "visible") v.since = performance.now();
+  }
+  // What saves carry: the record so far plus the open stretch and the answer
+  // now on screen (an SPR answer is otherwise only taken when leaving).
+  function activitySnapshot(): ActivityMap {
+    const snap = JSON.parse(JSON.stringify(activityRef.current ?? {})) as ActivityMap;
+    const v = viewRef.current;
+    if (v) {
+      if (v.since != null) addTime(snap, v.qid, performance.now() - v.since);
+      recordAnswer(snap, v.qid, answersRef.current[v.qid]);
+    }
+    return snap;
+  }
+
   const saveUrl = `/api/student/submissions/${submissionId}`;
 
   // The save helpers below read state only through refs, so a closure
@@ -318,7 +364,11 @@ export default function TestTakingClient({
   // What saves send as metadata: flags / cross-outs / highlights go per
   // question in questionMetaDelta() instead (D-20261104-1).
   function serverMetadata(): Record<string, unknown> {
-    return { tab_switches: tabSwitchRef.current, current_index: currentIndexRef.current };
+    return {
+      tab_switches: tabSwitchRef.current,
+      current_index: currentIndexRef.current,
+      question_activity: activitySnapshot(),
+    };
   }
 
   function currentQuestionMeta() {
@@ -401,6 +451,7 @@ export default function TestTakingClient({
       lastClientSeq: lastClientSeqRef.current,
       metaBase: metaBaseRef.current ?? undefined,
       attemptStartedAt,
+      activity: activitySnapshot(),
     };
     try {
       localStorage.setItem(backupKey(submissionId), JSON.stringify(backup));
@@ -646,6 +697,9 @@ export default function TestTakingClient({
     lastClientSeqRef.current = local?.lastClientSeq ?? 0;
     if (!local) return;
     const validIds = new Set(questions.map((q) => q.id));
+    if (local.activity) {
+      activityRef.current = mergeActivity(activityRef.current ?? {}, parseActivity(local.activity, validIds));
+    }
     const syncedAt = typeof local.syncedAt === "number" ? local.syncedAt : 0;
     syncedAtRef.current = syncedAt;
     const localAnswers = local.answers ?? {};
@@ -749,6 +803,35 @@ export default function TestTakingClient({
     markChanged(AUTO_SAVE_DEBOUNCE_MS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flagged, crossedOut, currentIndex, annotations, tabSwitchCount]);
+
+  // Activity: arriving at a question counts a visit (the first one after
+  // load doesn't, unless it's new: that's a reload); leaving it records the
+  // answer it holds and whether the first pass left it blank.
+  useEffect(() => {
+    const qid = questions[currentIndex]?.id;
+    if (!qid) return;
+    const prev = viewRef.current;
+    if (prev?.qid === qid) return;
+    if (prev) {
+      closeActivitySpan();
+      recordLeave(activityRef.current!, prev.qid, answersRef.current[prev.qid]);
+    }
+    recordArrive(activityRef.current!, qid, prev !== null);
+    viewRef.current = { qid, since: null };
+    openActivitySpan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentIndex]);
+
+  // Time only counts while the page is visible.
+  useEffect(() => {
+    function onVisibility() {
+      if (document.visibilityState === "hidden") closeActivitySpan();
+      else openActivitySpan();
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Tab visibility tracking. Hiding the tab is also the last reliable
   // moment on mobile (the page may be killed without pagehide), so flush.
@@ -885,6 +968,9 @@ export default function TestTakingClient({
     setAnswers(next);
     // A choice click saves right away; SPR typing is debounced.
     const isMcq = questions.find((q) => q.id === questionId)?.question_type === "Multiple Choice";
+    // Each choice click is an answer the student went through; typed SPR
+    // answers are taken when the student leaves the question.
+    if (isMcq) recordAnswer(activityRef.current!, questionId, answer);
     markChanged(isMcq ? 0 : AUTO_SAVE_DEBOUNCE_MS);
   }
 

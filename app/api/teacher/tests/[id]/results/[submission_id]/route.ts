@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { forbidCrossSide } from "@/lib/qa";
+import { parseActivity, summarizeActivity } from "@/lib/question-activity";
 
 // Two-track access model:
 // 1) admin → unrestricted
@@ -184,6 +185,10 @@ export async function GET(
     annotations?: Record<string, Record<string, Array<{ start: number; end: number; note?: string }>>>;
   };
   const annotationsByQid = meta.annotations ?? {};
+  // Per-question time / answer changes / skips, recorded per module row.
+  const activityBySubmission = new Map(
+    siblings.map((sib) => [sib.id, parseActivity(sib.metadata?.question_activity)]),
+  );
 
   type RawAnswer = {
     id: string;
@@ -230,6 +235,7 @@ export async function GET(
       correctAnswer: ar.correct_answer ?? q.correct_answer,
       isCorrect: ar.is_correct,
       timeSpentSeconds: ar.time_spent_seconds,
+      activity: summarizeActivity(activityBySubmission.get(ar.submission_id)?.[q.id]),
       wasFlagged,
       explanation: q.explanation,
       moduleId: q.module_id,

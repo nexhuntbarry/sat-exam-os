@@ -8,6 +8,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { scaleSectionScore } from "@/lib/scoring";
+import { parseActivity } from "@/lib/question-activity";
 import {
   moduleDeadlineMs,
   moduleStartedAtIso,
@@ -280,6 +281,12 @@ export async function finalizeSubmission(
 
   const answers = (input.answersOverride ?? submission.answers ?? {}) as Record<string, string>;
   const totalQuestions = questions.length;
+  // Real per-question time when the take page recorded it (submit folds the
+  // final copy into extraUpdates.metadata); older attempts had none, so they
+  // keep the even split of the module time.
+  const finalMeta = ((input.extraUpdates?.metadata ?? submission.metadata) ?? {}) as Record<string, unknown>;
+  const activity = parseActivity(finalMeta.question_activity);
+  const hasActivity = Object.keys(activity).length > 0;
 
   const answerRecords = questions.map((q) => {
     const studentAnswer = answers[q.id] ?? null;
@@ -290,8 +297,11 @@ export async function finalizeSubmission(
       student_answer: studentAnswer,
       correct_answer: q.correct_answer ?? null,
       is_correct: isCorrect,
-      time_spent_seconds:
-        totalQuestions > 0 ? Math.floor(timeSpentSeconds / totalQuestions) : 0,
+      time_spent_seconds: hasActivity
+        ? Math.round((activity[q.id]?.t ?? 0) / 1000)
+        : totalQuestions > 0
+          ? Math.floor(timeSpentSeconds / totalQuestions)
+          : 0,
     };
   });
 

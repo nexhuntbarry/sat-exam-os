@@ -4,30 +4,28 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { QuestionAnalyticsRow } from "@/components/analytics/QuestionAnalyticsRow";
-import { StatCard } from "@/components/analytics/StatCard";
-import type { QuestionAnalyticsData } from "@/components/analytics/QuestionAnalyticsRow";
-
-interface QuestionAnalyticsDataExtended extends QuestionAnalyticsData {
-  wrongStudents?: string[];
-}
-
-interface Summary {
-  hardestQuestion: { questionNumber: number; correctRate: number } | null;
-  easiestQuestion: { questionNumber: number; correctRate: number } | null;
-  mostFlaggedQuestion: { questionNumber: number; flaggedCount: number } | null;
-  avgClassScore: number | null;
-  answeredCorrectPct?: number | null;
-  totalSubmissions: number;
-}
+import { ChevronDown, ChevronRight, BookOpen } from "lucide-react";
+import MathMarkdown from "@/components/MathMarkdown";
+import type { AnalyticsModule, AnalyticsQuestion, StudentQuestionRow } from "@/app/api/teacher/tests/[id]/analytics/route";
 
 interface AnalyticsData {
-  questions: QuestionAnalyticsDataExtended[];
-  summary: Summary | null;
+  modules: AnalyticsModule[];
+  submittedAttempts: number;
 }
 
-type SortField = "questionNumber" | "correctRate" | "flaggedCount" | "avgTimeSeconds";
+function fmtTime(seconds: number | null | undefined) {
+  if (seconds == null) return "—";
+  const s = Math.round(seconds);
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+}
 
+function missedColor(pct: number) {
+  return pct >= 50 ? "bg-status-error" : pct >= 30 ? "bg-status-warning" : "bg-status-success";
+}
+
+// One table per module, questions in test order: how many students missed
+// each one (wrong or blank). Opening a question shows every student's
+// answer, time on it, answer changes and whether they skipped it first.
 export default function QuestionAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const testId = params.id;
@@ -35,12 +33,7 @@ export default function QuestionAnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  // Default to question order (full-test review) — reads top-to-bottom like
-  // the test itself, which teachers find clearer than a difficulty ranking.
-  const [sortField, setSortField] = useState<SortField>("questionNumber");
-  const [sortAsc, setSortAsc] = useState(true);
-  const [domainFilter, setDomainFilter] = useState("all");
-  const [difficultyFilter, setDifficultyFilter] = useState("all");
+  const [open, setOpen] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetch(`/api/teacher/tests/${testId}/analytics`)
@@ -53,7 +46,7 @@ export default function QuestionAnalyticsPage() {
       .finally(() => setLoading(false));
   }, [testId]);
 
-  const handleToggleClassReview = useCallback(
+  const toggleClassReview = useCallback(
     async (questionId: string, current: boolean) => {
       const ok = await fetch(`/api/teacher/tests/${testId}/questions/${questionId}/flag`, {
         method: "POST",
@@ -64,18 +57,27 @@ export default function QuestionAnalyticsPage() {
         alert("Couldn't save the class-review mark. Check your connection and try again.");
         return;
       }
-      setData((prev) => {
-        if (!prev) return prev;
-        return {
+      setData((prev) =>
+        prev && {
           ...prev,
-          questions: prev.questions.map((q) =>
-            q.questionId === questionId ? { ...q, classReview: !current } : q
-          ),
-        };
-      });
+          modules: prev.modules.map((m) => ({
+            ...m,
+            questions: m.questions.map((q) => (q.questionId === questionId ? { ...q, classReview: !current } : q)),
+          })),
+        },
+      );
     },
-    [testId]
+    [testId],
   );
+
+  function toggle(key: string) {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   if (loading) {
     return <div className="max-w-5xl mx-auto py-16 text-center text-soft-mute">Loading analytics...</div>;
@@ -100,47 +102,8 @@ export default function QuestionAnalyticsPage() {
     );
   }
 
-  const { questions, summary } = data;
-
-  // Derive filter options
-  const domains = ["all", ...Array.from(new Set(questions.map((q) => q.domain ?? "").filter(Boolean)))];
-  const difficulties = ["all", "Easy", "Medium", "Hard"];
-
-  // Filter
-  const filtered = questions.filter((q) => {
-    if (domainFilter !== "all" && q.domain !== domainFilter) return false;
-    if (difficultyFilter !== "all" && q.difficulty !== difficultyFilter) return false;
-    return true;
-  });
-
-  // Sort
-  const sorted = [...filtered].sort((a, b) => {
-    let av: number, bv: number;
-    if (sortField === "correctRate") {
-      av = a.totalSubmissions > 0 ? a.correctCount / a.totalSubmissions : 0;
-      bv = b.totalSubmissions > 0 ? b.correctCount / b.totalSubmissions : 0;
-    } else if (sortField === "flaggedCount") {
-      av = a.flaggedCount;
-      bv = b.flaggedCount;
-    } else if (sortField === "avgTimeSeconds") {
-      av = a.avgTimeSeconds ?? 0;
-      bv = b.avgTimeSeconds ?? 0;
-    } else {
-      av = a.questionNumber;
-      bv = b.questionNumber;
-    }
-    const cmp = av < bv ? -1 : av > bv ? 1 : 0;
-    return sortAsc ? cmp : -cmp;
-  });
-
-  // Class-review questions
-  const toTeach = questions.filter((q) => q.classReview);
-
-  const selectCls = "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
-
   return (
     <div className="max-w-5xl mx-auto space-y-8">
-      {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap">
         <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
@@ -149,147 +112,186 @@ export default function QuestionAnalyticsPage() {
         <span className="text-charcoal">Question Analytics</span>
       </div>
 
-      <h1 className="text-2xl font-bold text-charcoal">Question-Level Analytics</h1>
-
-      {/* Summary cards */}
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatCard
-            label="Avg Class Score"
-            value={summary.avgClassScore != null ? `${summary.avgClassScore.toFixed(1)}%` : "—"}
-            sub={
-              summary.answeredCorrectPct != null
-                ? `${summary.answeredCorrectPct.toFixed(1)}% of answered questions correct`
-                : undefined
-            }
-            color="emerald"
-          />
-          <StatCard
-            label="Hardest Question"
-            value={summary.hardestQuestion ? `Q${summary.hardestQuestion.questionNumber}` : "—"}
-            sub={summary.hardestQuestion ? `${summary.hardestQuestion.correctRate.toFixed(0)}% correct` : undefined}
-            color="rose"
-          />
-          <StatCard
-            label="Easiest Question"
-            value={summary.easiestQuestion ? `Q${summary.easiestQuestion.questionNumber}` : "—"}
-            sub={summary.easiestQuestion ? `${summary.easiestQuestion.correctRate.toFixed(0)}% correct` : undefined}
-            color="lime"
-          />
-          <StatCard
-            label="Most Flagged"
-            value={summary.mostFlaggedQuestion ? `Q${summary.mostFlaggedQuestion.questionNumber}` : "—"}
-            sub={summary.mostFlaggedQuestion ? `${summary.mostFlaggedQuestion.flaggedCount} flags` : undefined}
-            color="amber"
-          />
-        </div>
-      )}
-
-      {/* To-Teach panel */}
-      {toTeach.length > 0 && (
-        <div className="bg-warm-coral/5 border border-warm-coral/20 rounded-2xl p-5">
-          <h2 className="text-warm-coral-text font-semibold mb-3">To Teach in Class ({toTeach.length})</h2>
-          <div className="flex flex-wrap gap-2">
-            {toTeach.map((q) => (
-              <Link
-                key={q.questionId}
-                href={`/teacher/tests/${testId}/analytics/${q.questionId}`}
-                className="px-3 py-1.5 bg-warm-coral/15 border border-warm-coral/20 rounded-lg text-warm-coral-text text-sm hover:bg-warm-coral/25 transition-colors"
-              >
-                Q{q.questionNumber}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Filters + sort */}
-      <div className="flex flex-wrap items-center gap-3">
-        <select value={domainFilter} onChange={(e) => setDomainFilter(e.target.value)} className={selectCls}>
-          {domains.map((d) => (
-            <option key={d} value={d}>{d === "all" ? "All Domains" : d}</option>
-          ))}
-        </select>
-        <select value={difficultyFilter} onChange={(e) => setDifficultyFilter(e.target.value)} className={selectCls}>
-          {difficulties.map((d) => (
-            <option key={d} value={d}>{d === "all" ? "All Difficulties" : d}</option>
-          ))}
-        </select>
-        <div className="flex items-center gap-2 ml-auto">
-          <span className="text-soft-mute text-sm">Sort by:</span>
-          <select
-            value={sortField}
-            onChange={(e) => setSortField(e.target.value as SortField)}
-            className={selectCls}
-          >
-            <option value="questionNumber">Question #</option>
-            <option value="correctRate">Correct Rate</option>
-            <option value="flaggedCount">Most Flagged</option>
-            <option value="avgTimeSeconds">Avg Time</option>
-          </select>
-          <button
-            onClick={() => setSortAsc((v) => !v)}
-            className="px-3 py-1.5 bg-light-bg border border-divider rounded-lg text-sm text-mid-gray hover:text-charcoal transition-colors"
-          >
-            {sortAsc ? "↑ Asc" : "↓ Desc"}
-          </button>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold text-charcoal">Question Analytics</h1>
+        <p className="text-soft-mute text-sm mt-1">
+          {data.submittedAttempts} student{data.submittedAttempts === 1 ? "" : "s"} submitted. Missed = answered wrong or
+          left blank. Avg time and changed answer are recorded for tests taken from Nov 6, 2026 on. Click a question
+          to see each student&rsquo;s answer, time, answer changes and skips.
+        </p>
       </div>
 
-      {/* Question rows */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        {/* Table header */}
-        <div className="px-5 py-3 border-b border-divider flex items-center gap-4 text-soft-mute text-xs font-medium">
-          <div className="w-4" />
-          <div className="w-8">Q#</div>
-          <div className="flex-1">Question</div>
-          <div className="w-20 text-right">Correct %</div>
-          <div className="w-36 hidden md:block text-center">Distribution</div>
-          <div className="w-16 text-center hidden sm:block">Flagged</div>
-          <div className="w-20 text-center">Review</div>
-        </div>
-        {sorted.length === 0 ? (
-          <div className="py-12 text-center text-soft-mute text-sm">
-            {data?.summary?.totalSubmissions ? "No questions match the current filters." : "No submissions yet."}
-          </div>
-        ) : (
-          sorted.map((q) => {
-            const wrongStudents = q.wrongStudents ?? [];
-            return (
-              <div key={q.questionId}>
-                <QuestionAnalyticsRow
+      {data.modules.length === 0 && (
+        <div className="py-12 text-center text-soft-mute text-sm">This test has no questions yet.</div>
+      )}
+
+      {data.modules.map((m, mi) => (
+        <section key={mi} className="space-y-3">
+          {m.label && <h2 className="text-charcoal font-semibold text-lg">{m.label}</h2>}
+          <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-divider flex items-center gap-4 text-soft-mute text-xs font-medium">
+              <div className="w-4" />
+              <div className="w-10">Q#</div>
+              <div className="flex-1">Question</div>
+              <div className="w-44">Missed</div>
+              <div className="w-20 text-right hidden sm:block">Avg time</div>
+              <div className="w-24 text-right hidden sm:block">Changed answer</div>
+            </div>
+            {m.questions.map((q) => {
+              const key = `${mi}:${q.questionId}`;
+              return (
+                <QuestionRow
+                  key={key}
                   q={q}
-                  onToggleClassReview={handleToggleClassReview}
+                  expanded={open.has(key)}
+                  onToggle={() => toggle(key)}
+                  onToggleClassReview={toggleClassReview}
+                  detailHref={`/teacher/tests/${testId}/analytics/${q.questionId}`}
                 />
-                {q.totalSubmissions > 0 && (
-                  <div className="px-12 pb-4 border-b border-divider last:border-0">
-                    {wrongStudents.length > 0 ? (
-                      <details className="group">
-                        <summary className="cursor-pointer list-none flex items-center gap-1.5 py-1 text-sm text-status-error font-medium select-none">
-                          <span className="group-open:rotate-90 transition-transform inline-block text-xs">▶</span>
-                          {wrongStudents.length} student{wrongStudents.length !== 1 ? "s" : ""} missed this
-                        </summary>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {wrongStudents.map((name) => (
-                            <span
-                              key={name}
-                              className="px-2 py-0.5 bg-status-error/10 text-status-error border border-status-error/20 rounded text-xs font-medium"
-                            >
-                              {name}
-                            </span>
-                          ))}
-                        </div>
-                      </details>
-                    ) : (
-                      <p className="py-1 text-xs text-status-success font-medium">Everyone got this right</p>
-                    )}
-                  </div>
-                )}
+              );
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function QuestionRow({
+  q,
+  expanded,
+  onToggle,
+  onToggleClassReview,
+  detailHref,
+}: {
+  q: AnalyticsQuestion;
+  expanded: boolean;
+  onToggle: () => void;
+  onToggleClassReview: (questionId: string, current: boolean) => void;
+  detailHref: string;
+}) {
+  const pct = q.taken > 0 ? Math.round((q.missed / q.taken) * 100) : null;
+  return (
+    <div className={clsx("border-b border-divider last:border-0", q.classReview && "bg-warm-coral/5")}>
+      <button
+        onClick={onToggle}
+        aria-expanded={expanded}
+        className="w-full px-5 py-3.5 flex items-center gap-4 text-left hover:bg-light-bg/60 transition-colors"
+      >
+        <div className="w-4 shrink-0 text-soft-mute">{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</div>
+        <div className="w-10 shrink-0 text-charcoal text-sm font-semibold font-mono">Q{q.questionNumber}</div>
+        <div className="flex-1 min-w-0">
+          <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-0 [&_p]:truncate">
+            {q.questionText.length > 110 ? q.questionText.slice(0, 110) + "…" : q.questionText}
+          </MathMarkdown>
+          {q.domain && <div className="text-soft-mute text-xs mt-0.5">{q.domain}</div>}
+        </div>
+        <div className="w-44 shrink-0">
+          {pct == null ? (
+            <span className="text-soft-mute text-sm">No answers yet</span>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-2 rounded-full bg-light-bg overflow-hidden">
+                <div className={clsx("h-full rounded-full", missedColor(pct))} style={{ width: `${pct}%` }} />
               </div>
-            );
-          })
-        )}
-      </div>
+              <div className="text-right leading-tight">
+                <div className="text-charcoal text-sm font-bold">{pct}%</div>
+                <div className="text-soft-mute text-[11px] whitespace-nowrap">{q.missed} of {q.taken}</div>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="w-20 shrink-0 text-right text-sm text-mid-gray hidden sm:block">{fmtTime(q.avgTimeSeconds)}</div>
+        <div className="w-24 shrink-0 text-right text-sm text-mid-gray hidden sm:block">
+          {q.tracked === 0 ? "—" : `${q.changed} of ${q.tracked}`}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-5 sm:px-14 pb-5 space-y-4">
+          <MathMarkdown className="text-mid-gray text-sm leading-relaxed bg-light-bg/50 rounded-lg p-4 prose prose-sm max-w-none [&_p]:my-2">
+            {q.questionText}
+          </MathMarkdown>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <span>
+              <span className="text-soft-mute">Correct answer: </span>
+              <span className="font-bold text-charcoal">{q.correctAnswer || "—"}</span>
+            </span>
+            {q.blank > 0 && <span className="text-soft-mute">{q.blank} left blank</span>}
+            <button
+              onClick={() => onToggleClassReview(q.questionId, q.classReview)}
+              className={clsx(
+                "inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium border transition-colors",
+                q.classReview
+                  ? "bg-warm-coral/20 text-warm-coral-text border-warm-coral/30"
+                  : "bg-light-bg text-mid-gray border-divider hover:text-warm-coral-text hover:border-warm-coral/30",
+              )}
+            >
+              <BookOpen size={12} />
+              {q.classReview ? "Marked to teach in class" : "Teach in class"}
+            </button>
+            <Link href={detailHref} className="text-warm-coral-text text-xs font-medium hover:underline">
+              Full question &amp; explanation →
+            </Link>
+          </div>
+          {q.students.length > 0 ? <StudentTable students={q.students} /> : (
+            <p className="text-soft-mute text-sm">No student has submitted this question yet.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StudentTable({ students }: { students: StudentQuestionRow[] }) {
+  const anyActivity = students.some((s) => s.activity);
+  return (
+    <div className="border border-divider rounded-xl overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="bg-light-bg/60 text-soft-mute text-xs">
+          <tr>
+            <th className="text-left font-medium px-3 py-2">Student</th>
+            <th className="text-left font-medium px-3 py-2">Answer</th>
+            <th className="text-right font-medium px-3 py-2">Time</th>
+            <th className="text-left font-medium px-3 py-2">Changed answer?</th>
+            <th className="text-left font-medium px-3 py-2">Skipped, came back?</th>
+          </tr>
+        </thead>
+        <tbody>
+          {students.map((s, i) => (
+            <tr key={i} className="border-t border-divider">
+              <td className="px-3 py-2 text-charcoal">{s.name}</td>
+              <td className="px-3 py-2">
+                <span className={clsx("font-semibold", s.correct ? "text-status-success" : "text-status-error")}>
+                  {s.answer || "Blank"} {s.correct ? "✓" : "✗"}
+                </span>
+              </td>
+              <td className="px-3 py-2 text-right text-mid-gray">{s.activity ? fmtTime(s.activity.seconds) : "—"}</td>
+              <td className="px-3 py-2 text-mid-gray">
+                {!s.activity ? "—" : s.activity.changes === 0 ? "No" : (
+                  <span>
+                    Yes, {s.activity.changes}× <span className="text-soft-mute">({s.activity.history.join(" → ")})</span>
+                  </span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-mid-gray">
+                {!s.activity
+                  ? "—"
+                  : s.activity.skippedAndReturned
+                    ? "Yes"
+                    : s.activity.skippedNeverReturned
+                      ? "Skipped, never came back"
+                      : "No"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {!anyActivity && (
+        <p className="px-3 py-2 text-xs text-soft-mute border-t border-divider">
+          Time, answer changes and skips are recorded for tests taken from Nov 6, 2026 on.
+        </p>
+      )}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { clsx } from "clsx";
 import { ChevronDown, ChevronRight, Check, X, Flag, BookOpen } from "lucide-react";
 import MathMarkdown from "@/components/MathMarkdown";
 import HighlightableBlock, { type Annotation } from "@/components/tests/HighlightableBlock";
+import type { ActivitySummary } from "@/lib/question-activity";
 
 export interface AnswerDetail {
   questionId: string;
@@ -15,6 +16,8 @@ export interface AnswerDetail {
   correctAnswer: string | null;
   isCorrect: boolean | null;
   timeSpentSeconds: number | null;
+  /** Recorded on the take page; null for attempts from before it existed. */
+  activity?: ActivitySummary | null;
   wasFlagged: boolean;
   explanation: string | null;
   moduleId?: string;
@@ -69,8 +72,8 @@ export function SubmissionDetailPanel({
   }, [answers]);
 
   function fmtTime(s: number | null) {
-    if (!s) return "—";
-    return `${Math.floor(s / 60)}m ${s % 60}s`;
+    if (s == null) return "—";
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
   }
 
   return (
@@ -140,6 +143,21 @@ export function SubmissionDetailPanel({
               <div className="flex-shrink-0 text-soft-mute text-xs hidden sm:block w-16 text-right">
                 {fmtTime(a.timeSpentSeconds)}
               </div>
+
+              {/* Answer changes / skipped first pass */}
+              {a.activity && a.activity.changes > 0 && (
+                <span
+                  className="flex-shrink-0 px-1.5 py-0.5 rounded bg-warm-amber/15 text-xs text-charcoal hidden sm:inline"
+                  title={`Answers given: ${a.activity.history.join(" → ")}`}
+                >
+                  Changed {a.activity.changes}×
+                </span>
+              )}
+              {a.activity?.skippedAndReturned && (
+                <span className="flex-shrink-0 px-1.5 py-0.5 rounded bg-light-bg text-xs text-mid-gray hidden sm:inline">
+                  Skipped, came back
+                </span>
+              )}
 
               {/* Flags */}
               {a.wasFlagged && (
@@ -284,6 +302,30 @@ export function SubmissionDetailPanel({
                       <div className="text-soft-mute text-xs mb-1">Correct answer</div>
                       <div className="text-status-success font-mono font-bold">{a.correctAnswer ?? "—"}</div>
                     </div>
+                  </div>
+                )}
+
+                {/* How the student worked this question (time / changes / skip). */}
+                {a.activity && (
+                  <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-mid-gray">
+                    <span>
+                      <span className="text-soft-mute">Time on question: </span>
+                      {fmtTime(a.activity.seconds)}
+                    </span>
+                    <span>
+                      <span className="text-soft-mute">Changed answer: </span>
+                      {a.activity.changes === 0 ? "No" : `Yes, ${a.activity.changes}× (${a.activity.history.join(" → ")})`}
+                    </span>
+                    <span>
+                      <span className="text-soft-mute">Skipped first, came back: </span>
+                      {a.activity.skippedAndReturned ? "Yes" : a.activity.skippedNeverReturned ? "Skipped, never came back" : "No"}
+                    </span>
+                    {a.activity.visits > 1 && (
+                      <span>
+                        <span className="text-soft-mute">Visits: </span>
+                        {a.activity.visits}
+                      </span>
+                    )}
                   </div>
                 )}
 
