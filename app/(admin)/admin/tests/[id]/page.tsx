@@ -11,6 +11,7 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronUp, ChevronsUpDown, Eye, FileText } from "lucide-react";
 import TestDetailActions from "./TestDetailActions";
+import PrintTestMenu from "./PrintTestMenu";
 import EditTestButton from "./EditTestButton";
 import RemoveStudentButton from "./RemoveStudentButton";
 import AssignDialog from "./AssignDialog";
@@ -369,6 +370,7 @@ export default async function TestDetailPage({
             modules={eligibleModules}
             hasSubmissions={test.stats.total > 0}
           />
+          <PrintTestMenu testId={test.id} />
           <TestDetailActions
             testId={test.id}
             testName={test.test_name}

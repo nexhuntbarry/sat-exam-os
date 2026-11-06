@@ -104,6 +104,18 @@ export function normalizeAnswer(answer: string | null | undefined): string {
   return canonical(answer);
 }
 
+/** The acceptable answers listed in one correct_answer (see answersMatch). */
+export function answerCandidates(correct: string | null | undefined): string[] {
+  if (!correct) return [];
+  // Split on newline, "|", ";", the word "or", a comma followed by
+  // whitespace, or a comma BETWEEN non-digits — so a thousands separator
+  // like "1,000" stays intact.
+  return String(correct)
+    .split(/\s*(?:\bor\b|[\n;|])\s*|,\s+|(?<=\D),(?=\D)/i)
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+}
+
 // A correct_answer may list SEVERAL acceptable answers separated by a
 // newline, "|", ";", ", " or the word "or" (e.g. "5 or -13",
 // "214/3, 71.33"). The student is correct if their answer matches ANY
@@ -115,13 +127,7 @@ export function answersMatch(
   correct: string | null | undefined,
 ): boolean {
   if (!correct) return false;
-  // Split on newline, "|", ";", the word "or", a comma followed by
-  // whitespace, or a comma BETWEEN non-digits — so a thousands separator
-  // like "1,000" stays intact.
-  const candidates = String(correct)
-    .split(/\s*(?:\bor\b|[\n;|])\s*|,\s+|(?<=\D),(?=\D)/i)
-    .map((c) => c.trim())
-    .filter((c) => c.length > 0);
+  const candidates = answerCandidates(correct);
   if (candidates.length === 0) return false;
   const sText = canonical(student);
   if (!sText) return false;
