@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 // GET /api/teacher/teaching-mode/skill-questions?skill=Linear+equations&limit=10
 // Returns candidate practice questions for that skill, sorted by class error
@@ -60,11 +61,15 @@ export async function GET(req: Request) {
   const subIds = subs.map((s) => s.id as string);
   if (subIds.length > 0) {
     const qIds = candidates.map((q) => q.id);
-    const { data: ars } = await db
-      .from("answer_records")
-      .select("question_id, is_correct")
-      .in("submission_id", subIds)
-      .in("question_id", qIds);
+    const { data: ars } = await fetchAllRows<{ question_id: string; is_correct: boolean | null }>((from, to) =>
+      db
+        .from("answer_records")
+        .select("question_id, is_correct")
+        .in("submission_id", subIds)
+        .in("question_id", qIds)
+        .order("id")
+        .range(from, to),
+    );
 
     for (const ar of ars ?? []) {
       let e = errorRateByQ.get(ar.question_id);

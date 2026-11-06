@@ -5,6 +5,7 @@ import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { parseActivity, summarizeActivity, type ActivitySummary } from "@/lib/question-activity";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 export interface StudentQuestionRow {
   name: string;
@@ -126,14 +127,19 @@ export async function GET(
   type AnswerRow = { submission_id: string; question_id: string; student_answer: string | null; is_correct: boolean | null; time_spent_seconds: number | null };
   const answerRows: AnswerRow[] = [];
   const subIds = [...subInfo.keys()];
-  // Chunked: .in() with hundreds of ids makes a long URL.
+  // Chunked: .in() with hundreds of ids makes a long URL; paged past the
+  // 1000-row cap (lib/fetch-all-rows).
   for (let i = 0; i < subIds.length && questionIds.length > 0; i += 100) {
-    const { data } = await db
-      .from("answer_records")
-      .select("submission_id, question_id, student_answer, is_correct, time_spent_seconds")
-      .in("submission_id", subIds.slice(i, i + 100))
-      .in("question_id", questionIds);
-    answerRows.push(...((data ?? []) as AnswerRow[]));
+    const { data } = await fetchAllRows<AnswerRow>((from, to) =>
+      db
+        .from("answer_records")
+        .select("submission_id, question_id, student_answer, is_correct, time_spent_seconds")
+        .in("submission_id", subIds.slice(i, i + 100))
+        .in("question_id", questionIds)
+        .order("id")
+        .range(from, to),
+    );
+    answerRows.push(...data);
   }
   const byQuestion = new Map<string, AnswerRow[]>();
   for (const r of answerRows) byQuestion.set(r.question_id, [...(byQuestion.get(r.question_id) ?? []), r]);

@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { attemptScore } from "@/lib/score-display";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 // GET /api/teacher/tests/[id]/export
 // CSV of student results, one row per attempt (module rows of a
@@ -147,10 +148,18 @@ export async function GET(
   const answerMap: Record<string, string> = {}; // `${submissionId}:${questionId}` → answer
   const subIds = subs.map((s) => s.id);
   if (subIds.length > 0) {
-    const { data: answerRecords, error: arError } = await db
-      .from("answer_records")
-      .select("submission_id, question_id, student_answer")
-      .in("submission_id", subIds);
+    const { data: answerRecords, error: arError } = await fetchAllRows<{
+      submission_id: string;
+      question_id: string;
+      student_answer: string | null;
+    }>((from, to) =>
+      db
+        .from("answer_records")
+        .select("submission_id, question_id, student_answer")
+        .in("submission_id", subIds)
+        .order("id")
+        .range(from, to),
+    );
     if (arError) {
       console.error("[teacher/tests/export answers]", arError);
       return NextResponse.json({ error: "Failed to load answers" }, { status: 500 });

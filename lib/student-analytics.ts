@@ -2,6 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import type { AnswerRow, Occasion } from "@/lib/score-analysis";
 import { attemptScore } from "@/lib/score-display";
 import type { ProgressSubmission } from "@/lib/test-progress";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 // Every graded answer for a student, flattened for the strengths/weaknesses
 // breakdown (is_correct + the question's section/domain/skill).
@@ -14,10 +15,15 @@ export async function getStudentBreakdownRows(studentId: string): Promise<Answer
     .in("status", ["Submitted", "Late"]);
   const ids = (subs ?? []).map((s) => s.id);
   if (ids.length === 0) return [];
-  const { data } = await db
-    .from("answer_records")
-    .select("is_correct, questions!inner(section, domain, skill)")
-    .in("submission_id", ids);
+  // Every test the student took: easily past the 1000-row page cap.
+  const { data } = await fetchAllRows((from, to) =>
+    db
+      .from("answer_records")
+      .select("is_correct, questions!inner(section, domain, skill)")
+      .in("submission_id", ids)
+      .order("id")
+      .range(from, to),
+  );
   return ((data ?? []) as unknown as {
     is_correct: boolean;
     questions: { section: string | null; domain: string | null; skill: string | null };
@@ -45,10 +51,14 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
   })[];
   if (rows.length === 0) return [];
 
-  const { data: recs } = await db
-    .from("answer_records")
-    .select("submission_id, is_correct, questions!inner(section, domain, skill)")
-    .in("submission_id", rows.map((r) => r.id));
+  const { data: recs } = await fetchAllRows((from, to) =>
+    db
+      .from("answer_records")
+      .select("submission_id, is_correct, questions!inner(section, domain, skill)")
+      .in("submission_id", rows.map((r) => r.id))
+      .order("id")
+      .range(from, to),
+  );
   const bySub = new Map<string, AnswerRow[]>();
   for (const r of (recs ?? []) as unknown as {
     submission_id: string;

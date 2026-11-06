@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 // GET /api/teacher/teaching-mode/test-review?testId=optional
 // Returns the latest (or specified) published/closed test that the teacher's
@@ -88,10 +89,18 @@ export async function GET(req: Request) {
   }
 
   // Aggregate per question
-  const { data: ars } = await db
-    .from("answer_records")
-    .select("question_id, student_answer, is_correct")
-    .in("submission_id", subIds);
+  const { data: ars } = await fetchAllRows<{
+    question_id: string;
+    student_answer: string | null;
+    is_correct: boolean | null;
+  }>((from, to) =>
+    db
+      .from("answer_records")
+      .select("question_id, student_answer, is_correct")
+      .in("submission_id", subIds)
+      .order("id")
+      .range(from, to),
+  );
 
   const perQ = new Map<string, { total: number; wrong: number }>();
   for (const ar of ars ?? []) {

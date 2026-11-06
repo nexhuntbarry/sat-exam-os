@@ -12,6 +12,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { answersMatch } from "@/lib/grade-submission";
 import { scaleSectionScore } from "@/lib/scoring";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 export interface RescoreResult {
   questionId: string;
@@ -38,10 +39,20 @@ export async function rescoreQuestion(
   const newKey = (q.correct_answer as string | null) ?? null;
 
   // Every graded record for this question.
-  const { data: records } = await db
-    .from("answer_records")
-    .select("id, submission_id, student_answer, correct_answer, is_correct")
-    .eq("question_id", questionId);
+  const { data: records } = await fetchAllRows<{
+    id: string;
+    submission_id: string;
+    student_answer: string | null;
+    correct_answer: string | null;
+    is_correct: boolean | null;
+  }>((from, to) =>
+    db
+      .from("answer_records")
+      .select("id, submission_id, student_answer, correct_answer, is_correct")
+      .eq("question_id", questionId)
+      .order("id")
+      .range(from, to),
+  );
   const rows = records ?? [];
   if (rows.length === 0) {
     return { questionId, recordsUpdated: 0, submissionsRescored: 0 };

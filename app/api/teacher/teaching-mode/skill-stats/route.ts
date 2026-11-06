@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, onSide } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 // GET /api/teacher/teaching-mode/skill-stats?domain=Algebra
 // Returns top weakest skills (by error rate) within the requested domain,
@@ -46,11 +47,14 @@ export async function GET(req: Request) {
   const subIds = (subs ?? []).map((s) => s.id);
   if (subIds.length === 0) return NextResponse.json({ domains: [], skills: [] });
 
-  // Pull all answer records (cap not strictly needed; SAT modules are bounded)
-  const { data: ars } = await db
-    .from("answer_records")
-    .select("question_id, is_correct")
-    .in("submission_id", subIds);
+  const { data: ars } = await fetchAllRows<{ question_id: string; is_correct: boolean | null }>((from, to) =>
+    db
+      .from("answer_records")
+      .select("question_id, is_correct")
+      .in("submission_id", subIds)
+      .order("id")
+      .range(from, to),
+  );
 
   if (!ars || ars.length === 0) return NextResponse.json({ domains: [], skills: [] });
 
