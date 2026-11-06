@@ -62,7 +62,15 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
 
   // Answer/explanation reveal: the shared server-side decision (test
   // setting, per-student override, retake safety) — never the raw flags.
-  const visibility = await getAnswerVisibility(db, testId, studentId, "results");
+  // A teacher-opened class review counts here too: "View result" is where
+  // students look, so it shows the questions while review is unlocked and
+  // hides them again once it's locked (the decision still applies retake /
+  // per-student hide rules).
+  let visibility = await getAnswerVisibility(db, testId, studentId, "results");
+  if (!visibility.answers) {
+    const review = await getAnswerVisibility(db, testId, studentId, "class_review");
+    if (review.answers) visibility = review;
+  }
 
   // Adaptive sessions split the attempt across two submissions. Pull
   // the sibling row(s) so we can stitch a combined score card. We only
