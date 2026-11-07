@@ -17,7 +17,7 @@
 //     non-fatal: the question is still saved, it just won't get an answer.
 
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import type { ParsedQuestion } from "./parse-pdf";
 import { logUsage, QUOTE_RULE } from "./parse-pdf";
@@ -781,13 +781,56 @@ export async function solveQuestionsAndPersist(
 // to Approve. Shared by the parse pipeline and the /api/cron/explain-official
 // backfill endpoint.
 
-const ExplainOfficialSchema = z.object({
-  explanation: z
-    .string()
-    .describe(
-      "A clear, complete, self-contained explanation of WHY the given correct answer is correct, and briefly why the others are wrong. Never contradict it or name a different answer.",
-    ),
-});
+
+// ── Explanation output without JSON ─────────────────────────────────
+// generateObject makes the model write the explanation inside a JSON string.
+// Explanations quote words from the passage, and the model regularly types a
+// bare straight " — which ends the JSON string and silently cuts the
+// explanation (2026-11-07: Test #20 Aug 2024 ENG M1 Q27, even with
+// QUOTE_RULE and curly-quoted input). So explanation calls ask for plain text
+// in XML-style tags instead, which needs no escaping at all.
+type TaggedField = "explanation" | "independent_answer";
+
+const TAG_HINTS: Record<TaggedField, string> = {
+  independent_answer:
+    "<independent_answer>Solve the question yourself first, IGNORING the given answer. Multiple Choice: the single letter A/B/C/D only. Student Produced Response: the value only (no units, no $). Leave it empty if it cannot be determined.</independent_answer>",
+  explanation:
+    "<explanation>The complete explanation, as plain Markdown/KaTeX text.</explanation>",
+};
+
+export function parseTagged<F extends TaggedField>(text: string, fields: readonly F[]): Record<F, string> | null {
+  const out = {} as Record<F, string>;
+  for (const f of fields) {
+    const m = text.match(new RegExp(`<${f}>([\\s\\S]*?)</${f}>`));
+    // An unclosed final tag means the output itself was cut (token limit):
+    // keep what's there so the cut-off check can judge it.
+    const open = m ? null : text.match(new RegExp(`<${f}>([\\s\\S]*)$`));
+    if (!m && !open) return null;
+    out[f] = (m ? m[1] : open![1]).trim();
+  }
+  return out;
+}
+
+async function generateTagged<F extends TaggedField>(
+  params: { model: Parameters<typeof generateText>[0]["model"]; system: string; maxOutputTokens: number; maxRetries: number; messages: Parameters<typeof generateText>[0]["messages"] },
+  fields: readonly F[],
+): Promise<{ object: Record<F, string>; usage: Awaited<ReturnType<typeof generateText>>["usage"] }> {
+  const res = await generateText({
+    model: params.model,
+    system: `${params.system}
+
+OUTPUT FORMAT: reply with ONLY these tags, in this order, and nothing outside them:
+${fields.map((f) => TAG_HINTS[f]).join("\n")}
+Inside the tags write normal text — quotation marks need no escaping.`,
+    maxOutputTokens: params.maxOutputTokens,
+    maxRetries: params.maxRetries,
+    messages: params.messages!,
+  });
+  const object = parseTagged(res.text, fields);
+  if (!object) throw new Error("explanation output had no <explanation> tag");
+  return { object, usage: res.usage };
+}
+
 
 const EXPLAIN_OFFICIAL_SYSTEM = `You are an expert SAT tutor writing the final answer explanation a student reads after a test. You are GIVEN the correct answer — it comes from the official College Board answer key and is authoritative and final.
 
@@ -959,7 +1002,34 @@ export async function explainOfficialAndPersist(
 export const TRUNCATION_NOTE =
   "Needs review: the generated explanation looks cut off — regenerate or write it by hand.";
 
-export function looksTruncated(ex: string | null): boolean {
+/**
+ * Straight double quotes → typographic “ ” in text we SEND to the model.
+ * The model copies quoted words from the question/choices; a straight " in
+ * its JSON output ends the string and silently cuts the explanation
+ * (2026-11-07: Test #20 Aug 2024 ENG M1 Q27, quoting "korrrr" / "hu lu").
+ */
+export function curlyQuotes(s: string): string {
+  let open = true;
+  return s.replace(/"/g, () => {
+    const q = open ? "“" : "”";
+    open = !open;
+    return q;
+  });
+}
+
+/** Does this text have more opening than closing typographic quotes (after curlyQuotes)? */
+function hasUnbalancedQuotes(s: string): boolean {
+  const t = curlyQuotes(s);
+  return (t.match(/“/g) ?? []).length !== (t.match(/”/g) ?? []).length;
+}
+
+/**
+ * `source` = the question text + choices. When the source itself has an
+ * unmatched quote (a choice like `The Batak word "korrrr. which…`), quoting
+ * it is not a sign the explanation was cut, so the quote-balance check is
+ * skipped; the ending check still applies.
+ */
+export function looksTruncated(ex: string | null, source?: string | null): boolean {
   if (!ex) return false;
   const t = ex.trim();
   // Placeholder-only text ("...") is not an explanation; a short but complete
@@ -970,7 +1040,7 @@ export function looksTruncated(ex: string | null): boolean {
   // inside a quoted passage.
   const openQuotes = (t.match(/“/g) ?? []).length;
   const closeQuotes = (t.match(/”/g) ?? []).length;
-  if (openQuotes > closeQuotes) return true;
+  if (openQuotes > closeQuotes && !(source && hasUnbalancedQuotes(source))) return true;
   // Clean endings: sentence punctuation, a closing bracket/quote, $ or %, or a
   // number (math answers often end on a value). Anything else = mid-sentence.
   return !/[.!?)\]$%”"'’]$/.test(t) && !/\d$/.test(t);
@@ -1016,14 +1086,13 @@ export async function regenerateTruncatedExplanations(
           ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`)).join("\n")
           : "";
         try {
-          const res = await generateObject({
+          const res = await generateTagged({
             model: anthropic("claude-sonnet-4-6"),
-            schema: ExplainOfficialSchema,
             system: EXPLAIN_OFFICIAL_SYSTEM,
             maxOutputTokens: 3000,
             maxRetries: 2,
-            messages: [{ role: "user", content: [{ type: "text", text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nWrite a COMPLETE explanation of why ${ans} is correct — do not cut off.` }] }],
-          });
+            messages: [{ role: "user", content: [{ type: "text", text: curlyQuotes(`Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nWrite a COMPLETE explanation of why ${ans} is correct — do not cut off.`) }] }],
+          }, ["explanation"] as const);
           const raw = stripMetaNarration(res.object.explanation);
           const expl = q.question_type === SPR_TYPE && !looksTruncated(raw) ? withSprAnswerLine(raw, ans, q.question_text) : raw;
           if (!looksTruncated(expl)) {
@@ -1078,14 +1147,13 @@ export async function explainOneAnswer(
     : "";
   const explainOneParams = {
     model: anthropic("claude-sonnet-4-6"),
-    schema: ExplainOfficialSchema,
     system: EXPLAIN_OFFICIAL_SYSTEM,
     maxOutputTokens: 3000,
     maxRetries: 2,
-    messages: [{ role: "user" as const, content: [{ type: "text" as const, text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${answer}\n\nWrite a COMPLETE explanation of why ${answer} is correct.` }] }],
+    messages: [{ role: "user" as const, content: [{ type: "text" as const, text: curlyQuotes(`Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${answer}\n\nWrite a COMPLETE explanation of why ${answer} is correct.`) }] }],
   };
   try {
-    const res = await generateObject(explainOneParams);
+    const res = await generateTagged(explainOneParams, ["explanation"] as const);
     const usage = res.usage;
     if (usage) {
       const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
@@ -1095,7 +1163,7 @@ export async function explainOneAnswer(
     // Truncation guard: retry once if explanation looks cut off.
     if (looksTruncated(cleaned)) {
       try {
-        const retry = await generateObject(explainOneParams);
+        const retry = await generateTagged(explainOneParams, ["explanation"] as const);
         const retried = stripMetaNarration(retry.object.explanation);
         if (!looksTruncated(retried)) {
           cleaned = retried;
@@ -1132,18 +1200,6 @@ export async function explainOneAnswer(
 // argues the given answer; the model separately reports the answer it gets on
 // its own so the page can warn when the two differ. Never changes the answer.
 
-const RegenExplanationSchema = z.object({
-  independent_answer: z
-    .string()
-    .describe(
-      "Solve the question yourself first, IGNORING the given answer. For Multiple Choice: the single letter A/B/C/D only. For Student Produced Response: the value only (no units, no $). Empty string if it cannot be determined.",
-    ),
-  explanation: z
-    .string()
-    .describe(
-      "A clear, complete, self-contained explanation of WHY the GIVEN correct answer is correct, and briefly why the others are wrong. Never contradict it or name a different answer.",
-    ),
-});
 
 const REGEN_EXPLANATION_SYSTEM = `${EXPLAIN_OFFICIAL_SYSTEM}
 
@@ -1188,7 +1244,7 @@ export type RegenExplanationResult =
   | { ok: true; explanation: string; aiAnswer: string | null; agrees: boolean }
   // kind "cut_off": the model answered but every explanation looked cut off;
   // "failed": the API call or schema parse failed (nothing to judge).
-  | { ok: false; error: string; kind: "cut_off" | "failed" };
+  | { ok: false; error: string; kind: "cut_off" | "failed"; partial?: string | null };
 
 /** Does the model's own answer match the saved key (letters or values)? */
 export function aiAnswerAgrees(aiAnswer: string | null, saved: string, isMcq: boolean, questionText?: string | null): boolean {
@@ -1233,10 +1289,11 @@ export async function regenerateExplanation(
     }
   }
 
-  const prompt = `Question ${input.questionNumber ?? ""} (${isMcq ? "Multiple Choice" : "Student Produced Response"}):\n${input.questionText}${ch ? `\n\nChoices:\n${ch}` : ""}\n\nThe correct answer is: ${input.answer}\n\nWrite a COMPLETE explanation of why ${input.answer} is correct — do not cut off.`;
+  const prompt = curlyQuotes(`Question ${input.questionNumber ?? ""} (${isMcq ? "Multiple Choice" : "Student Produced Response"}):\n${input.questionText}${ch ? `\n\nChoices:\n${ch}` : ""}\n\nThe correct answer is: ${input.answer}\n\nWrite a COMPLETE explanation of why ${input.answer} is correct — do not cut off.`);
+  const source = `${input.questionText}\n${ch}`;
+  const RETRY_REMINDER = "\n\nREMINDER: your previous explanation was cut off. Write the WHOLE explanation inside the <explanation> tag and close the tag.";
   const params = {
     model: anthropic("claude-sonnet-4-6"),
-    schema: RegenExplanationSchema,
     system: REGEN_EXPLANATION_SYSTEM,
     maxOutputTokens: 3000,
     maxRetries: 2,
@@ -1245,9 +1302,15 @@ export async function regenerateExplanation(
 
   // Same cut-off check as the pipeline (looksTruncated); one retry, then give up.
   let sawCutOff = false;
+  let partial: string | null = null;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await generateObject(params);
+      const res = await generateTagged(
+        attempt === 0
+          ? params
+          : { ...params, messages: [{ role: "user" as const, content: [...imageBlocks, { type: "text" as const, text: prompt + RETRY_REMINDER }] }] },
+        ["independent_answer", "explanation"] as const,
+      );
       const usage = res.usage;
       if (usage) {
         const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
@@ -1261,8 +1324,9 @@ export async function regenerateExplanation(
         .replace(/\x08(?=[a-z])/g, "\\b")
         .replace(/\r(?=[a-z])/g, "\\r")
         .trim();
-      if (!explanation || looksTruncated(explanation)) {
-        console.warn(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} looks cut off`);
+      if (!explanation || looksTruncated(explanation, source)) {
+        if (explanation && explanation.length > (partial?.length ?? 0)) partial = explanation;
+        console.warn(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} looks cut off: …${JSON.stringify(explanation.slice(-160))}`);
         sawCutOff = true;
         continue;
       }
@@ -1278,7 +1342,7 @@ export async function regenerateExplanation(
       console.error(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} failed:`, e instanceof Error ? e.message : e);
     }
   }
-  return { ok: false, error: REGEN_EXPLANATION_FAILED, kind: sawCutOff ? "cut_off" : "failed" };
+  return { ok: false, error: REGEN_EXPLANATION_FAILED, kind: sawCutOff ? "cut_off" : "failed", partial };
 }
 
 export const REGEN_EXPLANATION_NOTE = "Needs review: explanation was cut off and regenerated by AI — check it.";
@@ -1302,8 +1366,14 @@ interface CutOffRow {
   image_urls: unknown;
 }
 
-function isCutOffTarget(r: { parsing_status: string | null; correct_answer: string | null; explanation: string | null }): boolean {
-  return r.parsing_status !== "Rejected" && !!r.correct_answer && looksTruncated(r.explanation);
+/** Question text + choice text, for looksTruncated's quote check. */
+export function explanationSource(questionText: string | null, choices: unknown): string {
+  const ch = Array.isArray(choices) ? choices.map((c) => (typeof c === "string" ? c : (c as { text?: string })?.text ?? "")).join("\n") : "";
+  return `${questionText ?? ""}\n${ch}`;
+}
+
+function isCutOffTarget(r: { parsing_status: string | null; correct_answer: string | null; explanation: string | null; question_text?: string | null; choices?: unknown }): boolean {
+  return r.parsing_status !== "Rejected" && !!r.correct_answer && looksTruncated(r.explanation, explanationSource(r.question_text ?? null, r.choices));
 }
 
 /** Questions in a module whose explanation looks cut off and that have a key to explain. */
@@ -1313,7 +1383,7 @@ export async function listCutOffExplanations(
 ): Promise<{ id: string; number: number | null }[]> {
   const { data, error } = await db
     .from("questions")
-    .select("id, original_question_number, explanation, correct_answer, parsing_status")
+    .select("id, original_question_number, explanation, correct_answer, parsing_status, question_text, choices")
     .eq("module_id", moduleId)
     .order("original_question_number");
   if (error) throw new Error(`listCutOffExplanations: ${error.message}`);

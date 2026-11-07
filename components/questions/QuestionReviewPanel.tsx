@@ -170,7 +170,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   // it is on the page now, previewed until the reviewer picks Use or Discard.
   const [regenBusy, setRegenBusy] = useState(false);
   const [regenError, setRegenError] = useState<string | null>(null);
-  const [regen, setRegen] = useState<{ explanation: string; forAnswer: string; aiAnswer: string | null; agrees: boolean } | null>(null);
+  const [regen, setRegen] = useState<{ explanation: string; forAnswer: string; aiAnswer: string | null; agrees: boolean; partial?: boolean } | null>(null);
 
   // Delete or replace one extracted image (reviewer cleanup of bad crops).
   async function editImage(index: number, action: "delete" | "replace", png?: Blob) {
@@ -529,6 +529,9 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.ok) {
         setRegen({ explanation: json.explanation, forAnswer: answer, aiAnswer: json.ai_answer ?? null, agrees: json.agrees !== false });
+      } else if (typeof json.partial === "string" && json.partial.trim()) {
+        // Still cut off after the retry: hand the reviewer the draft to finish.
+        setRegen({ explanation: json.partial, forAnswer: answer, aiAnswer: null, agrees: true, partial: true });
       } else {
         setRegenError(json.error ?? "Couldn't produce a complete explanation.");
       }
@@ -1303,6 +1306,11 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                 <p className="text-xs font-medium text-charcoal">
                   New explanation (preview — not saved) · explains answer {regen.forAnswer}
                 </p>
+                {regen.partial && (
+                  <p role="alert" className="rounded-lg border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs text-status-warning">
+                    Couldn't produce a complete explanation — this draft looks cut off at the end. Click Use to put it in the editor and finish it by hand.
+                  </p>
+                )}
                 {!regen.agrees && regen.aiAnswer && (
                   <p role="alert" className="rounded-lg border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs text-status-warning">
                     Warning: working it out on its own, the AI got <strong>{regen.aiAnswer}</strong>, but the answer on this page is{" "}
