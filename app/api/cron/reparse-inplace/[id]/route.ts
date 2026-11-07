@@ -23,7 +23,7 @@ import {
 import { autoPromoteModule } from "@/lib/auto-promote";
 import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { KEY_ROW_SELECT } from "@/lib/key-change";
-import { rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
+import { markNotRescored, rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
 
 export const maxDuration = 800;
 
@@ -249,13 +249,28 @@ export async function POST(
   try { await enforceCompleteness(id, db); } catch (e) { console.error("[reparse-inplace] completeness-gate:", e); }
   try { await enforceAnswerKeyForm(id, db); } catch (e) { console.error("[reparse-inplace] key-form gate:", e); }
   // Answer-key + stem guards — after every pass that can Approve, before auto-promote.
+  // undefined = the guards didn't get as far as deciding (then nothing is rescored).
+  let moduleKeyWarning: string | null | undefined;
   try {
     if (keyModuleNote) await flagQuestionsForReview(id, db, keyModuleNote);
     const disagreeNote = keyDisagreementNote(keyDisagreeNums.length, keyCompared);
+    moduleKeyWarning = keyModuleNote ?? disagreeNote ?? null;
     if (disagreeNote) await flagQuestionsForReview(id, db, disagreeNote, keyDisagreeNums);
     await enforceStemIntegrity(id, db);
-    rescored = await rescoreOfficialKeyChanges(db, id, keyChangedIds, keyModuleNote ?? disagreeNote ?? null);
   } catch (e) { console.error("[reparse-inplace] key/stem guards:", e); }
+  // Rescoring to the official key runs on its own: whatever stops it, the
+  // rows get the "not rescored" note so a person sees it.
+  try {
+    if (moduleKeyWarning === undefined) {
+      await markNotRescored(db, keyChangedIds, "the module's key checks didn't finish");
+      rescored = { rescored: 0, held: keyChangedIds.length };
+    } else {
+      rescored = await rescoreOfficialKeyChanges(db, id, keyChangedIds, moduleKeyWarning);
+    }
+  } catch (e) {
+    console.error("[reparse-inplace] rescore:", e);
+    await markNotRescored(db, keyChangedIds, `rescoring failed (${e instanceof Error ? e.message.slice(0, 80) : "error"})`);
+  }
   try { await checkNumberContiguity(id, db); } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
   try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
 

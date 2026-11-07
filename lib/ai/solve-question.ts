@@ -897,9 +897,28 @@ export function stripMetaNarration(raw: string | null | undefined): string {
 const EXPLAIN_HARD_ISSUE =
   /missing figure|needs? a figure|no figure|figure shown|based on the graph|image not uploaded|requires drawing|LaTeX|garbled|choices|needs review:/i;
 
+/**
+ * explainOfficialAndPersist: may the regenerated explanation be saved (and
+ * the row approved)? Only a draft written after a solve that never saw the
+ * key agreed, and that passes every explanation check for the key
+ * (`rejection` = lib/explanation-autofix draftRejection: cut off,
+ * formatting / thinking aloud, another answer, numbers that don't add up).
+ * Pure. null = save it; otherwise why not.
+ */
+export function officialDraftProblem(res: RegenExplanationResult, rejection: string | null): string | null {
+  if (!res.ok) return res.kind === "cut_off" ? "the explanation came out cut off" : res.error;
+  if (!res.agrees) return res.aiAnswer ? `solving it without the key, the AI got ${res.aiAnswer}` : "the AI's answer differs from the key";
+  if (res.independent === false) return "the answer did not come from a solve that never saw the key";
+  if (rejection) return `the new explanation failed its check: ${rejection}`;
+  return null;
+}
+
+export const OFFICIAL_EXPLANATION_FAILED_PREFIX = "Needs review: no checked explanation for the official key";
+
 interface ExplainRow {
   id: string;
   original_question_number: number;
+  explanation?: string | null;
   question_text: string | null;
   choices: unknown;
   correct_answer: string | null;
@@ -926,10 +945,12 @@ export async function explainOfficialAndPersist(
   const { data } = await db
     .from("questions")
     .select(
-      "id, original_question_number, question_text, choices, correct_answer, official_answer, parsing_status, parsing_notes, has_image, image_urls, question_type",
+      "id, original_question_number, section, question_text, choices, correct_answer, official_answer, explanation, parsing_status, parsing_notes, has_image, image_urls, has_table, question_type",
     )
     .eq("module_id", moduleId)
     .not("official_answer", "is", null);
+  // Loaded here, not at the top: lib/explanation-autofix imports this module.
+  const { draftRejection } = await import("@/lib/explanation-autofix");
   const rows = (data ?? []) as (ExplainRow & { parsing_status: string | null })[];
   const live = await liveQuestionIds(db, rows.filter((r) => r.parsing_status === "Approved").map((r) => r.id));
 
@@ -968,6 +989,13 @@ export async function explainOfficialAndPersist(
           }
           const conflict = res.ok && !res.agrees && res.aiAnswer ? res.aiAnswer : null;
           const truncatedOfficial = !res.ok;
+          // The draft is saved only when it passes every check for the key
+          // and came after a solve that never saw the key.
+          const asRow = { ...q, correct_answer: ans, explanation: q.explanation ?? null } as Parameters<typeof draftRejection>[0];
+          const draftProblem = res.ok && !conflict ? officialDraftProblem(res, draftRejection(asRow, res.explanation)) : null;
+          // The current text must also fit the key, or it goes (the re-parse
+          // already nulled it for a changed key).
+          const currentFits = !!(q.explanation ?? "").trim() && !draftRejection(asRow, q.explanation ?? "");
           const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: ans, question_text: q.question_text, choices: q.choices, official_answer: q.official_answer });
           if (truncatedOfficial) console.warn(`[explain-official] q${q.original_question_number}: explanation still cut off after retry`);
           const blindFigure = stemFigureMissing(q);
@@ -978,6 +1006,7 @@ export async function explainOfficialAndPersist(
             placeholder !== null ||
             truncatedOfficial ||
             !!conflict ||
+            !!draftProblem ||
             !!keyProblem;
           if (keep) keptReview++; else approved++;
           const parts: string[] = [];
@@ -992,19 +1021,23 @@ export async function explainOfficialAndPersist(
             addNote(keyDoubtNote(ans, conflict, "solving it independently before writing the explanation gave a different answer, so the explanation was not rewritten"));
           }
           if (keyProblem) addNote(keyFormNote(keyProblem));
+          if (draftProblem) addNote(`${OFFICIAL_EXPLANATION_FAILED_PREFIX} (${draftProblem.replace(/[;()]/g, ",").slice(0, 160)}) — write and check it by hand`);
           const update: Record<string, unknown> = {
             correct_answer: ans,
             parsing_status: keep ? "Needs Review" : "Approved",
             // Keep the original defect note on rows staying in review — it
             // names WHAT to fix (e.g. the PDF's real choices).
             parsing_notes: keep
-              ? [...parts, ...(conflict || keyProblem ? [] : ["Explanation matches official answer; still needs review (figure/choices)"])].join("; ")
+              ? [...parts, ...(conflict || keyProblem || draftProblem ? [] : ["Explanation matches official answer; still needs review (figure/choices)"])].join("; ")
               : "Answer = official key; explanation matches (verified)",
             updated_at: new Date().toISOString(),
           };
-          if (res.ok && !conflict) {
+          if (res.ok && !conflict && !draftProblem) {
             update.explanation = res.explanation;
             rewrote++;
+          } else if (!currentFits) {
+            // Never leave text that argues another answer behind the key.
+            update.explanation = null;
           }
           const { update: held } = applyLiveHold(q, update, "Explanation rewritten toward the official answer", live);
           await db.from("questions").update(held).eq("id", q.id);

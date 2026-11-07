@@ -15,7 +15,7 @@ import {
   type AutoFixRow,
   type NoteContext,
 } from "../lib/explanation-autofix";
-import { TRUNCATION_NOTE, REGEN_EXPLANATION_NOTE, REGEN_DISAGREE_PREFIX, looksTruncated, stripMetaNarration, withAnswerLine } from "../lib/ai/solve-question";
+import { TRUNCATION_NOTE, REGEN_EXPLANATION_NOTE, REGEN_DISAGREE_PREFIX, officialDraftProblem, looksTruncated, stripMetaNarration, withAnswerLine } from "../lib/ai/solve-question";
 import { keyDoubtNote } from "../lib/key-doubt";
 import { chainMismatches, explanationNumericProblems, keyLetters, statedLetters } from "../lib/explanation-consistency";
 import { LIVE_FIX_TAG } from "../lib/live-questions";
@@ -234,6 +234,18 @@ ok("strip: 'Customers wait, on average' kept", stripMetaNarration("Customers wai
 ok("strip: 'The wait-time function' kept", stripMetaNarration("The wait-time function is linear. Its slope is 2.") === "The wait-time function is linear. Its slope is 2.");
 ok("strip: leading 'Wait — let me re-check.' removed", stripMetaNarration("Wait — let me re-check. The slope is 2.") === "The slope is 2.");
 ok("strip: leading 'I need to find x.' removed", stripMetaNarration("I need to find x. Then x = 5.") === "Then x = 5.");
+
+// ── explainOfficialAndPersist: save + approve only a checked, independent draft ──
+{
+  const r10 = q10({ official_answer: "A", parsing_status: "Needs Review", explanation: null });
+  const good = { ok: true as const, explanation: Q10_GOOD, aiAnswer: "A", agrees: true, independent: true };
+  ok("official: checked independent draft → saved", officialDraftProblem(good, draftRejection(r10, Q10_GOOD)) === null);
+  ok("official: Q10 old draft (computes 100, says 120) → not saved", /failed its check/.test(officialDraftProblem({ ...good, explanation: Q10_OLD }, draftRejection(r10, Q10_OLD)) ?? ""));
+  ok("official: writer-only agreement (independent false) → not saved", /never saw the key/.test(officialDraftProblem({ ...good, independent: false }, null) ?? ""));
+  ok("official: AI disagrees → not saved", /AI got B/.test(officialDraftProblem({ ok: true, explanation: "", aiAnswer: "B", agrees: false, independent: true }, null) ?? ""));
+  ok("official: thinking aloud → not saved", officialDraftProblem({ ...good, explanation: "Wait — let me re-check. " + Q10_GOOD }, draftRejection(r10, "Wait — let me re-check. " + Q10_GOOD)) !== null);
+  ok("official: cut off → not saved", officialDraftProblem({ ok: false, error: "x", kind: "cut_off" }, null) !== null);
+}
 
 console.log(fail ? `${fail} FAILED` : "ALL PASSED");
 process.exit(fail ? 1 : 0);
