@@ -21,9 +21,17 @@ import {
   pdfPendingNote,
   withPdfNote,
 } from "@/lib/pdf-check-tags";
-import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
+import { applyLiveHold, liveQuestionIds, stripLiveFixNote, type LiveHoldRow } from "@/lib/live-questions";
 import { fetchPdfBase64, reextractQuestionFromPdf, type ReextractProposal } from "@/lib/repair-ops";
-import { choiceTextsAgree, normalizeChoiceText } from "@/lib/pdf-text-choices";
+import {
+  choiceTextsAgree,
+  extractChoicesFromPdfText,
+  isComparableChoice,
+  isTextLayerReliable,
+  lookupPdfTextQuestion,
+  normalizeChoiceText,
+  type PdfTextChoices,
+} from "@/lib/pdf-text-choices";
 
 export class ReplacePdfError extends Error {
   constructor(message: string, readonly status: number) {
@@ -123,6 +131,7 @@ interface CompareRow {
   question_text: string | null;
   choices: unknown;
   correct_answer: string | null;
+  official_answer: string | null;
   parsing_status: string | null;
   parsing_notes: string | null;
 }
@@ -151,6 +160,30 @@ const short = (s: string, n = 50) => {
 
 const STEM_SIMILARITY = 0.9;
 
+function storedChoice(row: CompareRow, label: string): string {
+  const stored = Array.isArray(row.choices) ? (row.choices as { label?: string; text?: string }[]) : [];
+  return stored.find((x) => (x?.label ?? "").trim().toUpperCase() === label)?.text ?? "";
+}
+
+/**
+ * The vision read sometimes binds a choice from the question printed above
+ * (seen: Test #17 Q3 choice D read as Q2's "Remember"). When the PDF text
+ * layer has this question's choices and they agree with the stored one,
+ * that choice difference is dropped.
+ */
+function dropTextLayerConfirmed(row: CompareRow, diffs: PdfDiff[], pdfText: PdfTextChoices | null): PdfDiff[] {
+  const textQ = pdfText && row.original_question_number != null
+    ? lookupPdfTextQuestion(pdfText, row.original_question_number)
+    : null;
+  if (!textQ) return diffs;
+  return diffs.filter((d) => {
+    if (!d.key.startsWith("choice ")) return true;
+    const t = textQ.choices.find((c) => c.label === d.key.slice(7));
+    if (!t || !isComparableChoice(t.text)) return true;
+    return !choiceTextsAgree(storedChoice(row, d.key.slice(7)), t.text);
+  });
+}
+
 export interface PdfDiff {
   /** Which part differs ("stem", "choice B", "answer", "type", "error"). */
   key: string;
@@ -162,16 +195,20 @@ export function diffAgainstPdf(row: CompareRow, p: ReextractProposal): PdfDiff[]
   const out: PdfDiff[] = [];
   for (const w of p.warnings) if (/PDF reads as/.test(w)) out.push({ key: "type", text: w });
 
-  const a = normalizeChoiceText(row.question_text ?? "");
-  const b = normalizeChoiceText(p.question_text);
+  // Printed boilerplate the stored stem often leaves out, and "[Right
+  // triangle FGH with …]" figure descriptions the read sometimes adds.
+  const stem = (s: string) =>
+    normalizeChoiceText(
+      s.replace(/note:\s*figures?\s+not\s+drawn\s+to\s+scale\.?/gi, "").replace(/^\s*\[[^\]\n]*\]\s*$/gm, ""),
+    );
+  const a = stem(row.question_text ?? "");
+  const b = stem(p.question_text);
   const sim = bigramDice(a, b);
   if (sim < STEM_SIMILARITY) out.push({ key: "stem", text: `question text differs (${Math.round(sim * 100)}% similar)` });
 
-  const stored = Array.isArray(row.choices) ? (row.choices as { label?: string; text?: string }[]) : [];
   if (row.question_type === "Multiple Choice" && p.choices.length > 0) {
     for (const c of p.choices) {
-      const s = stored.find((x) => (x?.label ?? "").trim().toUpperCase() === c.label);
-      const sText = s?.text ?? "";
+      const sText = storedChoice(row, c.label);
       if (!normalizeChoiceText(sText) && !normalizeChoiceText(c.text)) continue; // graph choices
       if (!choiceTextsAgree(sText, c.text)) {
         out.push({ key: `choice ${c.label}`, text: `choice ${c.label}: saved "${short(sText)}" vs PDF "${short(c.text)}"` });
@@ -179,7 +216,13 @@ export function diffAgainstPdf(row: CompareRow, p: ReextractProposal): PdfDiff[]
     }
   }
 
-  if (p.marked_answer && row.correct_answer) {
+  // A "marked" answer is read off checkmarks and is the least reliable part
+  // of the read (seen: Test #17 Q17 read as D on an unmarked page). When the
+  // saved key already equals the official answer-key page, trust that.
+  const keyIsOfficial =
+    !!row.official_answer &&
+    normalizeChoiceText(row.official_answer) === normalizeChoiceText(row.correct_answer ?? "");
+  if (p.marked_answer && row.correct_answer && !keyIsOfficial) {
     const marked = normalizeChoiceText(p.marked_answer);
     const keys = row.correct_answer.split(/[,|;]|\bor\b/).map(normalizeChoiceText).filter(Boolean);
     if (marked && keys.length && !keys.includes(marked)) {
@@ -213,7 +256,7 @@ export async function comparePendingQuestions(
   const { data: rows, error } = await db
     .from("questions")
     .select(
-      "id, original_question_number, question_type, question_text, choices, correct_answer, parsing_status, parsing_notes",
+      "id, original_question_number, question_type, question_text, choices, correct_answer, official_answer, parsing_status, parsing_notes",
     )
     .eq("module_id", moduleId)
     .like("parsing_notes", `%${PDF_PENDING_TAG}%`)
@@ -224,6 +267,13 @@ export async function comparePendingQuestions(
   if (queue.length === 0) return summary;
 
   const pdfBase64 = await fetchPdfBase64(mod.pdf_url as string);
+  let pdfText: PdfTextChoices | null = null;
+  try {
+    pdfText = await extractChoicesFromPdfText(pdfBase64);
+    if (!isTextLayerReliable(pdfText, queue.length)) pdfText = null;
+  } catch {
+    pdfText = null;
+  }
   const live = await liveQuestionIds(
     db,
     queue.filter((r) => r.parsing_status === "Approved").map((r) => r.id),
@@ -240,9 +290,10 @@ export async function comparePendingQuestions(
           return [{ key: "error", text: `couldn't compare: ${err instanceof Error ? err.message : String(err)}` }];
         }
       };
-      // One AI read can misread a single word (seen: choice D read as a page
-      // footer). A difference only counts when a second read sees it too.
-      let diffs = await read();
+      // One AI read can misread or mis-bind a choice. A difference counts
+      // only if the PDF text layer doesn't contradict it and a second read
+      // sees it too.
+      let diffs = dropTextLayerConfirmed(current, await read(), pdfText);
       if (diffs.length > 0) {
         const again = new Set((await read()).map((d) => d.key));
         diffs = diffs.filter((d) => again.has(d.key));
@@ -254,7 +305,9 @@ export async function comparePendingQuestions(
         update = { parsing_notes: withPdfNote(row.parsing_notes, pdfMatchNote()), updated_at: now };
         summary.matched++;
       } else {
-        update = { parsing_notes: withPdfNote(row.parsing_notes, pdfDiffNote(diffs.map((d) => d.text).join(", "))), updated_at: now };
+        // A live row gets a fresh [live-fix] from applyLiveHold below.
+        const base = row.parsing_status === "Approved" && live.has(row.id) ? stripLiveFixNote(row.parsing_notes) : row.parsing_notes;
+        update = { parsing_notes: withPdfNote(base, pdfDiffNote(diffs.map((d) => d.text).join(", "))), updated_at: now };
         if (row.parsing_status === "Draft" || row.parsing_status === "Approved") {
           update.parsing_status = "Needs Review";
         }
