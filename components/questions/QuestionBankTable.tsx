@@ -2,6 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from "react";
 import { hasKeyDoubt } from "@/lib/key-doubt";
+import { PDF_DIFF_TAG, PDF_MATCH_TAG } from "@/lib/pdf-check-tags";
 import Link from "next/link";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { clsx } from "clsx";
@@ -69,6 +70,8 @@ function issueSummary(
   });
 
   if (hasKeyDoubt(n)) return { label: "AI thinks the answer key is wrong", tone: "warn" };
+  // Module PDF was replaced and this question doesn't match the new one.
+  if (n.includes(PDF_DIFF_TAG)) return { label: "Differs from PDF", tone: "warn" };
   if (questionType === "Multiple Choice" && ch.length > 0 && ch.length < 4) return { label: "Missing answer choices", tone: "warn" };
   if (brokenChoice) return { label: "Broken / unreadable choice", tone: "warn" };
   if (/self-contradictory|not a choice|cos R|mis-parsed|bad question/i.test(n)) return { label: "Question looks mis-parsed", tone: "warn" };
@@ -474,6 +477,8 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
             {questions.map((q) => {
               const issue = issueSummary(q.parsing_notes, undefined, q.question_type, undefined, q.official_answer);
               const showNoKey = q.parsing_status === "Needs Review" && !q.official_answer && !issue?.noKey;
+              // Checked against a replaced module PDF and it matches: quick-approve hint.
+              const pdfMatch = (q.parsing_notes ?? "").includes(PDF_MATCH_TAG);
               const qNum = q.original_question_number ?? "—";
               const moduleName = q.modules?.module_name ?? "—";
 
@@ -500,7 +505,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                       <DetailItem label="Difficulty" priority="md">{q.difficulty ?? "—"}</DetailItem>
                       <DetailItem label="Domain" priority="2xl">{q.domain ?? "—"}</DetailItem>
                       <DetailItem label="Issue" priority="lg">
-                        {issue ? issue.label : showNoKey ? "no answer key" : "—"}
+                        {issue ? issue.label : showNoKey ? "no answer key" : pdfMatch ? "Matches PDF" : "—"}
                       </DetailItem>
                       <DetailItem label="Confidence" priority="2xl">
                         <ConfidenceBadge score={q.ai_confidence_score} />
@@ -542,7 +547,7 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                     <StatusBadge kind="question" status={q.parsing_status as QuestionStatus} />
                   </Td>
                   <Td kind="long" priority="lg">
-                    {(!issue && !showNoKey) ? (
+                    {(!issue && !showNoKey && !pdfMatch) ? (
                       <span className="text-soft-mute text-xs">—</span>
                     ) : (
                       <div className="flex flex-wrap items-center gap-1">
@@ -555,6 +560,14 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                             )}
                           >
                             {issue.label}
+                          </span>
+                        )}
+                        {pdfMatch && (
+                          <span
+                            title="Compared with the module's replaced source PDF: text, choices and marked answer match."
+                            className="inline-block px-1.5 py-0.5 rounded-md text-[11px] font-medium bg-warm-amber/15 text-warm-amber whitespace-nowrap"
+                          >
+                            Matches PDF
                           </span>
                         )}
                         {showNoKey && (

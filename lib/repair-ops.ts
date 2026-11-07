@@ -172,7 +172,7 @@ function keepImageChoices<T extends { label: string }>(next: T[], prior: unknown
   });
 }
 
-async function fetchPdfBase64(url: string): Promise<string> {
+export async function fetchPdfBase64(url: string): Promise<string> {
   const headers: Record<string, string> = {};
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -1059,10 +1059,12 @@ export interface ReextractProposal {
  * the review page shows it next to the stored copy and the reviewer picks
  * what to apply, then saves as usual. Graph (image) choices keep their
  * stored image. Sonnet first, Opus when the result is incomplete or its
- * math won't render.
+ * math won't render. `pdfBase64` lets batch callers (lib/pdf-replace.ts)
+ * reuse one download for a whole module.
  */
 export async function reextractQuestionFromPdf(
   questionId: string,
+  opts: { pdfBase64?: string } = {},
 ): Promise<{ ok: true; proposal: ReextractProposal } | { ok: false; message: string }> {
   const db = getServiceClient();
   const { data: row } = await db
@@ -1077,7 +1079,7 @@ export async function reextractQuestionFromPdf(
   const page = (row.page_number as number | null) ?? null;
   if (!page) return { ok: false, message: "This question has no PDF page number. Set the page first." };
 
-  const pdfBase64 = await fetchPdfBase64(pdfUrl);
+  const pdfBase64 = opts.pdfBase64 ?? (await fetchPdfBase64(pdfUrl));
   const slice = await slicePdfAroundPage(pdfBase64, page);
   const pages = slice && slice.last > slice.first ? `${slice.first}–${slice.last}` : `${page}`;
   const where = slice

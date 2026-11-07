@@ -7,6 +7,8 @@ import { getTranslations } from "next-intl/server";
 import ModuleParseButton from "./ModuleParseButton";
 import DeleteModuleButton from "../DeleteModuleButton";
 import EditModuleButton from "./EditModuleButton";
+import ReplacePdfButton from "./ReplacePdfButton";
+import { pdfCheckState } from "@/lib/pdf-check-tags";
 import { friendlyParseError } from "@/lib/friendly-parse-error";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
@@ -14,7 +16,7 @@ async function getModule(id: string) {
   const db = getServiceClient();
   const { data } = await db
     .from("modules")
-    .select("*, questions(id, parsing_status)")
+    .select("*, questions(id, parsing_status, parsing_notes)")
     .eq("id", id)
     .single();
   return data;
@@ -82,6 +84,12 @@ export default async function ModuleDetailPage({
 
   const questions = Array.isArray(mod.questions) ? mod.questions : [];
 
+  const pdfCounts = { pending: 0, match: 0, diff: 0 };
+  for (const q of questions as { parsing_notes: string | null }[]) {
+    const state = pdfCheckState(q.parsing_notes);
+    if (state) pdfCounts[state]++;
+  }
+
   const statusCounts = (questions as { parsing_status: string }[]).reduce<Record<string, number>>(
     (acc, q) => {
       acc[q.parsing_status] = (acc[q.parsing_status] ?? 0) + 1;
@@ -145,20 +153,25 @@ export default async function ModuleDetailPage({
       </div>
 
       {/* PDF link */}
-      <div className="bg-surface border border-divider rounded-2xl p-5 flex items-center justify-between">
-        <div className="min-w-0">
-          <p className="text-soft-mute text-xs mb-0.5">{t.pdfFile}</p>
-          <p className="text-charcoal text-sm truncate max-w-xs">{mod.pdf_url}</p>
+      <div className="bg-surface border border-divider rounded-2xl p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="min-w-0">
+            <p className="text-soft-mute text-xs mb-0.5">{t.pdfFile}</p>
+            <p className="text-charcoal text-sm truncate max-w-xs">{mod.pdf_url}</p>
+          </div>
+          <a
+            href={`/api/admin/modules/${id}/pdf`}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-light-bg hover:bg-light-bg text-charcoal text-sm transition-colors shrink-0 ml-3"
+          >
+            <ExternalLink size={14} />
+            {t.openPdf}
+          </a>
         </div>
-        <a
-          href={`/api/admin/modules/${id}/pdf`}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-light-bg hover:bg-light-bg text-charcoal text-sm transition-colors shrink-0 ml-3"
-        >
-          <ExternalLink size={14} />
-          {t.openPdf}
-        </a>
+        {questions.length > 0 && mod.parsing_status !== "parsing" && (
+          <ReplacePdfButton moduleId={id} initialCounts={pdfCounts} />
+        )}
       </div>
 
       {/* Parse section — uploaded (legacy 'pending' is treated the same) */}

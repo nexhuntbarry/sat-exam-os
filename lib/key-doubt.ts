@@ -5,6 +5,7 @@
 // admin approving (or fixing the key) clears it. Barry, 2026-11-02.
 
 import { LIVE_FIX_TAG, stripLiveFixNote } from "@/lib/live-questions";
+import { hasPdfReviewTags, stripPdfReviewTags } from "@/lib/pdf-check-tags";
 
 export const KEY_DOUBT_PREFIX = "Needs review: AI thinks the answer key may be wrong";
 
@@ -36,11 +37,14 @@ export function stripKeyDoubtNote(notes: string | null | undefined): string {
     .join("; ");
 }
 
-/** A person approved the row: drop the live-test re-check tag and any key doubt. */
+/**
+ * A person approved the row: drop the live-test re-check tag, any key doubt
+ * and a "differs from / not yet compared with the replaced PDF" tag.
+ */
 export function clearReviewTags(notes: string | null | undefined): string | null {
-  return stripKeyDoubtNote(stripLiveFixNote(notes)) || null;
+  return stripPdfReviewTags(stripKeyDoubtNote(stripLiveFixNote(notes))) || null;
 }
 
 export function hasReviewTags(notes: string | null | undefined): boolean {
-  return (notes ?? "").startsWith(LIVE_FIX_TAG) || hasKeyDoubt(notes);
+  return (notes ?? "").startsWith(LIVE_FIX_TAG) || hasKeyDoubt(notes) || hasPdfReviewTags(notes);
 }
