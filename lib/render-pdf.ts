@@ -39,6 +39,20 @@ async function getBrowser(): Promise<Browser> {
 
 export class PdfRenderError extends Error {}
 
+// Clerk's middleware sends a session-less page load through its handshake
+// (a top-level redirect to the instance's Frontend API host and back). Allow
+// exactly that host, for navigations only — nothing else leaves our origin.
+function clerkFrontendHost(): string | null {
+  const pk = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ?? "";
+  const enc = pk.split("_")[2];
+  if (!enc) return null;
+  try {
+    return Buffer.from(enc, "base64").toString("utf8").replace(/\$$/, "") || null;
+  } catch {
+    return null;
+  }
+}
+
 // At most this many pages render at once in one function instance; one
 // shared Chromium per instance runs out of memory past that.
 const MAX_OPEN_PAGES = 2;
@@ -83,13 +97,17 @@ export async function renderPrintPdf(url: string, { timeoutMs = 50_000 } = {}): 
     // Question content is rendered HTML; never let it make the server's
     // browser fetch anything but our own origin (no SSRF, no exfiltration).
     const origin = new URL(url).origin;
+    const clerkHost = clerkFrontendHost();
     await page.setRequestInterception(true);
     page.on("request", (r) => {
       const u = r.url();
       let ok = u.startsWith("data:") || u.startsWith("blob:");
       if (!ok) {
         try {
-          ok = new URL(u).origin === origin;
+          const target = new URL(u);
+          ok =
+            target.origin === origin ||
+            (r.isNavigationRequest() && target.protocol === "https:" && clerkHost !== null && target.host === clerkHost);
         } catch {
           ok = false;
         }
