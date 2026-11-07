@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ImagePlus, X } from "lucide-react";
+import SupportComposer from "@/components/support/SupportComposer";
 import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
 import { StatusBadge, type ReportStatus } from "@/components/ui/StatusBadge";
-import { STATUS_LABEL, type SupportRow, type SupportStatus } from "@/lib/support-shared";
+import { STATUS_LABEL, questionRefLabel, type SupportRow, type SupportStatus } from "@/lib/support-shared";
 
 // Short badge word per status; the full STATUS_LABEL shows on hover.
 const BADGE: Record<SupportStatus, ReportStatus> = {
@@ -15,109 +16,6 @@ const BADGE: Record<SupportStatus, ReportStatus> = {
   fixed: "Fixed",
   declined: "Closed",
 };
-
-/** Text box + screenshot picker (click, or paste an image). Posts multipart to `url`. */
-function Composer({ url, placeholder, button, onDone }: {
-  url: string;
-  placeholder: string;
-  button: string;
-  onDone: () => void;
-}) {
-  const [body, setBody] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const previews = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
-  useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p)), [previews]);
-
-  const addFiles = (list: FileList | File[]) => {
-    // Copy now: the input's FileList is cleared right after this call.
-    const picked = Array.from(list).filter((f) => f.type.startsWith("image/"));
-    setFiles((prev) => [...prev, ...picked].slice(0, 6));
-  };
-
-  async function send() {
-    if (!body.trim()) return setError("Please describe the problem.");
-    setBusy(true);
-    setError("");
-    try {
-      const fd = new FormData();
-      fd.set("body", body.trim());
-      files.forEach((f) => fd.append("screenshots", f));
-      const res = await fetch(url, { method: "POST", body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? `Error ${res.status}`);
-      setBody("");
-      setFiles([]);
-      onDone();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="space-y-2">
-      <textarea
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        onPaste={(e) => {
-          const imgs = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
-          if (imgs.length) {
-            e.preventDefault();
-            addFiles(imgs);
-          }
-        }}
-        placeholder={placeholder}
-        rows={4}
-        className="w-full rounded-lg border border-divider bg-surface px-3 py-2 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-warm-coral/40"
-      />
-      {files.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {files.map((f, i) => (
-            <div key={i} className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={previews[i]} alt={f.name} className="h-20 w-20 object-cover rounded-md border border-divider" />
-              <button
-                type="button"
-                onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
-                className="absolute -top-1.5 -right-1.5 bg-charcoal text-white rounded-full p-0.5"
-                aria-label="Remove screenshot"
-              >
-                <X size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="flex items-center gap-3">
-        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm bg-light-bg hover:bg-divider text-charcoal cursor-pointer">
-          <ImagePlus size={15} /> Add screenshots
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files) addFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        <span className="text-xs text-soft-mute">or paste an image into the box (up to 6)</span>
-        <button
-          onClick={send}
-          disabled={busy}
-          className="ml-auto px-4 py-1.5 rounded-lg text-sm font-medium bg-warm-coral text-white hover:bg-warm-coral-dark disabled:opacity-50"
-        >
-          {busy ? "Sending..." : button}
-        </button>
-      </div>
-      {error && <p className="text-sm text-status-error">{error}</p>}
-    </div>
-  );
-}
 
 export default function SupportClient({ requests }: { requests: SupportRow[] }) {
   const router = useRouter();
@@ -133,7 +31,7 @@ export default function SupportClient({ requests }: { requests: SupportRow[] }) 
     <div className="space-y-6">
       <div className="rounded-xl border border-divider bg-surface p-4">
         <h2 className="text-sm font-semibold text-charcoal mb-2">New report</h2>
-        <Composer
+        <SupportComposer
           url="/api/admin/support"
           placeholder="What happened? Who hit it (student / teacher), on which page or test, and what did they expect?"
           button="Send report"
@@ -156,6 +54,14 @@ export default function SupportClient({ requests }: { requests: SupportRow[] }) 
                 title={STATUS_LABEL[r.payload.status]}
               />
             </div>
+            {r.payload.question && (
+              <Link
+                href={`/admin/questions/${r.payload.question.id}`}
+                className="inline-block text-sm text-warm-coral-text hover:underline"
+              >
+                Question: {questionRefLabel(r.payload.question)}
+              </Link>
+            )}
             {r.payload.messages.map((m, i) => (
               <div
                 key={i}
@@ -182,7 +88,7 @@ export default function SupportClient({ requests }: { requests: SupportRow[] }) 
               </div>
             ))}
             {replyingTo === r.id ? (
-              <Composer
+              <SupportComposer
                 url={`/api/admin/support/${r.id}`}
                 placeholder="Add more details, or tell us if it's still happening"
                 button="Send"

@@ -21,6 +21,13 @@ export interface SupportMessage {
   screenshots?: string[];
 }
 
+/** The question a report is about (question-page "Report to dev" reports). */
+export interface SupportQuestionRef {
+  id: string;
+  module_name: string | null;
+  number: number | null;
+}
+
 export interface SupportRequest {
   kind: "support_request";
   status: SupportStatus;
@@ -28,6 +35,13 @@ export interface SupportRequest {
   reporter_email: string;
   messages: SupportMessage[];
   updated_at: string;
+  question?: SupportQuestionRef;
+  /** Where the thread came from when it wasn't opened on /admin/support (bug_reports row id). */
+  source?: { kind: "bug_report"; id: string };
+}
+
+export function questionRefLabel(q: SupportQuestionRef): string {
+  return `${q.module_name ?? "Question"} · Q${q.number ?? "?"}`;
 }
 
 export interface SupportRow {

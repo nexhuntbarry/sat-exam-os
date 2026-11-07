@@ -16,7 +16,8 @@ import { hasMarkdownTable } from "@/lib/markdown-table";
 import { put } from "@vercel/blob";
 import sharp from "sharp";
 import type { ParsedQuestion } from "./parse-pdf";
-import { clampToZones, figureExclusionZones, overlapsCheckMark, readPrintoutLayout, type Rect } from "@/lib/printout-layout";
+import { clampToZones, figureExclusionZones, overlapsCheckMark, readPrintoutLayout, type LayoutLine, type Rect } from "@/lib/printout-layout";
+import { checkChoiceCropPixels, choiceCropProblems, cropHasOtherQuestion } from "@/lib/choice-crop-check";
 
 // Render each PDF page at this DPI before cropping. 200 DPI gives crisp
 // graphs/tables without bloating cold-start memory.
@@ -41,6 +42,8 @@ export interface ExtractImagesResult {
   byQuestion: Map<number, { urls: string[]; alts: string[]; choiceUrls: Partial<Record<ChoiceLabel, string>> }>;
   /** Questions with a crop that still overlaps a ✓ answer mark → Needs Review. */
   checkMarkLeaks: Set<number>;
+  /** Graph-choice crops that are blank, cut off or include another question → Needs Review. */
+  choiceCropIssues: Map<number, string[]>;
   totalUploaded: number;
   errors: string[];
 }
@@ -220,17 +223,23 @@ export function sanitizeFigureAlt(alt: string | null | undefined): string {
  * check EVERY region's final crop box: one that still overlaps a ✓ answer
  * mark is reported (question numbers) so the caller can send it to review.
  */
-async function clampRegions(pdfBase64: string, questions: ParsedQuestion[]): Promise<Set<number>> {
+async function clampRegions(
+  pdfBase64: string,
+  questions: ParsedQuestion[],
+): Promise<{ leaks: Set<number>; otherQuestion: Map<number, Set<string>> }> {
   const leaks = new Set<number>();
+  // Graph-choice regions whose final box runs into another question.
+  const otherQuestion = new Map<number, Set<string>>();
   let layout;
   try {
     layout = await readPrintoutLayout(pdfBase64);
   } catch (err) {
     console.warn("[extract-images] text layer unreadable, regions not clamped:", err);
-    return leaks;
+    return { leaks, otherQuestion };
   }
-  if (layout.pages.length === 0) return leaks; // scanned PDF — no text layer
+  if (layout.pages.length === 0) return { leaks, otherQuestion }; // scanned PDF — no text layer
   const zones = figureExclusionZones(layout);
+  const lines = layout.elements.filter((e): e is LayoutLine => e.kind === "text");
   for (const q of questions) {
     for (const r of q.image_regions ?? []) {
       const page = Math.floor(r.page);
@@ -257,9 +266,14 @@ async function clampRegions(pdfBase64: string, questions: ParsedQuestion[]): Pro
         }
       }
       if (overlapsCheckMark(final, zonesHere)) leaks.add(q.original_question_number);
+      if (r.choice_label && cropHasOtherQuestion(final, page, zonesHere, lines)) {
+        const set = otherQuestion.get(q.original_question_number) ?? new Set<string>();
+        set.add(r.choice_label);
+        otherQuestion.set(q.original_question_number, set);
+      }
     }
   }
-  return leaks;
+  return { leaks, otherQuestion };
 }
 
 const TABLE_ALT = /\btable\b/i;
@@ -307,10 +321,15 @@ export async function extractAndUploadQuestionImages(
       if (Number.isFinite(r.page) && r.page >= 1) pageSet.add(Math.floor(r.page));
     }
   }
+  const choiceCropIssues: ExtractImagesResult["choiceCropIssues"] = new Map();
   if (pageSet.size === 0) {
-    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks: new Set() };
+    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks: new Set(), choiceCropIssues };
   }
-  const checkMarkLeaks = await clampRegions(pdfBase64, questions);
+  const { leaks: checkMarkLeaks, otherQuestion } = await clampRegions(pdfBase64, questions);
+  const addIssues = (n: number, issues: string[]) => {
+    if (issues.length === 0) return;
+    choiceCropIssues.set(n, [...(choiceCropIssues.get(n) ?? []), ...issues]);
+  };
 
   // Public store for question images. Falls back to the same token used for
   // the private PDF store if the dedicated public token isn't configured —
@@ -322,7 +341,7 @@ export async function extractAndUploadQuestionImages(
     process.env.BLOB_READ_WRITE_TOKEN;
   if (!publicToken) {
     errors.push("No Vercel Blob token configured for image uploads");
-    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks };
+    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks, choiceCropIssues };
   }
 
   let renderedPages: Map<number, { png: Buffer; widthPx: number; heightPx: number }>;
@@ -332,7 +351,7 @@ export async function extractAndUploadQuestionImages(
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[extract-images] PDF render failed:", err);
     errors.push(`PDF render failed: ${msg}`);
-    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks };
+    return { byQuestion, totalUploaded: 0, errors, checkMarkLeaks, choiceCropIssues };
   }
 
   let totalUploaded = 0;
@@ -360,6 +379,10 @@ export async function extractAndUploadQuestionImages(
       // the bearer token when fetching, and a server-side proxy route can
       // sign URLs for the student renderer.
       const choiceLabel = region.choice_label ?? null;
+      if (choiceLabel) {
+        const px = await checkChoiceCropPixels(cropped).catch(() => null);
+        addIssues(q.original_question_number, choiceCropProblems(choiceLabel, px, !!otherQuestion.get(q.original_question_number)?.has(choiceLabel)));
+      }
       const blobKey = choiceLabel
         ? `images/${moduleId}/${q.original_question_number}-choice-${choiceLabel}.png`
         : `images/${moduleId}/${q.original_question_number}-${i}.png`;
@@ -418,5 +441,5 @@ export async function extractAndUploadQuestionImages(
     );
   }
 
-  return { byQuestion, totalUploaded, errors, checkMarkLeaks };
+  return { byQuestion, totalUploaded, errors, checkMarkLeaks, choiceCropIssues };
 }

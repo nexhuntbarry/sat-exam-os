@@ -38,6 +38,7 @@ import { hasMarkdownTable } from "@/lib/markdown-table";
 import { fetchImageAsBase64 } from "@/lib/ai/solve-question";
 import { parseBlobUrl } from "@/lib/blob-url";
 import { LIVE_FIX_TAG } from "@/lib/live-questions";
+import { checkChoiceCropPixels, choiceCropProblems } from "@/lib/choice-crop-check";
 import {
   approvalBlockers,
   dropFigureNotes,
@@ -422,6 +423,160 @@ export async function compareFigureWithPdf(
     return { outcome: "unverifiable", checked, detail: [...detail, ...(unverifiable.length ? unverifiable : ["nothing to compare (no text choices, table or figure)"])] };
   }
   return { outcome: "match", checked, removeDuplicateImage, detail };
+}
+
+// ── Graph answer choices (choices[i].image_url) ─────────────────────
+
+const ChoiceCropVisionSchema = z.object({
+  choices: z.array(
+    z.object({
+      label: z.string(),
+      other_question: z.boolean(),
+      cut_off: z.boolean(),
+      reason: z.string(),
+    }),
+  ),
+});
+
+/**
+ * Vision check of a question's choice images: does a crop contain another
+ * question (number banner, stem text, another choice's letter box) or look
+ * cut off? Labels in `labels` order. Pixel checks can't see the first.
+ */
+export async function visionChoiceCrops(
+  urls: { label: string; url: string }[],
+): Promise<{ label: string; other_question: boolean; cut_off: boolean; reason: string }[]> {
+  const content: ({ type: "text"; text: string } | { type: "image"; image: string; mediaType: string })[] = [];
+  for (const u of urls) {
+    const f = await fetchImageAsBase64(u.url);
+    if (!f) continue;
+    content.push({ type: "text", text: `Choice ${u.label}:` }, { type: "image", image: f.base64, mediaType: f.mediaType });
+  }
+  if (content.length === 0) return [];
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: ChoiceCropVisionSchema,
+    system: "You check crops of SAT answer choices (each should show exactly one graph / figure / expression for one choice).",
+    messages: [
+      {
+        role: "user",
+        content: [
+          ...content,
+          {
+            type: "text",
+            text: "For each choice: other_question = the image also shows something that is not this choice (a question-number bar, another question's stem text, a different choice's graph or its letter box); a faint watermark doesn't count. cut_off = a character, label or axis is visibly sliced by the image border (a shaded area or line that simply ends at the graph's own frame is NOT cut off). reason: one short sentence.",
+          },
+        ],
+      },
+    ],
+  });
+  return object.choices;
+}
+
+export interface GraphChoiceAudit {
+  /** Plain-language problems ([] = the choice images look fine). */
+  problems: string[];
+  perChoice: { label: string; url: string | null; blank: boolean | null; cutEdges: string[]; otherQuestion: boolean | null; reason?: string }[];
+}
+
+/**
+ * Audit one graph-choice question's stored choice images: wrong count / a
+ * choice without an image, blank crops, ink touching the border, and (with
+ * `vision`) crops that contain another question. No writes.
+ */
+export async function auditGraphChoices(
+  row: Pick<AutoFixRow, "choices">,
+  opts: { vision?: boolean; load?: (url: string) => Promise<Buffer | null> } = {},
+): Promise<GraphChoiceAudit> {
+  const load =
+    opts.load ??
+    (async (u: string) => {
+      const f = await fetchImageAsBase64(u);
+      return f ? Buffer.from(f.base64, "base64") : null;
+    });
+  const choices = Array.isArray(row.choices) ? (row.choices as Choice[]) : [];
+  const problems: string[] = [];
+  if (choices.length !== 4) problems.push(`${choices.length} choices (expected 4)`);
+  const perChoice: GraphChoiceAudit["perChoice"] = [];
+  for (const c of choices) {
+    const url = c?.image_url ?? null;
+    if (!url) {
+      if (!(c?.text ?? "").trim()) problems.push(`choice ${c?.label ?? "?"} has no image and no text`);
+      perChoice.push({ label: c?.label ?? "?", url: null, blank: null, cutEdges: [], otherQuestion: null });
+      continue;
+    }
+    const buf = await load(url);
+    if (!buf) {
+      problems.push(`choice ${c.label} image couldn't be loaded`);
+      perChoice.push({ label: c.label, url, blank: null, cutEdges: [], otherQuestion: null });
+      continue;
+    }
+    const px = await checkChoiceCropPixels(buf);
+    problems.push(...choiceCropProblems(c.label, px, false));
+    perChoice.push({ label: c.label, url, blank: px.blank, cutEdges: px.cutEdges, otherQuestion: null });
+  }
+  if (opts.vision) {
+    const v = await visionChoiceCrops(perChoice.filter((p) => p.url).map((p) => ({ label: p.label, url: p.url! })));
+    for (const x of v) {
+      const p = perChoice.find((q) => q.label === x.label);
+      if (!p) continue;
+      p.otherQuestion = x.other_question;
+      p.reason = x.reason;
+      if (x.other_question) problems.push(`graph choice ${x.label} image includes another question (${x.reason})`);
+      if (x.cut_off && p.cutEdges.length === 0 && !p.blank) problems.push(`graph choice ${x.label} image may be cut off (${x.reason})`);
+    }
+  }
+  return { problems, perChoice };
+}
+
+const StemFigureVisionSchema = z.object({
+  question_number_box: z.boolean(),
+  page_header_or_footer: z.boolean(),
+  other_question: z.boolean(),
+  cut_off: z.boolean(),
+  reason: z.string(),
+});
+
+/**
+ * Audit one stored stem figure (questions.image_urls[i]): blank / ink at the
+ * border (pixels) and — with `vision` — a question-number box, page header or
+ * footer, another question's content, or a figure cut off (e.g. at a page
+ * break). No writes.
+ */
+export async function auditStemFigure(
+  url: string,
+  questionNumber: number | null,
+  opts: { vision?: boolean; load?: (url: string) => Promise<Buffer | null> } = {},
+): Promise<{ problems: string[]; blank: boolean | null; cutEdges: string[]; vision?: z.infer<typeof StemFigureVisionSchema> }> {
+  const f = opts.load ? await opts.load(url).then((b) => (b ? { base64: b.toString("base64"), mediaType: "image/png" } : null)) : await fetchImageAsBase64(url);
+  if (!f) return { problems: ["figure image couldn't be loaded"], blank: null, cutEdges: [] };
+  const px = await checkChoiceCropPixels(Buffer.from(f.base64, "base64"));
+  const problems: string[] = [];
+  if (px.blank) problems.push("figure image is blank");
+  else if (px.cutEdges.length) problems.push(`figure image may be cut off (ink at the ${px.cutEdges.join("/")} edge)`);
+  if (!opts.vision) return { problems, blank: px.blank, cutEdges: px.cutEdges };
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: StemFigureVisionSchema,
+    system: "You check a crop of an SAT question's figure (graph, table, diagram) taken from a printed PDF page.",
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "image", image: f.base64, mediaType: f.mediaType },
+          {
+            type: "text",
+            text: `This should be the figure of question ${questionNumber ?? "?"} only. question_number_box: the crop includes a question-number box/bar (a boxed number like "19", or "Question 19" / "Mark for Review" banner). page_header_or_footer: it includes a browser/print page header or footer (date and time, "Survey: print page", a URL, "n/m" page count). other_question: it includes another question's text or answer choices. cut_off: the figure itself is visibly incomplete — a shape, axis, label or table row sliced by the image border (as at a page break); a faint watermark doesn't count. reason: one short sentence.`,
+          },
+        ],
+      },
+    ],
+  });
+  if (object.question_number_box) problems.push("figure includes a question-number box");
+  if (object.page_header_or_footer) problems.push("figure includes a page header/footer");
+  if (object.other_question) problems.push(`figure includes another question (${object.reason})`);
+  if (object.cut_off) problems.push(`figure looks cut off (${object.reason})`);
+  return { problems, blank: px.blank, cutEdges: px.cutEdges, vision: object };
 }
 
 // ── Decision (pure) ──────────────────────────────────────────────────

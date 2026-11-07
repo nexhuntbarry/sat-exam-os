@@ -2,6 +2,8 @@ import { put } from "@vercel/blob";
 
 const MAX_FILES = 6;
 const MAX_BYTES = 10 * 1024 * 1024;
+// Raster only: an SVG can carry script if the blob is ever opened directly.
+const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 /**
  * Upload the screenshots attached to a support message (multipart field
@@ -13,7 +15,7 @@ export async function uploadScreenshots(form: FormData): Promise<string[] | stri
   const files = form.getAll("screenshots").filter((f): f is File => typeof f !== "string" && f.size > 0);
   if (files.length > MAX_FILES) return `At most ${MAX_FILES} screenshots per message`;
   for (const f of files) {
-    if (!f.type.startsWith("image/")) return `${f.name} is not an image`;
+    if (!ALLOWED_TYPES.has(f.type)) return `${f.name} must be a PNG, JPEG, GIF or WebP image`;
     if (f.size > MAX_BYTES) return `${f.name} is over 10 MB`;
   }
   const urls: string[] = [];

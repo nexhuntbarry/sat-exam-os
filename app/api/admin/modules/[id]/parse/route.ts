@@ -529,6 +529,7 @@ export async function POST(
     }
     let imageMap: Awaited<ReturnType<typeof extractAndUploadQuestionImages>>["byQuestion"] = new Map();
     let checkMarkLeaks = new Set<number>();
+    let choiceCropIssues = new Map<number, string[]>();
     try {
       const result = await extractAndUploadQuestionImages(
         pdfBase64,
@@ -537,6 +538,7 @@ export async function POST(
       );
       imageMap = result.byQuestion;
       checkMarkLeaks = result.checkMarkLeaks;
+      choiceCropIssues = result.choiceCropIssues;
     } catch (err) {
       console.error("[modules/parse] image extraction failed (non-fatal):", err);
     }
@@ -620,6 +622,10 @@ export async function POST(
       const partialGraphs = incompleteGraphChoices(q.choices);
       if (partialGraphs.length > 0) {
         figureNotes.push(`Needs review: graph choice ${partialGraphs.join(", ")} has no image (other choices are graphs)`);
+      }
+      // Graph-choice crops that are blank, cut off or include another question.
+      for (const issue of choiceCropIssues.get(q.original_question_number) ?? []) {
+        figureNotes.push(`Needs review: ${issue} — re-crop it from the PDF`);
       }
       if (figureNotes.length > 0) {
         parsingStatus = "Needs Review";

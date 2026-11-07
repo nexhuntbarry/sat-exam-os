@@ -11,6 +11,8 @@ import {
 import { CHECKS, type AuditRow } from "@/lib/post-parse-cleanup";
 import { stemFigureMissing } from "@/lib/parse-guards";
 import { notifyBugReportResolved } from "@/lib/notifications";
+import { bugReportSupportBody, createSupportRequest, findSupportForBugReport, resolveBugReportThread } from "@/lib/support";
+import { uploadScreenshots } from "@/app/api/admin/support/upload";
 
 const AUDIT_COLS =
   "id, parsing_status, parsing_notes, section, question_type, correct_answer, has_image, has_table, image_urls, question_text, choices, explanation";
@@ -23,9 +25,11 @@ export const maxDuration = 60;
 // POST /api/admin/questions/[id]/report-bug
 //
 // Reviewer-triggered "this question is broken — please fix" report.
-// Inserts a row into bug_reports and fires a best-effort Telegram
-// ping to the dev chat. Both side effects are isolated so a failed
-// Telegram ping doesn't block the DB row.
+// Body: JSON { note } or multipart (`note` + optional `screenshots`).
+// Inserts a row into bug_reports, opens a "Report a Problem" thread for it
+// (/admin/support: status, dev replies, bell, follow-ups) and fires a
+// best-effort Telegram ping to the dev chat. Side effects are isolated so a
+// failed thread / Telegram ping doesn't block the DB row.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -36,10 +40,30 @@ export async function POST(
   if (qaBlock) return qaBlock;
   const { id } = await params;
   let body: { note?: string } = {};
-  try {
-    body = await req.json();
-  } catch {
-    /* no body is fine */
+  let screenshots: string[] = [];
+  if ((req.headers.get("content-type") ?? "").includes("multipart/form-data")) {
+    const form = await req.formData();
+    body = { note: String(form.get("note") ?? "") };
+    if ((body.note ?? "").length > 5000) {
+      return NextResponse.json({ ok: false, message: "Note is too long (5000 characters max)" }, { status: 400 });
+    }
+    try {
+      const r = await uploadScreenshots(form);
+      if (typeof r === "string") return NextResponse.json({ ok: false, message: r }, { status: 400 });
+      screenshots = r;
+    } catch (e) {
+      console.error("[report-bug] screenshot upload failed:", e);
+      return NextResponse.json({ ok: false, message: "Screenshot upload failed, please try again" }, { status: 500 });
+    }
+  } else {
+    try {
+      body = await req.json();
+    } catch {
+      /* no body is fine */
+    }
+    if (typeof body.note === "string" && body.note.length > 5000) {
+      return NextResponse.json({ ok: false, message: "Note is too long (5000 characters max)" }, { status: 400 });
+    }
   }
 
   const db = getServiceClient();
@@ -57,6 +81,26 @@ export async function POST(
     );
   }
 
+  // A retried request (same person, question and note within a minute)
+  // returns the existing report instead of opening a second thread.
+  {
+    const since = new Date(Date.now() - 60_000).toISOString();
+    let dup = db
+      .from("bug_reports")
+      .select("id")
+      .eq("question_id", id)
+      .eq("reporter_user_id", authResult.userId)
+      .gte("created_at", since)
+      .limit(1);
+    const note = body.note?.trim() || null;
+    dup = note === null ? dup.is("note", null) : dup.eq("note", note);
+    const { data: existing } = await dup;
+    if (existing && existing.length > 0) {
+      const thread = await findSupportForBugReport(db, existing[0].id as string).catch(() => null);
+      return NextResponse.json({ ok: true, duplicate: true, id: existing[0].id, supportId: thread?.id ?? null });
+    }
+  }
+
   const { error: insErr, data: inserted } = await db
     .from("bug_reports")
     .insert({
@@ -72,6 +116,24 @@ export async function POST(
       { ok: false, message: insErr.message },
       { status: 500 },
     );
+  }
+
+  // The same report as a support thread (lib/support.ts — the code path
+  // /admin/support uses), linked back via payload.source.
+  const moduleName = (q.modules as unknown as { module_name?: string } | null)?.module_name ?? null;
+  let supportId: string | null = null;
+  try {
+    supportId = await createSupportRequest(db, {
+      userId: authResult.userId,
+      reporterName: authResult.displayName,
+      reporterEmail: authResult.email,
+      body: bugReportSupportBody(body.note),
+      screenshots,
+      question: { id, module_name: moduleName, number: (q.original_question_number as number | null) ?? null },
+      source: { kind: "bug_report", id: inserted.id as string },
+    });
+  } catch (e) {
+    console.error("[report-bug] support thread failed:", e);
   }
 
   // Best-effort Telegram ping. Failures don't block the response —
@@ -116,14 +178,22 @@ export async function POST(
           })
           .eq("id", inserted.id);
         // In-app notification so the reporter sees the outcome without
-        // depending on the dev Telegram bot.
-        await notifyBugReportResolved(db, {
-          reporterUserId: authResult.userId,
-          bugReportId: inserted.id,
-          questionId: id,
-          message: result.summary || "Auto-repair fixed the reported issue.",
-          auto: true,
+        // depending on the dev Telegram bot: a dev reply on the support
+        // thread (bell), or the old bell item when there's no thread.
+        const message = result.summary || "Auto-repair fixed the reported issue.";
+        const mirrored = await resolveBugReportThread(db, inserted.id, `Auto-fix: ${message}`).catch((e) => {
+          console.error("[report-bug] support thread update failed:", e);
+          return false;
         });
+        if (!mirrored) {
+          await notifyBugReportResolved(db, {
+            reporterUserId: authResult.userId,
+            bugReportId: inserted.id,
+            questionId: id,
+            message,
+            auto: true,
+          });
+        }
       }
     } catch (e) {
       console.error("[report-bug] auto-resolve crashed:", e);
@@ -132,9 +202,11 @@ export async function POST(
 
   return NextResponse.json({
     ok: true,
-    message:
-      "Report sent. The dev team will look at this question and Telegram you when it's resolved. You can keep reviewing the next question.",
+    message: supportId
+      ? "Report sent. Follow it (status, dev replies) on Report a Problem; you'll get a bell notification when it's resolved."
+      : "Report sent. The dev team will look at this question. You can keep reviewing the next question.",
     data: inserted,
+    supportId,
   });
 }
 

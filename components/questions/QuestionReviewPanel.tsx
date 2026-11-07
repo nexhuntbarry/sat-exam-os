@@ -9,6 +9,7 @@ import EditableMath from "./EditableMath";
 import ReextractPanel, { type ReextractPatch, type ReextractProposal } from "./ReextractPanel";
 import ImageCropDialog from "./ImageCropDialog";
 import ConfidenceBadge from "./ConfidenceBadge";
+import SupportComposer from "@/components/support/SupportComposer";
 import MathMarkdown from "@/components/MathMarkdown";
 import { formatDateTime } from "@/lib/datetime";
 import QuestionRenderer from "@/components/tests/QuestionRenderer";
@@ -153,6 +154,8 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // "Report to dev" box: closed | open | sent (with the support thread id).
+  const [report, setReport] = useState<{ open: boolean; sent: { message: string; supportId: string | null } | null }>({ open: false, sent: null });
   const [toast, setToast] = useState<{ msg: string; ok: boolean } | null>(null);
   type ViewMode = "edit" | "test" | "results";
   const [viewMode, setViewMode] = useState<ViewMode>("edit");
@@ -695,41 +698,62 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
             {actionLoading === "needs-review" ? "..." : "Flag"}
           </button>
           <button
-            onClick={async () => {
-              const note = window.prompt(
-                "Optional: tell the dev team what's broken on this question. Leave blank to just send a report.",
-              );
-              if (note === null) return;
-              setActionLoading("report-bug");
-              try {
-                const res = await fetch(
-                  `/api/admin/questions/${q.id}/report-bug`,
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ note: note.trim() || undefined }),
-                  },
-                );
-                const json = (await res.json()) as { ok: boolean; message: string };
-                showToast(json.message, json.ok);
-              } catch (e) {
-                showToast(
-                  e instanceof Error ? e.message : "Report failed",
-                  false,
-                );
-              } finally {
-                setActionLoading(null);
-              }
-            }}
+            onClick={() => setReport((r) => ({ open: !r.open || !!r.sent, sent: null }))}
             disabled={actionLoading !== null}
+            aria-expanded={report.open}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-100 hover:bg-purple-200 text-purple-800 text-sm font-medium transition-colors disabled:opacity-50"
             title="Send a bug report to the dev team with a link to this question"
           >
             <Bug size={14} />
-            {actionLoading === "report-bug" ? "..." : "Report to dev"}
+            Report to dev
           </button>
         </div>
       </div>
+
+      {report.open && (
+        <div className="rounded-xl border border-divider bg-surface p-4 space-y-2">
+          {report.sent ? (
+            <div role="status" className="space-y-2">
+              <p className="text-sm text-charcoal">
+                <CheckCircle2 size={14} className="inline mr-1.5 text-status-success" />
+                {report.sent.message}
+              </p>
+              <div className="flex items-center gap-4 text-sm">
+                <a
+                  href={report.sent.supportId ? `/admin/support#${report.sent.supportId}` : "/admin/support"}
+                  className="text-warm-coral-text hover:underline"
+                >
+                  View on Report a Problem
+                </a>
+                <button onClick={() => setReport({ open: false, sent: null })} className="text-mid-gray hover:text-charcoal">
+                  Close
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <h2 className="text-sm font-semibold text-charcoal">Report this question to the dev team</h2>
+              <SupportComposer
+                url={`/api/admin/questions/${q.id}/report-bug`}
+                field="note"
+                optional
+                autoFocus
+                placeholder="Optional: what's broken on this question? Leave blank to just send a report."
+                button="Send"
+                onDone={(data) =>
+                  setReport({
+                    open: true,
+                    sent: {
+                      message: typeof data.message === "string" ? data.message : "Report sent.",
+                      supportId: typeof data.supportId === "string" ? data.supportId : null,
+                    },
+                  })
+                }
+              />
+            </>
+          )}
+        </div>
+      )}
 
       {/* View mode tabs: Edit | Student view (test) | Student view (results) */}
       <div className="flex items-center gap-1 border-b border-divider pb-0">

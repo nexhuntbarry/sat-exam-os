@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { notifyBugReportResolved } from "@/lib/notifications";
+import { resolveBugReportThread } from "@/lib/support";
 
 // POST /api/admin/bug-reports/[id]/resolve
 //
@@ -47,7 +48,13 @@ export async function POST(
     return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
   }
 
-  if (report?.reporter_user_id && report.question_id) {
+  // Mirror onto the report's support thread (dev reply + bell); the old bell
+  // item only when the report has no thread.
+  const mirrored = await resolveBugReportThread(db, id, message || "Marked resolved by the dev team.").catch((e) => {
+    console.error("[bug-reports/resolve] support thread update failed:", e);
+    return false;
+  });
+  if (!mirrored && report?.reporter_user_id && report.question_id) {
     await notifyBugReportResolved(db, {
       reporterUserId: report.reporter_user_id as string,
       bugReportId: id,
