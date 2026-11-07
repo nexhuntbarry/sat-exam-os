@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/ai-spend-alert",
       "schedule": "0 13 * * *"
+    },
+    {
+      "path": "/api/cron/auto-fix-explanations",
+      "schedule": "0 9 * * *"
     }
   ]
 }

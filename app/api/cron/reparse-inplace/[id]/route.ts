@@ -7,6 +7,7 @@ import {
   fetchPdfAsBase64,
 } from "@/lib/ai/parse-pdf";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
+import { autoFixModuleExplanations } from "@/lib/explanation-autofix";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
 import { recoverMissingFigures, recoverBrokenChoices } from "@/lib/repair-ops";
@@ -232,6 +233,8 @@ export async function POST(
   try { audit = await runSemanticAudit(id, db); } catch (e) { audit = { error: String(e) }; }
   try { figures = await recoverMissingFigures(id, db); } catch (e) { figures = { error: String(e) }; }
   try { choicesRecovery = await recoverBrokenChoices(id, db); } catch (e) { choicesRecovery = { error: String(e) }; }
+  // Explanation-only problems: regenerate from the key, approve when nothing else is wrong.
+  try { await autoFixModuleExplanations(id, db); } catch (e) { console.error("[reparse-inplace] explanation-autofix:", e); }
   try { await enforceCompleteness(id, db); } catch (e) { console.error("[reparse-inplace] completeness-gate:", e); }
   try { await enforceAnswerKeyForm(id, db); } catch (e) { console.error("[reparse-inplace] key-form gate:", e); }
   // Answer-key + stem guards — after every pass that can Approve, before auto-promote.

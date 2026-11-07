@@ -13,6 +13,7 @@ import {
 } from "@/lib/ai/parse-pdf";
 import { extractAndUploadQuestionImages, isRedundantTableRegion } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
+import { autoFixModuleExplanations } from "@/lib/explanation-autofix";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
@@ -926,6 +927,18 @@ export async function POST(
       } catch (err) {
         console.error("[modules/parse] recover-choices crashed:", err);
       }
+    }
+
+    // Phase 5c' — explanation auto-fix. Cut-off / badly formatted
+    // explanations, or ones arguing a different choice than the official key,
+    // are regenerated from the saved key and saved only when the AI's own
+    // answer agrees; a row whose only problem was the explanation is
+    // Approved (lib/explanation-autofix.ts). Before the gates below, so they
+    // still demote anything else that's wrong.
+    try {
+      await autoFixModuleExplanations(id, db, authResult.userId);
+    } catch (err) {
+      console.error("[modules/parse] explanation-autofix crashed:", err);
     }
 
     // Phase 5d — completeness gate. Any question missing a real stem, four
