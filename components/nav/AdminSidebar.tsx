@@ -15,6 +15,7 @@ import {
   Bug,
   LifeBuoy,
   MessageSquareWarning,
+  ListChecks,
 } from "lucide-react";
 import SidebarShell, { type NavItem } from "@/components/nav/SidebarShell";
 
@@ -22,6 +23,7 @@ const navItems: NavItem[] = [
   { href: "/admin", icon: LayoutDashboard, label: "Dashboard", exact: true },
   { href: "/admin/modules", icon: BookOpen, label: "Modules" },
   { href: "/admin/questions", icon: HelpCircle, label: "Question Bank" },
+  { href: "/admin/review-queue", icon: ListChecks, label: "Review Queue" },
   { href: "/admin/tests", icon: ClipboardList, label: "Tests" },
   { href: "/admin/students", icon: Users, label: "Students" },
   { href: "/admin/teachers", icon: GraduationCap, label: "Teachers" },

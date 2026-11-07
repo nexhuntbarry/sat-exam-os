@@ -6,6 +6,7 @@ import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/
 import { rescoreQuestion } from "@/lib/rescore";
 import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
 import { clearReviewTags } from "@/lib/key-doubt";
+import { dropStaleKeyNotes } from "@/lib/review-queue";
 
 export const maxDuration = 60;
 
@@ -130,6 +131,13 @@ export async function POST(
   }
 
   update.correct_answer = finalAnswer;
+
+  // A new key makes the notes about the old one stale (consensus, semantic
+  // audit, "stored X", key doubts): drop them.
+  if (finalAnswer !== (q.correct_answer as string | null)) {
+    const base = "parsing_notes" in update ? (update.parsing_notes as string | null) : (q.parsing_notes as string | null);
+    update.parsing_notes = dropStaleKeyNotes(base, q.correct_answer as string | null, finalAnswer).notes;
+  }
 
   const { data: updated, error: updateErr } = await db
     .from("questions")
