@@ -459,28 +459,37 @@ Draw the box tight to the figure — the cropper adds its own small margin. It m
 
 alt is shown to students: describe the figure neutrally and never say which choice is correct.`;
 
-/**
- * Re-crop and re-upload the figure for one question whose
- * has_image=true but image_urls is empty. Mirrors
- * scripts/repair-blind-image-regions.ts for a single question.
- */
-export async function repairImageForQuestion(
-  questionId: string,
-): Promise<RepairResult> {
-  const db = getServiceClient();
-  const { data: row, error: rowErr } = await db
-    .from("questions")
-    .select(
-      "id, module_id, original_question_number, source_pdf_url, question_text, page_number, has_image, image_urls, section, choices",
-    )
-    .eq("id", questionId)
-    .maybeSingle();
-  if (rowErr) return { ok: false, message: rowErr.message };
-  if (!row) return { ok: false, message: "Question not found" };
-  if (!row.source_pdf_url)
-    return { ok: false, message: "No source PDF on this question" };
+export interface FigureCropRow {
+  id: string;
+  module_id: string | null;
+  original_question_number: number | null;
+  question_text: string | null;
+  page_number: number | null;
+  section: string | null;
+  choices: unknown;
+}
 
-  const pdfBase64 = await fetchPdfBase64(row.source_pdf_url as string);
+export type FigureCropResult =
+  /** A pure-algebra stem: the "figure" is a redundant equation crop. */
+  | { kind: "redundant_equation" }
+  /** Claude found no figure on the page. */
+  | { kind: "none" }
+  | { kind: "error"; message: string }
+  | {
+      kind: "cropped";
+      urls: string[];
+      alts: string[];
+      choiceUrls: Partial<Record<"A" | "B" | "C" | "D", string>>;
+      /** A crop may include the ✓ answer mark. */
+      checkMarkLeak: boolean;
+    };
+
+/**
+ * Locate this question's figure on its PDF page (Claude vision bbox), then
+ * crop and upload it. Never writes the question row: repairImageForQuestion
+ * saves the crop; lib/figure-compare.ts only compares it with the stored one.
+ */
+export async function cropFigureFromPdf(row: FigureCropRow, pdfBase64: string): Promise<FigureCropResult> {
   const result = await generateObject({
     model: anthropic("claude-sonnet-4-6"),
     schema: BBoxSchema,
@@ -503,31 +512,11 @@ export async function repairImageForQuestion(
   // Guard against the "wrong image — it's the previous question's figure"
   // bug: a pure-algebra math question carries its equation in the TEXT, so
   // a recovered "figure" is just a redundant equation crop that often grabs
-  // a neighbouring question's region. Don't attach it — clear the flag.
-  if (isRedundantEquationFigure(row.section as string | null, row.question_text as string | null, regions.map((r) => r.alt ?? ""))) {
-    await db
-      .from("questions")
-      .update({ has_image: false, image_urls: [], image_alts: [], updated_at: new Date().toISOString() })
-      .eq("id", questionId);
-    return {
-      ok: true,
-      message: "No figure attached — this question's equation is already in the text (redundant crop skipped).",
-    };
+  // a neighbouring question's region.
+  if (isRedundantEquationFigure(row.section, row.question_text, regions.map((r) => r.alt ?? ""))) {
+    return { kind: "redundant_equation" };
   }
-
-  if (regions.length === 0) {
-    // Admin explicitly clicked "Re-extract figure" — they think a
-    // figure exists. Don't silently flip has_image=false the way
-    // the batch resolveBlindImages step does; instead surface the
-    // problem so the admin can decide. They keep has_image=true
-    // and the row stays in its current status; the message tells
-    // them what happened.
-    return {
-      ok: false,
-      message:
-        "Claude looked at the page but couldn't pinpoint a figure for this question. If you can clearly see one on the PDF, try Re-extract again or crop a screenshot by hand. Use 'Mark as no figure needed' on the audit banner if there really isn't one.",
-    };
-  }
+  if (regions.length === 0) return { kind: "none" };
 
   // No extra padding here: the cropper adds its own margin and clamps the
   // box to the question's own area (the old +1.5% on top of the cropper's
@@ -556,22 +545,75 @@ export async function repairImageForQuestion(
       }),
     },
   ] as unknown as Parameters<typeof extractAndUploadQuestionImages>[1];
-  const res = await extractAndUploadQuestionImages(
-    pdfBase64,
-    synthetic,
-    row.module_id as string,
-  );
+  const res = await extractAndUploadQuestionImages(pdfBase64, synthetic, row.module_id as string);
   const slot = res.byQuestion.get(row.original_question_number ?? 0);
   const urls = slot?.urls ?? [];
-  const alts = slot?.alts ?? [];
   const choiceUrls = slot?.choiceUrls ?? {};
-  const nChoiceImgs = Object.keys(choiceUrls).length;
-  if (urls.length === 0 && nChoiceImgs === 0) {
+  if (urls.length === 0 && Object.keys(choiceUrls).length === 0) {
+    return { kind: "error", message: `Cropper produced 0 URLs (${res.errors[0] ?? "unknown"})` };
+  }
+  return {
+    kind: "cropped",
+    urls,
+    alts: slot?.alts ?? [],
+    choiceUrls,
+    checkMarkLeak: res.checkMarkLeaks.has(row.original_question_number ?? 0),
+  };
+}
+
+/**
+ * Re-crop and re-upload the figure for one question whose
+ * has_image=true but image_urls is empty. Mirrors
+ * scripts/repair-blind-image-regions.ts for a single question.
+ */
+export async function repairImageForQuestion(
+  questionId: string,
+): Promise<RepairResult> {
+  const db = getServiceClient();
+  const { data: row, error: rowErr } = await db
+    .from("questions")
+    .select(
+      "id, module_id, original_question_number, source_pdf_url, question_text, page_number, has_image, image_urls, section, choices",
+    )
+    .eq("id", questionId)
+    .maybeSingle();
+  if (rowErr) return { ok: false, message: rowErr.message };
+  if (!row) return { ok: false, message: "Question not found" };
+  if (!row.source_pdf_url)
+    return { ok: false, message: "No source PDF on this question" };
+
+  const pdfBase64 = await fetchPdfBase64(row.source_pdf_url as string);
+  const crop = await cropFigureFromPdf(row as FigureCropRow, pdfBase64);
+
+  // A redundant equation crop is not attached — clear the flag.
+  if (crop.kind === "redundant_equation") {
+    await db
+      .from("questions")
+      .update({ has_image: false, image_urls: [], image_alts: [], updated_at: new Date().toISOString() })
+      .eq("id", questionId);
     return {
-      ok: false,
-      message: `Cropper produced 0 URLs (${res.errors[0] ?? "unknown"})`,
+      ok: true,
+      message: "No figure attached — this question's equation is already in the text (redundant crop skipped).",
     };
   }
+
+  if (crop.kind === "none") {
+    // Admin explicitly clicked "Re-extract figure" — they think a
+    // figure exists. Don't silently flip has_image=false the way
+    // the batch resolveBlindImages step does; instead surface the
+    // problem so the admin can decide. They keep has_image=true
+    // and the row stays in its current status; the message tells
+    // them what happened.
+    return {
+      ok: false,
+      message:
+        "Claude looked at the page but couldn't pinpoint a figure for this question. If you can clearly see one on the PDF, try Re-extract again or crop a screenshot by hand. Use 'Mark as no figure needed' on the audit banner if there really isn't one.",
+    };
+  }
+  if (crop.kind === "error") return { ok: false, message: crop.message };
+
+  const { urls, alts, choiceUrls } = crop;
+  const nChoiceImgs = Object.keys(choiceUrls).length;
   const notes = [`Image re-extracted by admin self-repair (${urls.length} region${urls.length === 1 ? "" : "s"}${nChoiceImgs ? `, ${nChoiceImgs} choice graph${nChoiceImgs === 1 ? "" : "s"}` : ""}).`];
   const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
   // Only replace the stem figure when a new one was cropped — a re-crop that
@@ -591,7 +633,7 @@ export async function repairImageForQuestion(
     const partial = incompleteGraphChoices(nextChoices);
     if (partial.length > 0) notes.push(`Needs review: graph choice ${partial.join(", ")} has no image (other choices are graphs)`);
   }
-  if (res.checkMarkLeaks.has(row.original_question_number ?? 0)) {
+  if (crop.checkMarkLeak) {
     notes.push("Needs review: a figure crop may include the ✓ answer mark — check the image");
   }
   update.parsing_notes = notes.join("; ");

@@ -128,7 +128,7 @@ export async function replaceModulePdf(
 
 // ── Comparison ──────────────────────────────────────────────────────
 
-interface CompareRow {
+export interface CompareRow {
   id: string;
   original_question_number: number | null;
   question_type: string | null;
@@ -175,7 +175,7 @@ function storedChoice(row: CompareRow, label: string): string {
  * layer has this question's choices and they agree with the stored one,
  * that choice difference is dropped.
  */
-function dropTextLayerConfirmed(row: CompareRow, diffs: PdfDiff[], pdfText: PdfTextChoices | null): PdfDiff[] {
+export function dropTextLayerConfirmed(row: CompareRow, diffs: PdfDiff[], pdfText: PdfTextChoices | null): PdfDiff[] {
   const textQ = pdfText && row.original_question_number != null
     ? lookupPdfTextQuestion(pdfText, row.original_question_number)
     : null;

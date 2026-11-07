@@ -8,6 +8,7 @@ import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
 import { MAX_KEY_LENGTH, keyTypeProblem } from "@/lib/answer-key";
 import { liveQuestionIds } from "@/lib/live-questions";
 import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
+import { dropStaleKeyNotes } from "@/lib/review-queue";
 
 // Answer-key edits may regenerate the explanation (AI) — allow headroom.
 export const maxDuration = 60;
@@ -130,6 +131,14 @@ export async function PATCH(
         { status: 400 },
       );
     }
+  }
+
+  // A new key makes the notes about the old one stale (consensus, semantic
+  // audit, "stored X", key doubts): drop them.
+  if ("correct_answer" in body && (prior?.correct_answer ?? null) !== (body.correct_answer ?? null)) {
+    const base = "parsing_notes" in update ? (update.parsing_notes as string | null) : (prior?.parsing_notes ?? null);
+    const cleaned = dropStaleKeyNotes(base, prior?.correct_answer ?? null, body.correct_answer ?? null);
+    if (cleaned.removed.length > 0) update.parsing_notes = cleaned.notes;
   }
 
   // Saving it as Approved means a person checked it: clear the live-test
