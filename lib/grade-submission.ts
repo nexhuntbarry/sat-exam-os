@@ -14,6 +14,7 @@ import {
   moduleStartedAtIso,
   scopeToStudentQuestionSet,
 } from "@/lib/student-exam";
+import { keyCandidates, parseSprEntry, sprEntryCreditedForCandidate } from "@/lib/answer-key";
 
 // Hyphen look-alikes students paste or type on some keyboards (U+2212
 // minus sign, figure/en/em dashes, small and fullwidth hyphen-minus).
@@ -35,71 +36,25 @@ function canonical(answer: string | null | undefined): string {
     .trim();
 }
 
-const DECIMAL = /^-?\d+(\.\d+)?$/;
-const LEADING_DOT = /^-?\.\d+$/;
-// Thousands separators only in the proper 1,000 / 24,000.5 shape.
-const THOUSANDS = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
-const FRACTION = /^(-?\d+)\s*\/\s*(\d+)$/;
-
-/**
- * Strictly parse an SPR (grid-in) value. Accepts an integer or decimal
- * ("12", "-3.5", ".75", "-.5"), a fraction with a non-zero denominator
- * ("26/2", "-1/3"), or a correctly grouped thousands value ("1,000").
- * Anything else ("35abc", "4/0", "263 264", "1 1/2") is NOT a number,
- * so it can never match a numeric key.
- */
+// Strict parsing of a student's fill-in entry lives in lib/answer-key
+// (parseSprEntry: integer, decimal or fraction; no commas, %, $, mixed
+// numbers). Kept here under its old name for existing callers.
 const LATE_LABEL_EXTRA_GRACE_MS = 120_000;
 
-export function parseStrictNumber(answer: string | null | undefined): number | null {
-  const s = canonical(answer);
-  if (!s) return null;
-  if (DECIMAL.test(s) || LEADING_DOT.test(s)) return Number(s);
-  if (THOUSANDS.test(s)) return Number(s.replace(/,/g, ""));
-  const f = s.match(FRACTION);
-  if (f) {
-    const den = Number(f[2]);
-    if (den === 0) return null;
-    return Number(f[1]) / den;
-  }
-  return null;
-}
-
-const NUMBER_SHAPED = /^[-\d.,\s/]+$/;
-
-/** Can v be entered exactly in the SAT grid (5 chars, 6 with a minus)? */
-function fitsGridExactly(v: number): boolean {
-  for (let d = 0; d <= 4; d++) {
-    const str = Math.abs(v).toFixed(d).replace(/^0\./, ".");
-    if (str.length <= 5 && Math.abs(Number(str) - Math.abs(v)) < 1e-9) return true;
-  }
-  return false;
-}
-
 /**
- * SAT grid-in rule for answers with more digits than the 5-character
- * space holds (e.g. 2/3, 1/7): a decimal that FILLS the space and is the
- * value rounded or truncated is correct (2/3 → .6666, .6667, 0.666,
- * 0.667; but not 0.67). Only applies when the exact value doesn't fit.
+ * Strictly parse an SPR (grid-in) entry. Accepts an integer or decimal
+ * ("12", "-3.5", ".75", "-.5") or a fraction with a non-zero denominator
+ * ("26/2", "-1/3"). Anything else ("35abc", "4/0", "263 264", "1 1/2",
+ * "1,000") is NOT a number, so it can never match a numeric key.
  */
-function satDecimalMatch(studentText: string, v: number): boolean {
-  const m = studentText.match(/^-?(\d*)\.(\d+)$/);
-  if (!m) return false;
-  if ((v < 0) !== studentText.startsWith("-")) return false;
-  if (studentText.replace(/^-/, "").length !== 5) return false;
-  if (fitsGridExactly(v)) return false;
-  const d = m[2].length;
-  const scale = 10 ** d;
-  const s = Math.abs(Number(studentText));
-  const a = Math.abs(v);
-  const trunc = Math.trunc(a * scale) / scale;
-  const round = Math.round(a * scale) / scale;
-  return Math.abs(s - trunc) < 1e-9 || Math.abs(s - round) < 1e-9;
+export function parseStrictNumber(answer: string | null | undefined): number | null {
+  return parseSprEntry(answer);
 }
 
 /** Back-compat: canonical text form (fractions reduced to a decimal). */
 export function normalizeAnswer(answer: string | null | undefined): string {
   const n = parseStrictNumber(answer);
-  if (n != null && FRACTION.test(canonical(answer))) {
+  if (n != null && /\//.test(canonical(answer))) {
     return String(Math.round(n * 10000) / 10000);
   }
   return canonical(answer);
@@ -107,39 +62,34 @@ export function normalizeAnswer(answer: string | null | undefined): string {
 
 /** The acceptable answers listed in one correct_answer (see answersMatch). */
 export function answerCandidates(correct: string | null | undefined): string[] {
-  if (!correct) return [];
-  // Split on newline, "|", ";", the word "or", a comma followed by
-  // whitespace, or a comma BETWEEN non-digits — so a thousands separator
-  // like "1,000" stays intact.
-  return String(correct)
-    .split(/\s*(?:\bor\b|[\n;|])\s*|,\s+|(?<=\D),(?=\D)/i)
-    .map((c) => c.trim())
-    .filter((c) => c.length > 0);
+  return keyCandidates(correct);
 }
+
+const NUMBER_SHAPED = /^[-\d.,\s/]+$/;
 
 // A correct_answer may list SEVERAL acceptable answers separated by a
 // newline, "|", ";", ", " or the word "or" (e.g. "5 or -13",
 // "214/3, 71.33"). The student is correct if their answer matches ANY
-// candidate. Numeric candidates compare numerically (tolerance 1e-4)
-// against a STRICTLY parsed student value; non-numeric candidates (MC
+// candidate. Numeric candidates follow the official College Board fill-in
+// rules (lib/answer-key sprEntryCreditedForCandidate): the exact value in
+// any form, or — when it doesn't fit — the truncated/rounded decimal that
+// fills all 5 spaces; a rounding instruction in `questionText` ("nearest
+// tenth") replaces that with the rounded value. Non-numeric candidates (MC
 // letters) compare as case-insensitive text.
 export function answersMatch(
   student: string | null | undefined,
   correct: string | null | undefined,
+  questionText?: string | null,
 ): boolean {
   if (!correct) return false;
   const candidates = answerCandidates(correct);
   if (candidates.length === 0) return false;
   const sText = canonical(student);
   if (!sText) return false;
-  const sNum = parseStrictNumber(student);
   for (const cand of candidates) {
-    const cNum = parseStrictNumber(cand);
-    if (cNum != null) {
-      if (sNum != null && Math.abs(sNum - cNum) < 0.0001) return true;
-      if (sNum != null && satDecimalMatch(sText, cNum)) return true;
-      continue;
-    }
+    const numeric = sprEntryCreditedForCandidate(student, cand, questionText);
+    if (numeric === true) return true;
+    if (numeric === false) continue;
     // Text comparison covers MC letters and non-numeric keys (e.g.
     // "67/\sqrt{133}"). A number-shaped key that didn't parse (e.g. "4/0")
     // must never match by text.
@@ -270,7 +220,7 @@ export async function finalizeSubmission(
   const questionQuery = scopeToStudentQuestionSet(
     db
       .from("questions")
-      .select("id, correct_answer, question_type, original_question_number")
+      .select("id, correct_answer, question_type, question_text, original_question_number")
       .eq("module_id", gradingModuleId),
     test,
   ).order("original_question_number", { ascending: true });
@@ -290,7 +240,7 @@ export async function finalizeSubmission(
 
   const answerRecords = questions.map((q) => {
     const studentAnswer = answers[q.id] ?? null;
-    const isCorrect = answersMatch(studentAnswer, q.correct_answer);
+    const isCorrect = answersMatch(studentAnswer, q.correct_answer, q.question_text as string | null);
     return {
       submission_id: submissionId,
       question_id: q.id,

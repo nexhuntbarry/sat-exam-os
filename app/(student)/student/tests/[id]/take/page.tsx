@@ -1,3 +1,4 @@
+import { SPR_TYPE, sprInputMaxChars } from "@/lib/answer-key";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
@@ -70,12 +71,18 @@ async function getActiveSubmission(testId: string, studentId: string, startModul
   const questionQuery = scopeToStudentQuestionSet(
     db
       .from("questions")
-      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls")
+      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, correct_answer")
       .eq("module_id", activeModuleId),
     test,
   ).order("original_question_number", { ascending: true });
 
-  const { data: questions } = await questionQuery;
+  const { data: questionRows } = await questionQuery;
+  // The key never reaches the browser: only how many characters the
+  // fill-in box must allow (5/6, more for a verified longer key).
+  const questions = (questionRows ?? []).map(({ correct_answer, ...q }) => ({
+    ...q,
+    spr_max_chars: q.question_type === SPR_TYPE ? sprInputMaxChars(correct_answer as string | null) : null,
+  }));
 
   // Module 2 lazy-start: the handoff inserts the Module 2 submission
   // the moment Module 1 is submitted, but the student may not actually

@@ -16,6 +16,7 @@ export interface BulkApproveRow {
   choices: unknown;
   question_type: string | null;
   correct_answer: string | null;
+  official_answer?: string | null;
   parsing_status: string | null;
   parsing_notes: string | null;
 }
@@ -42,7 +43,7 @@ export function planBulkApprove(rows: BulkApproveRow[], live: Set<string>, now: 
       plan.skipped.push(r.id);
       continue;
     }
-    const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer);
+    const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer, r.official_answer);
     if (!blocker) {
       plan.clean.push(r.id);
       continue;

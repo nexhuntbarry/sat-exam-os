@@ -89,7 +89,7 @@ export async function PATCH(
   // Capture the prior answer so we can tell whether the key actually changed.
   const { data: prior } = await db
     .from("questions")
-    .select("correct_answer, question_text, choices, question_type, parsing_status, parsing_notes")
+    .select("correct_answer, official_answer, question_text, choices, question_type, parsing_status, parsing_notes")
     .eq("id", id)
     .maybeSingle();
 
@@ -101,9 +101,10 @@ export async function PATCH(
     choices: "choices" in update ? update.choices : prior?.choices,
     question_type: "question_type" in update ? (update.question_type as string | null) : prior?.question_type,
     correct_answer: "correct_answer" in update ? (update.correct_answer as string | null) : prior?.correct_answer,
+    official_answer: "official_answer" in update ? (update.official_answer as string | null) : prior?.official_answer,
   };
   if (update.parsing_status === "Approved") {
-    const blocker = findApproveBlocker(next.question_text, next.choices, next.question_type, next.correct_answer ?? null);
+    const blocker = findApproveBlocker(next.question_text, next.choices, next.question_type, next.correct_answer ?? null, next.official_answer ?? null);
     if (blocker) {
       return NextResponse.json({ error: approveBlockedMessage(blocker) }, { status: 400 });
     }

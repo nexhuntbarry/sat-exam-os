@@ -20,11 +20,11 @@ export async function POST(
 
   const { data: current } = await db
     .from("questions")
-    .select("question_text, choices, question_type, correct_answer, parsing_notes")
+    .select("question_text, choices, question_type, correct_answer, official_answer, parsing_notes")
     .eq("id", id)
     .maybeSingle();
   const blocker = current
-    ? findApproveBlocker(current.question_text, current.choices, current.question_type, current.correct_answer ?? null)
+    ? findApproveBlocker(current.question_text, current.choices, current.question_type, current.correct_answer ?? null, current.official_answer ?? null)
     : null;
   if (blocker) {
     return NextResponse.json({ error: approveBlockedMessage(blocker) }, { status: 400 });

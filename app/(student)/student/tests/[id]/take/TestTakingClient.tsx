@@ -47,6 +47,8 @@ interface Question {
   section: string;
   image_urls?: string[] | null;
   image_alts?: string[] | null;
+  /** Fill-in box length (5/6, more for a verified longer key). */
+  spr_max_chars?: number | null;
 }
 
 interface Props {
@@ -1548,6 +1550,7 @@ export default function TestTakingClient({
                   onAnswer={(ans) => handleAnswer(currentQuestion.id, ans)}
                   questionIndex={currentIndex}
                   totalQuestions={questions.length}
+                  sprDirections
                   annotationsEnabled={test.annotationsEnabled}
                   annotations={annotations[currentQuestion.id] ?? {}}
                   crossedOut={crossedOut[currentQuestion.id] ?? new Set()}

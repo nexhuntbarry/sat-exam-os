@@ -419,6 +419,8 @@ export function findApproveBlocker(
   choices: unknown,
   questionType?: string | null,
   correctAnswer?: string | null,
+  /** Official key — a verified longer fill-in number (1905.12) may be approved. */
+  officialAnswer?: string | null,
 ): { reason: string; note: string } | null {
   const placeholder = findParsePlaceholder(questionText, choices);
   if (placeholder) {
@@ -438,7 +440,7 @@ export function findApproveBlocker(
     }
   }
   if (correctAnswer !== undefined) {
-    const p = keyTypeProblem({ question_type: questionType, correct_answer: correctAnswer, question_text: questionText, choices });
+    const p = keyTypeProblem({ question_type: questionType, correct_answer: correctAnswer, question_text: questionText, choices, official_answer: officialAnswer });
     if (p) return { reason: p.reason, note: keyFormNote(p) };
   }
   return null;

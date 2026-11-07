@@ -30,6 +30,7 @@ import { z } from "zod";
 import { logUsage } from "./parse-pdf";
 import { applyLiveHold, liveQuestionIds } from "@/lib/live-questions";
 import { answersMatch } from "@/lib/grade-submission";
+import { answersAgreeForQuestion } from "@/lib/answer-key";
 import { keyDoubtNote, stripKeyDoubtNote } from "@/lib/key-doubt";
 
 // How many questions to send to Claude per call. Small enough that the model
@@ -149,7 +150,9 @@ function stripPriorAuditNote(notes: string | null): string {
 function keyDoubt(r: QuestionRow, v: { suspected_answer: string | null; suspected_reason: string | null }): string | null {
   const s = v.suspected_answer?.trim();
   if (!s || !r.correct_answer) return null;
-  if (answersMatch(s, r.correct_answer)) return null;
+  // Grading rules (answersMatch) or plain value agreement (an AI "0.6667"
+  // agrees with a key of 2/3 even though a student couldn't enter it).
+  if (answersMatch(s, r.correct_answer, r.question_text) || answersAgreeForQuestion(s, r.correct_answer, r.question_text)) return null;
   if (r.parsing_status === "Approved" && r.reviewed_at) return null;
   return keyDoubtNote(r.correct_answer, s, v.suspected_reason ?? "the AI's own solve reached a different answer");
 }

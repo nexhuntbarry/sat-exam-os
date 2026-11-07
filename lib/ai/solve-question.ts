@@ -34,6 +34,7 @@ import {
   keyTypeProblem,
   roundingInstruction,
   sprValue,
+  withSprAnswerLine,
   type ComputedAnswerCheck,
 } from "@/lib/answer-key";
 import { keyDoubtNote } from "@/lib/key-doubt";
@@ -80,7 +81,9 @@ export const SPR_COMPUTATION_RULE = `STUDENT PRODUCED RESPONSE — ARITHMETIC IS
 - Put the final computation in answer_expression as a plain arithmetic expression (numbers, + - * / ** ( ), sqrt(), abs(), pi). It is evaluated by a program, so never do long arithmetic in your head and never pre-round inside it.
 - Write the UNROUNDED value's expression; if the question says "round to the nearest tenth / whole number / …", the program applies that rounding. Still give your rounded answer in correct_answer.
 - When the problem gives an equation the answer must satisfy, put it in check_equation with ans for the answer (e.g. 3*ans + 7 == 31); the program plugs your answer back in.
-- The answer is a number in SAT grid form: an integer, a decimal or a fraction such as 7/2, optional leading minus; at most 5 characters (6 with the minus); no %, $, commas or units. Never a letter A–D.`;
+- The answer is a number in SAT grid form: an integer, a decimal or a fraction such as 7/2, optional leading minus; at most 5 characters (6 with the minus); no %, $, commas or units. Never a letter A–D.
+- Official entry rules: give the EXACT value when it fits (prefer the fraction 2/3 over 0.6667); a fraction that doesn't fit becomes a decimal that fills all 5 characters; no mixed numbers (7/2, not 3 1/2). When the question asks for a rounding ("nearest tenth"), the rounded value is the answer.
+- If the question has MORE THAN ONE correct answer (e.g. x = 5 or x = -13), put EVERY correct answer in correct_answer separated by " or " (e.g. "5 or -13"); answer_expression gives any one of them.`;
 
 const SOLVER_SYSTEM_PROMPT = `You are an expert SAT tutor who solves SAT problems for the official answer key.
 
@@ -148,6 +151,12 @@ export function extractFinalAnswer(explanation: string): string | null {
   let last: string | null = null;
   while ((match = re.exec(explanation)) !== null) {
     last = match[1];
+  }
+  // Fill-in explanations end with "Answer: 2/3; .6666, … also accepted."
+  // (lib/answer-key withSprAnswerLine), which replaces the trailer.
+  if (last === null) {
+    const m = explanation.match(/(?:^|\n)[ \t]*Answer\s*:\s*([^;\n\r]+)(?:;[^\n]*)?\s*$/);
+    if (m) last = m[1];
   }
   if (last === null) return null;
   // Trim whitespace, trailing period, and surrounding $ wrappers (in case the
@@ -732,7 +741,11 @@ export async function solveQuestionsAndPersist(
         const status = needsReview ? "Needs Review" : "Draft";
         let update: Record<string, unknown> = {
           correct_answer: savedAnswer,
-          explanation: solved.explanation,
+          // Fill-in: end on the stored key and its other accepted entries.
+          explanation:
+            isSPR && savedAnswer && !keyProblem && !solved.consistencyMismatch
+              ? withSprAnswerLine(solved.explanation, savedAnswer, q.question_text)
+              : solved.explanation,
           parsing_notes: notes,
           parsing_status: status,
         };
@@ -886,7 +899,7 @@ export async function explainOfficialAndPersist(
           }
           const conflict = res.ok && !res.agrees && res.aiAnswer ? res.aiAnswer : null;
           const truncatedOfficial = !res.ok;
-          const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: ans, question_text: q.question_text, choices: q.choices });
+          const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: ans, question_text: q.question_text, choices: q.choices, official_answer: q.official_answer });
           if (truncatedOfficial) console.warn(`[explain-official] q${q.original_question_number}: explanation still cut off after retry`);
           const blindFigure = stemFigureMissing(q);
           const placeholder = findParsePlaceholder(q.question_text, q.choices);
@@ -975,13 +988,14 @@ export async function regenerateTruncatedExplanations(
 ): Promise<{ checked: number; regenerated: number }> {
   const { data } = await db
     .from("questions")
-    .select("id, original_question_number, question_text, choices, correct_answer, official_answer, explanation, parsing_status, parsing_notes")
+    .select("id, original_question_number, question_text, choices, question_type, correct_answer, official_answer, explanation, parsing_status, parsing_notes")
     .eq("module_id", moduleId);
   const rows = (data ?? []) as {
     id: string;
     original_question_number: number;
     question_text: string | null;
     choices: unknown;
+    question_type: string | null;
     correct_answer: string | null;
     official_answer: string | null;
     explanation: string | null;
@@ -1010,7 +1024,8 @@ export async function regenerateTruncatedExplanations(
             maxRetries: 2,
             messages: [{ role: "user", content: [{ type: "text", text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nWrite a COMPLETE explanation of why ${ans} is correct — do not cut off.` }] }],
           });
-          const expl = stripMetaNarration(res.object.explanation);
+          const raw = stripMetaNarration(res.object.explanation);
+          const expl = q.question_type === SPR_TYPE && !looksTruncated(raw) ? withSprAnswerLine(raw, ans, q.question_text) : raw;
           if (!looksTruncated(expl)) {
             regenerated++;
             const { update } = applyLiveHold(
@@ -1054,7 +1069,7 @@ export async function explainOneAnswer(
 ): Promise<string | null> {
   const { data: q } = await db
     .from("questions")
-    .select("id, original_question_number, question_text, choices")
+    .select("id, original_question_number, question_text, choices, question_type")
     .eq("id", questionId)
     .maybeSingle();
   if (!q) return null;
@@ -1102,6 +1117,7 @@ export async function explainOneAnswer(
         console.warn(`[explain-one] ${questionId}: truncation retry failed`);
       }
     }
+    if (q.question_type === SPR_TYPE) cleaned = withSprAnswerLine(cleaned, answer, q.question_text as string | null);
     await db.from("questions").update({ correct_answer: answer, explanation: cleaned, updated_at: new Date().toISOString() }).eq("id", questionId);
     return cleaned;
   } catch (e) {
@@ -1187,7 +1203,7 @@ export function aiAnswerAgrees(aiAnswer: string | null, saved: string, isMcq: bo
   const rule = roundingInstruction(questionText);
   const v = sprValue(clean(aiAnswer));
   const ai = rule && v !== null ? String(applyRounding(v, rule.places)) : clean(aiAnswer);
-  return answersMatch(ai, clean(saved)) || answersAgree(ai, clean(saved));
+  return answersMatch(ai, clean(saved), questionText) || answersAgree(ai, clean(saved));
 }
 
 export async function regenerateExplanation(
@@ -1251,7 +1267,13 @@ export async function regenerateExplanation(
         continue;
       }
       const aiAnswer = res.object.independent_answer.trim() || null;
-      return { ok: true, explanation, aiAnswer, agrees: aiAnswerAgrees(aiAnswer, input.answer, isMcq, input.questionText) };
+      return {
+        ok: true,
+        // Fill-in: end on the answer and its other accepted entries.
+        explanation: isMcq ? explanation : withSprAnswerLine(explanation, input.answer, input.questionText),
+        aiAnswer,
+        agrees: aiAnswerAgrees(aiAnswer, input.answer, isMcq, input.questionText),
+      };
     } catch (e) {
       console.error(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} failed:`, e instanceof Error ? e.message : e);
     }

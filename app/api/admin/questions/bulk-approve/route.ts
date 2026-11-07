@@ -62,7 +62,7 @@ export async function POST(req: Request) {
     }
     const { data: rows, error: selErr } = await db
       .from("questions")
-      .select("id, question_text, choices, question_type, correct_answer, parsing_status, parsing_notes")
+      .select("id, question_text, choices, question_type, correct_answer, official_answer, parsing_status, parsing_notes")
       .in("id", ids)
       .in("parsing_status", [...BULK_APPROVE_STATUSES]);
     if (selErr) {
@@ -100,7 +100,7 @@ export async function POST(req: Request) {
       minConfidence?: number;
     };
 
-    let query = db.from("questions").select("id, question_text, choices, question_type, correct_answer, parsing_status, parsing_notes");
+    let query = db.from("questions").select("id, question_text, choices, question_type, correct_answer, official_answer, parsing_status, parsing_notes");
 
     if (moduleId) query = query.eq("module_id", moduleId);
     if (minConfidence !== undefined) {
