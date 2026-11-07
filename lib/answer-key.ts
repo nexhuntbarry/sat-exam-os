@@ -322,6 +322,23 @@ export function checkComputedAnswer(input: {
   const computed = value !== null ? formatSprAnswer(value, rule) : null;
   if (value !== null && computed === null) problems.push(`the computed value ${value} can't be entered as a fill-in answer`);
 
+  // Several correct answers ("5 or -13"): keep every one, each in accepted
+  // form; the computation must give one of them.
+  const declaredCands = keyCandidates(declared);
+  if (declaredCands.length > 1 && declaredCands.every((c) => sprValue(c) !== null)) {
+    const forms = declaredCands.map((c) => formatSprAnswer(sprValue(c) as number, rule));
+    if (forms.some((f) => f === null)) problems.push(`one of the stated answers ${declared} can't be entered as a fill-in answer`);
+    if (value !== null && !declaredCands.some((c) => nearlyEqual(applyRounding(sprValue(c) as number, rule?.places ?? 9), applyRounding(value, rule?.places ?? 9), 1e-9))) {
+      problems.push(`none of the stated answers ${declared} matches the computed ${computed ?? value}`);
+    }
+    if (value !== null && input.checkEquation && input.checkEquation.trim()) {
+      const ok = equationHolds(input.checkEquation, { ans: value, x: value });
+      if (ok === false) problems.push(`plug-back check "${input.checkEquation.slice(0, 80)}" fails for ${value}`);
+    }
+    const unique = [...new Set(forms.filter((f): f is string => f !== null))];
+    return { value, answer: unique.length ? unique.join(" or ") : computed, problems };
+  }
+
   const dv = declared ? sprValue(declared) : null;
   if (declared && dv === null && !/^\(?[A-Da-d]\)?$/.test(declared)) {
     // Not a plain number (e.g. "248.2 → 248"): only the computation counts.
@@ -382,4 +399,308 @@ export function answersAgreeForQuestion(
     if (x.replace(/\s+/g, "").toLowerCase() === normalizeKeyText(cand).replace(/\s+/g, "").toLowerCase()) return true;
   }
   return false;
+}
+
+// ── Official College Board fill-in (SPR) entry rules ────────────────
+// Owner-approved 2026-11-07, from the SAT practice test directions /
+// Bluebook: one answer only; at most 5 characters (6 with a leading minus);
+// a fraction that doesn't fit becomes a decimal; a decimal that doesn't fit
+// is truncated or rounded at the 4th digit, filling every space; mixed
+// numbers, %, commas and $ are not credited. A rounding instruction in the
+// question ("nearest tenth") overrides the fill-the-space rule.
+
+/** Characters an SPR entry may use (positive; one more for a leading minus). */
+export const SPR_MAX_CHARS = 5;
+
+/** Bluebook-style directions shown beside every fill-in question. */
+export const SPR_DIRECTIONS: string[] = [
+  "If you find more than one correct answer, enter only one answer.",
+  "You can enter up to 5 characters for a positive answer and up to 6 characters (including the negative sign) for a negative answer.",
+  "If your answer is a fraction that doesn't fit in the provided space, enter the decimal equivalent.",
+  "If your answer is a decimal that doesn't fit in the provided space, enter it by truncating or rounding at the fourth digit.",
+  "If your answer is a mixed number (such as 3 1/2), enter it as an improper fraction (7/2) or its decimal equivalent (3.5).",
+  "Don't enter symbols such as a percent sign, comma, or dollar sign.",
+];
+
+/** The examples table from the directions. */
+export const SPR_EXAMPLES: Array<{ answer: string; accepted: string[]; notAccepted: string[] }> = [
+  { answer: "3.5", accepted: ["3.5", "3.50", "7/2"], notAccepted: ["31/2", "3 1/2"] },
+  { answer: "2/3", accepted: ["2/3", ".6666", ".6667", "0.666", "0.667"], notAccepted: ["0.66", ".66", "0.67", ".67"] },
+  { answer: "-1/3", accepted: ["-1/3", "-.3333", "-0.333"], notAccepted: ["-.33", "-0.33"] },
+];
+
+/**
+ * What the answer box keeps of what was typed or pasted: digits, ".", "/"
+ * and a leading "-" only, at most 5 characters (6 when it starts with "-").
+ * Full-width digits and minus look-alikes are mapped first.
+ */
+export function sanitizeSprInput(raw: string, maxChars: number = SPR_MAX_CHARS + 1): string {
+  const s = String(raw ?? "").normalize("NFKC").replace(MINUS_LOOKALIKES, "-");
+  let out = "";
+  for (const ch of s) {
+    if (/[0-9./]/.test(ch)) out += ch;
+    else if (ch === "-" && out.length === 0) out += ch;
+  }
+  // A longer verified key (sprInputMaxChars) widens the box for everyone.
+  const limit = maxChars > SPR_MAX_CHARS + 1 ? maxChars : out.startsWith("-") ? SPR_MAX_CHARS + 1 : SPR_MAX_CHARS;
+  return out.slice(0, limit);
+}
+
+/** A student entry in compact form (NFKC, minus mapped, spaces around "/" removed). */
+function compactEntry(raw: string | null | undefined): string {
+  return String(raw ?? "")
+    .normalize("NFKC")
+    .trim()
+    .replace(MINUS_LOOKALIKES, "-")
+    .replace(/\s*\/\s*/g, "/");
+}
+
+/**
+ * Value of a student entry under the official rules, or null when it can't
+ * be credited at all. Only an integer, decimal or fraction with an optional
+ * leading minus ("3.5", ".75", "-7/2"); commas, %, $, units, mixed numbers,
+ * "+", two numbers or a zero denominator → null.
+ */
+export function parseSprEntry(raw: string | null | undefined): number | null {
+  const s = compactEntry(raw);
+  if (INT.test(s) || DEC.test(s)) return Number(s);
+  if (FRAC.test(s)) {
+    const [n, d] = s.split("/").map(Number);
+    return d === 0 ? null : n / d;
+  }
+  return null;
+}
+
+/** Can v be entered exactly as a decimal (or integer) within the space? */
+export function fitsExactDecimal(v: number): boolean {
+  const a = Math.abs(v);
+  for (let d = 0; d <= 4; d++) {
+    const str = a.toFixed(d).replace(/^0\./, ".");
+    if (str.length <= SPR_MAX_CHARS && Math.abs(Number(str) - a) < 1e-9) return true;
+  }
+  return false;
+}
+
+/**
+ * The decimals that fill every space, truncated and rounded, for a value
+ * whose exact decimal doesn't fit (2/3 → .6666, .6667, 0.666, 0.667;
+ * -1/3 → -.3333, -0.333; 214/3 → 71.33).
+ */
+export function fillDecimalForms(v: number): string[] {
+  if (!Number.isFinite(v)) return [];
+  const a = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  const intStr = String(Math.trunc(a));
+  const variants: Array<{ dropZero: boolean; d: number }> =
+    intStr === "0"
+      ? [{ dropZero: true, d: 4 }, { dropZero: false, d: 3 }]
+      : [{ dropZero: false, d: SPR_MAX_CHARS - intStr.length - 1 }];
+  const out: string[] = [];
+  for (const { dropZero, d } of variants) {
+    if (d < 1) continue;
+    const scale = 10 ** d;
+    for (const x of [Math.trunc(a * scale + 1e-7) / scale, Math.round(a * scale) / scale]) {
+      let s = x.toFixed(d);
+      if (dropZero) s = s.replace(/^0(?=\.)/, "");
+      if (s.length !== SPR_MAX_CHARS || Number(s) === 0) continue;
+      const full = sign + s;
+      if (!out.includes(full)) out.push(full);
+    }
+  }
+  return out;
+}
+
+/** Simplest fraction p/q (q ≤ 9999) equal to v, or null. */
+function exactFraction(v: number): { p: number; q: number } | null {
+  for (let q = 1; q <= 9999; q++) {
+    const p = Math.round(v * q);
+    if (Math.abs(p / q - v) < 1e-9) return { p, q };
+  }
+  return null;
+}
+
+/** Numeric value of a key candidate (a key may still carry "1,000"-style grouping). */
+function keyNumber(cand: string): number | null {
+  const s = normalizeKeyText(cand).replace(/\s*\/\s*/g, "/");
+  const v = sprValue(s);
+  if (v !== null) return v;
+  if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(s)) return Number(s.replace(/,/g, ""));
+  return null;
+}
+
+/**
+ * A key written as a decimal that fills the space (".6667", "0.667",
+ * "71.33") is often the rounded or truncated form of a simple fraction.
+ * Returns that fraction's value (smallest denominator ≤ 100) when the
+ * decimal is one of its fill forms, else null.
+ */
+export function impliedExactValue(cand: string): number | null {
+  const s = normalizeKeyText(cand);
+  if (!/^-?\d*\.\d{2,}$/.test(s)) return null;
+  const body = s.replace(/^-/, "");
+  if (body.length < SPR_MAX_CHARS && body.replace(/^0(?=\.)/, "").length < SPR_MAX_CHARS) return null;
+  const k = Number(s);
+  const d = (s.split(".")[1] ?? "").length;
+  const scale = 10 ** d;
+  for (let q = 2; q <= 100; q++) {
+    const w = Math.round(k * q) / q;
+    if (fitsExactDecimal(w) || Math.sign(w) !== Math.sign(k)) continue;
+    const a = Math.abs(w);
+    const t = Math.trunc(a * scale + 1e-7) / scale;
+    const r = Math.round(a * scale) / scale;
+    if (Math.abs(t - Math.abs(k)) < 1e-9 || Math.abs(r - Math.abs(k)) < 1e-9) return w;
+  }
+  return null;
+}
+
+/**
+ * Is a student's fill-in entry credited for one numeric key candidate?
+ *   - its value equals the key exactly (any form: 7/2, 3.5, 3.50); or
+ *   - with a rounding instruction in the question: it equals the key
+ *     rounded as asked (the fill-the-space rule doesn't apply); or
+ *   - without one, when the exact decimal doesn't fit: it is the truncated
+ *     or rounded decimal that fills every space.
+ * Returns null when the candidate isn't numeric (the caller compares text).
+ */
+export function sprEntryCreditedForCandidate(
+  entry: string | null | undefined,
+  cand: string,
+  questionText?: string | null,
+): boolean | null {
+  const kv = keyNumber(cand);
+  if (kv === null) return null;
+  const sv = parseSprEntry(entry);
+  if (sv === null) return false;
+  if (nearlyEqual(sv, kv, 1e-9)) return true;
+  const rule = roundingInstruction(questionText);
+  if (rule) return nearlyEqual(sv, applyRounding(kv, rule.places), 1e-9);
+  const implied = impliedExactValue(cand);
+  if (implied !== null && nearlyEqual(sv, implied, 1e-9)) return true;
+  const s = compactEntry(entry);
+  for (const v of implied !== null ? [kv, implied] : [kv]) {
+    if (!fitsExactDecimal(v) && fillDecimalForms(v).includes(s)) return true;
+  }
+  return false;
+}
+
+/** Exact forms of a value that fit the space: decimal ("0.5", ".5"), then the fraction. */
+function exactForms(v: number): string[] {
+  const out: string[] = [];
+  if (fitsExactDecimal(v)) {
+    const s = String(Number(v.toFixed(4)));
+    out.push(s);
+    if (/^-?0\./.test(s)) out.push(s.replace(/^(-?)0\./, "$1."));
+  }
+  if (!Number.isInteger(v)) {
+    const f = exactFraction(v);
+    const s = f ? `${f.p}/${f.q}` : null;
+    if (s && s.replace(/^-/, "").length <= SPR_MAX_CHARS) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * Every entry form credited for one key candidate, for students and
+ * explanations: "2/3" → ["2/3", ".6666", ".6667", "0.666", "0.667"].
+ * A non-numeric candidate comes back as written.
+ */
+export function acceptedFormsForCandidate(cand: string, questionText?: string | null): string[] {
+  const kv = keyNumber(cand);
+  if (kv === null) return [normalizeKeyText(cand)];
+  const rule = roundingInstruction(questionText);
+  if (rule) {
+    const r = applyRounding(kv, rule.places);
+    const forms = exactForms(r);
+    return forms.length ? forms : [String(r)];
+  }
+  const v = impliedExactValue(cand) ?? kv;
+  const forms = exactForms(v);
+  if (!fitsExactDecimal(v)) for (const f of fillDecimalForms(v)) if (!forms.includes(f)) forms.push(f);
+  return forms.length ? forms : [normalizeKeyText(cand)];
+}
+
+/** Accepted forms for each answer listed in a key ("5 or -13" → [["5"], ["-13"]]). */
+export function acceptedSprEntries(key: string | null | undefined, questionText?: string | null): string[][] {
+  return keyCandidates(key).map((c) => acceptedFormsForCandidate(c, questionText));
+}
+
+function formsInWords(forms: string[]): string {
+  if (forms.length <= 1) return forms[0] ?? "";
+  return `${forms.slice(0, -1).join(", ")} or ${forms[forms.length - 1]}`;
+}
+
+/**
+ * Closing line for an AI fill-in explanation: the final answer, then the
+ * other entry forms that are credited, e.g.
+ * "Answer: 2/3; .6666, .6667, 0.666 or 0.667 also accepted."
+ */
+export function sprAnswerLine(key: string | null | undefined, questionText?: string | null): string | null {
+  const groups = acceptedSprEntries(key, questionText).filter((g) => g.length > 0);
+  if (groups.length === 0) return null;
+  const main = groups.map((g) => g[0]).join(" or ");
+  const extra = groups.flatMap((g) => g.slice(1));
+  return extra.length ? `Answer: ${main}; ${formsInWords(extra)} also accepted.` : `Answer: ${main}`;
+}
+
+/**
+ * Explanation text ending in exactly one "Answer: …" line for a fill-in key
+ * (replaces a trailing "Final answer: X" or an earlier "Answer: …" line).
+ */
+export function withSprAnswerLine(explanation: string, key: string | null | undefined, questionText?: string | null): string {
+  const line = sprAnswerLine(key, questionText);
+  if (!line) return explanation;
+  const body = explanation.replace(/(?:^|\n)[ \t]*(?:\*\*)?(?:final\s+)?answer(?:\*\*)?\s*:[^\n]*\s*$/i, "").trimEnd();
+  return body ? `${body}\n\n${line}` : line;
+}
+
+/**
+ * Characters the answer box allows for one question: the official 5 (6 with
+ * a minus), or more when a verified key is longer (e.g. "1905.12") — the box
+ * must never make a question unanswerable. Only this number reaches the
+ * browser, never the key.
+ */
+export function sprInputMaxChars(key: string | null | undefined): number {
+  let max = SPR_MAX_CHARS + 1;
+  for (const c of keyCandidates(key)) {
+    const s = normalizeKeyText(c).replace(/\s*\/\s*/g, "/");
+    if (keyNumber(s) !== null && /^[-0-9./]+$/.test(s)) max = Math.max(max, s.length);
+  }
+  return max;
+}
+
+/** "2/3, .6666, .6667, 0.666, 0.667" (several answers joined by " · or · "). */
+export function acceptedAnswersText(key: string | null | undefined, questionText?: string | null): string {
+  return acceptedSprEntries(key, questionText)
+    .map((g) => g.join(", "))
+    .join("  ·  or  ·  ");
+}
+
+/**
+ * Why a fill-in entry wasn't credited, in student words, or null when
+ * there's nothing specific to say (blank, credited, or a different value).
+ */
+export function sprEntryFeedback(
+  entry: string | null | undefined,
+  key: string | null | undefined,
+  questionText?: string | null,
+): string | null {
+  const raw = (entry ?? "").trim();
+  if (!raw || !key) return null;
+  const cands = keyCandidates(key);
+  if (cands.some((c) => sprEntryCreditedForCandidate(raw, c, questionText) === true)) return null;
+  const sv = parseSprEntry(raw);
+  if (sv === null) {
+    const p = sprEntryProblem(raw);
+    return p ? `Not credited: your entry ${p}.` : "Not credited: only digits, \".\", \"/\" and a leading \"-\" are allowed.";
+  }
+  const rule = roundingInstruction(questionText);
+  for (const c of cands) {
+    const kv = keyNumber(c);
+    if (kv === null) continue;
+    const target = rule ? applyRounding(kv, rule.places) : impliedExactValue(c) ?? kv;
+    if (Math.abs(sv - target) > 0.01 * Math.max(1, Math.abs(target))) continue;
+    if (rule) return `Close, but the question asks for the answer to the ${rule.label}.`;
+    return "Close, but a shorter approximation isn't credited: enter the exact value, or a decimal that fills all the spaces.";
+  }
+  return null;
 }

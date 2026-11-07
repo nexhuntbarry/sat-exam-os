@@ -203,7 +203,7 @@ export function analyzeKeyRow(row: KeyCheckRow): Omit<KeyCheckFinding, "moduleNa
         const byText = ch.find((c) => (c.text ?? "").trim() && norm(c.text) === norm(key));
         const byValue = ch.find((c) => {
           const v = sprValue(normalizeKeyText(c.text ?? ""));
-          return v !== null && answersMatch(key, c.text);
+          return v !== null && (answersMatch(key, c.text) || answersAgreeForQuestion(key, c.text));
         });
         const hit = byText ?? byValue;
         if (hit) {
@@ -308,8 +308,9 @@ export async function previewKeyChange(
   newKey: string,
   includeStudent: (studentId: string | null) => boolean = () => true,
 ): Promise<KeyChangePreview> {
-  const { data: q } = await db.from("questions").select("id, correct_answer").eq("id", questionId).maybeSingle();
+  const { data: q } = await db.from("questions").select("id, correct_answer, question_text").eq("id", questionId).maybeSingle();
   const oldKey = (q?.correct_answer as string | null) ?? null;
+  const questionText = (q?.question_text as string | null) ?? null;
   const { data: records } = await fetchAllRows<{ id: string; submission_id: string; student_answer: string | null; is_correct: boolean | null }>((from, to) =>
     db
       .from("answer_records")
@@ -319,7 +320,7 @@ export async function previewKeyChange(
       .range(from, to),
   );
   const flips = records
-    .map((r) => ({ r, now: answersMatch(r.student_answer, newKey) }))
+    .map((r) => ({ r, now: answersMatch(r.student_answer, newKey, questionText) }))
     .filter((x) => x.now !== !!x.r.is_correct);
   const subIds = [...new Set(flips.map((x) => x.r.submission_id))];
   const subs = new Map<string, { student_id: string | null; test_id: string | null; scaled_score: number | null }>();

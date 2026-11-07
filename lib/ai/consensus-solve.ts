@@ -21,7 +21,7 @@ import {
   TRUNCATION_NOTE,
 } from "@/lib/ai/solve-question";
 import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
-import { SPR_TYPE, answersAgreeForQuestion, checkComputedAnswer, keyFormNote, keyTypeProblem, sprValue } from "@/lib/answer-key";
+import { SPR_TYPE, answersAgreeForQuestion, checkComputedAnswer, keyFormNote, keyTypeProblem, sprValue, withSprAnswerLine } from "@/lib/answer-key";
 import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
 
 type DbClient = ReturnType<typeof getServiceClient>;
@@ -256,7 +256,8 @@ export async function consensusResolve(
       settled++;
       await db.from("questions").update({
         correct_answer: a1,
-        explanation: v.explanation,
+        // Fill-in: end on the key and its other accepted entries.
+        explanation: q.question_type === SPR_TYPE ? withSprAnswerLine(v.explanation, a1, q.question_text) : v.explanation,
         parsing_status: "Approved",
         parsing_notes: "Auto-settled: 3 independent solves agreed + verified (no answer key available)",
         updated_at: new Date().toISOString(),

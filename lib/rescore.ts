@@ -14,6 +14,24 @@ import { answersMatch } from "@/lib/grade-submission";
 import { scaleSectionScore } from "@/lib/scoring";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 
+/**
+ * Score columns for a submission from its graded records — the same math
+ * rescoreQuestion writes. Pure, so read-only reports (e.g.
+ * scripts/audit-spr-rescore-impact.ts) can preview a rescore.
+ */
+export function scoreFromRecords(records: { is_correct: boolean | null }[]): {
+  correctCount: number;
+  total: number;
+  percentage: number;
+  scaledScore: number;
+} | null {
+  const total = records.length;
+  if (total === 0) return null;
+  const correctCount = records.filter((x) => x.is_correct).length;
+  const percentage = Math.round((correctCount / total) * 100 * 10) / 10;
+  return { correctCount, total, percentage, scaledScore: scaleSectionScore(percentage) };
+}
+
 export interface RescoreResult {
   questionId: string;
   recordsUpdated: number;
@@ -32,7 +50,7 @@ export async function rescoreQuestion(
   // Current (post-edit) key.
   const { data: q } = await db
     .from("questions")
-    .select("id, correct_answer")
+    .select("id, correct_answer, question_text")
     .eq("id", questionId)
     .maybeSingle();
   if (!q) return { questionId, recordsUpdated: 0, submissionsRescored: 0 };
@@ -62,7 +80,7 @@ export async function rescoreQuestion(
   const affectedSubmissions = new Set<string>();
   let recordsUpdated = 0;
   for (const r of rows) {
-    const nowCorrect = answersMatch(r.student_answer as string | null, newKey);
+    const nowCorrect = answersMatch(r.student_answer as string | null, newKey, (q.question_text as string | null) ?? null);
     const keyChanged = (r.correct_answer as string | null) !== newKey;
     if (nowCorrect !== r.is_correct || keyChanged) {
       const { error } = await db
@@ -83,11 +101,9 @@ export async function rescoreQuestion(
       .from("answer_records")
       .select("is_correct")
       .eq("submission_id", submissionId);
-    const total = subRecords?.length ?? 0;
-    if (total === 0) continue;
-    const correctCount = (subRecords ?? []).filter((x) => x.is_correct).length;
-    const percentage = Math.round((correctCount / total) * 100 * 10) / 10;
-    const scaledScore = scaleSectionScore(percentage);
+    const score = scoreFromRecords(subRecords ?? []);
+    if (!score) continue;
+    const { correctCount, total, percentage, scaledScore } = score;
     const { error } = await db
       .from("submissions")
       .update({
