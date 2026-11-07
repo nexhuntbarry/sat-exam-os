@@ -10,6 +10,7 @@ import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ReportProblemButton from "@/components/tests/ReportProblemButton";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
+import { acceptedAnswersText, sprEntryFeedback } from "@/lib/answer-key";
 
 const TRACK_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -548,6 +549,19 @@ export default async function StudentResultPage({
                           )}
                         </div>
                         <div className="text-soft-mute text-xs">Correct answer: <span className="text-status-success">{record.correct_answer}</span></div>
+                        {/* Official fill-in rules: every entry that counts, and why
+                            this one didn't (only rendered where answers are shown). */}
+                        {record.correct_answer && (
+                          <div className="text-soft-mute text-xs">
+                            Accepted answers:{" "}
+                            <span className="text-charcoal font-mono">{acceptedAnswersText(record.correct_answer, q.question_text)}</span>
+                          </div>
+                        )}
+                        {!record.is_correct && sprEntryFeedback(record.student_answer, record.correct_answer, q.question_text) && (
+                          <div className="text-status-warning text-xs">
+                            {sprEntryFeedback(record.student_answer, record.correct_answer, q.question_text)}
+                          </div>
+                        )}
                       </div>
                     )}
 

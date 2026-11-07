@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
 import { hasMarkdownTable } from "@/lib/markdown-table";
+import { acceptedAnswersText, sprEntryFeedback } from "@/lib/answer-key";
 
 // One question as shown in a REVIEW walkthrough (student class-review and
 // teacher class-review both render through this so they can never drift
@@ -180,6 +181,15 @@ export default function ReviewQuestionCard({
               {q.correct_answer ?? "—"}
             </span>
           </div>
+          {q.correct_answer && (
+            <div>
+              Accepted answers:{" "}
+              <span className="text-charcoal font-mono">{acceptedAnswersText(q.correct_answer, q.question_text)}</span>
+            </div>
+          )}
+          {mine && !mine.isCorrect && sprEntryFeedback(mine.answer, q.correct_answer, q.question_text) && (
+            <div className="text-status-warning">{sprEntryFeedback(mine.answer, q.correct_answer, q.question_text)}</div>
+          )}
         </div>
       )}
 

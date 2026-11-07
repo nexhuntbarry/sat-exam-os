@@ -4,6 +4,7 @@ import { ExternalLink } from "lucide-react";
 import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
 import HighlightableBlock, { type Annotation } from "@/components/tests/HighlightableBlock";
+import { SPR_DIRECTIONS, SPR_EXAMPLES, SPR_MAX_CHARS, sanitizeSprInput } from "@/lib/answer-key";
 
 interface Choice {
   label: string;
@@ -27,6 +28,71 @@ interface Question {
   section?: string | null;
   image_urls?: string[] | null;
   image_alts?: string[] | null;
+  /** Fill-in box length (5/6, more for a verified longer key). */
+  spr_max_chars?: number | null;
+}
+
+/** "−" for display (a plain hyphen reads like a dash next to a fraction). */
+function displayMinus(s: string): string {
+  return s.replace(/^-/, "\u2212");
+}
+
+/**
+ * Bluebook "Answer Preview": a fraction shows stacked (numerator over
+ * denominator); anything else shows as typed.
+ */
+function AnswerPreview({ value }: { value: string }) {
+  const m = value.match(/^(-?)(\d+)\/(\d+)$/);
+  if (m) {
+    return (
+      <span className="inline-flex items-center gap-1" aria-label={`${m[1] ? "negative " : ""}${m[2]} over ${m[3]}`}>
+        {m[1] && <span>{"\u2212"}</span>}
+        <span className="inline-flex flex-col items-center leading-none">
+          <span className="px-1">{m[2]}</span>
+          <span className="w-full border-t-2 border-charcoal my-0.5" />
+          <span className="px-1">{m[3]}</span>
+        </span>
+      </span>
+    );
+  }
+  return <span>{displayMinus(value)}</span>;
+}
+
+/** Official fill-in directions + examples, shown beside every SPR question. */
+function SprDirectionsPanel() {
+  return (
+    <section aria-label="Student-produced response directions" className="space-y-3 text-sm text-charcoal">
+      <h3 className="font-semibold text-base">Student-produced response directions</h3>
+      <ul className="list-disc pl-5 space-y-1.5 leading-relaxed">
+        {SPR_DIRECTIONS.map((d) => (
+          <li key={d}>{d}</li>
+        ))}
+      </ul>
+      <table className="w-full text-left border border-divider text-sm">
+        <caption className="sr-only">Examples</caption>
+        <thead className="bg-light-bg">
+          <tr>
+            <th className="px-3 py-2 font-semibold border-b border-divider">Answer</th>
+            <th className="px-3 py-2 font-semibold border-b border-divider">Acceptable ways to enter answer</th>
+            <th className="px-3 py-2 font-semibold border-b border-divider">Unacceptable: will NOT receive credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {SPR_EXAMPLES.map((ex) => (
+            <tr key={ex.answer} className="align-top">
+              <td className="px-3 py-2 border-b border-divider text-base"><AnswerPreview value={ex.answer} /></td>
+              <td className="px-3 py-2 border-b border-divider font-mono">
+                {ex.accepted.map((a) => <div key={a}>{displayMinus(a)}</div>)}
+              </td>
+              <td className="px-3 py-2 border-b border-divider font-mono">
+                {ex.notAccepted.map((a) => <div key={a}>{displayMinus(a)}</div>)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  );
 }
 
 // Heuristic: for R&W questions whose stems carry a long passage, find
@@ -121,6 +187,9 @@ interface QuestionRendererProps {
   /** Show internal "Has Image" / "Has Table" debug badges. False by
    *  default — these are for reviewers / admins only. */
   showDebugBadges?: boolean;
+  /** Bluebook fill-in layout: directions + examples on the left, the
+   *  question and answer box on the right (student take page). */
+  sprDirections?: boolean;
 }
 
 export default function QuestionRenderer({
@@ -136,6 +205,7 @@ export default function QuestionRenderer({
   onToggleCrossOut,
   showSourceFigure = false,
   showDebugBadges = false,
+  sprDirections = false,
 }: QuestionRendererProps) {
   const isMultipleChoice = question.question_type === "Multiple Choice";
   void questionIndex;
@@ -352,15 +422,26 @@ export default function QuestionRenderer({
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
-            maxLength={12}
+            // Official entry rules: digits, ".", "/", leading "-"; 5
+            // characters (6 with "-"), more only for a longer verified key.
+            maxLength={Math.max(SPR_MAX_CHARS + 1, question.spr_max_chars ?? 0)}
             value={selectedAnswer}
-            onChange={(e) => onAnswer(e.target.value)}
-            placeholder="Enter your answer (e.g. 3, 1/2, 0.5)"
-            className="w-full max-w-xs px-4 py-3 rounded-xl bg-surface border border-divider text-charcoal placeholder-soft-mute focus:outline-none focus:border-warm-coral/60 focus:bg-surface transition-colors"
+            onChange={(e) => onAnswer(sanitizeSprInput(e.target.value, question.spr_max_chars ?? undefined))}
+            placeholder="Enter your answer"
+            aria-describedby={`spr-preview-${question.id}`}
+            className="w-full max-w-[14rem] px-4 py-3 rounded-xl bg-surface border-2 border-charcoal/40 text-charcoal text-lg font-mono tracking-wider placeholder:text-base placeholder:font-sans placeholder:tracking-normal placeholder-soft-mute focus:outline-none focus:border-warm-coral/70 transition-colors"
           />
-          <p className="text-soft-mute text-xs">
-            Numbers only, no units. For fractions, you may enter a decimal (0.5) or a fraction (1/2); both are accepted.
-          </p>
+          <div id={`spr-preview-${question.id}`} aria-live="polite" className="pt-1">
+            <div className="text-soft-mute text-xs font-medium">Answer Preview:</div>
+            <div className="min-h-[2.75rem] flex items-center text-charcoal text-xl font-semibold">
+              {selectedAnswer ? <AnswerPreview value={selectedAnswer} /> : null}
+            </div>
+          </div>
+          {!sprDirections && (
+            <p className="text-soft-mute text-xs">
+              Digits, &quot;.&quot;, &quot;/&quot; and a leading &quot;-&quot; only: up to 5 characters (6 with a negative sign).
+            </p>
+          )}
         </div>
       );
 
@@ -398,6 +479,19 @@ export default function QuestionRenderer({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
         <div className="space-y-5 lg:border-r lg:border-divider lg:pr-6">{stemBlock}</div>
         <div>{answerBlock}</div>
+      </div>
+    );
+  }
+
+  // Bluebook fill-in layout: directions + examples on the left, question and
+  // answer box on the right (question first when the columns stack).
+  if (sprDirections) {
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8 items-start">
+        <div className="order-2 lg:order-1 lg:border-r lg:border-divider lg:pr-6">
+          <SprDirectionsPanel />
+        </div>
+        <div className="order-1 lg:order-2 space-y-5">{stemBlock}{answerBlock}</div>
       </div>
     );
   }
