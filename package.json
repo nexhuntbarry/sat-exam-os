@@ -21,7 +21,7 @@
     "fflate": "^0.8.2",
     "katex": "^0.16.45",
     "lucide-react": "1.11.0",
-    "next": "16.2.4",
+    "next": "16.4.5",
     "next-intl": "^4.11.2",
     "pagedjs": "^0.4.3",
     "pdf-lib": "^1.17.1",
@@ -48,6 +48,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5"
   }
 }
