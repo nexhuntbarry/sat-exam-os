@@ -35,6 +35,10 @@ export async function POST(
   if (body.action === "add") {
     const roleErr = await roleError(db, [body.studentId], "student");
     if (roleErr) return NextResponse.json({ error: roleErr }, { status: 400 });
+    const { data: userRow } = await db.from("users").select("account_status").eq("id", body.studentId).single();
+    if (userRow?.account_status === "suspended") {
+      return NextResponse.json({ error: "Cannot add a suspended student to a class" }, { status: 400 });
+    }
     const { error } = await db.from("class_group_members").upsert(
       { class_group_id: classGroupId, student_id: body.studentId },
       { onConflict: "class_group_id,student_id" }

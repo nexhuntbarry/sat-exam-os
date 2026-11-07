@@ -230,7 +230,6 @@ export default function QuestionDetailPage() {
                     <img
                       src={`/api/blob-image?u=${encodeURIComponent(ch.image_url)}`}
                       alt={`Choice ${ch.letter} graph`}
-                      loading="lazy"
                       className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
                     />
                   )}

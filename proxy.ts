@@ -17,8 +17,13 @@ const isPublicRoute = createRouteMatcher([
 
 const isApiRoute = createRouteMatcher(["/api(.*)", "/trpc(.*)"]);
 
+const isPrintResults = createRouteMatcher(["/print/results/(.*)"]);
+
 export default clerkMiddleware(async (auth, request) => {
   if (isPublicRoute(request)) return;
+  // The PDF download's headless browser has no session: it carries a
+  // short-lived signed ticket that the page itself verifies (lib/print-token).
+  if (isPrintResults(request) && request.nextUrl.searchParams.has("pt")) return;
   // auth.protect() answers signed-out API calls with a rewrite to the
   // 404 page (200 text/html), which fetch() callers mistook for success —
   // an expired session silently dropped autosaves and submits. API

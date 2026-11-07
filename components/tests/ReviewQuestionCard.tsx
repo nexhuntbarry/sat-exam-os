@@ -94,8 +94,6 @@ export default function ReviewQuestionCard({
               key={url}
               src={`/api/blob-image?u=${encodeURIComponent(url)}`}
               alt={q.image_alts?.[i] || `Figure for question ${q.original_question_number}`}
-              loading="lazy"
-              decoding="async"
               className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
             />
           ))}
@@ -104,7 +102,6 @@ export default function ReviewQuestionCard({
       {needsFigureFallback && (
         <iframe
           src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
-          loading="lazy"
           className="w-full h-[420px] rounded-xl border border-divider bg-white"
           title={`Question figure (PDF page ${q.page_number ?? 1})`}
         />
@@ -140,8 +137,6 @@ export default function ReviewQuestionCard({
                     <img
                       src={`/api/blob-image?u=${encodeURIComponent(c.image_url)}`}
                       alt={`Choice ${c.label} graph`}
-                      loading="lazy"
-                      decoding="async"
                       className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
                     />
                   )}

@@ -8,6 +8,7 @@ import { StatCard } from "@/components/analytics/StatCard";
 import { ScoreDistributionChart } from "@/components/analytics/ScoreDistributionChart";
 import { StudentResultsTable } from "@/components/analytics/StudentResultsTable";
 import { ExportCsvButton } from "@/components/analytics/ExportCsvButton";
+import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { attemptScore, averageSat } from "@/lib/score-display";
@@ -264,6 +265,8 @@ export default async function TestResultsPage({
           </Link>
         </div>
       </div>
+
+      <ResultsDownloadPanel testId={id} />
 
       {/* Summary stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

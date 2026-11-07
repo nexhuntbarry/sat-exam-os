@@ -165,11 +165,16 @@ export function SubmissionDetailPanel({
               )}
             </div>
 
-            {/* Expanded — full question + choices. For print, drop the
-                left gutter (px-12) so the page uses full width, and
-                tighten the vertical rhythm. */}
-            {expanded[a.questionId] && (
-              <div className="px-12 pb-5 space-y-4 print:px-2 print:pb-3 print:pt-2 print:space-y-2">
+            {/* Expanded — full question + choices. Always in the DOM so its
+                figures load with the page (a collapsed row is only hidden on
+                screen) and Ctrl/Cmd+P prints every question with its
+                figures. For print, drop the left gutter (px-12) so the page
+                uses full width, and tighten the vertical rhythm. */}
+            {(
+              <div className={clsx(
+                "px-12 pb-5 space-y-4 print:px-2 print:pb-3 print:pt-2 print:space-y-2",
+                !expanded[a.questionId] && "hidden print:block",
+              )}>
                 <div className="hidden print:block text-soft-mute text-xs font-mono mb-1">
                   Q{a.questionNumber}
                   {" "}{a.isCorrect ? "✓" : "✗"}
@@ -212,18 +217,32 @@ export function SubmissionDetailPanel({
                         key={url}
                         src={`/api/blob-image?u=${encodeURIComponent(url)}`}
                         alt={a.imageAlts?.[i] || "Question figure"}
-                        loading="lazy"
-                        decoding="async"
                         className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
                       />
                     ))}
                   </div>
                 ) : (a.hasImage || a.hasTable) && a.moduleId && !a.choices.some((ch) => ch.image_url) ? (
-                  <iframe
-                    src={`/api/modules/${a.moduleId}/page/${a.pageNumber ?? 1}`}
-                    className="w-full h-[420px] rounded-xl border border-divider bg-white"
-                    title={`Question figure (PDF page ${a.pageNumber ?? 1})`}
-                  />
+                  // Source-page PDF viewer: only once opened on screen (each
+                  // one fetches the module PDF), and never on paper — an
+                  // embedded PDF prints as an empty box.
+                  expanded[a.questionId] ? (
+                    <>
+                      {a.hasImage && (
+                        <p className="hidden print:block text-xs italic text-mid-gray">
+                          [Figure is on page {a.pageNumber ?? 1} of the source test PDF.]
+                        </p>
+                      )}
+                      <iframe
+                        src={`/api/modules/${a.moduleId}/page/${a.pageNumber ?? 1}`}
+                        title={`Question figure (PDF page ${a.pageNumber ?? 1})`}
+                        className="w-full h-[420px] rounded-xl border border-divider bg-white print:hidden"
+                      />
+                    </>
+                  ) : a.hasImage ? (
+                    <p className="hidden print:block text-xs italic text-mid-gray">
+                      [Figure is on page {a.pageNumber ?? 1} of the source test PDF.]
+                    </p>
+                  ) : null
                 ) : null}
 
                 {/* Choices */}
@@ -268,7 +287,6 @@ export function SubmissionDetailPanel({
                               <img
                                 src={`/api/blob-image?u=${encodeURIComponent(ch.image_url)}`}
                                 alt={`Choice ${ch.letter} graph`}
-                                loading="lazy"
                                 className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
                               />
                             )}

@@ -4,6 +4,7 @@ import StudentsClient from "./StudentsClient";
 import PageIntro from "@/components/shared/PageIntro";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, scopeIds, scopeUsers } from "@/lib/qa";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 async function getStudents(viewerIsQa: boolean) {
   const db = getServiceClient();
@@ -56,23 +57,36 @@ export default async function StudentsPage() {
     getClassGroups(isQa),
   ]);
 
-  // Class names per student (only groups visible to this viewer side).
+  // Class memberships per student (only groups visible to this viewer side).
   const nameById = new Map(classGroups.map((g) => [g.id as string, g.name as string]));
-  const classesByStudent: Record<string, string[]> = {};
+  const membershipsByStudent: Record<string, { id: string; name: string }[]> = {};
   if (students.length > 0 && nameById.size > 0) {
-    const { data: members } = await getServiceClient()
-      .from("class_group_members")
-      .select("student_id, class_group_id")
-      .in("class_group_id", [...nameById.keys()]);
+    const memberDb = getServiceClient();
+    const cgKeys = [...nameById.keys()];
+    const { data: members } = await fetchAllRows<{ student_id: string; class_group_id: string }>((from, to) =>
+      memberDb
+        .from("class_group_members")
+        .select("student_id, class_group_id")
+        .in("class_group_id", cgKeys)
+        .order("student_id")
+        .order("class_group_id")
+        .range(from, to),
+    );
     for (const m of members ?? []) {
       const name = nameById.get(m.class_group_id as string);
       if (!name) continue;
-      (classesByStudent[m.student_id as string] ??= []).push(name);
+      (membershipsByStudent[m.student_id as string] ??= []).push({
+        id: m.class_group_id as string,
+        name,
+      });
     }
   }
   const withClasses = students.map((s) => ({
     ...s,
-    classes: (classesByStudent[s.id as string] ?? []).sort(),
+    classes: (membershipsByStudent[s.id as string] ?? []).map((m) => m.name).sort(),
+    classMemberships: (membershipsByStudent[s.id as string] ?? []).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    ),
   }));
 
   return (

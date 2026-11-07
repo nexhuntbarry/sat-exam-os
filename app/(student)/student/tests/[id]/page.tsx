@@ -16,8 +16,30 @@ import { module2RecoveryBlock } from "@/lib/module2-handoff";
 async function getTestInfo(testId: string, studentId: string) {
   const db = getServiceClient();
 
-  // Check student has access (directly or via a class group).
-  if (!(await isTestAssignedToStudent(db, testId, studentId))) return null;
+  // Check access: assigned students always get in. Unassigned students who
+  // have an unfinished attempt may still resume — either an In Progress
+  // submission OR a graded M1 awaiting M2 (the handoff case). We show the
+  // page but mark isAssigned=false so the render suppresses "Start new attempt".
+  const isAssigned = await isTestAssignedToStudent(db, testId, studentId);
+  if (!isAssigned) {
+    // Check for any In Progress submission or graded M1 missing M2.
+    const { data: subs } = await db
+      .from("submissions")
+      .select("status, adaptive_track, attempt_number")
+      .eq("test_id", testId)
+      .eq("student_id", studentId)
+      .in("status", ["In Progress", "Submitted", "Late"])
+      .order("attempt_number", { ascending: false });
+    if (!subs || subs.length === 0) return null;
+    const latestAttempt = (subs[0].attempt_number as number) ?? 1;
+    const latestRows = subs.filter((s) => (s.attempt_number as number ?? 1) === latestAttempt);
+    const hasInProgress = latestRows.some((s) => s.status === "In Progress");
+    const hasGradedM1 = latestRows.some(
+      (s) => s.adaptive_track === "module_1" && (s.status === "Submitted" || s.status === "Late"),
+    );
+    const hasM2 = latestRows.some((s) => s.adaptive_track && s.adaptive_track !== "module_1");
+    if (!hasInProgress && !(hasGradedM1 && !hasM2)) return null;
+  }
 
   const { data: test } = await db
     .from("tests")
@@ -154,6 +176,7 @@ async function getTestInfo(testId: string, studentId: string) {
 
   return {
     test,
+    isAssigned,
     canOpenClassReview: classReview.answers,
     questionCount: totalQuestionCount,
     submission,
@@ -182,7 +205,7 @@ export default async function StudentTestLandingPage({
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 
-  const { test, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, module2Closed, hasRetakeGrant } = data;
+  const { test, isAssigned, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, module2Closed, hasRetakeGrant } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -203,7 +226,9 @@ export default async function StudentTestLandingPage({
     !needsModule2 && (submission?.status === "Submitted" || submission?.status === "Late");
   // Retake is offered when the test allows it OR a teacher granted a
   // one-off retake to this student.
-  const canRetake = (test.allow_retake || hasRetakeGrant) && isSubmitted;
+  // Retake and starting fresh both require the student to be assigned.
+  // An unassigned student who has an in-progress session may only resume.
+  const canRetake = isAssigned && (test.allow_retake || hasRetakeGrant) && isSubmitted;
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -303,6 +328,12 @@ export default async function StudentTestLandingPage({
           <div className="p-4 bg-light-bg border border-divider rounded-xl text-center text-mid-gray">
             This test opens on {formatDateTime(test.open_date as string)}.
           </div>
+        ) : !isAssigned && !isInProgress ? (
+          // Unassigned and no in-progress session: should normally be gated
+          // earlier by notFound(), but guard defensively here too.
+          <div className="p-4 bg-status-error/10 border border-status-error/20 rounded-xl text-center text-status-error">
+            This test is not assigned to you.
+          </div>
         ) : (
           <div className="space-y-3">
             {isInProgress && (
@@ -310,11 +341,19 @@ export default async function StudentTestLandingPage({
                 You have an in-progress submission. Resuming will continue from where you left off.
               </p>
             )}
-            <StartTestButton
-              testId={test.id}
-              submissionId={isInProgress ? submission?.id : undefined}
-              isResume={isInProgress}
-            />
+            {!isAssigned && isInProgress && (
+              <p className="text-soft-mute text-xs text-center">
+                You can finish this attempt, but you&apos;re no longer assigned to this test.
+              </p>
+            )}
+            {/* When not assigned, only show Resume (never Start new attempt). */}
+            {(isAssigned || isInProgress) && (
+              <StartTestButton
+                testId={test.id}
+                submissionId={isInProgress ? submission?.id : undefined}
+                isResume={isInProgress}
+              />
+            )}
           </div>
         )}
 

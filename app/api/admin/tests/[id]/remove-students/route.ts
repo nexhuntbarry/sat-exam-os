@@ -63,25 +63,49 @@ export async function POST(
       );
     }
   }
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("id, student_ids, class_group_ids")
-    .eq("test_id", testId)
-    .single();
+  // CAS loop: read current student_ids, compute remaining, write only if unchanged.
+  // Also read class_group_ids (needed for stillVisibleViaGroup) on the first pass.
+  let actuallyRemoved: string[] = [];
+  let cgIds: string[] = [];
 
-  if (!assignment) {
-    return NextResponse.json({ error: "Test assignment not found" }, { status: 404 });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: row, error: readErr } = await db
+      .from("test_assignments")
+      .select("student_ids, class_group_ids")
+      .eq("test_id", testId)
+      .maybeSingle();
+    if (readErr) {
+      console.error("[remove-students] read error:", readErr);
+      return NextResponse.json({ error: "Failed to remove students" }, { status: 500 });
+    }
+    if (!row) {
+      return NextResponse.json({ error: "Test assignment not found" }, { status: 404 });
+    }
+    const existing: string[] = Array.isArray(row.student_ids) ? (row.student_ids as string[]) : [];
+    cgIds = Array.isArray(row.class_group_ids) ? (row.class_group_ids as string[]) : [];
+    const removeSet = new Set(incoming);
+    const remaining = existing.filter((s) => !removeSet.has(s));
+    actuallyRemoved = existing.filter((s) => removeSet.has(s));
+
+    if (actuallyRemoved.length === 0) break; // ids not in list, nothing to remove
+
+    const { data: updated, error: writeErr } = await db
+      .from("test_assignments")
+      .update({ student_ids: remaining })
+      .eq("test_id", testId)
+      .filter("student_ids", "eq", JSON.stringify(existing))
+      .select("student_ids");
+    if (writeErr) {
+      console.error("[remove-students] update error:", writeErr);
+      return NextResponse.json({ error: "Failed to remove students" }, { status: 500 });
+    }
+    if ((updated ?? []).length > 0) break; // CAS succeeded
+    if (attempt < 4) await new Promise((r) => setTimeout(r, 15 * (attempt + 1)));
+    else return NextResponse.json({ error: "Concurrent update conflict — please retry" }, { status: 409 });
   }
 
-  const existing: string[] = (assignment.student_ids as string[]) ?? [];
-  const removeSet = new Set(incoming);
-  const remaining = existing.filter((s) => !removeSet.has(s));
-  // Only ids that were actually individually assigned — never delete work
-  // for a student who reaches this test some other way (class group).
-  const actuallyRemoved = existing.filter((s) => removeSet.has(s));
   const removed = actuallyRemoved.length;
 
-  const cgIds: string[] = (assignment.class_group_ids as string[]) ?? [];
   let stillVisibleViaGroup: string[] = [];
   if (cgIds.length > 0) {
     const { data: members, error: membersError } = await db
@@ -97,16 +121,6 @@ export async function POST(
   }
   const visibleSet = new Set(stillVisibleViaGroup);
   const deletable = actuallyRemoved.filter((s) => !visibleSet.has(s));
-
-  const { error } = await db
-    .from("test_assignments")
-    .update({ student_ids: remaining })
-    .eq("id", assignment.id);
-
-  if (error) {
-    console.error("[remove-students] update error:", error);
-    return NextResponse.json({ error: "Failed to remove students" }, { status: 500 });
-  }
 
   let deletedSubmissions = 0;
   if (body.deleteSubmissions && deletable.length > 0) {

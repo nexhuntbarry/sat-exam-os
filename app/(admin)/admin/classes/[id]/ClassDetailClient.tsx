@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, UserPlus, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, Eye } from "lucide-react";
+import { UserMinus, GraduationCap, ShieldCheck, Trash2, AlertTriangle, Pencil, ClipboardList, Eye } from "lucide-react";
 import { formatShortDate } from "@/lib/datetime";
 import {
   DataRow,
@@ -22,6 +22,8 @@ import {
 import { Portal } from "@/components/ui/Portal";
 import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
+import SearchablePicker, { type PickerItem } from "@/components/ui/SearchablePicker";
+import AssignTestButton, { type AvailableTest } from "./AssignTestButton";
 
 export interface AssignedTest {
   id: string;
@@ -31,6 +33,8 @@ export interface AssignedTest {
   dueDate: string | null;
   status: string | null;
   submitted: number;
+  /** Students in this class with an In Progress submission for this test. */
+  inProgress: number;
   total: number;
   /** % correct, secondary to avgSat. */
   avgScore: number | null;
@@ -59,6 +63,9 @@ interface Student {
   id: string;
   email: string;
   display_name: string | null;
+  account_status: string;
+  grade: string | null;
+  school: string | null;
 }
 
 interface Teacher {
@@ -83,6 +90,7 @@ interface Props {
   assignedTeachers: AssignedTeacher[];
   linkedTests: { id: string; name: string }[];
   assignedTests: AssignedTest[];
+  availableTests: AvailableTest[];
 }
 
 export default function ClassDetailClient({
@@ -93,6 +101,7 @@ export default function ClassDetailClient({
   assignedTeachers,
   linkedTests,
   assignedTests,
+  availableTests,
 }: Props) {
   const router = useRouter();
 
@@ -129,13 +138,33 @@ export default function ClassDetailClient({
     }
   }
   const [, startTransition] = useTransition();
-  const [addStudentId, setAddStudentId] = useState("");
-  const [addTeacherId, setAddTeacherId] = useState("");
   const [loading, setLoading] = useState(false);
   const [teacherLoading, setTeacherLoading] = useState(false);
 
   const memberIds = new Set(members.map((m) => m.student_id));
-  const nonMembers = allStudents.filter((s) => !memberIds.has(s.id));
+
+  // Build picker items for students; alreadyIn marks existing members,
+  // meta shows grade/school, accountStatus marks pending/suspended.
+  const studentPickerItems: PickerItem[] = allStudents.map((s) => ({
+    id: s.id,
+    label: s.display_name ?? s.email,
+    sublabel: s.display_name ? s.email : undefined,
+    meta:
+      [s.grade && `Grade ${s.grade}`, s.school].filter(Boolean).join(" · ") ||
+      undefined,
+    alreadyIn: memberIds.has(s.id),
+    accountStatus: (s.account_status as PickerItem["accountStatus"]) ?? "approved",
+  }));
+
+  // Build picker items for teachers
+  const assignedTeacherIds = new Set(assignedTeachers.map((t) => t.id));
+  const teacherPickerItems: PickerItem[] = allTeachers.map((t) => ({
+    id: t.id,
+    label: t.display_name ?? t.email,
+    sublabel: t.display_name ? t.email : undefined,
+    meta: t.can_review_questions ? "Reviewer" : undefined,
+    alreadyIn: assignedTeacherIds.has(t.id),
+  }));
 
   async function handleAction(studentId: string, action: "add" | "remove") {
     setLoading(true);
@@ -151,25 +180,62 @@ export default function ClassDetailClient({
     }
   }
 
-  async function handleAdd() {
-    if (!addStudentId) return;
-    await handleAction(addStudentId, "add");
-    setAddStudentId("");
+  async function handleAddStudents(ids: string[]): Promise<{ ok: boolean; error?: string }> {
+    setLoading(true);
+    try {
+      const results = await Promise.allSettled(
+        ids.map((studentId) =>
+          fetch(`/api/admin/class-groups/${classGroup.id}/members`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ studentId, action: "add" }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const j = await res.json().catch(() => ({}));
+              throw new Error((j as { error?: string }).error ?? `HTTP ${res.status}`);
+            }
+            return studentId;
+          }),
+        ),
+      );
+      const failed = results
+        .map((r, i) => (r.status === "rejected" ? ids[i] : null))
+        .filter((id): id is string => id !== null);
+      const anySuccess = results.some((r) => r.status === "fulfilled");
+      if (anySuccess) startTransition(() => router.refresh());
+      if (failed.length > 0) {
+        // Find display names for failed ids so the error message is readable.
+        const failedLabels = failed.map((id) => {
+          const s = allStudents.find((s) => s.id === id);
+          return s ? (s.display_name ?? s.email) : id;
+        });
+        return {
+          ok: false,
+          error: `Failed to add: ${failedLabels.join(", ")}`,
+        };
+      }
+      return { ok: true };
+    } finally {
+      setLoading(false);
+    }
   }
 
-  const assignedTeacherIds = new Set(assignedTeachers.map((t) => t.id));
-  const unassignedTeachers = allTeachers.filter((t) => !assignedTeacherIds.has(t.id));
-
-  async function addTeacher(teacherId: string) {
-    if (!teacherId) return;
+  async function handleAddTeachers(ids: string[]): Promise<{ ok: boolean; error?: string }> {
     setTeacherLoading(true);
     try {
-      await fetch(`/api/admin/class-groups/${classGroup.id}/teachers`, {
+      const res = await fetch(`/api/admin/class-groups/${classGroup.id}/teachers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ teacherIds: [teacherId] }),
+        body: JSON.stringify({ teacherIds: ids }),
       });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        return { ok: false, error: (j as { error?: string }).error ?? "Failed to add teachers" };
+      }
       startTransition(() => router.refresh());
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "Network error" };
     } finally {
       setTeacherLoading(false);
     }
@@ -200,6 +266,49 @@ export default function ClassDetailClient({
       startTransition(() => router.refresh());
     } finally {
       setTeacherLoading(false);
+    }
+  }
+
+  // Unassign-test confirm state.
+  // `step`: "confirm" = first confirm; "confirm-inprogress" = extra step when students are mid-exam.
+  const [unassignTarget, setUnassignTarget] = useState<{
+    id: string;
+    name: string;
+    submitted: number;
+    inProgress: number;
+  } | null>(null);
+  const [unassignStep, setUnassignStep] = useState<"confirm" | "confirm-inprogress">("confirm");
+  const [unassignBusy, setUnassignBusy] = useState(false);
+  const [unassignError, setUnassignError] = useState<string | null>(null);
+
+  async function confirmUnassign() {
+    if (!unassignTarget) return;
+    // If students are mid-exam, require an extra step before proceeding.
+    if (unassignStep === "confirm" && unassignTarget.inProgress > 0) {
+      setUnassignStep("confirm-inprogress");
+      return;
+    }
+    setUnassignBusy(true);
+    setUnassignError(null);
+    try {
+      // Atomic remove: server CAS ensures no concurrent assign is overwritten.
+      const res = await fetch(`/api/admin/tests/${unassignTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ removeClassGroupIds: [classGroup.id] }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        setUnassignError((j as { error?: string }).error ?? "Failed to unassign");
+        return;
+      }
+      setUnassignTarget(null);
+      setUnassignStep("confirm");
+      startTransition(() => router.refresh());
+    } catch {
+      setUnassignError("Network error");
+    } finally {
+      setUnassignBusy(false);
     }
   }
 
@@ -388,31 +497,14 @@ export default function ClassDetailClient({
               ({assignedTeachers.length})
             </span>
           </h2>
-          {unassignedTeachers.length > 0 && (
-            <div className="flex items-center gap-2">
-              <select
-                className="bg-light-bg border border-divider text-charcoal rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:border-warm-coral/50"
-                value={addTeacherId}
-                onChange={(e) => setAddTeacherId(e.target.value)}
-              >
-                <option value="">Add teacher…</option>
-                {unassignedTeachers.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.display_name ?? t.email}
-                    {t.can_review_questions ? " · Reviewer" : ""}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={() => {
-                  addTeacher(addTeacherId);
-                  setAddTeacherId("");
-                }}
-                disabled={!addTeacherId || teacherLoading}
-                className="px-3 py-1.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white text-sm font-semibold disabled:opacity-50 transition-colors"
-              >
-                Add
-              </button>
+          {allTeachers.length > assignedTeacherIds.size && (
+            <div className="w-full max-w-sm">
+              <SearchablePicker
+                items={teacherPickerItems}
+                noun="teacher"
+                onAdd={handleAddTeachers}
+                loading={teacherLoading}
+              />
             </div>
           )}
         </div>
@@ -457,40 +549,101 @@ export default function ClassDetailClient({
       </div>
 
       {/* Add student */}
-      {nonMembers.length > 0 && (
+      {allStudents.length > 0 && (
         <div className="bg-surface border border-divider rounded-2xl p-5">
           <h2 className="text-charcoal font-medium text-sm mb-3">Add Student</h2>
-          <div className="flex gap-3">
-            <select
-              className="flex-1 bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors"
-              value={addStudentId}
-              onChange={(e) => setAddStudentId(e.target.value)}
-            >
-              <option value="">Select a student...</option>
-              {nonMembers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.display_name ?? s.email} ({s.email})
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={handleAdd}
-              disabled={!addStudentId || loading}
-              className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-medium text-sm disabled:opacity-60 transition-colors"
-            >
-              <UserPlus size={15} />
-              Add
-            </button>
-          </div>
+          <SearchablePicker
+            items={studentPickerItems}
+            noun="student"
+            onAdd={handleAddStudents}
+            loading={loading}
+          />
         </div>
+      )}
+
+      {/* Unassign-test confirm modal */}
+      {unassignTarget && (
+        <Portal>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
+            <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
+              <div className="p-5 border-b border-divider flex items-start gap-3">
+                <AlertTriangle
+                  size={20}
+                  className={`shrink-0 mt-0.5 ${unassignStep === "confirm-inprogress" ? "text-status-error" : "text-status-warning"}`}
+                />
+                <div>
+                  {unassignStep === "confirm-inprogress" ? (
+                    <>
+                      <h3 className="font-bold text-charcoal text-base">Students are mid-exam — are you sure?</h3>
+                      <p className="text-status-error text-xs mt-1 font-medium leading-relaxed">
+                        {unassignTarget.inProgress} student{unassignTarget.inProgress !== 1 ? "s are" : " is"} currently
+                        taking this test. Unassigning now will not interrupt their current session, but they will
+                        not be able to start a new attempt afterwards.
+                      </p>
+                      <p className="text-mid-gray text-xs mt-1">Their submissions are always kept.</p>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="font-bold text-charcoal text-base">Remove test from this class?</h3>
+                      <p className="text-mid-gray text-xs mt-0.5 leading-relaxed">
+                        Students in <strong>{classGroup.name}</strong> who haven&apos;t started{" "}
+                        <strong>{unassignTarget.name}</strong> will lose access. Students mid-exam can still finish
+                        their current attempt. (Individual assignments are unaffected.)
+                      </p>
+                      {unassignTarget.submitted > 0 && (
+                        <p className="text-status-warning text-xs mt-2 font-medium">
+                          {unassignTarget.submitted} student{unassignTarget.submitted !== 1 ? "s have" : " has"} already
+                          submitted — their results are kept.
+                        </p>
+                      )}
+                      {unassignTarget.inProgress > 0 && (
+                        <p className="text-status-warning text-xs mt-1 font-medium">
+                          {unassignTarget.inProgress} student{unassignTarget.inProgress !== 1 ? "s are" : " is"} currently
+                          mid-exam and can still finish.
+                        </p>
+                      )}
+                    </>
+                  )}
+                  {unassignError && <p className="text-status-error text-xs mt-2">{unassignError}</p>}
+                </div>
+              </div>
+              <div className="p-5 border-t border-divider flex items-center justify-end gap-2">
+                <button
+                  onClick={() => { setUnassignTarget(null); setUnassignStep("confirm"); setUnassignError(null); }}
+                  className="px-4 py-2 rounded-xl border border-divider text-mid-gray hover:text-charcoal text-sm transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => void confirmUnassign()}
+                  disabled={unassignBusy}
+                  className="px-4 py-2 rounded-xl bg-status-error hover:bg-status-error/90 text-white font-semibold text-sm transition-colors disabled:opacity-40"
+                >
+                  {unassignBusy
+                    ? "Removing…"
+                    : unassignStep === "confirm-inprogress"
+                    ? "Yes, remove from class"
+                    : "Remove from class"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </Portal>
       )}
 
       {/* Assigned Tests */}
       <section>
-        <div className="flex items-center gap-2 mb-3">
-          <ClipboardList size={14} className="text-warm-coral-text" />
-          <h2 className="font-semibold text-charcoal">Assigned Tests</h2>
-          <span className="text-soft-mute font-normal text-sm">({assignedTests.length})</span>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <ClipboardList size={14} className="text-warm-coral-text" />
+            <h2 className="font-semibold text-charcoal">Assigned Tests</h2>
+            <span className="text-soft-mute font-normal text-sm">({assignedTests.length})</span>
+          </div>
+          <AssignTestButton
+            classGroupId={classGroup.id}
+            availableTests={availableTests}
+            memberCount={members.length}
+          />
         </div>
         <DataTable>
           <thead>
@@ -505,7 +658,7 @@ export default function ClassDetailClient({
           </thead>
           <tbody>
             {assignedTests.length === 0 && (
-              <EmptyRow colSpan={6}>No tests assigned to this class yet. Assign one from a test&rsquo;s page.</EmptyRow>
+              <EmptyRow colSpan={6}>No tests assigned yet. Use the &ldquo;Assign test&rdquo; button above, or assign from a test&rsquo;s page.</EmptyRow>
             )}
             {assignedTests.map((t) => {
               const openStr = t.openDate ? `Opens ${formatShortDate(t.openDate)}` : "Open now";
@@ -556,6 +709,21 @@ export default function ClassDetailClient({
                         label="Results"
                         icon={<Eye size={13} />}
                         href={`/admin/tests/${t.id}/submissions?class=${classGroup.id}`}
+                      />
+                      <RowActionsMenu
+                        label={`Actions for ${t.name}`}
+                        items={[
+                          {
+                            label: "Unassign from this class…",
+                            icon: UserMinus,
+                            tone: "danger",
+                            onSelect: () => {
+                              setUnassignError(null);
+                              setUnassignStep("confirm");
+                              setUnassignTarget({ id: t.id, name: t.name, submitted: t.submitted, inProgress: t.inProgress });
+                            },
+                          },
+                        ]}
                       />
                     </RowActions>
                   </Td>

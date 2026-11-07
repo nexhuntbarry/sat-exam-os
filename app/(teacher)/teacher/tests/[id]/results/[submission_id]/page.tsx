@@ -176,21 +176,6 @@ export default function SubmissionDetailPage() {
   }
   const score = scoreDisplay(scoreModules, submission.scaledSection);
 
-  function handlePrint() {
-    // The per-question rows in SubmissionDetailPanel are gated by
-    // React state, so a plain DOM mutation can't reveal them. Fire a
-    // custom event the panel listens for, then wait two animation
-    // frames so React commits the state update + the layout reflow
-    // before we hand off to the print pipeline.
-    document.querySelectorAll<HTMLDetailsElement>("details").forEach((d) => {
-      d.open = true;
-    });
-    window.dispatchEvent(new Event("submission-detail-expand-all"));
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => window.print());
-    });
-  }
-
   return (
     <div className="max-w-4xl mx-auto space-y-6 print:max-w-none">
       {/* Breadcrumb */}
@@ -200,14 +185,19 @@ export default function SubmissionDetailPage() {
         <Link href={`/teacher/tests/${testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
         <span>/</span>
         <span className="text-charcoal">{student.name}</span>
-        <button
-          onClick={handlePrint}
+        {/* The student's printed result: preview at Letter size, same
+            visibility as the student's own result page. Ctrl/Cmd+P on this
+            page still prints every question with its figures. */}
+        <a
+          href={`/print/results/${testId}?subs=${submissionId}`}
+          target="_blank"
+          rel="noopener"
           className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-coral hover:bg-warm-coral-dark text-white text-xs font-semibold transition-colors"
-          title="Open every answer and trigger the print dialog (Save as PDF works from there)"
+          title="Preview and print this student's result (Save as PDF from there)"
         >
           <Printer size={13} />
-          Print / Save PDF
-        </button>
+          Print
+        </a>
       </div>
 
       {/* Student header */}

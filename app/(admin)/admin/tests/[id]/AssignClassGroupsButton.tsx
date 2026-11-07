@@ -55,10 +55,22 @@ export default function AssignClassGroupsButton({
   async function submit() {
     setSubmitting(true);
     try {
+      const current = new Set(currentClassGroupIds);
+      const desired = selected;
+      // Compute diff so we use atomic add/remove instead of full replacement.
+      const toAdd = [...desired].filter((id) => !current.has(id));
+      const toRemove = [...current].filter((id) => !desired.has(id));
+      if (toAdd.length === 0 && toRemove.length === 0) {
+        setOpen(false);
+        return;
+      }
+      const body: Record<string, string[]> = {};
+      if (toAdd.length > 0) body.addClassGroupIds = toAdd;
+      if (toRemove.length > 0) body.removeClassGroupIds = toRemove;
       const res = await fetch(`/api/admin/tests/${testId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ classGroupIds: Array.from(selected) }),
+        body: JSON.stringify(body),
       });
       const j = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -66,7 +78,7 @@ export default function AssignClassGroupsButton({
         startTransition(() => router.refresh());
         setTimeout(() => { setOpen(false); setToast(null); }, 900);
       } else {
-        setToast(j.error ?? "Failed");
+        setToast((j as { error?: string }).error ?? "Failed");
       }
     } catch {
       setToast("Network error");

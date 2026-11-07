@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect, useRef, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { Check, X, Search, Ban, RotateCcw, Trash2 } from "lucide-react";
+import { Check, X, Search, Ban, RotateCcw, Trash2, Plus, ClipboardList, UserMinus } from "lucide-react";
 import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import { changeStudentStatus } from "./[id]/StudentStatusButton";
@@ -64,6 +64,7 @@ interface Student {
   last_sign_in_at: number | null;
   student_profiles: StudentProfile | StudentProfile[] | null;
   classes: string[];
+  classMemberships: { id: string; name: string }[];
 }
 
 interface ClassGroup {
@@ -78,12 +79,14 @@ interface Props {
   classGroups: ClassGroup[];
 }
 
-type Filter = "all" | "pending" | "approved" | "suspended";
+type Filter = "all" | "pending" | "approved" | "suspended" | "noClass";
 
 function getProfile(s: Student): StudentProfile | null {
   if (!s.student_profiles) return null;
   return Array.isArray(s.student_profiles) ? s.student_profiles[0] ?? null : s.student_profiles;
 }
+
+// ─── Modals ───────────────────────────────────────────────────────────────────
 
 function ApproveModal({
   student,
@@ -152,7 +155,7 @@ function ApproveModal({
         <div className="bg-surface border border-divider rounded-xl p-4 text-sm space-y-1">
           <p className="text-charcoal font-medium">{student.display_name ?? student.email}</p>
           <p className="text-soft-mute">{student.email}</p>
-          {profile?.school && <p className="text-soft-mute">{profile.school}</p>}
+          {getProfile(student)?.school && <p className="text-soft-mute">{getProfile(student)!.school}</p>}
         </div>
 
         <div className="space-y-3">
@@ -250,6 +253,491 @@ function ApproveModal({
   );
 }
 
+function AddToClassModal({
+  studentIds,
+  studentNames,
+  classGroups,
+  onClose,
+  onDone,
+  onSuccessful,
+}: {
+  studentIds: string[];
+  studentNames: string[];
+  classGroups: ClassGroup[];
+  onClose: () => void;
+  onDone: () => void;
+  onSuccessful?: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const q = search.toLowerCase();
+  const filtered = classGroups.filter(
+    (cg) => !q || cg.name.toLowerCase().includes(q) || (cg.campus ?? "").toLowerCase().includes(q),
+  );
+
+  async function handleAdd() {
+    if (!selectedClassId) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const results = await Promise.allSettled(
+        studentIds.map((id) =>
+          fetch(`/api/admin/class-groups/${selectedClassId}/members`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ studentId: id, action: "add" }),
+          }),
+        ),
+      );
+      const failedIdxs = results
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok))
+        .map(({ i }) => i);
+      const anyOk = failedIdxs.length < results.length;
+      if (failedIdxs.length === 0) {
+        setResult(`Added ${studentIds.length} student${studentIds.length !== 1 ? "s" : ""}`);
+        setTimeout(onDone, 900);
+      } else {
+        const failedNames = failedIdxs.map((i) => studentNames[i] ?? studentIds[i]).join(", ");
+        setError(`${failedIdxs.length} of ${studentIds.length} failed: ${failedNames}`);
+        if (anyOk) onSuccessful?.();
+      }
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Portal>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+      <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between p-5 border-b border-divider">
+          <div>
+            <h2 className="font-bold text-charcoal text-lg">Add to class</h2>
+            <p className="text-soft-mute text-xs mt-0.5">
+              {studentIds.length === 1 ? studentNames[0] : `${studentIds.length} students`}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-soft-mute hover:text-charcoal"><X size={20} /></button>
+        </div>
+        <div className="p-3 border-b border-divider">
+          <div className="relative">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-soft-mute" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search classes…"
+              autoFocus
+              className="w-full pl-9 pr-3 py-2 bg-light-bg border border-divider rounded-xl text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-warm-coral/50"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {filtered.map((cg) => (
+            <button
+              key={cg.id}
+              onClick={() => setSelectedClassId(cg.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
+                selectedClassId === cg.id
+                  ? "bg-warm-coral/15 text-charcoal"
+                  : "hover:bg-light-bg text-charcoal"
+              }`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{cg.name}</div>
+                {(cg.campus || cg.grade) && (
+                  <div className="text-xs text-soft-mute">{[cg.campus, cg.grade && `Grade ${cg.grade}`].filter(Boolean).join(" · ")}</div>
+                )}
+              </div>
+              {selectedClassId === cg.id && <Check size={14} className="text-warm-coral shrink-0" />}
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <p className="text-center text-soft-mute text-sm py-6">No classes found.</p>
+          )}
+        </div>
+        <div className="p-5 border-t border-divider flex items-center justify-between gap-3">
+          <span className="text-xs text-soft-mute">
+            {error && <span className="text-status-error">{error}</span>}
+            {result && <span className="text-status-success">{result}</span>}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-divider text-mid-gray text-sm transition-colors hover:text-charcoal">Cancel</button>
+            <button
+              onClick={handleAdd}
+              disabled={!selectedClassId || loading}
+              className="px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-50 transition-colors"
+            >
+              {loading ? "Adding…" : "Add"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+function AssignTestModal({
+  studentIds,
+  studentNames,
+  onClose,
+  onDone,
+}: {
+  studentIds: string[];
+  studentNames: string[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [tests, setTests] = useState<{ id: string; name: string; status: string | null; section: string | null }[] | null>(null);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [selectedTestId, setSelectedTestId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/tests?list=1")
+      .then((r) => r.json())
+      .then((j) => {
+        const list = Array.isArray(j.data) ? j.data : [];
+        setTests(
+          list.map((t: { id: string; test_name: string; status: string | null; modules?: { section?: string } | { section?: string }[] | null }) => ({
+            id: t.id,
+            name: t.test_name,
+            status: t.status,
+            section: Array.isArray(t.modules) ? t.modules[0]?.section ?? null : (t.modules as { section?: string } | null)?.section ?? null,
+          }))
+        );
+      })
+      .catch(() => setFetchError("Failed to load tests"));
+  }, []);
+
+  const q = search.toLowerCase();
+  const filtered = (tests ?? []).filter(
+    (t) => !q || t.name.toLowerCase().includes(q),
+  );
+
+  async function handleAssign() {
+    if (!selectedTestId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/tests/${selectedTestId}/add-students`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ studentIds }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setResult(`Assigned to ${studentIds.length} student${studentIds.length !== 1 ? "s" : ""}`);
+        setTimeout(onDone, 900);
+      } else {
+        setError((j as { error?: string }).error ?? "Failed");
+      }
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <Portal>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+      <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between p-5 border-b border-divider">
+          <div>
+            <h2 className="font-bold text-charcoal text-lg flex items-center gap-2">
+              <ClipboardList size={16} />
+              Assign test
+            </h2>
+            <p className="text-soft-mute text-xs mt-0.5">
+              {studentIds.length === 1 ? studentNames[0] : `${studentIds.length} students`}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-soft-mute hover:text-charcoal"><X size={20} /></button>
+        </div>
+        <div className="p-3 border-b border-divider">
+          <div className="relative">
+            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-soft-mute" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search tests…"
+              autoFocus
+              className="w-full pl-9 pr-3 py-2 bg-light-bg border border-divider rounded-xl text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-warm-coral/50"
+            />
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {tests === null && !fetchError && (
+            <p className="text-center text-soft-mute text-sm py-6">Loading…</p>
+          )}
+          {fetchError && (
+            <p className="text-center text-status-error text-sm py-6">{fetchError}</p>
+          )}
+          {tests !== null && filtered.map((t) => (
+            <button
+              key={t.id}
+              onClick={() => setSelectedTestId(t.id)}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
+                selectedTestId === t.id ? "bg-warm-coral/15 text-charcoal" : "hover:bg-light-bg text-charcoal"
+              }`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium truncate">{t.name}</div>
+                {(t.status || t.section) && (
+                  <div className="text-xs text-soft-mute">{[t.section, t.status].filter(Boolean).join(" · ")}</div>
+                )}
+              </div>
+              {selectedTestId === t.id && <Check size={14} className="text-warm-coral shrink-0" />}
+            </button>
+          ))}
+          {tests !== null && filtered.length === 0 && (
+            <p className="text-center text-soft-mute text-sm py-6">{tests.length === 0 ? "No tests." : "No tests match."}</p>
+          )}
+        </div>
+        <div className="p-5 border-t border-divider flex items-center justify-between gap-3">
+          <span className="text-xs">
+            {error && <span className="text-status-error">{error}</span>}
+            {result && <span className="text-status-success">{result}</span>}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-divider text-mid-gray text-sm transition-colors hover:text-charcoal">Cancel</button>
+            <button
+              onClick={handleAssign}
+              disabled={!selectedTestId || loading}
+              className="px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-50 transition-colors"
+            >
+              {loading ? "Assigning…" : "Assign"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+interface InProgressTest {
+  id: string;
+  name: string;
+  inProgressCount: number;
+}
+
+function RemoveFromClassModal({
+  students,
+  onClose,
+  onDone,
+  onSuccessful,
+}: {
+  students: Student[];
+  onClose: () => void;
+  onDone: () => void;
+  onSuccessful?: () => void;
+}) {
+  // Intersection: classes where at least one selected student is a member
+  const classMap = new Map<string, { id: string; name: string; count: number }>();
+  for (const s of students) {
+    for (const m of s.classMemberships) {
+      const existing = classMap.get(m.id);
+      classMap.set(m.id, { id: m.id, name: m.name, count: (existing?.count ?? 0) + 1 });
+    }
+  }
+  const classes = Array.from(classMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+
+  const [selectedClassId, setSelectedClassId] = useState("");
+  const [inProgressCheck, setInProgressCheck] = useState<
+    null | "loading" | "check-failed" | InProgressTest[]
+  >(null);
+  const [confirmStep, setConfirmStep] = useState<"pick" | "warn-inprogress">("pick");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  // Track the latest check request to discard stale responses.
+  const checkRequestIdRef = useRef(0);
+
+  async function pickClass(cgId: string) {
+    setSelectedClassId(cgId);
+    setConfirmStep("pick");
+    setInProgressCheck("loading");
+    const requestId = ++checkRequestIdRef.current;
+    const studentIds = students
+      .filter((s) => s.classMemberships.some((m) => m.id === cgId))
+      .map((s) => s.id);
+    try {
+      const res = await fetch(
+        `/api/admin/class-groups/${cgId}/in-progress-check`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ studentIds }),
+        },
+      );
+      if (checkRequestIdRef.current !== requestId) return; // stale — discard
+      if (res.ok) {
+        const j = (await res.json()) as { tests?: InProgressTest[] };
+        setInProgressCheck(j.tests ?? []);
+      } else {
+        setInProgressCheck("check-failed");
+      }
+    } catch {
+      if (checkRequestIdRef.current !== requestId) return;
+      setInProgressCheck("check-failed");
+    }
+  }
+
+  async function handleRemove() {
+    if (!selectedClassId) return;
+    const toRemove = students.filter((s) => s.classMemberships.some((m) => m.id === selectedClassId));
+    setLoading(true);
+    setError(null);
+    try {
+      const results = await Promise.allSettled(
+        toRemove.map((s) =>
+          fetch(`/api/admin/class-groups/${selectedClassId}/members`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ studentId: s.id, action: "remove" }),
+          }),
+        ),
+      );
+      const failedIdxs = results
+        .map((r, i) => ({ r, i }))
+        .filter(({ r }) => r.status === "rejected" || (r.status === "fulfilled" && !r.value.ok))
+        .map(({ i }) => i);
+      const anyOk = failedIdxs.length < results.length;
+      if (failedIdxs.length === 0) {
+        setResult(`Removed ${toRemove.length} student${toRemove.length !== 1 ? "s" : ""}`);
+        setTimeout(onDone, 900);
+      } else {
+        const failedNames = failedIdxs
+          .map((i) => toRemove[i]?.display_name ?? toRemove[i]?.email ?? toRemove[i]?.id)
+          .join(", ");
+        setError(`${failedIdxs.length} of ${toRemove.length} failed: ${failedNames}`);
+        if (anyOk) onSuccessful?.();
+      }
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleRemoveClick() {
+    if (!selectedClassId) return;
+    const testsWithInProgress = Array.isArray(inProgressCheck)
+      ? inProgressCheck.filter((t) => t.inProgressCount > 0)
+      : [];
+    if (confirmStep === "pick" && (testsWithInProgress.length > 0 || inProgressCheck === "check-failed")) {
+      setConfirmStep("warn-inprogress");
+      return;
+    }
+    void handleRemove();
+  }
+
+  const testsWithInProgress = Array.isArray(inProgressCheck)
+    ? inProgressCheck.filter((t) => t.inProgressCount > 0)
+    : [];
+  const checkingNow = inProgressCheck === "loading";
+  const checkFailed = inProgressCheck === "check-failed";
+
+  return (
+    <Portal>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
+      <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh]">
+        <div className="flex items-center justify-between p-5 border-b border-divider">
+          <div>
+            <h2 className="font-bold text-charcoal text-lg flex items-center gap-2">
+              <UserMinus size={16} />
+              Remove from class
+            </h2>
+            <p className="text-soft-mute text-xs mt-0.5">
+              {students.length === 1 ? (students[0].display_name ?? students[0].email) : `${students.length} students`}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-soft-mute hover:text-charcoal"><X size={20} /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {classes.length === 0 ? (
+            <p className="text-center text-soft-mute text-sm py-6">None of the selected students are in any class.</p>
+          ) : (
+            classes.map((cg) => (
+              <button
+                key={cg.id}
+                onClick={() => void pickClass(cg.id)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
+                  selectedClassId === cg.id ? "bg-status-error/10 text-charcoal" : "hover:bg-light-bg text-charcoal"
+                }`}
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate">{cg.name}</div>
+                  <div className="text-xs text-soft-mute">{cg.count} of {students.length} selected student{students.length !== 1 ? "s" : ""} in this class</div>
+                </div>
+                {selectedClassId === cg.id && <Check size={14} className="text-status-error shrink-0" />}
+              </button>
+            ))
+          )}
+        </div>
+
+        {/* In-progress warning (shown after check completes with > 0 results) */}
+        {confirmStep === "warn-inprogress" && (
+          checkFailed ? (
+            <div className="mx-5 mb-0 mt-0 rounded-xl bg-status-warning/10 border border-status-warning/30 px-4 py-3 text-sm space-y-1">
+              <p className="font-semibold text-charcoal">Couldn&apos;t check who is mid-test — remove anyway?</p>
+              <p className="text-xs text-soft-mute">The in-progress check failed. Students mid-exam can still finish their current attempt after removal.</p>
+            </div>
+          ) : testsWithInProgress.length > 0 ? (
+            <div className="mx-5 mb-0 mt-0 rounded-xl bg-status-warning/10 border border-status-warning/30 px-4 py-3 text-sm space-y-1.5">
+              <p className="font-semibold text-charcoal">
+                {testsWithInProgress.reduce((s, t) => s + t.inProgressCount, 0)} student
+                {testsWithInProgress.reduce((s, t) => s + t.inProgressCount, 0) !== 1 ? "s have" : " has"} an In Progress submission:
+              </p>
+              <ul className="text-soft-mute text-xs space-y-0.5 ml-2">
+                {testsWithInProgress.map((t) => (
+                  <li key={t.id}>· {t.name} ({t.inProgressCount} student{t.inProgressCount !== 1 ? "s" : ""})</li>
+                ))}
+              </ul>
+              <p className="text-xs text-soft-mute">
+                They can finish their current attempt but cannot start a new one after removal.
+              </p>
+            </div>
+          ) : null
+        )}
+
+        <div className="p-5 border-t border-divider flex items-center justify-between gap-3">
+          <span className="text-xs">
+            {error && <span className="text-status-error">{error}</span>}
+            {result && <span className="text-status-success">{result}</span>}
+          </span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-divider text-mid-gray text-sm transition-colors hover:text-charcoal">Cancel</button>
+            <button
+              onClick={handleRemoveClick}
+              disabled={!selectedClassId || loading || classes.length === 0 || checkingNow}
+              className="px-4 py-2 rounded-xl bg-status-error hover:bg-status-error/90 text-white font-semibold text-sm disabled:opacity-50 transition-colors"
+            >
+              {loading ? "Removing…" : checkingNow ? "Checking…" : confirmStep === "warn-inprogress" ? (checkFailed ? "Remove anyway" : "Remove anyway") : "Remove"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    </Portal>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
+
 export default function StudentsClient({ students, classGroups }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -261,10 +749,15 @@ export default function StudentsClient({ students, classGroups }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<Student | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
+  const [bulkModal, setBulkModal] = useState<"addToClass" | "assignTest" | "removeFromClass" | null>(null);
+  const [singleTarget, setSingleTarget] = useState<Student | null>(null);
   const cols = useColumnPrefs("admin-students", COLUMNS);
 
-  // Bulk approve: the single-approve route in a loop, so every student goes
-  // through the same role / QA-isolation checks. No class or profile fields.
+  function refresh() {
+    startTransition(() => router.refresh());
+  }
+
+  // Bulk approve (pending only, single-approve route in a loop)
   async function approveMany(ids: string[]) {
     if (ids.length === 0 || bulk) return;
     const noun = ids.length === 1 ? "student" : "students";
@@ -294,7 +787,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
       });
       setActionError(`Could not approve ${failed.length} of ${ids.length}: ${names.join(", ")}`);
     }
-    startTransition(() => router.refresh());
+    refresh();
   }
 
   function toggleSelected(id: string) {
@@ -324,7 +817,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
       setActionError(`${student.display_name ?? student.email}: ${result.error}`);
       return;
     }
-    startTransition(() => router.refresh());
+    refresh();
   }
 
   async function handleSuspend(studentId: string) {
@@ -335,21 +828,26 @@ export default function StudentsClient({ students, classGroups }: Props) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason }),
     });
-    if (res.ok) {
-      startTransition(() => router.refresh());
-    }
+    if (res.ok) refresh();
   }
+
+  const noClassCount = students.filter((s) => s.classes.length === 0).length;
 
   const counts = {
     all: students.length,
     pending: students.filter((s) => s.account_status === "pending").length,
     approved: students.filter((s) => s.account_status === "approved").length,
     suspended: students.filter((s) => s.account_status === "suspended").length,
+    noClass: noClassCount,
   };
 
   const q = search.trim().toLowerCase();
   const matches = students.filter((s) => {
-    if (filter !== "all" && s.account_status !== filter) return false;
+    if (filter === "noClass") {
+      if (s.classes.length !== 0) return false;
+    } else if (filter !== "all" && s.account_status !== filter) {
+      return false;
+    }
     if (!q) return true;
     const profile = getProfile(s);
     return (
@@ -368,15 +866,42 @@ export default function StudentsClient({ students, classGroups }: Props) {
 
   const pendingIds = students.filter((s) => s.account_status === "pending").map((s) => s.id);
   const selectedPending = pendingIds.filter((id) => selected.has(id));
-  const visiblePending = filtered.filter((s) => s.account_status === "pending").map((s) => s.id);
-  const allVisibleSelected = visiblePending.length > 0 && visiblePending.every((id) => selected.has(id));
+  const visibleIds = filtered.map((s) => s.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
-  const chips: { key: Filter; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "pending", label: "Pending" },
-    { key: "approved", label: "Active" },
-    { key: "suspended", label: "Suspended" },
+  // Students currently selected (for bulk modals)
+  const selectedStudents = filtered.filter((s) => selected.has(s.id));
+
+  const chips: { key: Filter; label: string; count: number }[] = [
+    { key: "all", label: "All", count: counts.all },
+    { key: "pending", label: "Pending", count: counts.pending },
+    { key: "approved", label: "Active", count: counts.approved },
+    { key: "suspended", label: "Suspended", count: counts.suspended },
+    { key: "noClass", label: "No class", count: counts.noClass },
   ];
+
+  // Determine which students to pass to single-action modals
+  const modalStudentIds = singleTarget ? [singleTarget.id] : selectedStudents.map((s) => s.id);
+  const modalStudentNames = singleTarget
+    ? [singleTarget.display_name ?? singleTarget.email]
+    : selectedStudents.map((s) => s.display_name ?? s.email);
+  const modalStudents = singleTarget ? [singleTarget] : selectedStudents;
+
+  function openBulkModal(mode: "addToClass" | "assignTest" | "removeFromClass", target?: Student) {
+    setSingleTarget(target ?? null);
+    setBulkModal(mode);
+  }
+
+  function closeBulkModal() {
+    setBulkModal(null);
+    setSingleTarget(null);
+  }
+
+  function handleModalDone() {
+    closeBulkModal();
+    if (!singleTarget) setSelected(new Set());
+    refresh();
+  }
 
   return (
     <div className="space-y-6">
@@ -387,8 +912,37 @@ export default function StudentsClient({ students, classGroups }: Props) {
           onClose={() => setApproveTarget(null)}
           onApproved={() => {
             setApproveTarget(null);
-            startTransition(() => router.refresh());
+            refresh();
           }}
+        />
+      )}
+
+      {bulkModal === "addToClass" && (
+        <AddToClassModal
+          studentIds={modalStudentIds}
+          studentNames={modalStudentNames}
+          classGroups={classGroups}
+          onClose={closeBulkModal}
+          onDone={handleModalDone}
+          onSuccessful={refresh}
+        />
+      )}
+
+      {bulkModal === "assignTest" && (
+        <AssignTestModal
+          studentIds={modalStudentIds}
+          studentNames={modalStudentNames}
+          onClose={closeBulkModal}
+          onDone={handleModalDone}
+        />
+      )}
+
+      {bulkModal === "removeFromClass" && (
+        <RemoveFromClassModal
+          students={modalStudents}
+          onClose={closeBulkModal}
+          onDone={handleModalDone}
+          onSuccessful={refresh}
         />
       )}
 
@@ -405,7 +959,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
           onClose={() => setDeleteTarget(null)}
           onDeleted={() => {
             setDeleteTarget(null);
-            startTransition(() => router.refresh());
+            refresh();
           }}
         />
       )}
@@ -443,12 +997,50 @@ export default function StudentsClient({ students, classGroups }: Props) {
         </div>
       )}
 
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-surface border border-warm-coral/30 rounded-xl px-4 py-3">
+          <span className="text-sm font-semibold text-charcoal mr-1">
+            {selected.size} selected
+          </span>
+          <button
+            onClick={() => openBulkModal("addToClass")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal text-xs font-medium transition-colors"
+          >
+            <Plus size={12} />
+            Add to class
+          </button>
+          <button
+            onClick={() => openBulkModal("assignTest")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal text-xs font-medium transition-colors"
+          >
+            <ClipboardList size={12} />
+            Assign test
+          </button>
+          <button
+            onClick={() => openBulkModal("removeFromClass")}
+            disabled={!selectedStudents.some((s) => s.classMemberships.length > 0)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal text-xs font-medium transition-colors disabled:opacity-40"
+          >
+            <UserMinus size={12} />
+            Remove from class
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="ml-auto text-soft-mute hover:text-charcoal"
+            aria-label="Clear selection"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
       {/* Filter chips */}
       <div className="flex flex-wrap gap-2">
         {chips.map((t) => (
           <button
             key={t.key}
-            onClick={() => setFilter(t.key)}
+            onClick={() => { setFilter(t.key); setSelected(new Set()); }}
             className={clsx(
               "px-3.5 py-1.5 rounded-full text-sm font-medium border transition-colors",
               filter === t.key
@@ -456,7 +1048,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
                 : "bg-surface border-divider text-mid-gray hover:text-charcoal"
             )}
           >
-            {t.label} ({counts[t.key]})
+            {t.label} ({t.count})
           </button>
         ))}
       </div>
@@ -469,7 +1061,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
             className="w-full bg-surface border border-divider text-charcoal placeholder:text-soft-mute rounded-xl pl-10 pr-4 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50 transition-colors"
             placeholder="Search by name, email, grade, school..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => { setSearch(e.target.value); setSelected(new Set()); }}
           />
         </div>
         <ColumnsPicker prefs={cols} className="ml-auto" />
@@ -481,34 +1073,30 @@ export default function StudentsClient({ students, classGroups }: Props) {
         </p>
       )}
 
-      {/* Table — kit reference implementation, see docs/table-standard.md */}
+      {/* Table */}
       <DataTable>
         <thead>
           <HeadRow>
             <Th kind="main" sticky="left">
-              {visiblePending.length > 0 ? (
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 accent-warm-coral"
-                    checked={allVisibleSelected}
-                    onChange={() =>
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        for (const id of visiblePending) {
-                          if (allVisibleSelected) next.delete(id);
-                          else next.add(id);
-                        }
-                        return next;
-                      })
-                    }
-                    aria-label="Select all pending students"
-                  />
-                  Student
-                </label>
-              ) : (
-                "Student"
-              )}
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-warm-coral"
+                  checked={allVisibleSelected}
+                  onChange={() =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      for (const id of visibleIds) {
+                        if (allVisibleSelected) next.delete(id);
+                        else next.add(id);
+                      }
+                      return next;
+                    })
+                  }
+                  aria-label="Select all visible students"
+                />
+                Student
+              </label>
             </Th>
             {cols.isVisible("status") && <Th>Status</Th>}
             {cols.isVisible("class") && <Th kind="long" priority="md" className="w-[16%]">Class</Th>}
@@ -521,7 +1109,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
         <tbody>
           {filtered.length === 0 && (
             <EmptyRow colSpan={cols.visibleCount}>
-              No {filter === "all" ? "" : `${filter} `}students found.
+              No {filter === "all" ? "" : filter === "noClass" ? "students without a class" : `${filter} `}students found.
             </EmptyRow>
           )}
           {filtered.map((student) => {
@@ -543,22 +1131,36 @@ export default function StudentsClient({ students, classGroups }: Props) {
             const registered = `Registered ${formatShortDate(student.created_at)}`;
             const activityTitle = `${lastSignIn ? `Last sign-in ${formatDateTime(student.last_sign_in_at)}` : "Never signed in"} · Registered ${formatDateTime(student.created_at)}`;
 
-            // Rule 4: the state's main action is a visible button; risky or
-            // rare ones live in ⋯. The row itself opens the student.
             const isPending = student.account_status === "pending";
             const busy = busyId === student.id || bulk !== null;
             const actions: (RowAction | false)[] = [
+              {
+                label: "Add to class…",
+                icon: Plus,
+                onSelect: () => openBulkModal("addToClass", student),
+              },
+              {
+                label: "Assign test…",
+                icon: ClipboardList,
+                onSelect: () => openBulkModal("assignTest", student),
+              },
+              student.classMemberships.length > 0 && {
+                label: "Remove from class…",
+                icon: UserMinus,
+                tone: "danger" as const,
+                onSelect: () => openBulkModal("removeFromClass", student),
+              },
               student.account_status === "approved" && {
                 label: "Suspend…",
                 icon: Ban,
-                tone: "danger",
+                tone: "danger" as const,
                 disabled: busy,
                 onSelect: () => handleStatusChange(student),
               },
               student.account_status === "suspended" && {
                 label: "Delete…",
                 icon: Trash2,
-                tone: "danger",
+                tone: "danger" as const,
                 disabled: busy,
                 onSelect: () => setDeleteTarget(student),
               },
@@ -588,15 +1190,13 @@ export default function StudentsClient({ students, classGroups }: Props) {
               >
                 <Td kind="main" sticky="left">
                   <span className="flex min-w-0 items-center gap-2">
-                    {isPending && (
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 shrink-0 accent-warm-coral"
-                        checked={selected.has(student.id)}
-                        onChange={() => toggleSelected(student.id)}
-                        aria-label={`Select ${name}`}
-                      />
-                    )}
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 shrink-0 accent-warm-coral"
+                      checked={selected.has(student.id)}
+                      onChange={() => toggleSelected(student.id)}
+                      aria-label={`Select ${name}`}
+                    />
                     <Link
                       href={`/admin/students/${student.id}`}
                       className="block min-w-0 flex-1 hover:text-warm-coral-text transition-colors"
@@ -616,8 +1216,18 @@ export default function StudentsClient({ students, classGroups }: Props) {
                   </Td>
                 )}
                 {cols.isVisible("class") && (
-                  <Td kind="long" priority="md" className="text-mid-gray">
-                    <TruncatedText>{classes}</TruncatedText>
+                  <Td kind="long" priority="md">
+                    <span className="flex items-center gap-1.5 min-w-0">
+                      <TruncatedText className="text-mid-gray flex-1">{classes}</TruncatedText>
+                      <button
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); openBulkModal("addToClass", student); }}
+                        className="shrink-0 text-soft-mute hover:text-warm-coral-text transition-colors"
+                        title="Add to class"
+                        aria-label={`Add ${name} to a class`}
+                      >
+                        <Plus size={13} />
+                      </button>
+                    </span>
                   </Td>
                 )}
                 {cols.isVisible("gradeSchool") && (
