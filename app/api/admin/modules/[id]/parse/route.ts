@@ -28,7 +28,9 @@ import {
   normalizeChoiceRegions,
   applyChoiceImages,
   incompleteGraphChoices,
+  enforceAnswerKeyForm,
 } from "@/lib/parse-guards";
+import { keyFormNote, keyTypeProblem } from "@/lib/answer-key";
 import {
   extractChoicesFromPdfText,
   isTextLayerReliable,
@@ -610,6 +612,20 @@ export async function POST(
           `No official answer in key for Q${q.original_question_number} — AI solver only, please verify`;
       }
 
+      // Pre-save key check: a letter key on a fill-in question, a fill-in key
+      // that isn't an accepted number or ignores "round to the nearest …", or
+      // a Multiple choice key that isn't A–D (lib/answer-key).
+      const keyProblem = keyTypeProblem({
+        question_type: q.question_type,
+        correct_answer: officialAns ?? q.correct_answer ?? null,
+        question_text: q.question_text,
+        choices: q.choices,
+      });
+      if (keyProblem) {
+        parsingStatus = "Needs Review";
+        parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + keyFormNote(keyProblem);
+      }
+
       if (parsingStatus === "Needs Review") needsReviewCount++;
       const { error: insertError } = await db.from("questions").insert({
         module_id: id,
@@ -922,6 +938,14 @@ export async function POST(
       }
     } catch (err) {
       console.error("[modules/parse] completeness-gate crashed:", err);
+    }
+
+    // Phase 5d''' — answer-key form gate: every key must fit its question
+    // type (after explain-official / recovery passes, before auto-promote).
+    try {
+      await enforceAnswerKeyForm(id, db);
+    } catch (err) {
+      console.error("[modules/parse] key-form gate crashed:", err);
     }
 
     // Phase 5d'' — answer-key + stem guards. Run here, after every pass that

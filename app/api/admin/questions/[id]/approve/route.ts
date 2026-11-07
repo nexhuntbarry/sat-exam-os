@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
-import { findApproveBlocker } from "@/lib/parse-guards";
+import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
 import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
 
 // POST /api/admin/questions/[id]/approve
@@ -20,12 +20,14 @@ export async function POST(
 
   const { data: current } = await db
     .from("questions")
-    .select("question_text, choices, question_type, parsing_notes")
+    .select("question_text, choices, question_type, correct_answer, parsing_notes")
     .eq("id", id)
     .maybeSingle();
-  const blocker = current ? findApproveBlocker(current.question_text, current.choices, current.question_type) : null;
+  const blocker = current
+    ? findApproveBlocker(current.question_text, current.choices, current.question_type, current.correct_answer ?? null)
+    : null;
   if (blocker) {
-    return NextResponse.json({ error: `Can't approve: ${blocker.reason}. Fix the text first.` }, { status: 400 });
+    return NextResponse.json({ error: approveBlockedMessage(blocker) }, { status: 400 });
   }
 
   const update: Record<string, unknown> = {

@@ -4,7 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
-import { findApproveBlocker } from "@/lib/parse-guards";
+import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
 import { clearReviewTags } from "@/lib/key-doubt";
 
 export const maxDuration = 60;
@@ -72,7 +72,7 @@ export async function POST(
 
   const blocker = findApproveBlocker(q.question_text, q.choices, q.question_type);
   if (blocker) {
-    return NextResponse.json({ error: `Can't approve: ${blocker.reason}. Fix the text first.` }, { status: 400 });
+    return NextResponse.json({ error: approveBlockedMessage(blocker) }, { status: 400 });
   }
 
   const update: Record<string, unknown> = {
@@ -120,6 +120,13 @@ export async function POST(
   } else {
     // trust === "official"
     finalAnswer = (q.official_answer as string | null) ?? (q.correct_answer as string | null);
+  }
+
+  // The settled key must fit the question type (a letter on a fill-in
+  // question, a fill-in value that ignores the rounding asked for…).
+  const keyBlocker = findApproveBlocker(q.question_text, q.choices, q.question_type, finalAnswer);
+  if (keyBlocker) {
+    return NextResponse.json({ error: approveBlockedMessage(keyBlocker) }, { status: 400 });
   }
 
   update.correct_answer = finalAnswer;

@@ -28,12 +28,12 @@ export async function POST(req: Request) {
   // cut off: they stay in (or move to) Needs Review with a note instead of
   // being approved.
   async function excludePlaceholders(
-    rows: { id: string; question_text: string | null; choices: unknown; question_type: string | null; parsing_notes: string | null }[],
+    rows: { id: string; question_text: string | null; choices: unknown; question_type: string | null; correct_answer: string | null; parsing_notes: string | null }[],
   ): Promise<{ clean: string[]; blocked: number }> {
     const clean: string[] = [];
     let blocked = 0;
     for (const r of rows) {
-      const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type);
+      const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer);
       if (!blocker) {
         clean.push(r.id);
         continue;
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
     }
     const { data: rows, error: selErr } = await db
       .from("questions")
-      .select("id, question_text, choices, question_type, parsing_notes")
+      .select("id, question_text, choices, question_type, correct_answer, parsing_notes")
       .in("id", ids);
     if (selErr) {
       console.error("[bulk-approve] select error:", selErr);
@@ -80,7 +80,7 @@ export async function POST(req: Request) {
     const { clean, blocked } = await excludePlaceholders(rows ?? []);
     if (clean.length === 0) {
       return NextResponse.json(
-        { error: `None approved: ${blocked} question(s) contain parser placeholder text or look cut off, and were kept in Needs Review.`, blocked },
+        { error: `None approved: ${blocked} question(s) contain parser placeholder text, look cut off, or have an answer key that does not fit the question type, and were kept in Needs Review.`, blocked },
         { status: 400 },
       );
     }
@@ -104,7 +104,7 @@ export async function POST(req: Request) {
       minConfidence?: number;
     };
 
-    let query = db.from("questions").select("id, question_text, choices, question_type, parsing_notes");
+    let query = db.from("questions").select("id, question_text, choices, question_type, correct_answer, parsing_notes");
 
     if (moduleId) query = query.eq("module_id", moduleId);
     if (minConfidence !== undefined) {

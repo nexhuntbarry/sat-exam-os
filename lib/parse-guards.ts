@@ -1,6 +1,7 @@
 import type { getServiceClient } from "@/lib/supabase";
 import { checkChoiceAlignment, type PdfTextChoices } from "@/lib/pdf-text-choices";
 import { applyLiveHold, liveQuestionIds } from "@/lib/live-questions";
+import { KEY_FORM_NOTE_PREFIX, keyFormNote, keyTypeProblem } from "@/lib/answer-key";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -406,11 +407,18 @@ export function choiceLooksBroken(c: unknown): boolean {
   return !/[\p{L}\p{N}$]/u.test(t);
 }
 
-/** Why this question can't be Approved as-is (null = OK). */
+/**
+ * Why this question can't be Approved as-is (null = OK). Pass `correctAnswer`
+ * to also check that the key fits the question type (lib/answer-key): a
+ * letter key on a fill-in question, a fill-in key that isn't an accepted
+ * number or ignores "round to the nearest …", or a Multiple choice key that
+ * isn't A–D.
+ */
 export function findApproveBlocker(
   questionText: string | null | undefined,
   choices: unknown,
   questionType?: string | null,
+  correctAnswer?: string | null,
 ): { reason: string; note: string } | null {
   const placeholder = findParsePlaceholder(questionText, choices);
   if (placeholder) {
@@ -429,5 +437,73 @@ export function findApproveBlocker(
       return { reason: `choice ${label} is empty or cut off (compare it with the PDF)`, note: CHOICE_CUT_OFF_NOTE };
     }
   }
+  if (correctAnswer !== undefined) {
+    const p = keyTypeProblem({ question_type: questionType, correct_answer: correctAnswer, question_text: questionText, choices });
+    if (p) return { reason: p.reason, note: keyFormNote(p) };
+  }
   return null;
+}
+
+/** "Can't approve: …" message for an approve endpoint's 400. */
+export function approveBlockedMessage(blocker: { reason: string; note: string }): string {
+  return blocker.note.startsWith(KEY_FORM_NOTE_PREFIX)
+    ? `Can't approve: ${blocker.reason}.`
+    : `Can't approve: ${blocker.reason}. Fix the text first.`;
+}
+
+// ── Answer-key form gate ─────────────────────────────────────────────
+// Pre-save check for the parse pipeline: every key must fit its question
+// type (lib/answer-key keyTypeProblem). A mismatch goes to Needs Review with
+// a "Needs review: answer key check (…)" note; a live-test question stays
+// Approved with a [live-fix] note instead. Runs after every pass that can
+// Approve a row and before auto-promote.
+export async function enforceAnswerKeyForm(
+  moduleId: string,
+  db: DbClient,
+): Promise<{ checked: number; flagged: number }> {
+  const { data } = await db
+    .from("questions")
+    .select("id, original_question_number, question_text, choices, correct_answer, question_type, parsing_status, parsing_notes")
+    .eq("module_id", moduleId)
+    .neq("parsing_status", "Rejected");
+  const rows = (data ?? []) as {
+    id: string;
+    original_question_number: number;
+    question_text: string | null;
+    choices: unknown;
+    correct_answer: string | null;
+    question_type: string | null;
+    parsing_status: string;
+    parsing_notes: string | null;
+  }[];
+  const bad = rows.flatMap((r) => {
+    const p = keyTypeProblem(r);
+    return p ? [{ r, p }] : [];
+  });
+  const liveIds = await liveQuestionIds(db, bad.filter((x) => x.r.parsing_status === "Approved").map((x) => x.r.id));
+  let flagged = 0;
+  for (const { r, p } of bad) {
+    const note = keyFormNote(p);
+    if (r.parsing_status === "Needs Review" && (r.parsing_notes || "").includes(note)) continue;
+    const base = (r.parsing_notes || "")
+      .split(/;\s*/)
+      .filter((s) => s && !s.startsWith(KEY_FORM_NOTE_PREFIX))
+      .join("; ");
+    const hold = applyLiveHold(
+      r,
+      {
+        parsing_status: "Needs Review",
+        parsing_notes: base ? `${base}; ${note}` : note,
+        updated_at: new Date().toISOString(),
+      },
+      "Answer key doesn't fit the question type",
+      liveIds,
+    );
+    if (!hold.held) flagged++;
+    await db.from("questions").update(hold.update).eq("id", r.id);
+  }
+  if (bad.length > 0) {
+    console.warn(`[key-form-gate] module=${moduleId} flagged: ${bad.map((x) => `Q${x.r.original_question_number} ${x.p.code}`).join(", ")}`);
+  }
+  return { checked: rows.length, flagged };
 }

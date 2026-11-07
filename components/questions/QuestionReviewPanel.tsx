@@ -15,6 +15,7 @@ import QuestionRenderer from "@/components/tests/QuestionRenderer";
 import ReviewQuestionCard from "@/components/tests/ReviewQuestionCard";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
 import { hasMarkdownTable } from "@/lib/markdown-table";
+import { SPR_FORM_HELP, SPR_TYPE, MC_TYPE, keyTypeProblem } from "@/lib/answer-key";
 
 
 const SAT_DOMAINS = [
@@ -381,6 +382,57 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
     }));
   }
 
+  // Multiple choice ↔ Fill-in switch. A fill-in question never carries
+  // choices; the choices are kept aside so switching back restores them.
+  const stashedChoices = useRef<Choice[]>([]);
+  function setQuestionType(newType: Question["question_type"]) {
+    setQ((prev) => {
+      if (prev.question_type === newType) return prev;
+      if (newType === SPR_TYPE) {
+        if (prev.choices.length > 0) stashedChoices.current = prev.choices;
+        return { ...prev, question_type: newType, choices: [] };
+      }
+      const restore = prev.choices.length === 0 ? stashedChoices.current : prev.choices;
+      return { ...prev, question_type: newType, choices: restore };
+    });
+  }
+
+  // Type and key must fit each other before Approve (same rule as the server).
+  const keyProblem = keyTypeProblem(q);
+  const approveBlockedTitle = keyProblem ? `Can't approve: ${keyProblem.reason}` : undefined;
+
+  // "AI suggestion · Use": the AI solves the question as it is on the page
+  // (independently of the saved key). Fill-in values come from its
+  // computation evaluated in code, rounded as the stem asks.
+  const [aiSuggestBusy, setAiSuggestBusy] = useState(false);
+  const [aiSuggest, setAiSuggest] = useState<{ answer: string | null; warnings: string[]; forType: string | null } | null>(null);
+  const [aiSuggestError, setAiSuggestError] = useState<string | null>(null);
+  async function runAiSuggestion() {
+    setAiSuggestBusy(true);
+    setAiSuggest(null);
+    setAiSuggestError(null);
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/ai-answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question_text: q.question_text, choices: q.choices, question_type: q.question_type }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.ok) setAiSuggest({ answer: json.answer ?? null, warnings: json.warnings ?? [], forType: q.question_type });
+      else setAiSuggestError(json.error ?? "Couldn't get an AI answer.");
+    } catch {
+      setAiSuggestError("Couldn't get an AI answer.");
+    } finally {
+      setAiSuggestBusy(false);
+    }
+  }
+
+  /** Fill-in answer field: only characters an accepted SPR answer can contain. */
+  function onAnswerChange(raw: string) {
+    const v = q.question_type === SPR_TYPE ? raw.replace(/[^0-9./\-|\sor]/gi, "") : raw;
+    setQ((prev) => ({ ...prev, correct_answer: v || null }));
+  }
+
   async function handleCropSourceFigure() {
     if (
       !window.confirm(
@@ -496,6 +548,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
         : prev.choices,
       correct_answer: patch.correct_answer ?? prev.correct_answer,
     }));
+    if (patch.question_type) setQuestionType(patch.question_type);
     setReextract(null);
     showToast("Applied to the editor. Review it, then Save.");
   }
@@ -604,7 +657,8 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           </button>
           <button
             onClick={() => handleAction("approve")}
-            disabled={actionLoading !== null || q.parsing_status === "Approved"}
+            disabled={actionLoading !== null || q.parsing_status === "Approved" || !!keyProblem}
+            title={approveBlockedTitle}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-amber/15 hover:bg-warm-amber/25 text-warm-amber text-sm font-medium transition-colors disabled:opacity-50"
           >
             <CheckCircle2 size={14} />
@@ -613,9 +667,9 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           {nav && (
             <button
               onClick={approveAndNext}
-              disabled={actionLoading !== null}
+              disabled={actionLoading !== null || !!keyProblem}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-amber hover:bg-warm-amber/90 text-white text-sm font-semibold transition-colors disabled:opacity-50"
-              title="Approve this question and jump to the next one needing review"
+              title={approveBlockedTitle ?? "Approve this question and jump to the next one needing review"}
             >
               <ArrowRightCircle size={14} />
               {actionLoading === "approve-next" ? "..." : "Approve & Next"}
@@ -893,7 +947,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
         <div className="flex flex-col gap-4 overflow-y-auto max-h-[780px] pr-1">
           {reextract && (
             <ReextractPanel
-              current={{ question_text: q.question_text, choices: q.choices, correct_answer: q.correct_answer }}
+              current={{ question_text: q.question_text, choices: q.choices, correct_answer: q.correct_answer, question_type: q.question_type }}
               proposal={reextract}
               onApply={applyReextract}
               onClose={() => setReextract(null)}
@@ -1099,22 +1153,101 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
             </div>
           )}
 
+          {/* Question type switch — right above the answer, so the type and
+              the key are checked together. */}
+          <div>
+            <span className="block text-xs text-soft-mute mb-1">Question type</span>
+            <div role="radiogroup" aria-label="Question type" className="inline-flex rounded-lg border border-divider bg-light-bg p-0.5 text-xs">
+              {([
+                [MC_TYPE, "Multiple choice"],
+                [SPR_TYPE, "Fill-in (SPR)"],
+              ] as const).map(([t, label]) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="radio"
+                  aria-checked={q.question_type === t}
+                  onClick={() => setQuestionType(t)}
+                  className={clsx(
+                    "rounded-md px-3 py-1 font-medium transition-colors",
+                    q.question_type === t ? "bg-surface text-charcoal shadow-sm" : "text-soft-mute hover:text-charcoal",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {keyProblem && (
+            <p role="alert" className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error">
+              Can&rsquo;t approve yet: {keyProblem.reason}.
+            </p>
+          )}
+
           {/* Correct answer + explanation */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-soft-mute mb-1">Correct Answer</label>
+              <label htmlFor="correct-answer" className="block text-xs text-soft-mute mb-1">Correct Answer</label>
               {q.correct_answer && (
                 <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 mb-1 [&_p]:my-0">
                   {q.correct_answer}
                 </MathMarkdown>
               )}
               <input
+                id="correct-answer"
                 type="text"
+                inputMode={q.question_type === SPR_TYPE ? "decimal" : undefined}
                 value={q.correct_answer ?? ""}
-                onChange={(e) => setQ((prev) => ({ ...prev, correct_answer: e.target.value || null }))}
-                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50"
-                placeholder="e.g. B or 3/4"
+                onChange={(e) => onAnswerChange(e.target.value)}
+                aria-invalid={!!keyProblem}
+                className={clsx(
+                  "w-full bg-light-bg border rounded-lg px-3 py-1.5 text-xs text-charcoal focus:outline-none focus:border-warm-coral/50",
+                  keyProblem ? "border-status-error/50" : "border-divider",
+                )}
+                placeholder={q.question_type === SPR_TYPE ? "e.g. 12, 3.5, 7/2" : "A, B, C or D"}
               />
+              {q.question_type === SPR_TYPE && (
+                <p className="mt-1 text-[11px] leading-snug text-soft-mute">{SPR_FORM_HELP}</p>
+              )}
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={runAiSuggestion}
+                  disabled={aiSuggestBusy || !q.question_type}
+                  title="The AI solves the question as it is on this page, without looking at the saved key. Nothing changes until you click Use."
+                  className="inline-flex items-center gap-1 rounded-md border border-divider bg-surface px-2 py-0.5 text-[11px] font-medium text-charcoal hover:bg-light-bg disabled:opacity-60"
+                >
+                  <Sparkles size={11} />
+                  {aiSuggestBusy ? "Solving… (about 10–30 s)" : "AI suggestion"}
+                </button>
+                {aiSuggest && aiSuggest.forType === q.question_type && (
+                  <span className="inline-flex items-center gap-1.5 text-[11px] text-charcoal" aria-label="AI suggestion">
+                    {aiSuggest.answer ? (
+                      <>
+                        AI suggestion: <strong>{aiSuggest.answer}</strong>
+                        {aiSuggest.answer !== (q.correct_answer ?? "").trim() && (
+                          <>
+                            {" · "}
+                            <button
+                              type="button"
+                              onClick={() => setQ((prev) => ({ ...prev, correct_answer: aiSuggest.answer }))}
+                              className="font-semibold text-warm-coral hover:underline"
+                            >
+                              Use
+                            </button>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-status-warning">No usable AI answer.</span>
+                    )}
+                  </span>
+                )}
+              </div>
+              {aiSuggest && aiSuggest.forType === q.question_type && aiSuggest.warnings.length > 0 && (
+                <p className="mt-1 text-[11px] text-status-warning">Check by hand: {aiSuggest.warnings.join("; ")}.</p>
+              )}
+              {aiSuggestError && <p className="mt-1 text-[11px] text-status-error">{aiSuggestError}</p>}
             </div>
             <div>
               <label className="block text-xs text-soft-mute mb-1">Page #</label>
@@ -1214,32 +1347,6 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                 <option value="Easy">Easy</option>
                 <option value="Medium">Medium</option>
                 <option value="Hard">Hard</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-xs text-soft-mute mb-1">Type</label>
-              <select
-                value={q.question_type ?? ""}
-                onChange={(e) => {
-                  const newType = (e.target.value || null) as Question["question_type"];
-                  setQ((prev) => ({
-                    ...prev,
-                    question_type: newType,
-                    // SPR must never carry choices; MC gets a blank editable set
-                    // if it currently has none so the admin can fill them in.
-                    choices:
-                      newType === "Student Produced Response"
-                        ? []
-                        : newType === "Multiple Choice" && prev.choices.length === 0
-                          ? []
-                          : prev.choices,
-                  }));
-                }}
-                className="w-full bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50"
-              >
-                <option value="">—</option>
-                <option value="Multiple Choice">Multiple Choice</option>
-                <option value="Student Produced Response">Student Produced Response</option>
               </select>
             </div>
           </div>

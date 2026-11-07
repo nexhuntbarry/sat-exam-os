@@ -54,6 +54,8 @@ export interface ParsedQuestion {
    * written into parsing_notes ("Needs review: …") at insert time.
    */
   review_reasons?: string[];
+  /** The page shows a student-response answer box / "Answer Preview" for this question. */
+  has_answer_box?: boolean;
 }
 
 // ────────────────────────────────────────────
@@ -82,6 +84,11 @@ const ParsedQuestionSchema = z.object({
   skill: z.string().describe("Skill (non-empty)"),
   concept: z.string().describe("Concept (non-empty)"),
   question_type: z.enum(["Multiple Choice", "Student Produced Response"]),
+  has_answer_box: z
+    .boolean()
+    .describe(
+      "True when this question's own area shows a student-response answer box / entry field / \"Answer Preview\" instead of A–D options (a fill-in question).",
+    ),
   has_image: z.boolean(),
   has_table: z.boolean(),
   has_formula: z.boolean(),
@@ -274,6 +281,11 @@ Many PDFs (e.g. browser printouts titled "Survey: print page") place a question'
 - Choices always FOLLOW their own stem. The A/B/C/D boxes printed at the top of a page, ABOVE a numbered stem, belong to the PREVIOUS question (the stem on the previous page) — NEVER to the stem printed below them on the same page.
 - A question's choices end where the next question's number box / "N." stem begins. A choice list may itself be split across a page break (e.g. A on one page, B–D on the next) — stitch it back together.
 - Before returning, sanity-check every question: its choices must make sense for ITS OWN stem (e.g. word-in-context options must fit the blank in that passage), and no two questions may share the identical set of four choices. If they do, you have shifted choices by one question — fix the binding.
+
+FILL-IN (STUDENT PRODUCED RESPONSE) LAYOUT (CRITICAL):
+- A question whose own area shows an answer box, an entry field, or the words "Answer Preview" is a Student Produced Response question: set question_type="Student Produced Response", has_answer_box=true, and choices=[] — even when A/B/C/D boxes are printed nearby. Never copy "Answer Preview" into question_text.
+- Choices are attached ONLY to the question number they FOLLOW. A/B/C/D boxes at the top of a page, before the next numbered stem, finish the PREVIOUS question's list (e.g. its C and D) — they never belong to a fill-in question below them. Never attach choices across a page break to a different question number.
+- A Student Produced Response question must end with NO choices, and its correct_answer is a number (e.g. 12, 3.5, 7/2), never a letter A–D.
 
 CHECKMARKS = CORRECT ANSWER:
 Some printouts mark the correct choice with a check-mark / check-circle icon (✓, often at the right edge of the choice box, with that box highlighted). When a choice of a question carries such a mark, set correct_answer to that choice's letter. Attribute the mark using the PAGE BREAKS rule above — a checked box at the top of a page belongs to the previous page's stem.
@@ -735,7 +747,84 @@ Return all questions in order via the schema. Confirm you have not missed any be
     );
   }
 
+  const fixes = reattachStrayChoices(questions);
+  if (fixes.length > 0) console.warn(`[parse-pdf] question-type / choice fixes: ${fixes.join(" | ")}`);
+
   return questions;
+}
+
+const ANSWER_PREVIEW = /\banswer\s+preview\b/i;
+const LETTERS = ["A", "B", "C", "D"] as const;
+
+/**
+ * Question type from layout, after the AI parse (March 2024 A Math M1 Q17:
+ * Q16's choices C/D at the top of the next page were attached to the
+ * fill-in Q17, whose key then became "C"):
+ *  - an answer box / "Answer Preview" means Student Produced Response with
+ *    no choices ("Answer Preview" is dropped from the stem);
+ *  - a choice list that doesn't start at A, sitting on the question after one
+ *    whose list stops short, goes back to that previous question;
+ *  - a fill-in question ends with no choices and never keeps a letter key.
+ * Mutates `questions`; returns one line per fix for the log. Each fixed
+ * question gets a review reason so a person checks it.
+ */
+export function reattachStrayChoices(questions: ParsedQuestion[]): string[] {
+  const log: string[] = [];
+  const sorted = [...questions].sort((a, b) => a.original_question_number - b.original_question_number);
+  for (let i = 0; i < sorted.length; i++) {
+    const q = sorted[i];
+    const prev = i > 0 ? sorted[i - 1] : null;
+    const reasons = (q.review_reasons ??= []);
+    if (ANSWER_PREVIEW.test(q.question_text ?? "")) {
+      q.question_text = q.question_text.replace(/\s*\banswer\s+preview\b:?\s*/gi, "\n").trim();
+    }
+    const answerBox = q.has_answer_box === true || ANSWER_PREVIEW.test(q.question_text ?? "");
+    const choices = Array.isArray(q.choices) ? q.choices : [];
+    const labels = choices.map((c) => c.label);
+
+    if (choices.length > 0) {
+      const startsLate = labels[0] !== "A";
+      const prevChoices = prev && Array.isArray(prev.choices) ? prev.choices : [];
+      const belongsToPrev =
+        !!prev &&
+        prev.question_type === "Multiple Choice" &&
+        prevChoices.length > 0 &&
+        // prev stops short (A, B …) and these are exactly the letters after it
+        prevChoices.every((c, idx) => c.label === LETTERS[idx]) &&
+        labels.every((l, idx) => l === LETTERS[prevChoices.length + idx]);
+      if ((startsLate || answerBox) && belongsToPrev && prev) {
+        prev.choices = [...prevChoices, ...choices];
+        q.choices = [];
+        reasons.push(
+          `choice${labels.length > 1 ? "s" : ""} ${labels.join(", ")} printed above this question belonged to Q${prev.original_question_number} and were moved back to it — check both questions`,
+        );
+        (prev.review_reasons ??= []).push(
+          `choice${labels.length > 1 ? "s" : ""} ${labels.join(", ")} were first attached to Q${q.original_question_number} (page break) and were moved back here — check the choices`,
+        );
+        log.push(`Q${q.original_question_number} → Q${prev.original_question_number}: ${labels.join("")}`);
+      } else if (answerBox) {
+        q.choices = [];
+        reasons.push("this question shows an answer box (fill-in) but choices were attached to it — they were removed; check the PDF");
+        log.push(`Q${q.original_question_number}: answer box, dropped choices ${labels.join("")}`);
+      }
+    }
+
+    if (answerBox && q.question_type !== "Student Produced Response") {
+      q.question_type = "Student Produced Response";
+      q.choices = [];
+      log.push(`Q${q.original_question_number}: answer box → fill-in`);
+    }
+    if (q.question_type === "Student Produced Response") {
+      if (Array.isArray(q.choices) && q.choices.length > 0) q.choices = [];
+      if (q.correct_answer && /^\(?[A-Da-d]\)?$/.test(q.correct_answer.trim())) {
+        reasons.push(`the fill-in answer was read as the letter "${q.correct_answer.trim()}" — the key was cleared so it gets solved; check it`);
+        log.push(`Q${q.original_question_number}: cleared letter key ${q.correct_answer}`);
+        q.correct_answer = null;
+      }
+    }
+    if (reasons.length === 0) delete q.review_reasons;
+  }
+  return log;
 }
 
 // ────────────────────────────────────────────
