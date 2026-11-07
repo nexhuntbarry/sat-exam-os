@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { forbidCrossSide } from "@/lib/qa";
+import { forbidCrossSide, getQaClassGroupIds, onSide } from "@/lib/qa";
 import {
   TEST_STATUSES,
   dateOrderError,
@@ -65,6 +65,41 @@ export async function GET(
   });
 }
 
+/** Atomically adds/removes ids from a jsonb string-array column via compare-and-swap.
+ * Retries up to 5 times on CAS conflict (concurrent writer changed the value).
+ * Returns an error string on failure, null on success. */
+async function casArrayOp(
+  db: ReturnType<typeof getServiceClient>,
+  testId: string,
+  jsonField: "class_group_ids" | "student_ids",
+  toAdd: string[],
+  toRemove: Set<string>,
+): Promise<string | null> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: row, error: readErr } = await db
+      .from("test_assignments")
+      .select(jsonField)
+      .eq("test_id", testId)
+      .maybeSingle();
+    if (readErr) return "Could not read test assignment";
+    if (!row) return "Test assignment not found"; // no ?? [] fallback
+    const rowRecord = row as Record<string, unknown>;
+    const old: string[] = Array.isArray(rowRecord[jsonField]) ? (rowRecord[jsonField] as string[]) : [];
+    const next = [...new Set([...old.filter((v) => !toRemove.has(v)), ...toAdd])];
+    if (JSON.stringify(old) === JSON.stringify(next)) return null; // no-op
+    // CAS: only commit if no concurrent writer changed the field between read and write.
+    const { data: updated } = await db
+      .from("test_assignments")
+      .update({ [jsonField]: next })
+      .eq("test_id", testId)
+      .filter(jsonField, "eq", JSON.stringify(old))
+      .select("test_id");
+    if ((updated ?? []).length > 0) return null; // committed
+    if (attempt < 4) await new Promise((r) => setTimeout(r, 15 * (attempt + 1)));
+  }
+  return "Concurrent update conflict — please retry";
+}
+
 // PATCH /api/admin/tests/[id]
 export async function PATCH(
   req: Request,
@@ -89,7 +124,10 @@ export async function PATCH(
       ...(Array.isArray(body.teacherIds) ? (body.teacherIds as string[]) : []),
       ...(Array.isArray(body.studentIds) ? (body.studentIds as string[]) : []),
     ],
-    classGroupIds: Array.isArray(body.classGroupIds) ? (body.classGroupIds as string[]) : [],
+    classGroupIds: [
+      ...(Array.isArray(body.classGroupIds) ? (body.classGroupIds as string[]) : []),
+      ...(Array.isArray(body.addClassGroupIds) ? (body.addClassGroupIds as string[]) : []),
+    ],
   });
   if (linkCheck) return linkCheck;
 
@@ -250,14 +288,42 @@ export async function PATCH(
     return NextResponse.json({ error: "Failed to update test" }, { status: 500 });
   }
 
-  // Update assignment if provided
-  if (body.teacherIds !== undefined || body.studentIds !== undefined || body.classGroupIds !== undefined) {
+  // Update assignment if provided.
+  // Full-replacement fields (teacherIds, studentIds, classGroupIds) write the
+  // exact set provided.  Atomic add/remove fields (addClassGroupIds, removeClassGroupIds)
+  // use compare-and-swap so concurrent callers never silently drop each other's changes.
+  if (
+    body.teacherIds !== undefined ||
+    body.studentIds !== undefined ||
+    body.classGroupIds !== undefined
+  ) {
     const assignUpdates: Record<string, unknown> = {};
     if (body.teacherIds !== undefined) assignUpdates.teacher_ids = body.teacherIds;
     if (body.studentIds !== undefined) assignUpdates.student_ids = body.studentIds;
     if (body.classGroupIds !== undefined) assignUpdates.class_group_ids = body.classGroupIds;
 
-    await db.from("test_assignments").update(assignUpdates).eq("test_id", id);
+    const { error: assignErr } = await db.from("test_assignments").update(assignUpdates).eq("test_id", id);
+    if (assignErr) {
+      console.error("[admin/tests/patch] assignment update:", assignErr);
+      return NextResponse.json({ error: "Failed to update assignment" }, { status: 500 });
+    }
+  }
+
+  // Atomic class-group add/remove — CAS loop so concurrent assign/unassign
+  // operations never silently overwrite each other.
+  if (body.addClassGroupIds !== undefined || body.removeClassGroupIds !== undefined) {
+    const toAdd = Array.isArray(body.addClassGroupIds) ? (body.addClassGroupIds as string[]) : [];
+    const toRemove = new Set(Array.isArray(body.removeClassGroupIds) ? (body.removeClassGroupIds as string[]) : []);
+
+    // Additional cross-side guard for the ids being added.
+    if (toAdd.length > 0) {
+      const qaIds = await getQaClassGroupIds();
+      const badId = toAdd.find((cgId) => !onSide(cgId, qaIds, authResult.isQa));
+      if (badId) return bad("Cross-side class group assignment not allowed");
+    }
+
+    const casErr = await casArrayOp(db, id, "class_group_ids", toAdd, toRemove);
+    if (casErr) return bad(casErr, casErr.includes("not found") ? 404 : 409);
   }
 
   return NextResponse.json({ success: true });

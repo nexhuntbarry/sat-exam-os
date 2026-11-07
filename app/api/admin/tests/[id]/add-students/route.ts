@@ -42,32 +42,42 @@ export async function POST(
   const roleErr = await roleError(db, incoming, "student");
   if (roleErr) return NextResponse.json({ error: roleErr }, { status: 400 });
 
-  const { data: assignment } = await db
-    .from("test_assignments")
-    .select("id, student_ids")
-    .eq("test_id", testId)
-    .single();
+  // CAS loop: read current student_ids, merge, write only if unchanged.
+  // Retries handle concurrent callers (e.g. two admins adding different students
+  // at the same time) without either silently losing the other's additions.
+  let added = 0;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const { data: row, error: readErr } = await db
+      .from("test_assignments")
+      .select("student_ids")
+      .eq("test_id", testId)
+      .maybeSingle();
+    if (readErr) {
+      console.error("[add-students] read error:", readErr);
+      return NextResponse.json({ error: "Failed to add students" }, { status: 500 });
+    }
+    if (!row) {
+      return NextResponse.json({ error: "Test assignment not found" }, { status: 404 });
+    }
+    const existing: string[] = Array.isArray(row.student_ids) ? (row.student_ids as string[]) : [];
+    const merged = Array.from(new Set([...existing, ...incoming]));
+    added = merged.length - existing.length;
+    if (added === 0) break; // all already present, nothing to do
 
-  if (!assignment) {
-    return NextResponse.json({ error: "Test assignment not found" }, { status: 404 });
+    const { data: updated, error: writeErr } = await db
+      .from("test_assignments")
+      .update({ student_ids: merged })
+      .eq("test_id", testId)
+      .filter("student_ids", "eq", JSON.stringify(existing))
+      .select("student_ids");
+    if (writeErr) {
+      console.error("[add-students] update error:", writeErr);
+      return NextResponse.json({ error: "Failed to add students" }, { status: 500 });
+    }
+    if ((updated ?? []).length > 0) break; // CAS succeeded
+    if (attempt < 4) await new Promise((r) => setTimeout(r, 15 * (attempt + 1)));
+    else return NextResponse.json({ error: "Concurrent update conflict — please retry" }, { status: 409 });
   }
 
-  const existing: string[] = (assignment.student_ids as string[]) ?? [];
-  const merged = Array.from(new Set([...existing, ...incoming]));
-  const added = merged.length - existing.length;
-
-  const { error } = await db
-    .from("test_assignments")
-    .update({ student_ids: merged })
-    .eq("id", assignment.id);
-
-  if (error) {
-    console.error("[add-students] update error:", error);
-    return NextResponse.json(
-      { error: "Failed to add students" },
-      { status: 500 },
-    );
-  }
-
-  return NextResponse.json({ ok: true, added, total: merged.length });
+  return NextResponse.json({ ok: true, added, total: (incoming.length + added) });
 }

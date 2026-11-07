@@ -5,11 +5,11 @@
 // and the take page's Module 2 recovery, checked before anything is
 // created: same QA side, test Published, assigned to the student.
 //
-// Exception: a student whose latest session already has a graded Module 1
-// is mid-attempt. Un-assigning them mid-exam must not strand them between
-// modules, so for them the assignment check is skipped — but only for
-// recovering / resuming that attempt, never for starting a new one
-// (`assigned` tells the caller which).
+// Exception: a student whose latest session has an In Progress submission
+// (or a graded M1 awaiting M2 handoff) is mid-attempt. Un-assigning them
+// mid-exam must not strand them, so for them the assignment check is
+// skipped — but only for resuming/recovering that attempt, never for
+// starting a new one (`assigned` tells the caller which).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { forbidCrossSide } from "@/lib/qa";
@@ -22,6 +22,43 @@ export interface StudentTestAccess {
   assigned: boolean;
 }
 
+/** Returns true if the student's latest attempt has any In Progress submission. */
+async function latestSessionHasAnyInProgress(db: SupabaseClient, testId: string, studentId: string) {
+  // Two-module tests use session_id to link modules; check the latest session.
+  const { data: latest } = await db
+    .from("submissions")
+    .select("session_id")
+    .eq("test_id", testId)
+    .eq("student_id", studentId)
+    .not("session_id", "is", null)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latest?.session_id) {
+    const { data: inProgress } = await db
+      .from("submissions")
+      .select("id")
+      .eq("session_id", latest.session_id)
+      .eq("student_id", studentId)
+      .eq("status", "In Progress")
+      .limit(1)
+      .maybeSingle();
+    if (inProgress) return true;
+  }
+  // Single-module test (no session_id): check for a direct in-progress row.
+  const { data: single } = await db
+    .from("submissions")
+    .select("id")
+    .eq("test_id", testId)
+    .eq("student_id", studentId)
+    .is("session_id", null)
+    .eq("status", "In Progress")
+    .limit(1)
+    .maybeSingle();
+  return Boolean(single);
+}
+
+/** Returns true if the latest session has a graded M1 (awaiting M2 handoff). */
 async function latestSessionHasGradedModule1(db: SupabaseClient, testId: string, studentId: string) {
   const { data: latest } = await db
     .from("submissions")
@@ -53,6 +90,10 @@ export async function studentTestAccess(
   if (test.status !== "Published") return { error: { status: 403, error: "Test is not available" }, assigned: false };
   // Directly or via a class group, same rule as the My Tests list.
   if (await isTestAssignedToStudent(db, test.id, user.userId)) return { error: null, assigned: true };
+  // Allow resuming/recovering an in-progress attempt even if unassigned.
+  // This prevents stranding a student mid-exam when an admin unassigns the test.
+  // `assigned: false` tells the caller not to allow starting a NEW attempt.
+  if (await latestSessionHasAnyInProgress(db, test.id, user.userId)) return { error: null, assigned: false };
   if (await latestSessionHasGradedModule1(db, test.id, user.userId)) return { error: null, assigned: false };
   return { error: { status: 403, error: "Test is not assigned to you" }, assigned: false };
 }
