@@ -5,6 +5,8 @@ import { getQaTestIds, onSide } from "@/lib/qa";
 import { scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { formatDate } from "@/lib/datetime";
 import PrintableTest, { type PrintModule, type PrintQuestion } from "@/components/tests/PrintableTest";
+import PrintPreview from "@/components/print/PrintPreview";
+import { printPageCss } from "@/lib/print-page-css";
 
 export const dynamic = "force-dynamic";
 
@@ -70,11 +72,27 @@ export default async function PrintTestPage({
   }
 
   return (
-    <PrintableTest
-      testName={test.test_name}
-      modules={modules}
-      withKey={withKey}
-      generatedOn={formatDate(new Date().toISOString())}
-    />
+    <PrintPreview
+      title={`${test.test_name} — ${withKey ? "with answer key" : "blank test"}`}
+      pageCss={printPageCss({ header: { text: test.test_name } })}
+      options={[
+        {
+          param: "key",
+          label: "Version",
+          value: withKey ? "1" : "",
+          choices: [
+            { value: "", label: "Blank test" },
+            { value: "1", label: "With answer key" },
+          ],
+        },
+      ]}
+    >
+      <PrintableTest
+        testName={test.test_name}
+        modules={modules}
+        withKey={withKey}
+        generatedOn={formatDate(new Date().toISOString())}
+      />
+    </PrintPreview>
   );
 }

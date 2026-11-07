@@ -46,7 +46,11 @@ export default function PrintButton({ label = "Download PDF" }: { label?: string
 export function PrintPendingNotice() {
   const [pending, setPending] = useState(false);
   useEffect(() => {
-    const check = () => setPending(Array.from(document.images).some((i) => !i.complete));
+    const update = () => setPending(Array.from(document.images).some((i) => !i.complete));
+    // load/error don't bubble: capture them, images only.
+    const check = (e?: Event) => {
+      if (!e || e.target instanceof HTMLImageElement) update();
+    };
     check();
     document.addEventListener("load", check, true);
     document.addEventListener("error", check, true);

@@ -9,7 +9,6 @@ import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel"
 import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
 import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDate, formatDateTime } from "@/lib/datetime";
-import { waitForImages } from "@/lib/print-images";
 
 interface StudentInfo {
   name: string;
@@ -123,8 +122,6 @@ export default function SubmissionDetailPage() {
   // a "Save" click. Visible status: "Saving…" / "Saved".
   const [tutorNotes, setTutorNotes] = useState("");
   const [tutorStatus, setTutorStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const [printProgress, setPrintProgress] = useState<{ loaded: number; total: number } | null>(null);
-  const [printFailed, setPrintFailed] = useState<string[]>([]);
   const tutorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -179,20 +176,6 @@ export default function SubmissionDetailPage() {
   }
   const score = scoreDisplay(scoreModules, submission.scaledSection);
 
-  async function handlePrint() {
-    // Open every row on screen too (the bodies are already in the DOM and
-    // printed regardless), then wait for every figure: a print snapshot
-    // draws nothing for an image that is still loading.
-    document.querySelectorAll<HTMLDetailsElement>("details").forEach((d) => {
-      d.open = true;
-    });
-    window.dispatchEvent(new Event("submission-detail-expand-all"));
-    const res = await waitForImages(document, { onProgress: (loaded, total) => setPrintProgress({ loaded, total }) });
-    setPrintProgress(null);
-    setPrintFailed(res.failed);
-    window.print();
-  }
-
   return (
     <div className="max-w-4xl mx-auto space-y-6 print:max-w-none">
       {/* Breadcrumb */}
@@ -202,20 +185,19 @@ export default function SubmissionDetailPage() {
         <Link href={`/teacher/tests/${testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
         <span>/</span>
         <span className="text-charcoal">{student.name}</span>
-        <button
-          onClick={handlePrint}
-          disabled={printProgress !== null}
+        {/* The student's printed result: preview at Letter size, same
+            visibility as the student's own result page. Ctrl/Cmd+P on this
+            page still prints every question with its figures. */}
+        <a
+          href={`/print/results/${testId}?subs=${submissionId}`}
+          target="_blank"
+          rel="noopener"
           className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-coral hover:bg-warm-coral-dark text-white text-xs font-semibold transition-colors"
-          title="Open every answer and trigger the print dialog (Save as PDF works from there)"
+          title="Preview and print this student's result (Save as PDF from there)"
         >
           <Printer size={13} />
-          {printProgress ? `Loading images… ${printProgress.loaded}/${printProgress.total}` : "Print / Save PDF"}
-        </button>
-        {printFailed.length > 0 && (
-          <p role="alert" className="basis-full text-right text-xs text-status-error">
-            {printFailed.length} image{printFailed.length === 1 ? "" : "s"} didn&apos;t load and will be missing on paper: {printFailed.join(", ")}. Reload and try again.
-          </p>
-        )}
+          Print
+        </a>
       </div>
 
       {/* Student header */}

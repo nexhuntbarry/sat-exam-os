@@ -6,13 +6,18 @@ const withNextIntl = createNextIntlPlugin("./i18n/request.ts");
 const nextConfig: NextConfig = {
   // pdfjs-dist + @napi-rs/canvas + sharp ship native bindings that must be
   // resolved at runtime, not bundled by Turbopack/Webpack.
-  serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas", "sharp"],
+  // @sparticuz/chromium + puppeteer-core render result PDFs (lib/render-pdf).
+  serverExternalPackages: ["pdfjs-dist", "@napi-rs/canvas", "sharp", "@sparticuz/chromium", "puppeteer-core"],
   // /terms, /privacy and /disclaimer read docs/LEGAL/*.md at request time
   // (the root layout uses Clerk, so they can't be prerendered).
   outputFileTracingIncludes: {
     "/terms": ["./docs/LEGAL/terms.md"],
     "/privacy": ["./docs/LEGAL/privacy.md"],
     "/disclaimer": ["./docs/LEGAL/disclaimer.md"],
+    // Headless Chromium for result PDFs: the brotli'd binary is read at
+    // runtime, not imported, so tracing can't find it. (Glob key: "[testId]"
+    // would be read as a character class.)
+    "/api/print/results/*/pdf": ["./node_modules/@sparticuz/chromium/**"],
   },
   async headers() {
     // CSP allowlist:

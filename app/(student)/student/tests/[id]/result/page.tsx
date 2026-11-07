@@ -2,7 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import { CheckCircle, XCircle, Clock, BarChart2 } from "lucide-react";
+import { CheckCircle, XCircle, Clock, BarChart2, Printer } from "lucide-react";
 import { clsx } from "clsx";
 import MathMarkdown from "@/components/MathMarkdown";
 import { attemptScore } from "@/lib/score-display";
@@ -440,7 +440,18 @@ export default async function StudentResultPage({
         }
         return (
         <div className="space-y-4">
-          <h2 className="text-charcoal font-semibold text-lg">Answer Review</h2>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-charcoal font-semibold text-lg">Answer Review</h2>
+            <a
+              href={`/print/results/${id}?subs=${submission.id}`}
+              target="_blank"
+              rel="noopener"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-light-bg hover:bg-divider text-charcoal text-xs font-semibold transition-colors print:hidden"
+            >
+              <Printer size={13} />
+              Print
+            </a>
+          </div>
           {groups.map((group) => (
           <div key={group.key} className="space-y-3">
             {group.label && (

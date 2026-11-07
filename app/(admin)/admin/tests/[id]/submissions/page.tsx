@@ -4,6 +4,7 @@ import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import GrantRetakeButton from "./GrantRetakeButton";
+import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
 import { formatDateTimeSeconds, formatShortDateTime, formatShortDate } from "@/lib/datetime";
 import { attemptScore, type AttemptScore } from "@/lib/score-display";
 import { getTestSections } from "@/lib/teacher-access";
@@ -230,6 +231,8 @@ export default async function TestSubmissionsPage({
           </Link>
         )}
       </div>
+
+      {attempts.length > 0 && <ResultsDownloadPanel testId={test.id} />}
 
       {attempts.length === 0 ? (
         <div className="py-16 text-center text-soft-mute text-sm border-y border-divider">
