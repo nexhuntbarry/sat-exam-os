@@ -3,6 +3,11 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { getServiceClient } from "@/lib/supabase";
 import QuestionReviewPanel from "@/components/questions/QuestionReviewPanel";
+import FigureDiff from "@/components/questions/FigureDiff";
+import { getCurrentUser } from "@/lib/auth";
+import { forbidQa } from "@/lib/qa";
+import { figureProposalUrl } from "@/lib/review-queue";
+import { loadProposal } from "@/lib/figure-compare";
 
 async function getQuestion(id: string) {
   const db = getServiceClient();
@@ -85,6 +90,11 @@ export default async function QuestionDetailPage({
 
   if (!question) notFound();
 
+  // Figure check found a difference with the PDF: show both side by side.
+  const proposalUrl = figureProposalUrl(question.parsing_notes);
+  const proposal = proposalUrl ? await loadProposal(proposalUrl).catch(() => null) : null;
+  const user = proposal ? await getCurrentUser() : null;
+
   const nav = await getReviewNav(
     question.module_id,
     question.id,
@@ -109,6 +119,18 @@ export default async function QuestionDetailPage({
           </Link>
         )}
       </div>
+      {proposal && proposal.questionId === question.id && (
+        <section aria-label="Figure check" className="rounded-2xl border border-status-warning/30 bg-status-warning/5 p-4">
+          <h2 className="mb-2 text-sm font-semibold text-charcoal">Figure check: differs from the PDF</h2>
+          <FigureDiff
+            questionId={question.id}
+            updatedAt={question.updated_at ?? null}
+            proposal={{ parts: proposal.parts, diffs: proposal.diffs, pages: proposal.pages, stored: proposal.stored, pdf: proposal.pdf }}
+            canWrite={!!user && forbidQa(user) === null}
+            reloadOnDone
+          />
+        </section>
+      )}
       <QuestionReviewPanel key={question.id} question={question} nav={nav} />
     </div>
   );

@@ -102,6 +102,9 @@ ok("priority: key first, then stem, then figure", multi.primary === "key_dispute
 const counts = countByGroup([row({ parsing_notes: STEM_CUT_OFF_NOTE }), row({ parsing_notes: STEM_CUT_OFF_NOTE }), row({ parsing_notes: "Answer = official key" })]);
 ok("countByGroup", counts.stem === 2 && counts.other === 1 && counts.key_dispute === 0);
 
+ok("'re-extracted from the PDF — check the explanation' → explanation", g("Needs review: stem and choices re-extracted from the PDF (quote cut-off fix, 2026-11-07) — check the explanation against the full question, then approve.") === "explanation");
+ok("queue history notes never block", approvalBlockers(row({ parsing_notes: "Question text replaced from the PDF by a reviewer (2026-11-07); Figure check: stored version kept by a reviewer (2026-11-07)" })).length === 0);
+
 // ── Owner item 3: notes about the old key go when the key changes ──
 const stemAudit = "Semantic audit: Stem is truncated mid-sentence ('the drugs were' cut off)";
 const keyFix = `Key fix 2026-10-26: key = "SAT ENGLISH MODULE 2 AK" (printed on the Module 2 PDF; the two Oct 2024 ENG PDFs carry each other's keys), verified against this PDF's screenshots`;

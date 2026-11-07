@@ -32,6 +32,8 @@ import { loadProposal, replaceTableBlock } from "@/lib/figure-compare";
 import {
   approvalBlockers,
   dropFigureNotes,
+  EXPLANATION_CHECK_NOTE,
+  STEM_REPLACED_PREFIX,
   figureProposalUrl,
   FIGURE_KEPT_PREFIX,
   FIGURE_USED_PDF_PREFIX,
@@ -112,7 +114,7 @@ async function refreshExplanation(row: Row, userId?: string): Promise<{ explanat
   if (draftRejection(row, res.explanation)) return { outcome: "failed" };
   // The old explanation-problem notes are settled by the new explanation.
   const ctx = { officialKey: keyIsOfficial(row), failingChecks: failingChecks(row, res.explanation) };
-  const notes = removeNotes(row.parsing_notes, (s) => classifyNote(s, ctx) === "explanation").notes;
+  const notes = removeNotes(row.parsing_notes, (s) => classifyNote(s, ctx) === "explanation" || EXPLANATION_CHECK_NOTE.test(s)).notes;
   return { explanation: res.explanation, notes, outcome: "regenerated" };
 }
 
@@ -239,7 +241,7 @@ export async function decide(
       if (!text) return { ok: false, status: 400, error: "The re-extracted text is empty." };
       const patch: Record<string, unknown> = {
         question_text: text,
-        parsing_notes: [removeNotes(row.parsing_notes, isStemNote).notes, `Question text replaced from the PDF by a reviewer (${new Date().toISOString().slice(0, 10)})`].filter(Boolean).join("; "),
+        parsing_notes: [removeNotes(row.parsing_notes, isStemNote).notes, `${STEM_REPLACED_PREFIX} (${new Date().toISOString().slice(0, 10)})`].filter(Boolean).join("; "),
       };
       const ex = await refreshExplanation({ ...row, ...patch } as Row, opts.userId);
       if (ex.explanation) patch.explanation = ex.explanation;
