@@ -430,7 +430,7 @@ export function findApproveBlocker(
   if (stemLooksCutOff(questionText) && !endsCleanly) {
     return { reason: "the question text looks cut off (compare it with the PDF)", note: STEM_CUT_OFF_NOTE };
   }
-  if (questionType !== "Student-Produced Response" && Array.isArray(choices) && choices.length > 0) {
+  if (questionType !== "Student Produced Response" && Array.isArray(choices) && choices.length > 0) {
     const bad = choices.findIndex((c) => choiceLooksBroken(c));
     if (bad >= 0) {
       const label = (choices[bad] as { label?: string } | null)?.label ?? String.fromCharCode(65 + bad);
