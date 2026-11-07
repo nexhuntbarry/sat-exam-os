@@ -243,8 +243,12 @@ export function keyTypeProblem(q: {
   correct_answer: string | null | undefined;
   question_text?: string | null;
   choices?: unknown;
+  /** The official key: a verified official number longer than 5/6
+   *  characters (e.g. 1905.12) is allowed; the answer box widens for it. */
+  official_answer?: string | null;
 }): KeyProblem | null {
   const key = (q.correct_answer ?? "").trim();
+  const official = new Set(keyCandidates(q.official_answer).map((c) => normalizeKeyText(c)));
   if (q.question_type === SPR_TYPE) {
     if (key) {
       const cands = keyCandidates(key);
@@ -257,6 +261,7 @@ export function keyTypeProblem(q: {
       }
       for (const c of cands) {
         const p = sprEntryProblem(c);
+        if (p && p.startsWith("is too long") && official.has(normalizeKeyText(c))) continue;
         if (p) return { code: "spr-invalid-form", reason: `the Fill-in (SPR) key "${c}" ${p}` };
       }
       const r = roundingProblem(key, roundingInstruction(q.question_text));
@@ -531,18 +536,20 @@ function keyNumber(cand: string): number | null {
 /**
  * A key written as a decimal that fills the space (".6667", "0.667",
  * "71.33") is often the rounded or truncated form of a simple fraction.
- * Returns that fraction's value (smallest denominator ≤ 100) when the
+ * Returns that fraction's value (smallest denominator ≤ 20) when the
  * decimal is one of its fill forms, else null.
  */
 export function impliedExactValue(cand: string): number | null {
   const s = normalizeKeyText(cand);
   if (!/^-?\d*\.\d{2,}$/.test(s)) return null;
+  // Only a decimal that exactly fills the space (".6667", "0.667", "71.33").
   const body = s.replace(/^-/, "");
-  if (body.length < SPR_MAX_CHARS && body.replace(/^0(?=\.)/, "").length < SPR_MAX_CHARS) return null;
+  if (body.length !== SPR_MAX_CHARS && body.replace(/^0(?=\.)/, "").length !== SPR_MAX_CHARS) return null;
   const k = Number(s);
   const d = (s.split(".")[1] ?? "").length;
   const scale = 10 ** d;
-  for (let q = 2; q <= 100; q++) {
+  // Small denominators only: a key like 0.018 or 11.25 is exact, not 1/53.
+  for (let q = 2; q <= 20; q++) {
     const w = Math.round(k * q) / q;
     if (fitsExactDecimal(w) || Math.sign(w) !== Math.sign(k)) continue;
     const a = Math.abs(w);

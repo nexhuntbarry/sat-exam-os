@@ -28,12 +28,12 @@ export async function POST(req: Request) {
   // cut off: they stay in (or move to) Needs Review with a note instead of
   // being approved.
   async function excludePlaceholders(
-    rows: { id: string; question_text: string | null; choices: unknown; question_type: string | null; correct_answer: string | null; parsing_notes: string | null }[],
+    rows: { id: string; question_text: string | null; choices: unknown; question_type: string | null; correct_answer: string | null; official_answer?: string | null; parsing_notes: string | null }[],
   ): Promise<{ clean: string[]; blocked: number }> {
     const clean: string[] = [];
     let blocked = 0;
     for (const r of rows) {
-      const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer);
+      const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer, r.official_answer);
       if (!blocker) {
         clean.push(r.id);
         continue;
@@ -71,7 +71,7 @@ export async function POST(req: Request) {
     }
     const { data: rows, error: selErr } = await db
       .from("questions")
-      .select("id, question_text, choices, question_type, correct_answer, parsing_notes")
+      .select("id, question_text, choices, question_type, correct_answer, official_answer, parsing_notes")
       .in("id", ids);
     if (selErr) {
       console.error("[bulk-approve] select error:", selErr);
@@ -104,7 +104,7 @@ export async function POST(req: Request) {
       minConfidence?: number;
     };
 
-    let query = db.from("questions").select("id, question_text, choices, question_type, correct_answer, parsing_notes");
+    let query = db.from("questions").select("id, question_text, choices, question_type, correct_answer, official_answer, parsing_notes");
 
     if (moduleId) query = query.eq("module_id", moduleId);
     if (minConfidence !== undefined) {

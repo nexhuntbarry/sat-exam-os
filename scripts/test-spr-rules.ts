@@ -9,6 +9,7 @@ import {
   acceptedSprEntries,
   fillDecimalForms,
   impliedExactValue,
+  keyTypeProblem,
   acceptedAnswersText,
   sanitizeSprInput,
   sprAnswerLine,
@@ -104,6 +105,17 @@ eq("sanitize default box", sanitizeSprInput("1905.12"), "1905.");
 eq("long key graded", answersMatch("1905.12", "1905.12"), true);
 eq("long key wrong value", answersMatch("1905.1", "1905.12"), false);
 eq("long key feedback none", sprEntryFeedback("1905.12", "1905.12"), null);
+eq("long official key allowed", keyTypeProblem({ question_type: "Student Produced Response", correct_answer: "1905.12", official_answer: "1905.12" }), null);
+eq("long AI key flagged", keyTypeProblem({ question_type: "Student Produced Response", correct_answer: "1905.12" })?.code, "spr-invalid-form");
+eq("accepted 1905.12", acceptedSprEntries("1905.12"), [["1905.12"]]);
+
+// Exact keys are not mistaken for approximations of a fraction.
+eq("implied 0.018", impliedExactValue("0.018"), null);
+eq("implied 11.25", impliedExactValue("11.25"), null);
+eq("implied 1905.12", impliedExactValue("1905.12"), null);
+eq("11.26 vs 11.25", answersMatch("11.26", "11.25"), false);
+eq("1/53 vs 0.018", answersMatch("1/53", "0.018"), false);
+eq(".0189 vs 0.018", answersMatch(".0189", "0.018"), false);
 
 console.log(`\n${total - failed}/${total} passed`);
 if (failed > 0) process.exit(1);

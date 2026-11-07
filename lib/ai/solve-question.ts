@@ -856,7 +856,7 @@ export async function explainOfficialAndPersist(
           );
           const conflict = res.ok && !res.agrees && res.aiAnswer ? res.aiAnswer : null;
           const truncatedOfficial = !res.ok;
-          const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: ans, question_text: q.question_text, choices: q.choices });
+          const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: ans, question_text: q.question_text, choices: q.choices, official_answer: q.official_answer });
           if (truncatedOfficial) console.warn(`[explain-official] q${q.original_question_number}: explanation still cut off after retry`);
           const blindFigure = stemFigureMissing(q);
           const placeholder = findParsePlaceholder(q.question_text, q.choices);
