@@ -380,7 +380,10 @@ export function decideAutoFix(
     // A person decides the key. Explanation is not written.
     const notes = [...splitNotes(r.parsing_notes).filter((s) => !s.startsWith(REGEN_DISAGREE_PREFIX)), regenDisagreeNote(res.aiAnswer, key)].join("; ");
     const update: Record<string, unknown> = { parsing_notes: notes, updated_at: now.toISOString() };
-    if (r.parsing_status === "Approved") update.parsing_status = "Needs Review";
+    // Never demote: an Approved key was already checked by a person; the
+    // note flags the AI's doubt without pulling the question. Draft rows
+    // move to Needs Review so a person sees them.
+    if (r.parsing_status === "Draft") update.parsing_status = "Needs Review";
     const held = applyLiveHold(
       { id: r.id, parsing_status: r.parsing_status, parsing_notes: r.parsing_notes, correct_answer: r.correct_answer },
       update,
