@@ -21,6 +21,7 @@ import { safeEvaluate, tryEvaluate, equationHolds, SafeEvalError } from "../lib/
 import { findApproveBlocker } from "../lib/parse-guards";
 import { aiAnswerAgrees } from "../lib/ai/solve-question";
 import { reattachStrayChoices, type ParsedQuestion } from "../lib/ai/parse-pdf";
+import { analyzeKeyRow, cleanSprKey, type KeyCheckRow } from "../lib/key-check";
 
 let failed = 0;
 let passed = 0;
@@ -234,6 +235,39 @@ function pq(n: number, type: ParsedQuestion["question_type"], labels: string[], 
   reattachStrayChoices(qs);
   eq([qs[0].choices.length, qs[1].choices.length, qs[1].review_reasons], [4, 4, undefined], "normal MC untouched");
 }
+
+// ── Scanner suggestions (lib/key-check, pure parts) ──────────────────
+eq(cleanSprKey("1,000", null), "1000", "clean comma");
+eq(cleanSprKey("$5", null), "5", "clean dollar");
+eq(cleanSprKey("50%", null), "50", "clean percent");
+eq(cleanSprKey("3 1/2", null), "7/2", "clean mixed number");
+eq(cleanSprKey("12 cm", null), "12", "clean units");
+eq(cleanSprKey("248.2", q17), "248", "clean → rounded as asked");
+eq(cleanSprKey("1905.12", "what percent of c is a?"), null, "too long without rounding → no silent change");
+const row = (o: Partial<KeyCheckRow>): KeyCheckRow => ({
+  id: "x", module_id: "m", original_question_number: 17, question_type: "Student Produced Response", question_text: q17,
+  choices: [], correct_answer: "C", official_answer: null, explanation: "Final answer: 248", parsing_status: "Draft", section: "Math", ...o,
+});
+eq(analyzeKeyRow(row({}))?.suggestion, { correct_answer: "248" }, "SPR letter key → explanation's final answer");
+eq(analyzeKeyRow(row({ official_answer: "B" }))?.suggestion, null, "official letter → no numeric guess");
+eq(
+  analyzeKeyRow(row({ choices: ["A", "B", "C", "D"].map((l) => ({ label: l, text: l })) }))?.suggestion,
+  { question_type: "Multiple Choice" },
+  "SPR letter key + 4 choices → switch to MC",
+);
+eq(analyzeKeyRow(row({ correct_answer: "248.2" }))?.suggestion, { correct_answer: "248" }, "rounding suggestion");
+eq(
+  analyzeKeyRow(row({ correct_answer: "249", explanation: "Final answer: 248" }))?.suggestion,
+  { correct_answer: "248" },
+  "Math 001 Q17 shape: 249 is a valid whole number, but the explanation says 248",
+);
+eq(analyzeKeyRow(row({ question_text: "What is x?", correct_answer: "249", explanation: "So x = 248. Final answer: 248" }))?.code, "ai-explanation-disagrees", "AI key vs explanation");
+eq(analyzeKeyRow(row({ question_text: "What is x?", correct_answer: "248", explanation: "Final answer: 248" })), null, "consistent row → no finding");
+eq(
+  analyzeKeyRow(row({ question_type: "Multiple Choice", question_text: "Which?", correct_answer: "84", choices: [{ label: "A", text: "12" }, { label: "B", text: "84" }, { label: "C", text: "3" }, { label: "D", text: "4" }] }))?.suggestion,
+  { correct_answer: "B" },
+  "MC key = choice text → letter",
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);

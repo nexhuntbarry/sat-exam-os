@@ -149,8 +149,7 @@ export default function KeyCheckList({ findings, canApply }: { findings: KeyChec
                       label="Apply"
                       tone="primary"
                       onClick={() => void startApply(f)}
-                      disabled={!canApply}
-                      title={canApply ? "Preview the change and the affected attempts, then confirm" : "QA accounts cannot modify shared data"}
+                      title="Preview the change and the affected attempts, then confirm"
                     />
                   ) : (
                     <RowButton label="Open" href={`/admin/questions/${f.id}`} />
@@ -244,6 +243,9 @@ export default function KeyCheckList({ findings, canApply }: { findings: KeyChec
                     </>
                   ) : (
                     <p className="text-sm text-charcoal">The key stays the same, so no attempt is regraded.</p>
+                  )}
+                  {!canApply && (
+                    <p className="text-xs text-soft-mute">QA accounts can preview but cannot change shared questions.</p>
                   )}
                   <div className="flex justify-end gap-2">
                     <button type="button" onClick={close} className="rounded-lg px-3 py-1.5 text-sm text-charcoal hover:bg-light-bg">
