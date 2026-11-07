@@ -37,6 +37,7 @@ import {
   type ComputedAnswerCheck,
 } from "@/lib/answer-key";
 import { keyDoubtNote } from "@/lib/key-doubt";
+import { parseBlobUrl } from "@/lib/blob-url";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -214,26 +215,61 @@ interface ImageInput {
  * to access:"private" when the public-access mode is rejected, so we mirror
  * that here.
  */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
 export async function fetchImageAsBase64(
   url: string,
 ): Promise<{ base64: string; mediaType: string } | null> {
+  // Only stored figures on Vercel Blob are fetched (no other host, no
+  // http), so a caller-supplied URL can't make the server fetch internal
+  // addresses or receive the Blob token.
+  const parsed = parseBlobUrl(url);
+  if (!parsed) {
+    console.warn(`[solve-question] image URL refused (not an https Vercel Blob URL): ${String(url).slice(0, 200)}`);
+    return null;
+  }
   try {
-    const headers: Record<string, string> = {};
-    const token =
-      process.env.PUBLIC_BLOB_READ_WRITE_TOKEN ??
-      process.env.BLOB_READ_WRITE_TOKEN;
-    if (token && url.includes(".blob.vercel-storage.com")) {
-      headers.Authorization = `Bearer ${token}`;
+    // Figures live in more than one Blob store, each with its own token; a
+    // token from the other store gets 403, so try each (as fetchPdfAsBase64).
+    const tokens = [process.env.PUBLIC_BLOB_READ_WRITE_TOKEN, process.env.BLOB_READ_WRITE_TOKEN].filter(
+      (t): t is string => Boolean(t),
+    );
+    let res: Response | null = null;
+    for (const token of tokens.length > 0 ? tokens : [undefined]) {
+      res = await fetch(parsed.href, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        redirect: "error",
+      });
+      if (res.status !== 401 && res.status !== 403) break;
+      await res.body?.cancel().catch(() => {});
     }
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      console.warn(`[solve-question] image fetch failed (${res.status}): ${url}`);
+    if (!res || !res.ok || !res.body) {
+      console.warn(`[solve-question] image fetch failed (${res?.status}): ${url}`);
+      return null;
+    }
+    const declared = Number(res.headers.get("content-length") ?? "0");
+    if (declared > MAX_IMAGE_BYTES) {
+      console.warn(`[solve-question] image too large (${declared} bytes): ${url}`);
+      await res.body.cancel().catch(() => {});
       return null;
     }
     const contentType = res.headers.get("content-type") ?? "image/png";
-    const buffer = await res.arrayBuffer();
+    const reader = res.body.getReader();
+    const parts: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_IMAGE_BYTES) {
+        console.warn(`[solve-question] image exceeded ${MAX_IMAGE_BYTES} bytes: ${url}`);
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      parts.push(value);
+    }
     return {
-      base64: Buffer.from(buffer).toString("base64"),
+      base64: Buffer.concat(parts).toString("base64"),
       mediaType: contentType,
     };
   } catch (err) {
@@ -841,6 +877,13 @@ export async function explainOfficialAndPersist(
             callerUserId,
             "explain-official",
           );
+          // An API/schema failure says nothing about the question: skip the
+          // row and leave its status and notes alone.
+          if (!res.ok && res.kind === "failed") {
+            skipped++;
+            console.warn(`[explain-official] q${q.original_question_number}: AI call failed; row left unchanged`);
+            return;
+          }
           const conflict = res.ok && !res.agrees && res.aiAnswer ? res.aiAnswer : null;
           const truncatedOfficial = !res.ok;
           const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: ans, question_text: q.question_text, choices: q.choices });
@@ -858,11 +901,15 @@ export async function explainOfficialAndPersist(
           const parts: string[] = [];
           if (keep && q.parsing_notes) parts.push(q.parsing_notes);
           if (placeholder && !(q.parsing_notes || "").includes("parser placeholder text")) parts.push(placeholderNote(placeholder));
-          if (truncatedOfficial) parts.push(TRUNCATION_NOTE);
+          // Don't repeat a note the row already carries (re-runs).
+          const addNote = (n: string) => {
+            if (!(q.parsing_notes || "").includes(n) && !parts.includes(n)) parts.push(n);
+          };
+          if (truncatedOfficial) addNote(TRUNCATION_NOTE);
           if (conflict) {
-            parts.push(keyDoubtNote(ans, conflict, "solving it independently before writing the explanation gave a different answer, so the explanation was not rewritten"));
+            addNote(keyDoubtNote(ans, conflict, "solving it independently before writing the explanation gave a different answer, so the explanation was not rewritten"));
           }
-          if (keyProblem) parts.push(keyFormNote(keyProblem));
+          if (keyProblem) addNote(keyFormNote(keyProblem));
           const update: Record<string, unknown> = {
             correct_answer: ans,
             parsing_status: keep ? "Needs Review" : "Approved",
@@ -1086,6 +1133,28 @@ const REGEN_EXPLANATION_SYSTEM = `${EXPLAIN_OFFICIAL_SYSTEM}
 
 INDEPENDENT CHECK: before writing the explanation, solve the question on your own as if no answer were given, and put that result in independent_answer. This is only a cross-check for the reviewer — it never changes what the explanation argues. The explanation must still justify the GIVEN answer.`;
 
+/**
+ * The page's (possibly unsaved) choice text with each choice's image_url
+ * taken from the saved row by label — image URLs in the request body are
+ * never fetched by the server.
+ */
+export function choicesWithStoredImages(bodyChoices: unknown, storedChoices: unknown): { label?: string; text?: string; image_url: string | null }[] {
+  const stored = new Map<string, string | null>();
+  for (const c of Array.isArray(storedChoices) ? storedChoices : []) {
+    const cc = c as { label?: unknown; image_url?: unknown };
+    if (typeof cc?.label === "string") stored.set(cc.label, typeof cc.image_url === "string" ? cc.image_url : null);
+  }
+  return (Array.isArray(bodyChoices) ? bodyChoices : []).map((c) => {
+    const cc = (c ?? {}) as { label?: unknown; text?: unknown };
+    const label = typeof cc.label === "string" ? cc.label : undefined;
+    return {
+      label,
+      text: typeof cc.text === "string" ? cc.text : undefined,
+      image_url: label ? stored.get(label) ?? null : null,
+    };
+  });
+}
+
 export const REGEN_EXPLANATION_FAILED = "Couldn't produce a complete explanation.";
 
 export interface RegenExplanationInput {
@@ -1101,7 +1170,9 @@ export interface RegenExplanationInput {
 
 export type RegenExplanationResult =
   | { ok: true; explanation: string; aiAnswer: string | null; agrees: boolean }
-  | { ok: false; error: string };
+  // kind "cut_off": the model answered but every explanation looked cut off;
+  // "failed": the API call or schema parse failed (nothing to judge).
+  | { ok: false; error: string; kind: "cut_off" | "failed" };
 
 /** Does the model's own answer match the saved key (letters or values)? */
 export function aiAnswerAgrees(aiAnswer: string | null, saved: string, isMcq: boolean, questionText?: string | null): boolean {
@@ -1157,6 +1228,7 @@ export async function regenerateExplanation(
   };
 
   // Same cut-off check as the pipeline (looksTruncated); one retry, then give up.
+  let sawCutOff = false;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await generateObject(params);
@@ -1175,6 +1247,7 @@ export async function regenerateExplanation(
         .trim();
       if (!explanation || looksTruncated(explanation)) {
         console.warn(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} looks cut off`);
+        sawCutOff = true;
         continue;
       }
       const aiAnswer = res.object.independent_answer.trim() || null;
@@ -1183,7 +1256,7 @@ export async function regenerateExplanation(
       console.error(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} failed:`, e instanceof Error ? e.message : e);
     }
   }
-  return { ok: false, error: REGEN_EXPLANATION_FAILED };
+  return { ok: false, error: REGEN_EXPLANATION_FAILED, kind: sawCutOff ? "cut_off" : "failed" };
 }
 
 export const REGEN_EXPLANATION_NOTE = "Needs review: explanation was cut off and regenerated by AI — check it.";

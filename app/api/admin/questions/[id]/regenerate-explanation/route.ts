@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { regenerateExplanation } from "@/lib/ai/solve-question";
+import { choicesWithStoredImages, regenerateExplanation } from "@/lib/ai/solve-question";
 
 // Up to two Claude calls (one retry when the first explanation looks cut off).
 export const maxDuration = 120;
@@ -31,12 +31,13 @@ export async function POST(
     return NextResponse.json({ ok: false, error: "The question text is empty." }, { status: 400 });
   }
 
-  // Only the stored figures come from the DB (image edits save immediately);
-  // text, choices and answer come from the page.
+  // Stored figures and choice images come from the DB (image edits save
+  // immediately; body URLs are never fetched); text, choice text and answer
+  // come from the page.
   const db = getServiceClient();
   const { data: q } = await db
     .from("questions")
-    .select("id, original_question_number, image_urls")
+    .select("id, original_question_number, image_urls, choices")
     .eq("id", id)
     .maybeSingle();
   if (!q) return NextResponse.json({ ok: false, error: "Question not found" }, { status: 404 });
@@ -46,7 +47,7 @@ export async function POST(
       questionId: id,
       questionNumber: q.original_question_number as number | null,
       questionText,
-      choices: Array.isArray(body.choices) ? body.choices : [],
+      choices: choicesWithStoredImages(body.choices, q.choices),
       questionType: typeof body.question_type === "string" ? body.question_type : null,
       answer,
       imageUrls: Array.isArray(q.image_urls) ? (q.image_urls as string[]) : null,

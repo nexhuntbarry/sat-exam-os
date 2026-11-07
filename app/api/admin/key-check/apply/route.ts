@@ -70,13 +70,14 @@ export async function POST(req: Request) {
     .filter((s) => s && !s.startsWith(KEY_FORM_NOTE_PREFIX))
     .join("; ");
   const fixNote = `Answer key check: ${changes.join(", ")} (applied by an admin)`;
-  const notes = [
-    live ? `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check.` : null,
-    kept || null,
-    fixNote,
-  ]
-    .filter(Boolean)
-    .join(live ? " " : "; ");
+  // Notes are "; "-separated; the [live-fix] sentence leads (the format
+  // stripLiveFixNote expects). An identical fix note isn't added twice.
+  const noteBody = [...(kept ? kept.split(/;\s*/) : []), fixNote]
+    .filter((s, i, all) => s && all.indexOf(s) === i)
+    .join("; ");
+  const notes = live
+    ? `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check. ${noteBody}`
+    : noteBody;
 
   const { error } = await db
     .from("questions")

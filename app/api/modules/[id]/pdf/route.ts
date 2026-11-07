@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { parseBlobUrl } from "@/lib/blob-url";
 
 // GET /api/modules/[id]/pdf
 // Streams the FULL module PDF. Restricted to admin / teacher only — students
@@ -24,12 +25,17 @@ export async function GET(
     return NextResponse.json({ error: "Module not found" }, { status: 404 });
   }
 
+  // Only fetch (and only send the Blob token to) a real Vercel Blob URL.
+  const pdfUrl = parseBlobUrl(mod.pdf_url);
+  if (!pdfUrl) {
+    return NextResponse.json({ error: "Module PDF is not a Vercel Blob URL" }, { status: 502 });
+  }
   const blobToken = process.env.BLOB_READ_WRITE_TOKEN;
   const headers: Record<string, string> = {};
-  if (blobToken && mod.pdf_url.includes(".blob.vercel-storage.com")) {
+  if (blobToken) {
     headers.Authorization = `Bearer ${blobToken}`;
   }
-  const upstream = await fetch(mod.pdf_url, { headers });
+  const upstream = await fetch(pdfUrl.href, { headers });
   if (!upstream.ok || !upstream.body) {
     return NextResponse.json(
       { error: `Upstream ${upstream.status}` },
