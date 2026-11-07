@@ -5,7 +5,8 @@ import { forbidQa } from "@/lib/qa";
 import { explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
 import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
-import { keyTypeProblem } from "@/lib/answer-key";
+import { MAX_KEY_LENGTH, keyTypeProblem } from "@/lib/answer-key";
+import { liveQuestionIds } from "@/lib/live-questions";
 import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
 
 // Answer-key edits may regenerate the explanation (AI) — allow headroom.
@@ -74,6 +75,15 @@ export async function PATCH(
     if (key in body) update[key] = body[key];
   }
 
+  for (const k of ["correct_answer", "official_answer"] as const) {
+    if (typeof update[k] === "string" && (update[k] as string).length > MAX_KEY_LENGTH) {
+      return NextResponse.json(
+        { error: `The ${k === "correct_answer" ? "answer key" : "official answer"} can be at most ${MAX_KEY_LENGTH} characters.` },
+        { status: 400 },
+      );
+    }
+  }
+
   const db = getServiceClient();
 
   // Capture the prior answer so we can tell whether the key actually changed.
@@ -109,8 +119,13 @@ export async function PATCH(
   if (resultIsApproved && keyOrTypeChanged && update.parsing_status !== "Approved") {
     const p = keyTypeProblem(next);
     if (p) {
+      // Never advise demoting a question students are taking right now.
+      const live = (await liveQuestionIds(db, [id]).catch(() => new Set<string>([id]))).has(id);
+      const advice = live
+        ? "Fix it before saving — this question is in a live test, so keep it Approved."
+        : "Fix it, or mark it Needs Review first.";
       return NextResponse.json(
-        { error: `Can't save this Approved question: ${p.reason}. Fix it, or mark it Needs Review first.` },
+        { error: `Can't save this Approved question: ${p.reason}. ${advice}` },
         { status: 400 },
       );
     }

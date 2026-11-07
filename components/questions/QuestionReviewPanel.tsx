@@ -1183,6 +1183,19 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
               Can&rsquo;t approve yet: {keyProblem.reason}.
             </p>
           )}
+          {q.question_type === SPR_TYPE && q.choices.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-xs text-soft-mute">
+              This fill-in question still has {q.choices.length} answer choice{q.choices.length === 1 ? "" : "s"}.
+              <button
+                type="button"
+                onClick={() => setQ((prev) => ({ ...prev, choices: [] }))}
+                title="Clears the leftover choices on this page. Click Save to keep the change."
+                className="rounded-md border border-divider bg-surface px-2 py-0.5 text-[11px] font-medium text-charcoal hover:bg-light-bg"
+              >
+                Remove choices
+              </button>
+            </div>
+          )}
 
           {/* Correct answer + explanation */}
           <div className="grid grid-cols-2 gap-3">

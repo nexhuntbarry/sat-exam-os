@@ -33,7 +33,8 @@ export default function BulkActions({ selectedIds, onComplete }: BulkActionsProp
       if (res.ok) {
         showToast(
           `Approved ${json.approved} questions` +
-            (json.blocked ? ` · ${json.blocked} kept in Needs Review (parser placeholder text)` : ""),
+            (json.blocked ? ` · ${json.blocked} kept in Needs Review (see notes)` : "") +
+            (json.skipped ? ` · ${json.skipped} skipped (not Draft / Needs Review)` : ""),
         );
         onComplete();
       } else {
@@ -50,18 +51,13 @@ export default function BulkActions({ selectedIds, onComplete }: BulkActionsProp
     if (count === 0) return;
     setLoading("reject");
     try {
-      const res = await fetch("/api/admin/questions/bulk-approve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question_ids: selectedIds }),
-      });
       // Reject individually — call each
       const results = await Promise.allSettled(
         selectedIds.map((id) =>
           fetch(`/api/admin/questions/${id}/reject`, { method: "POST" })
         )
       );
-      const succeeded = results.filter((r) => r.status === "fulfilled").length;
+      const succeeded = results.filter((r) => r.status === "fulfilled" && r.value.ok).length;
       showToast(`Rejected ${succeeded} questions`);
       onComplete();
     } catch {

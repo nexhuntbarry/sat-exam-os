@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
-import { findApproveBlocker } from "@/lib/parse-guards";
+import { BULK_APPROVE_STATUSES, planBulkApprove, type BulkApproveRow } from "@/lib/bulk-approve";
+import { liveQuestionIds } from "@/lib/live-questions";
 import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
 
 // POST /api/admin/questions/bulk-approve
 // Body: { question_ids: string[] } OR { filter: { moduleId?, minConfidence? } }
+// Only Draft / Needs Review rows are approved; anything else is left alone.
 export async function POST(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
@@ -24,32 +26,21 @@ export async function POST(req: Request) {
     updated_at: now,
   };
 
-  // Drop rows whose stem/choices still carry parser placeholder text or look
-  // cut off: they stay in (or move to) Needs Review with a note instead of
-  // being approved.
-  async function excludePlaceholders(
-    rows: { id: string; question_text: string | null; choices: unknown; question_type: string | null; correct_answer: string | null; parsing_notes: string | null }[],
-  ): Promise<{ clean: string[]; blocked: number }> {
-    const clean: string[] = [];
-    let blocked = 0;
-    for (const r of rows) {
-      const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer);
-      if (!blocker) {
-        clean.push(r.id);
-        continue;
-      }
-      blocked++;
-      const base = (r.parsing_notes || "").trim();
+  // Draft / Needs Review rows with a blocker stay in (or move to) Needs
+  // Review with a note instead of being approved (lib/bulk-approve.ts).
+  // Already-Approved rows are never touched, and any hold goes through the
+  // live-test guard so a question in a running exam is never demoted.
+  async function excludePlaceholders(rows: BulkApproveRow[]): Promise<{ clean: string[]; blocked: number; skipped: number }> {
+    const live = await liveQuestionIds(db, rows.map((r) => r.id));
+    const plan = planBulkApprove(rows, live, now);
+    for (const h of plan.holds) {
       await db
         .from("questions")
-        .update({
-          parsing_status: "Needs Review",
-          parsing_notes: base && !base.includes(blocker.note) ? `${base}; ${blocker.note}` : blocker.note,
-          updated_at: now,
-        })
-        .eq("id", r.id);
+        .update(h.update)
+        .eq("id", h.id)
+        .in("parsing_status", [...BULK_APPROVE_STATUSES]);
     }
-    return { clean, blocked };
+    return { clean: plan.clean, blocked: plan.holds.length, skipped: plan.skipped.length };
   }
 
   // Approving clears the live-test re-check tag and key doubts on the approved rows.
@@ -71,23 +62,28 @@ export async function POST(req: Request) {
     }
     const { data: rows, error: selErr } = await db
       .from("questions")
-      .select("id, question_text, choices, question_type, correct_answer, parsing_notes")
-      .in("id", ids);
+      .select("id, question_text, choices, question_type, correct_answer, parsing_status, parsing_notes")
+      .in("id", ids)
+      .in("parsing_status", [...BULK_APPROVE_STATUSES]);
     if (selErr) {
       console.error("[bulk-approve] select error:", selErr);
       return NextResponse.json({ error: "Bulk approve failed" }, { status: 500 });
     }
     const { clean, blocked } = await excludePlaceholders(rows ?? []);
+    // Selected rows that aren't Draft / Needs Review (already Approved,
+    // Rejected) are skipped untouched.
+    const skipped = ids.length - (rows ?? []).length;
     if (clean.length === 0) {
-      return NextResponse.json(
-        { error: `None approved: ${blocked} question(s) contain parser placeholder text, look cut off, or have an answer key that does not fit the question type, and were kept in Needs Review.`, blocked },
-        { status: 400 },
-      );
+      const error = blocked > 0
+        ? `None approved: ${blocked} question(s) contain parser placeholder text, look cut off, or have an answer key that does not fit the question type, and were kept in Needs Review.`
+        : "None approved: the selected questions are not Draft or Needs Review.";
+      return NextResponse.json({ error, blocked, skipped }, { status: 400 });
     }
     const { error, count } = await db
       .from("questions")
-      .update(patch)
-      .in("id", clean);
+      .update(patch, { count: "exact" })
+      .in("id", clean)
+      .in("parsing_status", [...BULK_APPROVE_STATUSES]);
 
     if (error) {
       console.error("[bulk-approve] error:", error);
@@ -95,7 +91,7 @@ export async function POST(req: Request) {
     }
     await clearLiveFixTags(rows ?? [], clean);
 
-    return NextResponse.json({ approved: count ?? clean.length, blocked });
+    return NextResponse.json({ approved: count ?? clean.length, blocked, skipped });
   }
 
   if (body.filter) {
@@ -104,7 +100,7 @@ export async function POST(req: Request) {
       minConfidence?: number;
     };
 
-    let query = db.from("questions").select("id, question_text, choices, question_type, correct_answer, parsing_notes");
+    let query = db.from("questions").select("id, question_text, choices, question_type, correct_answer, parsing_status, parsing_notes");
 
     if (moduleId) query = query.eq("module_id", moduleId);
     if (minConfidence !== undefined) {
@@ -124,7 +120,7 @@ export async function POST(req: Request) {
     const CHUNK = 100;
     for (let i = 0; i < clean.length; i += CHUNK) {
       const chunk = clean.slice(i, i + CHUNK);
-      const { error } = await db.from("questions").update(patch).in("id", chunk);
+      const { error } = await db.from("questions").update(patch).in("id", chunk).in("parsing_status", [...BULK_APPROVE_STATUSES]);
       if (error) {
         console.error("[bulk-approve] filter error:", error);
         return NextResponse.json({ error: "Bulk approve failed", approved, blocked }, { status: 500 });
