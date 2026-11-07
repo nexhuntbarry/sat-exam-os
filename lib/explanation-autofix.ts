@@ -373,6 +373,9 @@ export function decideAutoFix(
   if (!res.ok) return none(res.kind === "cut_off" ? "still_cut_off" : "failed", res.error);
   const key = r.correct_answer as string;
   if (!res.aiAnswer) return none("unverified", "the AI gave no independent answer");
+  // It must be a bare letter / value; sometimes the model writes its working
+  // there instead, which can't be compared — no verdict, row left as-is.
+  if (res.aiAnswer.length > 40 || res.aiAnswer.includes("\n")) return none("unverified", "the AI's independent answer was working, not a value");
   if (!res.agrees) {
     // A person decides the key. Explanation is not written.
     const notes = [...splitNotes(r.parsing_notes).filter((s) => !s.startsWith(REGEN_DISAGREE_PREFIX)), regenDisagreeNote(res.aiAnswer, key)].join("; ");
@@ -501,21 +504,25 @@ export async function autoFixExplanations(
       };
       let o: AutoFixOutcome;
       try {
-        const res = await regenWithBackoff(
-          regen,
-          {
-            questionId: r.id,
-            questionNumber: r.original_question_number,
-            questionText: r.question_text ?? "",
-            choices: r.choices,
-            questionType: r.question_type,
-            answer: r.correct_answer as string,
-            imageUrls: Array.isArray(r.image_urls) ? (r.image_urls as string[]) : null,
-          },
-          opts.callerUserId,
-          opts.usageRoute ?? "auto-fix-explanations",
-        );
-        const d = decideAutoFix(r, t, res, live.has(r.id));
+        const input: RegenExplanationInput = {
+          questionId: r.id,
+          questionNumber: r.original_question_number,
+          questionText: r.question_text ?? "",
+          choices: r.choices,
+          questionType: r.question_type,
+          answer: r.correct_answer as string,
+          imageUrls: Array.isArray(r.image_urls) ? (r.image_urls as string[]) : null,
+        };
+        const route = opts.usageRoute ?? "auto-fix-explanations";
+        let res = await regenWithBackoff(regen, input, opts.callerUserId, route);
+        let d = decideAutoFix(r, t, res, live.has(r.id));
+        // A draft that narrates ("Wait, let me re-check") or names another
+        // letter, or no usable independent answer: one fresh attempt before
+        // the row is left as-is.
+        if (d.group === "draft_rejected" || d.group === "unverified") {
+          res = await regenWithBackoff(regen, input, opts.callerUserId, route);
+          d = decideAutoFix(r, t, res, live.has(r.id));
+        }
         o = {
           ...base,
           group: d.group,

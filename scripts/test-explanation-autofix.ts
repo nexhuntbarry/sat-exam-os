@@ -115,6 +115,8 @@ const d10 = decideAutoFix(row(), t, { ok: true, explanation: GOOD.replace("Choic
 ok("draft arguing another letter rejected", d10.group === "draft_rejected" && d10.update === null);
 const d11 = decideAutoFix(row(), t, { ok: true, explanation: GOOD, aiAnswer: null, agrees: true }, false);
 ok("no independent answer → left as-is", d11.group === "unverified" && d11.update === null);
+const d11b = decideAutoFix(row(), t, { ok: true, explanation: GOOD, aiAnswer: "Let me re-read carefully. We want the greatest value.\nSo the answer is 15.", agrees: false }, false);
+ok("independent answer that is working, not a value → left as-is (no disagree note)", d11b.group === "unverified" && d11b.update === null);
 const d12 = decideAutoFix(row(), t, { ok: true, explanation: `${GOOD} Wait, let me re-check that.`, aiAnswer: "A", agrees: true }, false);
 ok("draft with narration rejected", d12.group === "draft_rejected");
 const d13 = decideAutoFix(row(), t, { ok: false, error: "x", kind: "failed" }, false);
