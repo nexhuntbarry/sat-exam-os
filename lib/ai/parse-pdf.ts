@@ -3,6 +3,7 @@ import { generateObject } from "ai";
 import { z } from "zod";
 import { getServiceClient } from "@/lib/supabase";
 import { hasMarkdownTable } from "@/lib/ai/extract-images";
+import { noAnswerMarksReason, readAnswerMarkFacts, type AnswerMarkFacts } from "@/lib/answer-marks";
 
 // ────────────────────────────────────────────
 // Types
@@ -436,7 +437,7 @@ Your job:
 4. For student-produced response (numeric / fill-in-the-blank) answers, return the literal value as printed (e.g. "12", "3/4", "0.5", "1.25", "7"). Do NOT wrap in LaTeX or quotes. Do NOT convert decimals to fractions or vice versa — return what the key prints.
 5. If you can only read part of the key (e.g. some letters are smudged or cut off at a page break), still return what you can. Set notes to describe which question numbers you couldn't read.
 6. CHECKMARK PRINTOUTS: some PDFs have no separate key but mark the correct choice of each question with a check-mark / check-circle icon (✓) on the choice box. Treat those marks as the answer key (found=true). A question's stem is often at the bottom of one page with its choices at the top of the NEXT page (after a URL footer and date header); choices — and their checkmark — always belong to the stem ABOVE them, i.e. a checked box at the top of a page is the answer to the PREVIOUS page's question, not to the stem printed below it.
-7. If no answer key or checkmarks are visible at all, set found=false and answers=[]. Do not invent answers from your own solving.
+7. If no answer key or checkmarks are visible at all, set found=false and answers=[]. NEVER solve the questions yourself to fill in a key — a student copy with unmarked choices has NO key. A fill-in (student-produced response) question never has a letter A–D as its answer.
 8. Copy the answer-key page's title verbatim into key_title, and the section/module header printed on the question pages (e.g. "Section 1, Module 1: Reading and Writing") verbatim into question_header. Report them as printed even if they name different modules.
 
 Return STRICT JSON matching the schema. No prose, no markdown, no explanations.`;
@@ -444,7 +445,25 @@ Return STRICT JSON matching the schema. No prose, no markdown, no explanations.`
 export async function extractAnswerKey(
   pdfBase64: string,
   callerUserId?: string,
+  /** Precomputed lib/answer-marks facts (read from the PDF when omitted). */
+  marks?: AnswerMarkFacts | null,
 ): Promise<AnswerKey> {
+  // A PDF with no answer marks has no key — don't even ask the model, which
+  // has invented a full key for such a PDF (J Test Math M1, 2026-11-07).
+  let facts = marks ?? null;
+  if (!facts) {
+    try {
+      facts = await readAnswerMarkFacts(pdfBase64);
+    } catch (err) {
+      console.warn("[parse-pdf] answer-mark check failed (continuing without it):", err);
+    }
+  }
+  const noMarks = facts ? noAnswerMarksReason(facts) : null;
+  if (noMarks) {
+    console.log(`[parse-pdf] answer-key extractor skipped: ${noMarks}`);
+    return { found: false, answers: {}, notes: noMarks, keyTitle: null, questionHeader: null };
+  }
+
   let result;
   try {
     // Sonnet 4.6 instead of Haiku 4.5: answer-key extraction was

@@ -17,7 +17,15 @@ import { autoFixModuleExplanations } from "@/lib/explanation-autofix";
 import { runPostParseCleanup } from "@/lib/post-parse-cleanup";
 import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
-import { recoverMissingFigures, recoverBrokenChoices, repairChoicesForQuestion } from "@/lib/repair-ops";
+import { recoverMissingFigures, recoverBrokenChoices, repairChoicesForQuestion, rereadCutOffQuestions } from "@/lib/repair-ops";
+import {
+  keyRejectedNote,
+  noAnswerMarksReason,
+  readAnswerMarkFacts,
+  sprLetterKeyQuestions,
+  sprLetterKeyReason,
+  type AnswerMarkFacts,
+} from "@/lib/answer-marks";
 import {
   enforceCompleteness,
   checkNumberContiguity,
@@ -130,10 +138,15 @@ export async function POST(
 
   // Optional answer key from probe step.
   let answerKey: Record<number, string> | null = null;
+  // The admin ran the probe and it found no key: don't ask the extractor
+  // again at parse time (it once returned an invented 22-answer key for the
+  // same PDF the probe had just said had none — J Test Math M1).
+  let probedNoKey = false;
   try {
     const body = (await req.clone().json()) as
-      | { answerKey?: Record<string, string> }
+      | { answerKey?: Record<string, string>; noKey?: boolean }
       | undefined;
+    probedNoKey = body?.noKey === true;
     if (body?.answerKey) {
       answerKey = {};
       for (const [k, v] of Object.entries(body.answerKey)) {
@@ -316,9 +329,28 @@ export async function POST(
     // "Module 2" PDF whose pages say "Section 1, Module 1" but whose key page
     // says "MODULE 2 AK") is NOT applied; every question goes to Needs Review.
     let keyModuleNote: string | null = null;
-    if (!answerKey) {
+    // Answer marks on the PDF itself (lib/answer-marks): a student printout
+    // with no answer_token / ✓ marks has no key, whatever a model reads.
+    let marks: AnswerMarkFacts | null = null;
+    try {
+      marks = await readAnswerMarkFacts(pdfBase64);
+    } catch (err) {
+      console.warn("[modules/parse] answer-mark check failed (non-fatal):", err);
+    }
+    const noMarks = marks ? noAnswerMarksReason(marks) : null;
+    if (noMarks) {
+      console.log(`[modules/parse] no answer marks in PDF: ${noMarks}`);
+      // The only key a request carries is the probe's reading of this same
+      // PDF, so it can't be real either.
+      if (answerKey) console.warn("[modules/parse] dropping the request's answer key — the PDF has no answer marks");
+      answerKey = null;
+      adminKey = null;
+    }
+    if (!answerKey && probedNoKey) {
+      console.log("[modules/parse] probe found no answer key — not extracting one at parse time");
+    } else if (!answerKey && !noMarks) {
       try {
-        const probed = await extractAnswerKey(pdfBase64, authResult.userId);
+        const probed = await extractAnswerKey(pdfBase64, authResult.userId, marks);
         keyModuleNote = probed.found
           ? keyModuleMismatchNote(probed.keyTitle, probed.questionHeader, mod.module_name, mod.module_number)
           : null;
@@ -397,6 +429,33 @@ export async function POST(
         console.log(
           `[modules/parse] normalized question numbers: shifted by -${offset} → 1..${parsedQuestions.length}`,
         );
+      }
+    }
+
+    // A key that gives a choice letter to a fill-in question is not a real
+    // key (J Test Math M1: "B" on four fill-ins) — throw the whole key out.
+    {
+      const sprLetters = sprLetterKeyQuestions(answerKey, parsedQuestions);
+      if (sprLetters) {
+        keyModuleNote = keyRejectedNote(sprLetterKeyReason(sprLetters));
+        console.warn(`[modules/parse] answer key rejected: ${keyModuleNote}`);
+        answerKey = null;
+        adminKey = null;
+      }
+    }
+    // No answer marks → answers the whole-PDF AI parse "read" are guesses, not
+    // a key: clear them so the solver answers and labels them AI-only.
+    if (noMarks && !printoutQuestions) {
+      for (const q of parsedQuestions) q.correct_answer = null;
+    }
+    // Whole-PDF AI parse: re-read any stem that looks cut off / MC with an
+    // empty choice on its own, as plain tagged text (a quote can't end it).
+    if (!printoutQuestions) {
+      try {
+        const reread = await rereadCutOffQuestions(pdfBase64, parsedQuestions);
+        if (reread.length > 0) console.log(`[modules/parse] re-read cut-off questions Q${reread.join(", Q")}`);
+      } catch (err) {
+        console.error("[modules/parse] cut-off re-read failed (non-fatal):", err);
       }
     }
 

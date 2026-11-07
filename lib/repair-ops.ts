@@ -7,7 +7,7 @@
 // trigger them with one button click.
 
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import katex from "katex";
 import { getServiceClient } from "@/lib/supabase";
@@ -16,14 +16,17 @@ import {
   applyChoiceImages,
   choiceHasContent,
   choiceImageUrls,
+  choiceLooksBroken,
   findParsePlaceholder,
   incompleteGraphChoices,
   normalizeChoiceRegions,
   placeholderNote,
   stemFigureMissing,
+  stemLooksCutOff,
 } from "@/lib/parse-guards";
 import { extractAndUploadQuestionImages } from "@/lib/ai/extract-images";
-import { MATH_FORMAT_RULES, QUOTE_RULE } from "@/lib/ai/parse-pdf";
+import { MATH_FORMAT_RULES, QUOTE_RULE, type ParsedQuestion } from "@/lib/ai/parse-pdf";
+import { TAGGED_TEXT_RULES, cleanTagText, readTag, readTags } from "@/lib/ai/tagged-output";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
 import {
@@ -1022,26 +1025,58 @@ export async function recoverBrokenChoices(
 const REEXTRACT_SYSTEM = `You are re-reading ONE SAT question from its source PDF so a reviewer can compare it with the stored copy. The pages may be scanned images with no text layer: read the page images.
 
 Return the question exactly as printed:
-- question_text: the full stem: any passage, notes or bullet list, then the question sentence itself. Keep paragraph breaks as blank lines and bullets as "- " lines. Copy every word; never summarise, shorten or fix the wording.
-- choices: for Multiple Choice, the four A/B/C/D choices that FOLLOW this question's stem, verbatim. Ignore any A–D boxes printed ABOVE the stem; they belong to the previous question. If a choice is a graph or picture with no text, return text "".
-- question_type: "Multiple Choice" when there are A–D choices, otherwise "Student Produced Response". A question showing an answer box / entry field / "Answer Preview" is "Student Produced Response" (choices = []), even when A–D boxes of the previous question are printed above it.
-- marked_answer: the choice the PDF marks as correct (a checkmark or tick next to it), or the printed answer under a Student Produced Response box. null when nothing is marked.
+- question_text: the full stem: any passage, notes or bullet list, then the question sentence itself. Keep paragraph breaks as blank lines and bullets as "- " lines. Copy every word — including quoted titles and quoted words — never summarise, shorten or fix the wording.
+- choices: for Multiple Choice, the four A/B/C/D choices that FOLLOW this question's stem, verbatim. Ignore any A–D boxes printed ABOVE the stem; they belong to the previous question. If a choice is a graph or picture with no text, leave its tag empty.
+- question_type: "Multiple Choice" when there are A–D choices, otherwise "Student Produced Response". A question showing an answer box / entry field / "Answer Preview" is "Student Produced Response" (no choice tags), even when A–D boxes of the previous question are printed above it.
+- marked_answer: the choice the PDF marks as correct (a checkmark or tick next to it), or the printed answer under a Student Produced Response box. Empty when nothing is marked.
 - Underlined text in the passage is wrapped in <u>…</u>.
-- found=false when this question number isn't on these pages.
+- found: "no" when this question number isn't on these pages.
 
 ${MATH_FORMAT_RULES}
 
-${QUOTE_RULE}
+${TAGGED_TEXT_RULES}
 
-Return JSON only.`;
+Reply in exactly this shape:
+<found>yes</found>
+<question_type>Multiple Choice</question_type>
+<question_text>the full stem</question_text>
+<choice label="A">choice A text</choice>
+<choice label="B">choice B text</choice>
+<choice label="C">choice C text</choice>
+<choice label="D">choice D text</choice>
+<marked_answer>the marked letter or value, or empty</marked_answer>`;
 
-const ReextractSchema = z.object({
-  found: z.boolean(),
-  question_type: z.enum(["Multiple Choice", "Student Produced Response"]),
-  question_text: z.string(),
-  choices: z.array(z.object({ label: z.enum(["A", "B", "C", "D"]), text: z.string() })),
-  marked_answer: z.string().nullable(),
-});
+type Label = "A" | "B" | "C" | "D";
+
+export interface ReextractRead {
+  found: boolean;
+  question_type: "Multiple Choice" | "Student Produced Response";
+  question_text: string;
+  choices: { label: Label; text: string }[];
+  marked_answer: string | null;
+}
+
+/** Parse the tagged re-extract reply (REEXTRACT_SYSTEM); null when it has no stem tag. */
+export function parseReextractReply(raw: string): ReextractRead | null {
+  const stem = readTag(raw, "question_text");
+  if (stem === null) return null;
+  const found = !/^\s*(no|false)\s*$/i.test(readTag(raw, "found") ?? "yes");
+  const type = /student|spr|fill/i.test(readTag(raw, "question_type") ?? "") ? "Student Produced Response" : "Multiple Choice";
+  const choices: ReextractRead["choices"] = [];
+  for (const c of readTags(raw, "choice")) {
+    const label = (c.attrs.label ?? "").trim().toUpperCase();
+    if (/^[A-D]$/.test(label) && !choices.some((x) => x.label === label)) choices.push({ label: label as Label, text: cleanTagText(c.body) });
+  }
+  choices.sort((a, b) => a.label.localeCompare(b.label));
+  const marked = cleanTagText(readTag(raw, "marked_answer"));
+  return {
+    found,
+    question_type: type,
+    question_text: cleanTagText(stem),
+    choices: type === "Multiple Choice" ? choices : [],
+    marked_answer: marked && !/^(null|none|n\/a)$/i.test(marked) ? marked : null,
+  };
+}
 
 export interface ReextractProposal {
   /** How the PDF reads the question (compared with the saved type on the review page). */
@@ -1055,47 +1090,40 @@ export interface ReextractProposal {
   warnings: string[];
 }
 
-/**
- * Read one question again from its source PDF page (page images; most of
- * these PDFs have no text layer) and return what it says. Never writes:
- * the review page shows it next to the stored copy and the reviewer picks
- * what to apply, then saves as usual. Graph (image) choices keep their
- * stored image. Sonnet first, Opus when the result is incomplete or its
- * math won't render. `pdfBase64` lets batch callers (lib/pdf-replace.ts)
- * reuse one download for a whole module.
- */
-export async function reextractQuestionFromPdf(
-  questionId: string,
-  opts: { pdfBase64?: string } = {},
-): Promise<{ ok: true; proposal: ReextractProposal } | { ok: false; message: string }> {
-  const db = getServiceClient();
-  const { data: row } = await db
-    .from("questions")
-    .select("id, original_question_number, source_pdf_url, page_number, question_type, question_text, choices, modules(pdf_url)")
-    .eq("id", questionId)
-    .maybeSingle();
-  if (!row) return { ok: false, message: "Question not found" };
-  const mod = row.modules as unknown as { pdf_url: string | null } | null;
-  const pdfUrl = (row.source_pdf_url as string | null) ?? mod?.pdf_url ?? null;
-  if (!pdfUrl) return { ok: false, message: "This question has no source PDF." };
-  const page = (row.page_number as number | null) ?? null;
-  if (!page) return { ok: false, message: "This question has no PDF page number. Set the page first." };
+/** What's known about the question being re-read (stored copy is only a locator). */
+export interface ReadQuestionTarget {
+  number: number | null;
+  page: number;
+  storedText?: string | null;
+  /** Stored choices: graph (image) choices keep their image. */
+  storedChoices?: unknown;
+  storedType?: string | null;
+}
 
-  const pdfBase64 = opts.pdfBase64 ?? (await fetchPdfBase64(pdfUrl));
-  const slice = await slicePdfAroundPage(pdfBase64, page);
-  const pages = slice && slice.last > slice.first ? `${slice.first}–${slice.last}` : `${page}`;
+/**
+ * Read one question from a PDF (page images, plain text in tags — never JSON,
+ * so quoted titles and choices that open with a quote come back whole).
+ * Sonnet first, Opus when the result is incomplete or its math won't render.
+ * Never writes.
+ */
+export async function readQuestionFromPdf(
+  pdfBase64: string,
+  t: ReadQuestionTarget,
+): Promise<{ ok: true; proposal: ReextractProposal } | { ok: false; message: string }> {
+  const slice = await slicePdfAroundPage(pdfBase64, t.page);
+  const pages = slice && slice.last > slice.first ? `${slice.first}–${slice.last}` : `${t.page}`;
   const where = slice
-    ? `This excerpt holds original pages ${slice.first}–${slice.last}; question ${row.original_question_number ?? "?"} starts on excerpt page 1 and may continue onto excerpt page 2.`
-    : `Question ${row.original_question_number ?? "?"} is on page ${page}; it may continue onto the next page.`;
-  const graphChoices = choiceImageUrls(row.choices).length > 0;
+    ? `This excerpt holds original pages ${slice.first}–${slice.last}; question ${t.number ?? "?"} starts on excerpt page 1 and may continue onto excerpt page 2.`
+    : `Question ${t.number ?? "?"} is on page ${t.page}; it may continue onto the next page.`;
+  const graphChoices = choiceImageUrls(t.storedChoices).length > 0;
 
   const ladder = ["claude-sonnet-4-6", "claude-opus-4-8"] as const;
   let lastReason = "";
   for (let attempt = 0; attempt < ladder.length; attempt++) {
-    const { object: o } = await generateObject({
+    const { text } = await generateText({
       model: anthropic(ladder[attempt]),
-      schema: ReextractSchema,
       system: REEXTRACT_SYSTEM,
+      maxOutputTokens: 6000,
       messages: [
         {
           role: "user",
@@ -1103,7 +1131,7 @@ export async function reextractQuestionFromPdf(
             { type: "file", data: slice?.base64 ?? pdfBase64, mediaType: "application/pdf" },
             {
               type: "text",
-              text: `Re-read question ${row.original_question_number ?? "?"}. ${where}\n\nThe stored copy starts like this (it may be cut off or wrong; use it only to find the right question):\n${String(row.question_text ?? "").slice(0, 300)}${
+              text: `Re-read question ${t.number ?? "?"}. ${where}\n\nThe stored copy starts like this (it may be cut off or wrong; use it only to find the right question):\n${String(t.storedText ?? "").slice(0, 300)}${
                 attempt > 0 ? `\n\nA previous read was rejected (${lastReason}). Read the page again carefully.` : ""
               }`,
             },
@@ -1111,12 +1139,17 @@ export async function reextractQuestionFromPdf(
         },
       ],
     });
+    const o = parseReextractReply(text);
+    if (!o) {
+      lastReason = "the reply had no question text";
+      continue;
+    }
     if (!o.found) {
       lastReason = "question not found on the page";
       continue;
     }
     const mc = o.question_type === "Multiple Choice";
-    const choices = mc ? keepImageChoices(o.choices, row.choices) : [];
+    const choices = mc ? keepImageChoices(o.choices, t.storedChoices) : [];
     const problems: string[] = [];
     if (!o.question_text.trim()) problems.push("no question text");
     if (mc && choices.length !== 4) problems.push(`${choices.length} choices`);
@@ -1125,8 +1158,8 @@ export async function reextractQuestionFromPdf(
       const r = isMathClean(text);
       if (!r.ok) problems.push(`${field}: ${r.reason}`);
     }
-    if (row.question_type && o.question_type !== row.question_type) {
-      problems.push(`the PDF reads as ${o.question_type}, saved as ${row.question_type}`);
+    if (t.storedType && o.question_type !== t.storedType) {
+      problems.push(`the PDF reads as ${o.question_type}, saved as ${t.storedType}`);
     }
     if (problems.length && attempt < ladder.length - 1) {
       lastReason = problems.join(", ");
@@ -1145,5 +1178,97 @@ export async function reextractQuestionFromPdf(
       },
     };
   }
-  return { ok: false, message: `Couldn't read question ${row.original_question_number ?? "?"} on PDF page ${pages} (${lastReason}). Check the page number.` };
+  return { ok: false, message: `Couldn't read question ${t.number ?? "?"} on PDF page ${pages} (${lastReason}). Check the page number.` };
+}
+
+/**
+ * Read one question again from its source PDF page (page images; most of
+ * these PDFs have no text layer) and return what it says. Never writes:
+ * the review page shows it next to the stored copy and the reviewer picks
+ * what to apply, then saves as usual. Graph (image) choices keep their
+ * stored image. `pdfBase64` lets batch callers (lib/pdf-replace.ts)
+ * reuse one download for a whole module.
+ */
+export async function reextractQuestionFromPdf(
+  questionId: string,
+  opts: { pdfBase64?: string } = {},
+): Promise<{ ok: true; proposal: ReextractProposal } | { ok: false; message: string }> {
+  const db = getServiceClient();
+  const { data: row } = await db
+    .from("questions")
+    .select("id, original_question_number, source_pdf_url, page_number, question_type, question_text, choices, modules(pdf_url)")
+    .eq("id", questionId)
+    .maybeSingle();
+  if (!row) return { ok: false, message: "Question not found" };
+  const mod = row.modules as unknown as { pdf_url: string | null } | null;
+  const pdfUrl = (row.source_pdf_url as string | null) ?? mod?.pdf_url ?? null;
+  if (!pdfUrl) return { ok: false, message: "This question has no source PDF." };
+  const page = (row.page_number as number | null) ?? null;
+  if (!page) return { ok: false, message: "This question has no PDF page number. Set the page first." };
+  const pdfBase64 = opts.pdfBase64 ?? (await fetchPdfBase64(pdfUrl));
+  return readQuestionFromPdf(pdfBase64, {
+    number: row.original_question_number as number | null,
+    page,
+    storedText: row.question_text as string | null,
+    storedChoices: row.choices,
+    storedType: row.question_type as string | null,
+  });
+}
+
+/** The re-read stem and choices are whole: stem not cut off, MC has 4 non-empty choices (or kept graph images). */
+export function rereadIsComplete(p: Pick<ReextractProposal, "question_type" | "question_text" | "choices" | "warnings">): boolean {
+  if (p.warnings.length > 0) return false;
+  const stem = p.question_text.trim();
+  const endsCleanly = /[?.!)\]:]["”'’]?$/.test(stem);
+  if (!stem || (stemLooksCutOff(stem) && !endsCleanly)) return false;
+  if (p.question_type === "Multiple Choice") {
+    if (p.choices.length !== 4) return false;
+    if (p.choices.some((c) => !c.image_url && choiceLooksBroken(c))) return false;
+  }
+  return true;
+}
+
+/**
+ * Whole-PDF AI parse safety net: a stem that looks cut off or a Multiple
+ * Choice question with an empty / broken text choice is read again on its own
+ * (tagged text, so quotes can't cut it). Only a complete re-read replaces the
+ * stem and choices; answers and figures are never touched. Mutates
+ * `questions`; returns the question numbers that were replaced.
+ */
+export async function rereadCutOffQuestions(
+  pdfBase64: string,
+  questions: ParsedQuestion[],
+  /** Cap per parse (each re-read is one or two model calls on a page slice). */
+  max = 10,
+): Promise<number[]> {
+  const fixed: number[] = [];
+  const targets = questions.filter((q) => {
+    const graphLabels = new Set((q.image_regions ?? []).map((r) => r.choice_label).filter(Boolean));
+    const brokenChoice =
+      q.question_type === "Multiple Choice" &&
+      (q.choices ?? []).some((c) => !graphLabels.has(c.label) && !c.image_url && choiceLooksBroken(c));
+    return stemLooksCutOff(q.question_text) || brokenChoice;
+  });
+  for (const q of targets.slice(0, max)) {
+    try {
+      const res = await readQuestionFromPdf(pdfBase64, {
+        number: q.original_question_number,
+        page: q.page_number,
+        storedText: q.question_text,
+        storedChoices: q.choices,
+        storedType: q.question_type,
+      });
+      if (!res.ok || !rereadIsComplete(res.proposal) || res.proposal.question_type !== q.question_type) continue;
+      q.question_text = res.proposal.question_text;
+      if (q.question_type === "Multiple Choice") {
+        const graphLabels = new Set((q.image_regions ?? []).map((r) => r.choice_label).filter(Boolean));
+        // Graph choices stay "" (their image comes from image_regions).
+        q.choices = res.proposal.choices.map((c) => ({ label: c.label, text: graphLabels.has(c.label) ? "" : c.text }));
+      }
+      fixed.push(q.original_question_number);
+    } catch (e) {
+      console.error(`[reread] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return fixed;
 }
