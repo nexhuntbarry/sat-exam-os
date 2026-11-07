@@ -412,7 +412,7 @@ export default function QuestionRenderer({
         </div>
       ) : (
         <div className="space-y-2">
-          <label htmlFor={`spr-${question.id}`} className="text-soft-mute text-sm">Your Answer</label>
+          <label htmlFor={`spr-${question.id}`} className="block text-soft-mute text-sm">Your Answer</label>
           <input
             id={`spr-${question.id}`}
             type="text"
