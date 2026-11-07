@@ -11,7 +11,13 @@ import {
   applyQuestionMeta,
   sanitizeClientMetadata,
   stampModule2Start,
+  deviceInfoFromHeaders,
 } from "@/lib/student-exam";
+import { ensureModule2, findModule2, recoverModule2, RECOVERY_TEST_COLUMNS } from "@/lib/module2-handoff";
+
+// Grading + answer_records + the Module 2 handoff can take a while on a
+// slow Supabase moment; don't let the default limit cut a submit short.
+export const maxDuration = 60;
 
 // POST /api/student/submissions/[id]/submit
 // Optional JSON body:
@@ -25,6 +31,14 @@ import {
 //
 // Submitting after the module deadline (limit + grace) is still accepted
 // and graded, but the submission is marked "Late".
+//
+// Module 1 of a two-module test: the response carries nextSubmissionId
+// (the Module 2 row, created idempotently by lib/module2-handoff). A
+// submit that finds Module 1 already graded (cron closed it, or an
+// earlier request landed) still answers 400 "already submitted", but
+// with alreadySubmitted + nextSubmissionId so the client can continue to
+// Module 2. handoffFailed: Module 1 is graded but Module 2 couldn't be
+// created even after a retry; the take page retries the handoff.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -71,7 +85,7 @@ export async function POST(
   const { data: submission, error: subError } = await db
     .from("submissions")
     .select(
-      "id, test_id, student_id, answers, status, started_at, attempt_number, session_id, module_id, adaptive_track, metadata",
+      "id, test_id, student_id, answers, status, started_at, attempt_number, session_id, module_id, adaptive_track, metadata, percentage",
     )
     .eq("id", id)
     .eq("student_id", user.userId)
@@ -81,23 +95,94 @@ export async function POST(
     return NextResponse.json({ error: "Submission not found" }, { status: 404 });
   }
 
-  if (submission.status !== "In Progress") {
-    return NextResponse.json({ error: "Submission already submitted" }, { status: 400 });
-  }
-
   // Fetch test. We pull adaptive routing fields too — they're only used
   // when this submission is the Module 1 of an adaptive attempt, but
   // pulling them here keeps the query count down.
   const { data: test, error: testError } = await db
     .from("tests")
     .select(
-      "id, module_id, module_2_id, time_limit_minutes, time_limit_minutes_module_2, is_untimed, due_date, question_ids, is_adaptive, module_2_easy_id, module_2_hard_id, adaptive_threshold",
+      `id, module_id, time_limit_minutes, time_limit_minutes_module_2, is_untimed, question_ids, ${RECOVERY_TEST_COLUMNS}`,
     )
     .eq("id", submission.test_id)
     .single();
 
   if (testError || !test) {
-    return NextResponse.json({ error: "Test not found" }, { status: 500 });
+    // Permanent: the client must not keep retrying this.
+    return NextResponse.json({ error: "Test not found" }, { status: 404 });
+  }
+
+  const device = deviceInfoFromHeaders(req.headers);
+
+  // Module 1 → Module 2 handoff, retried once (a transient DB error must
+  // not strand a student whose Module 1 is already graded).
+  async function handoff(module1Percentage: number): Promise<string | null> {
+    if (submission!.adaptive_track !== "module_1" || !submission!.session_id) return null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const next = await ensureModule2(
+          db,
+          {
+            test_id: submission!.test_id,
+            student_id: submission!.student_id,
+            session_id: submission!.session_id,
+            attempt_number: submission!.attempt_number,
+            adaptive_track: submission!.adaptive_track,
+          },
+          test!,
+          { module1Percentage, device },
+        );
+        return next?.id ?? null;
+      } catch (e) {
+        console.error(`[submit/module2_handoff] attempt ${attempt + 1}`, e);
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    throw new Error("module 2 handoff failed");
+  }
+
+  // Already graded (cron closed Module 1, or an earlier request of ours
+  // landed but its response was lost): still 400, but tell the client
+  // where to go next instead of leaving it on a dead end. An existing
+  // Module 2 of this session is always handed back; a missing one is only
+  // created through the recovery rules (this must be the student's latest
+  // session, test Published, due-date window) — a stale request for an
+  // old attempt must never add a Module 2 to it.
+  async function alreadySubmitted() {
+    let nextSubmissionId: string | null = null;
+    let handoffFailed = false;
+    const sub = submission!;
+    if (sub.adaptive_track === "module_1" && sub.session_id) {
+      try {
+        const m1 = {
+          test_id: sub.test_id,
+          student_id: sub.student_id,
+          session_id: sub.session_id,
+          attempt_number: sub.attempt_number,
+          adaptive_track: sub.adaptive_track,
+        };
+        nextSubmissionId = await findModule2(db, m1);
+        if (!nextSubmissionId) {
+          // recoverModule2 also requires Module 1 really graded (a winner
+          // whose grading failed puts it back to In Progress).
+          const recovered = await recoverModule2(db, sub.test_id, sub.student_id, test!, {
+            device,
+            onlySessionId: sub.session_id,
+          });
+          if (recovered && "id" in recovered) nextSubmissionId = recovered.id;
+        }
+      } catch (e) {
+        console.error("[submit/already_submitted_handoff]", e);
+        handoffFailed = true;
+      }
+    }
+    return NextResponse.json(
+      { error: "Submission already submitted", alreadySubmitted: true, nextSubmissionId, handoffFailed },
+      { status: 400 },
+    );
+  }
+
+  if (submission.status !== "In Progress") {
+    return alreadySubmitted();
   }
 
   // Submitting a Module 2 whose clock never started stamps it first (same
@@ -160,72 +245,30 @@ export async function POST(
     });
   } catch (e) {
     console.error("[submit/finalize]", e);
+    // A module with no grading module is a configuration problem a retry
+    // can't fix; everything else (DB hiccup) is worth retrying.
+    if (e instanceof Error && /no grading module/.test(e.message)) {
+      return NextResponse.json({ error: "Test is misconfigured — contact your teacher" }, { status: 422 });
+    }
     return NextResponse.json({ error: "Failed to finalize submission" }, { status: 500 });
   }
   // Lost the claim: an overlapping submit (client retry, timer expiry +
   // manual click, cron) already finalized it. Same 400 as a late duplicate.
   if (!graded) {
-    return NextResponse.json({ error: "Submission already submitted" }, { status: 400 });
+    return alreadySubmitted();
   }
   const { status: finalStatus, correctCount, totalQuestions, percentage, timeSpentSeconds } = graded;
 
-  // Module 1 → Module 2 handoff. Two paths share the same handoff
-  // shape (insert a fresh In-Progress submission in the same session),
-  // they only differ in how the next module is chosen.
+  // Module 1 → Module 2 handoff (adaptive: easy/hard by score; fixed:
+  // module_2_id). Module 1 is already graded, so a failure is reported
+  // (handoffFailed) rather than turned into an error — the take page
+  // retries the handoff when the client goes there.
   let nextSubmissionId: string | null = null;
-  if (submission.adaptive_track === "module_1" && submission.session_id) {
-    let nextModuleId: string | null = null;
-    let nextTrack: "module_2" | "module_2_easy" | "module_2_hard" | null = null;
-
-    if (test.is_adaptive) {
-      const threshold = test.adaptive_threshold ?? 60;
-      const wantHard = percentage >= threshold;
-      // Pick the chosen track first, fall back to the other when the
-      // chosen one wasn't configured. The start endpoint already
-      // refused to launch a test missing both tracks.
-      nextModuleId = wantHard
-        ? test.module_2_hard_id ?? null
-        : test.module_2_easy_id ?? null;
-      nextTrack = wantHard ? "module_2_hard" : "module_2_easy";
-      if (!nextModuleId) {
-        nextModuleId = wantHard
-          ? test.module_2_easy_id ?? null
-          : test.module_2_hard_id ?? null;
-        nextTrack = wantHard ? "module_2_easy" : "module_2_hard";
-      }
-    } else if (test.module_2_id) {
-      // Non-adaptive 2-module test: fixed handoff, no routing decision.
-      nextModuleId = test.module_2_id;
-      nextTrack = "module_2";
-    }
-
-    if (nextModuleId && nextTrack) {
-      const { data: nextSub, error: nextErr } = await db
-        .from("submissions")
-        .insert({
-          test_id: submission.test_id,
-          student_id: submission.student_id,
-          answers: {},
-          status: "In Progress",
-          started_at: new Date().toISOString(),
-          attempt_number: submission.attempt_number,
-          metadata: {},
-          session_id: submission.session_id,
-          module_id: nextModuleId,
-          adaptive_track: nextTrack,
-        })
-        .select("id")
-        .single();
-
-      if (nextErr || !nextSub) {
-        console.error("[submit/module2_handoff]", nextErr);
-        // Module 1 is already graded; refusing now would strand the
-        // attempt. Return success without a next-id so the UI lands on
-        // Module 1 result and an admin can intervene.
-      } else {
-        nextSubmissionId = nextSub.id;
-      }
-    }
+  let handoffFailed = false;
+  try {
+    nextSubmissionId = await handoff(percentage);
+  } catch {
+    handoffFailed = true;
   }
 
   return NextResponse.json({
@@ -238,6 +281,7 @@ export async function POST(
       percentage,
       timeSpentSeconds,
       nextSubmissionId,
+      handoffFailed,
     },
   });
 }

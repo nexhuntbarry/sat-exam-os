@@ -14,6 +14,10 @@ import {
   stampModule2Start,
 } from "@/lib/student-exam";
 
+// Autosave retries its optimistic write up to 3 times; give a slow
+// database moment room instead of the default limit.
+export const maxDuration = 60;
+
 function pickQuestionMeta(meta: Record<string, unknown>) {
   return { flagged: meta.flagged ?? [], crossed_out: meta.crossed_out ?? {}, annotations: meta.annotations ?? {} };
 }

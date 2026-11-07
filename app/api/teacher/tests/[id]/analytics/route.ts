@@ -109,7 +109,13 @@ export async function GET(
   }
   submissionQuery = scopeIds(submissionQuery, "student_id", await getQaUserIds(), user.isQa);
   const { data: submissionRows } = await submissionQuery;
-  const graded = (submissionRows ?? []).filter((s) => s.status === "Submitted" || s.status === "Late");
+  // A Module 2 the cron closed without the student ever opening it holds
+  // no real answers — counting it would make every question look missed.
+  const graded = (submissionRows ?? []).filter(
+    (s) =>
+      (s.status === "Submitted" || s.status === "Late") &&
+      !(s.metadata as Record<string, unknown> | null)?.auto_closed_unopened,
+  );
 
   const subInfo = new Map(
     graded.map((s) => {

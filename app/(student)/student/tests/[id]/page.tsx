@@ -11,6 +11,7 @@ import {
   scopeToStudentQuestionSet,
 } from "@/lib/student-exam";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
+import { module2RecoveryBlock } from "@/lib/module2-handoff";
 
 async function getTestInfo(testId: string, studentId: string) {
   const db = getServiceClient();
@@ -97,6 +98,7 @@ async function getTestInfo(testId: string, studentId: string) {
   // Module 1 graded but no Module 2 row (the handoff failed or the
   // student crashed before it was created): the attempt is NOT finished.
   let needsModule2 = false;
+  let module1SubmittedAt: string | null = null;
   if (subs && subs.length > 0) {
     const latestAttempt = subs[0].attempt_number;
     const sessionRows = subs.filter((s) => s.attempt_number === latestAttempt);
@@ -106,6 +108,8 @@ async function getTestInfo(testId: string, studentId: string) {
       isTwoModule &&
       sessionRows.some((s) => s.adaptive_track === "module_1" && isDone(s)) &&
       !sessionRows.some((s) => isModule2Track(s.adaptive_track));
+    module1SubmittedAt =
+      (sessionRows.find((s) => s.adaptive_track === "module_1")?.submitted_at as string | null) ?? null;
     if (sessionRows.length > 1 && allSubmitted) {
       const correct = sessionRows.reduce((a, s) => a + (s.correct_count ?? 0), 0);
       const total = sessionRows.reduce((a, s) => a + (s.total_questions ?? 0), 0);
@@ -157,6 +161,11 @@ async function getTestInfo(testId: string, studentId: string) {
     isTwoModule,
     combinedPct,
     needsModule2,
+    // Past the due date a missing Module 2 can only be opened within 24 h
+    // of Module 1 (same rule as the server's recovery).
+    // Any reason recovery would refuse (past due, test closed / archived):
+    // say so instead of offering a Continue button that would 403.
+    module2Closed: needsModule2 ? module2RecoveryBlock(test, module1SubmittedAt) : null,
     hasRetakeGrant: Boolean(grant),
   };
 }
@@ -173,7 +182,7 @@ export default async function StudentTestLandingPage({
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 
-  const { test, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, hasRetakeGrant } = data;
+  const { test, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, module2Closed, hasRetakeGrant } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -269,13 +278,21 @@ export default async function StudentTestLandingPage({
               View Result
             </Link>
           </div>
-        ) : needsModule2 && !isPastDue ? (
+        ) : needsModule2 && module2Closed ? (
+          <div className="p-4 bg-status-error/10 border border-status-error/20 rounded-xl text-center text-status-error">
+            {module2Closed === "past_due"
+              ? "This attempt is closed — Module 1 was submitted, but Module 2 can't be started after the due date."
+              : "This attempt is closed — Module 1 was submitted, but this test is no longer open."}{" "}
+            Ask your teacher if you need to finish it.
+          </div>
+        ) : needsModule2 ? (
           <div className="space-y-3">
             <p className="text-status-warning text-sm text-center">
               Module 1 is submitted. Your test isn&apos;t finished yet — continue to Module 2.
             </p>
             {/* POST /api/student/submissions recreates the missing Module 2
-                row for this attempt, then opens the take page. */}
+                row for this attempt, then opens the take page. Past the due
+                date only within 24 h of Module 1 (module2Closed above). */}
             <StartTestButton testId={test.id} isResume={false} label="Continue to Module 2" />
           </div>
         ) : isPastDue && !isInProgress ? (

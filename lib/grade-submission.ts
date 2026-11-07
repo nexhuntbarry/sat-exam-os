@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { scaleSectionScore } from "@/lib/scoring";
 import { parseActivity } from "@/lib/question-activity";
 import {
+  isModule2Track,
   moduleDeadlineMs,
   moduleStartedAtIso,
   scopeToStudentQuestionSet,
@@ -133,6 +134,9 @@ export interface FinalizeSubmissionInput {
   answersOverride?: Record<string, string>;
   /** Extra columns written in the same claiming UPDATE (e.g. metadata). */
   extraUpdates?: Record<string, unknown>;
+  /** Cron closing a Module 2 that was never opened: no time was spent, and
+   *  metadata.auto_closed_unopened marks it so analytics can skip it. */
+  autoClosedUnopened?: boolean;
   db: SupabaseClient;
 }
 
@@ -174,10 +178,9 @@ export async function finalizeSubmission(
 
   const now = new Date();
   const startedAt = new Date(moduleStartedAtIso(submission) ?? submission.started_at);
-  const timeSpentSeconds = Math.max(
-    0,
-    Math.floor((now.getTime() - startedAt.getTime()) / 1000),
-  );
+  const timeSpentSeconds = input.autoClosedUnopened
+    ? 0
+    : Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000));
 
   // Past due only counts when the exam was STARTED after the due date. A
   // student who began on time and finishes within the module time limit is
@@ -205,6 +208,16 @@ export async function finalizeSubmission(
       if (first?.started_at) examStart = Math.min(examStart, new Date(first.started_at).getTime());
     }
     isPastDue = examStart >= due;
+  }
+  // A Module 2 that only exists because recovery created it after the due
+  // date (lib/module2-handoff, 24 h window) is Late. Nothing else about
+  // Module 2 timing makes it Late: a normal handoff of an on-time exam
+  // stays on time even if the due date passed meanwhile.
+  if (
+    isModule2Track(submission.adaptive_track) &&
+    ((submission.metadata ?? {}) as Record<string, unknown>).created_after_due === true
+  ) {
+    isPastDue = true;
   }
   let isOverTime = false;
   if (input.enforceTimeLimit) {
@@ -275,6 +288,12 @@ export async function finalizeSubmission(
     time_spent_seconds: timeSpentSeconds,
   };
   if (input.answersOverride) updates.answers = input.answersOverride;
+  if (input.autoClosedUnopened) {
+    updates.metadata = {
+      ...((updates.metadata ?? submission.metadata ?? {}) as Record<string, unknown>),
+      auto_closed_unopened: true,
+    };
+  }
 
   const { data: claimed, error: upErr } = await db
     .from("submissions")

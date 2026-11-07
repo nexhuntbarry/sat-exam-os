@@ -94,7 +94,20 @@ const KEEPALIVE_MAX_BYTES = 60000;
 // module was already finalized), so only Submit can still deliver answers.
 type SaveStatus = "saved" | "saving" | "error" | "closed";
 
-type SubmitPayload = { data?: { id?: string; nextSubmissionId?: string | null } };
+// Background submit retries after every immediate attempt failed: 5 s,
+// 10 s, 20 s… capped here, until the submit lands or the page closes.
+const SUBMIT_BACKGROUND_RETRY_MAX_MS = 60000;
+// After this many background retries, stop and ask the student to contact
+// their teacher (the answers stay on this device; the button still works).
+const SUBMIT_BACKGROUND_RETRY_LIMIT = 10;
+
+type SubmitPayload = {
+  data?: { id?: string; nextSubmissionId?: string | null; handoffFailed?: boolean };
+  // 400 "already submitted" (the cron or an earlier request graded it).
+  alreadySubmitted?: boolean;
+  error?: string;
+  nextSubmissionId?: string | null;
+};
 
 // Device-side mirror of the attempt, so a refresh / crash / expired session
 // never loses work the server didn't receive.
@@ -1011,7 +1024,7 @@ export default function TestTakingClient({
         signal: controller.signal,
       });
       const payload =
-        isJsonOk(res) || res.status === 400
+        isJsonOk(res) || (res.status >= 400 && res.status < 500)
           ? await res.json().catch((e) => {
               if (controller.signal.aborted) throw e; // stalled → retry
               return null;
@@ -1120,11 +1133,59 @@ export default function TestTakingClient({
     submitControllerRef.current?.abort();
   }
 
+  // Submit failed at the network / server level after every immediate
+  // retry: keep trying in the background (answers stay on this device and
+  // ride along with each attempt) with a visible status and a manual
+  // "Try submitting again" button. Coming back online retries at once.
+  const submitRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submitRetryCountRef = useRef(0);
+  const [submitRetrying, setSubmitRetrying] = useState(false);
+  const handleSubmitRef = useRef<() => void>(() => {});
+  function clearSubmitRetry() {
+    if (submitRetryTimerRef.current) clearTimeout(submitRetryTimerRef.current);
+    submitRetryTimerRef.current = null;
+    setSubmitRetrying(false);
+  }
+  function scheduleSubmitRetry() {
+    if (submittedRef.current) return;
+    if (submitRetryTimerRef.current) clearTimeout(submitRetryTimerRef.current);
+    if (submitRetryCountRef.current >= SUBMIT_BACKGROUND_RETRY_LIMIT) {
+      setSubmitRetrying(false);
+      setSubmitError(
+        "We still can't submit your test. Your answers are kept on this device — don't close this page, and contact your teacher.",
+      );
+      return;
+    }
+    const delay = Math.min(SUBMIT_BACKGROUND_RETRY_MAX_MS, 5000 * 2 ** submitRetryCountRef.current);
+    submitRetryCountRef.current += 1;
+    setSubmitRetrying(true);
+    submitRetryTimerRef.current = setTimeout(() => {
+      submitRetryTimerRef.current = null;
+      handleSubmitRef.current();
+    }, delay);
+  }
+  function retrySubmitNow() {
+    clearSubmitRetry();
+    handleSubmitRef.current();
+  }
+  useEffect(() => {
+    const onOnline = () => {
+      if (submitRetryTimerRef.current) retrySubmitNow();
+    };
+    window.addEventListener("online", onOnline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      if (submitRetryTimerRef.current) clearTimeout(submitRetryTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handleSubmit() {
     // Timer expiry + a manual click (or a double click) used to fire two
     // submits; the loser got 400 "already submitted" and silently reset
     // the UI while the winner's navigation could be lost.
     if (submitInFlightRef.current) return;
+    clearSubmitRetry();
     submitInFlightRef.current = true;
     setIsSubmitting(true);
     setSubmitError(null);
@@ -1167,10 +1228,16 @@ export default function TestTakingClient({
         return;
       }
       if (res.status === 400 && payload) {
-        // "Submission already submitted" — an earlier request landed but
-        // its response never reached us. Reload the take page: it opens
-        // Module 2 if one is in progress, otherwise redirects to the test page.
-        navigateAway(`/student/tests/${testId}/take`);
+        // "Submission already submitted" — an earlier request of ours
+        // landed but its response never reached us, or the time-up cron
+        // graded this module first. Either way the module is done: carry
+        // on like a successful submit. Module 1 → the take page, which
+        // opens Module 2 (the server already created it, or the take page
+        // creates it); Module 2 → the result page.
+        submittedRef.current = true;
+        clearSubmitRetry();
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        leaveAfterSubmit();
         return;
       }
       if (isJsonOk(res) && payload?.data?.id) {
@@ -1189,21 +1256,31 @@ export default function TestTakingClient({
         // Module 2 (DB showed Module 2 rows with 44 answers = 22+22).
         // A real navigation guarantees a fresh React tree, fresh
         // state, fresh server fetch, and a fresh timer.
-        const nextId = payload?.data?.nextSubmissionId;
-        if (nextId) {
-          navigateAway(`/student/tests/${testId}/take`);
-        } else {
-          navigateAway(
-            `/student/tests/${testId}/result?submission=${submissionId}`,
-          );
-        }
+        // Module 1 always continues on the take page, even when the
+        // server couldn't create Module 2 (handoffFailed / no next id):
+        // the take page retries the handoff, and falls back to the test
+        // page's "Continue to Module 2". Never the Module 1 result page —
+        // that was a dead end mid-test.
+        clearSubmitRetry();
+        leaveAfterSubmit();
       } else {
         submitInFlightRef.current = false;
         setIsSubmitting(false);
         setAutoSubmitting(false);
         setShowSubmitModal(false);
-        setSubmitError(`Couldn't submit — please try again. ${savedNote()}`);
         if (hasUnsavedChanges()) scheduleSave(0);
+        // Server error / unexpected reply: retry in the background.
+        // Other 4xx (e.g. 404) won't fix themselves.
+        const transient = res.status >= 500 || (res.ok && !isJsonOk(res));
+        if (transient) {
+          setSubmitError(`Not submitted yet — the server had a problem. Retrying automatically… ${savedNote()}`);
+          scheduleSubmitRetry();
+        } else {
+          // Permanent (404 / 422 …): retrying won't help.
+          setSubmitError(
+            `Couldn't submit${payload?.error ? ` (${payload.error})` : ""}. Please contact your teacher. ${savedNote()}`,
+          );
+        }
       }
     } catch {
       // Network failure after all retries.
@@ -1211,10 +1288,12 @@ export default function TestTakingClient({
       setIsSubmitting(false);
       setAutoSubmitting(false);
       setShowSubmitModal(false);
-      setSubmitError(`Couldn't reach the server. Check your connection and press Submit again. ${savedNote()}`);
+      setSubmitError(`Not submitted yet — can't reach the server. Retrying automatically; check your Wi-Fi. ${savedNote()}`);
       if (hasUnsavedChanges()) scheduleSave(0);
+      scheduleSubmitRetry();
     }
   }
+  handleSubmitRef.current = () => void handleSubmit();
 
   // Only claim "saved" when the last autosave actually covered every change.
   function savedNote() {
@@ -1295,9 +1374,18 @@ export default function TestTakingClient({
       {submitError && (
         <div
           role="alert"
-          className="shrink-0 bg-status-error text-white text-sm px-4 py-2 text-center font-medium"
+          className="shrink-0 bg-status-error text-white text-sm px-4 py-2 flex flex-wrap items-center justify-center gap-3 text-center font-medium"
         >
-          {submitError}
+          <span>{submitError}</span>
+          {!isSubmitting && (
+            <button
+              type="button"
+              onClick={retrySubmitNow}
+              className="whitespace-nowrap rounded-md bg-white text-status-error px-3 py-1 font-semibold hover:bg-white/90"
+            >
+              {submitRetrying ? "Retry now" : "Try submitting again"}
+            </button>
+          )}
         </div>
       )}
       {sessionExpired && (

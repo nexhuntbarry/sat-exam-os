@@ -2,15 +2,24 @@ import { SPR_TYPE, sprInputMaxChars } from "@/lib/answer-key";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
+import { headers } from "next/headers";
 import TestTakingClient from "./TestTakingClient";
 import Module2Intro from "./Module2Intro";
-import { isModule2Track, scopeToStudentQuestionSet } from "@/lib/student-exam";
+import ClearTakeErrorReloads from "./ClearTakeErrorReloads";
+import { deviceInfoFromHeaders, isModule2Track, scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { RECOVERY_TEST_COLUMNS, recoverModule2, type RecoveryTest } from "@/lib/module2-handoff";
+import { studentTestAccess } from "@/lib/module2-access";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
 
-async function getActiveSubmission(testId: string, studentId: string, startModule2: boolean) {
+async function getActiveSubmission(
+  testId: string,
+  user: { userId: string; isQa: boolean },
+  startModule2: boolean,
+) {
+  const studentId = user.userId;
   const db = getServiceClient();
 
-  const { data: submission } = await db
+  let { data: submission } = await db
     .from("submissions")
     .select(
       "id, test_id, answers, status, started_at, metadata, module_id, adaptive_track, session_id",
@@ -21,6 +30,45 @@ async function getActiveSubmission(testId: string, studentId: string, startModul
     .order("started_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  // Module 1 graded but its Module 2 never created (handoff failed after
+  // a submit, or an old cron close): every "go on" path lands here, so
+  // create it now instead of bouncing the student to the test page. Same
+  // access rules as POST /api/student/submissions before anything is
+  // created; past the due date only within 24 h of Module 1 (otherwise
+  // the test page explains the attempt is closed).
+  if (!submission) {
+    const { data: handoffTest } = await db
+      .from("tests")
+      .select(`id, ${RECOVERY_TEST_COLUMNS}`)
+      .eq("id", testId)
+      .maybeSingle();
+    const test = handoffTest as unknown as (RecoveryTest & { id: string }) | null;
+    // Assignment is not required mid-attempt (graded Module 1), same as
+    // POST /api/student/submissions and the submit route's recovery.
+    if (test && !(await studentTestAccess(db, user, test)).error) {
+      try {
+        const recovered = await recoverModule2(db, testId, studentId, test, {
+          device: deviceInfoFromHeaders(await headers()),
+        });
+        // By id: an identical second query would get the memoized first
+        // (empty) result within this render.
+        if (recovered && "id" in recovered) {
+          ({ data: submission } = await db
+            .from("submissions")
+            .select(
+              "id, test_id, answers, status, started_at, metadata, module_id, adaptive_track, session_id",
+            )
+            .eq("id", recovered.id)
+            .eq("status", "In Progress")
+            .maybeSingle());
+        }
+      } catch (e) {
+        // The test page shows "Continue to Module 2", which retries.
+        console.error("[take] module 2 recovery failed", e);
+      }
+    }
+  }
 
   if (!submission) return null;
 
@@ -124,6 +172,9 @@ async function getActiveSubmission(testId: string, studentId: string, startModul
             ...submissionMetadata,
             module_2_started_at: stamp,
             answers_version: version + 1,
+            // The device Module 2 was actually started on (a cron-created
+            // Module 2 has none yet).
+            device: submissionMetadata.device ?? deviceInfoFromHeaders(await headers()),
           },
         })
         .eq("id", submission.id)
@@ -210,7 +261,7 @@ export default async function TestTakingPage({
 
   const { id } = await params;
   const { start } = await searchParams;
-  const data = await getActiveSubmission(id, user.userId, start === "1");
+  const data = await getActiveSubmission(id, user, start === "1");
 
   if (!data) {
     redirect(`/student/tests/${id}`);
@@ -220,12 +271,15 @@ export default async function TestTakingPage({
 
   if (data.awaitingModuleStart) {
     return (
+      <>
+      <ClearTakeErrorReloads testId={id} />
       <Module2Intro
         testId={id}
         testName={data.test.name}
         questionCount={data.questions.length}
         timeLimitMinutes={data.test.isUntimed ? null : data.test.timeLimitMinutes}
       />
+      </>
     );
   }
 
@@ -234,6 +288,8 @@ export default async function TestTakingPage({
     // handoff uses router.push to same URL; without the key, React keeps
     // the same instance and Module 1's answers state pollutes Module 2,
     // causing the submit modal to show 0/N and the DB to store M1+M2 keys.
+    <>
+    <ClearTakeErrorReloads testId={id} />
     <TestTakingClient
       key={data.submission.id}
       testId={id}
@@ -246,5 +302,6 @@ export default async function TestTakingPage({
       timeRemainingSeconds={data.timeRemainingSeconds}
       reportsEnabled={reportsEnabled}
     />
+    </>
   );
 }

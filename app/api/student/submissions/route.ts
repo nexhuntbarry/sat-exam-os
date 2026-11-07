@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { forbidCrossSide } from "@/lib/qa";
-import { isTestAssignedToStudent } from "@/lib/student-exam";
+import { deviceInfoFromHeaders } from "@/lib/student-exam";
+import { recoverModule2 } from "@/lib/module2-handoff";
+import { studentTestAccess } from "@/lib/module2-access";
+
+export const maxDuration = 60;
 
 // POST /api/student/submissions — start a test (create submission)
 export async function POST(req: Request) {
@@ -21,9 +24,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "testId is required" }, { status: 400 });
   }
 
-  const crossSide = await forbidCrossSide(user, { testIds: [body.testId] });
-  if (crossSide) return crossSide;
-
   const db = getServiceClient();
 
   // Verify test is published
@@ -39,14 +39,43 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Test not found" }, { status: 404 });
   }
 
-  if (test.status !== "Published") {
-    return NextResponse.json({ error: "Test is not available" }, { status: 403 });
-  }
+  // Same QA side, Published, assigned (shared with the take page). A
+  // student un-assigned mid-attempt may still finish it, not start anew.
+  const access = await studentTestAccess(db, user, test);
+  if (access.error) return NextResponse.json({ error: access.error.error }, { status: access.error.status });
 
-  // Only students the test is assigned to (directly or via a class group,
-  // same rule as the My Tests list) may start it.
-  if (!(await isTestAssignedToStudent(db, body.testId, user.userId))) {
-    return NextResponse.json({ error: "Test is not assigned to you" }, { status: 403 });
+  const device = deviceInfoFromHeaders(req.headers);
+
+  // Handoff recovery (prevents the "Module 2 crashed and the test reset"
+  // bug). For a two-module / adaptive test, if the student's most recent
+  // session has Module 1 submitted but no Module 2 row — because the
+  // Module 1→2 handoff failed, or they crashed before Module 2 was created
+  // — "start" would otherwise create a brand-new attempt from Module 1,
+  // i.e. appear to reset. Instead, recreate the Module 2 submission for
+  // that session and resume it. Runs before the due-date check: after the
+  // due date it is still allowed within 24 h of Module 1 being graded
+  // (lib/module2-handoff module2RecoveryBlock), then the attempt is closed.
+  try {
+    const recovered = await recoverModule2(db, body.testId, user.userId, test, { device });
+    if (recovered && "blocked" in recovered) {
+      return NextResponse.json(
+        {
+          error:
+            "This attempt is closed — Module 2 can't be started after the due date. Ask your teacher if you need to finish it.",
+          blocked: recovered.blocked,
+        },
+        { status: 403 },
+      );
+    }
+    if (recovered) {
+      return NextResponse.json({ data: { id: recovered.id, resumed: true, recovered: true } });
+    }
+  } catch (e) {
+    console.error("[student/submissions] M2 recovery failed:", e);
+    return NextResponse.json(
+      { error: "Couldn't open Module 2 — please try again." },
+      { status: 503 },
+    );
   }
 
   if (test.open_date && new Date(test.open_date) > new Date()) {
@@ -92,69 +121,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ data: { id: inProgress.id, resumed: true } });
   }
 
-  // Handoff recovery (prevents the "Module 2 crashed and the test reset"
-  // bug). For a two-module / adaptive test, if the student's most recent
-  // session has Module 1 submitted but no Module 2 row — because the
-  // Module 1→2 handoff failed, or they crashed before Module 2 was created
-  // — "start" would otherwise create a brand-new attempt from Module 1,
-  // i.e. appear to reset. Instead, recreate the Module 2 submission for
-  // that session and resume it.
-  if (test.is_adaptive || test.module_2_id) {
-    const { data: sessionRows } = await db
-      .from("submissions")
-      .select("id, status, session_id, adaptive_track, attempt_number, started_at, percentage")
-      .eq("test_id", body.testId)
-      .eq("student_id", user.userId)
-      .not("session_id", "is", null)
-      .order("started_at", { ascending: false });
-    const rows = sessionRows ?? [];
-    const latestSessionId = rows[0]?.session_id as string | undefined;
-    if (latestSessionId) {
-      const sess = rows.filter((r) => r.session_id === latestSessionId);
-      const m1 = sess.find((r) => r.adaptive_track === "module_1");
-      const hasM2 = sess.some((r) => String(r.adaptive_track ?? "").startsWith("module_2"));
-      const m1Done = m1 && (m1.status === "Submitted" || m1.status === "Late");
-      if (m1Done && !hasM2) {
-        let nextModuleId: string | null = null;
-        let nextTrack: "module_2" | "module_2_easy" | "module_2_hard" | null = null;
-        if (test.is_adaptive) {
-          const threshold = (test.adaptive_threshold as number | null) ?? 60;
-          const pct = m1!.percentage != null ? Number(m1!.percentage) : 0;
-          const wantHard = pct >= threshold;
-          nextModuleId = (wantHard ? test.module_2_hard_id : test.module_2_easy_id)
-            ?? (wantHard ? test.module_2_easy_id : test.module_2_hard_id) ?? null;
-          nextTrack = wantHard ? "module_2_hard" : "module_2_easy";
-          if (nextModuleId === (wantHard ? test.module_2_easy_id : test.module_2_hard_id)) {
-            nextTrack = wantHard ? "module_2_easy" : "module_2_hard";
-          }
-        } else if (test.module_2_id) {
-          nextModuleId = test.module_2_id;
-          nextTrack = "module_2";
-        }
-        if (nextModuleId && nextTrack) {
-          const { data: recovered, error: recErr } = await db
-            .from("submissions")
-            .insert({
-              test_id: body.testId,
-              student_id: user.userId,
-              answers: {},
-              status: "In Progress",
-              started_at: new Date().toISOString(),
-              attempt_number: (m1!.attempt_number as number) ?? 1,
-              metadata: {},
-              session_id: latestSessionId,
-              module_id: nextModuleId,
-              adaptive_track: nextTrack,
-            })
-            .select("id")
-            .single();
-          if (!recErr && recovered) {
-            return NextResponse.json({ data: { id: recovered.id, resumed: true, recovered: true } });
-          }
-          console.error("[student/submissions] M2 recovery failed:", recErr);
-        }
-      }
-    }
+  if (!access.assigned) {
+    return NextResponse.json({ error: "Test is not assigned to you" }, { status: 403 });
   }
 
   // No in-progress row → look at the highest prior attempt to gate
@@ -211,7 +179,7 @@ export async function POST(req: Request) {
       status: "In Progress",
       started_at: new Date().toISOString(),
       attempt_number: attemptNumber,
-      metadata: {},
+      metadata: device ? { device } : {},
       session_id: sessionId,
       module_id: moduleId,
       adaptive_track: adaptiveTrack,

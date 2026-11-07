@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 import { finalizeSubmission } from "@/lib/grade-submission";
+import { ensureModule2, HANDOFF_TEST_COLUMNS } from "@/lib/module2-handoff";
 
 // POST /api/admin/submissions/[id]/force-submit
 //
@@ -12,10 +13,10 @@ import { finalizeSubmission } from "@/lib/grade-submission";
 // closed out. Reads the latest answers from the submission row and
 // runs the same grading pipeline.
 //
-// Does NOT trigger the Module-1 → Module-2 handoff. If admin force-
-// submits Module 1 of a two-module test, the student stays parked and
-// admin can create the Module 2 submission manually (or by using
-// reset on the next attempt).
+// Force-submitting Module 1 of a two-module test hands off to Module 2
+// (same idempotent lib/module2-handoff as a student submit and the cron),
+// so the student can carry on; the Module 2 clock starts only when they
+// open it. The response carries module2Id / handoffError.
 //
 // Grades through lib/grade-submission's finalizeSubmission — the same
 // Approved-only question set and answer matching as a student submit.
@@ -32,7 +33,7 @@ export async function POST(
   const { data: submission } = await db
     .from("submissions")
     .select(
-      "id, test_id, student_id, answers, started_at, status, module_id, adaptive_track, metadata",
+      "id, test_id, student_id, answers, started_at, status, module_id, adaptive_track, metadata, session_id, attempt_number",
     )
     .eq("id", id)
     .maybeSingle();
@@ -50,7 +51,7 @@ export async function POST(
 
   const { data: test } = await db
     .from("tests")
-    .select("id, module_id, due_date, question_ids, is_adaptive, time_limit_minutes, time_limit_minutes_module_2, is_untimed")
+    .select(`id, module_id, due_date, question_ids, time_limit_minutes, time_limit_minutes_module_2, is_untimed, ${HANDOFF_TEST_COLUMNS}`)
     .eq("id", submission.test_id)
     .maybeSingle();
   if (!test) {
@@ -105,8 +106,35 @@ export async function POST(
     );
   }
 
+  let module2Id: string | null = null;
+  let handoffError: string | undefined;
+  if (submission.adaptive_track === "module_1" && submission.session_id) {
+    try {
+      module2Id =
+        (
+          await ensureModule2(
+            db,
+            {
+              test_id: submission.test_id,
+              student_id: submission.student_id,
+              session_id: submission.session_id,
+              attempt_number: submission.attempt_number,
+              adaptive_track: submission.adaptive_track,
+            },
+            test,
+            { module1Percentage: graded.percentage },
+          )
+        )?.id ?? null;
+    } catch (e) {
+      handoffError = e instanceof Error ? e.message : String(e);
+      console.error("[admin/submissions/force-submit] module 2 handoff", handoffError);
+    }
+  }
+
   return NextResponse.json({
     ok: true,
+    module2Id,
+    ...(handoffError ? { handoffError } : {}),
     status: graded.status,
     correctCount: graded.correctCount,
     totalQuestions: graded.totalQuestions,

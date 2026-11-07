@@ -267,7 +267,43 @@ export function applyQuestionMeta(
   return { flagged: [...flagged], crossed_out: crossed, annotations: annos };
 }
 
-const SERVER_OWNED_METADATA_KEYS = ["module_2_started_at", "answers_version"];
+const SERVER_OWNED_METADATA_KEYS = [
+  "module_2_started_at",
+  "answers_version",
+  "device",
+  // Set by lib/module2-handoff recovery after the due date; makes it Late.
+  "created_after_due",
+  "auto_closed_unopened",
+];
+
+/** Device a module was started on (submissions.metadata.device). */
+export interface DeviceInfo {
+  /** Raw user agent, capped. */
+  ua: string;
+  /** Rough label: iPhone, iPad, Android, Windows, Mac, ChromeOS, Linux or Other. */
+  platform: string;
+  at: string;
+}
+
+/**
+ * Device info from the request headers, for support ("which device was
+ * the student on?"). Prefers the Sec-CH-UA-Platform client hint when the
+ * browser sends one. iPadOS Safari reports itself as a Mac.
+ */
+export function deviceInfoFromHeaders(headers: Headers): DeviceInfo | null {
+  const ua = headers.get("user-agent") ?? "";
+  if (!ua) return null;
+  const hint = (headers.get("sec-ch-ua-platform") ?? "").replace(/"/g, "");
+  let platform = "Other";
+  if (/iPhone|iPod/.test(ua)) platform = "iPhone";
+  else if (/iPad/.test(ua)) platform = "iPad";
+  else if (/Android/.test(ua)) platform = "Android";
+  else if (/CrOS/.test(ua) || hint === "Chrome OS") platform = "ChromeOS";
+  else if (/Windows/.test(ua) || hint === "Windows") platform = "Windows";
+  else if (/Macintosh|Mac OS X/.test(ua) || hint === "macOS") platform = "Mac";
+  else if (/Linux/.test(ua) || hint === "Linux") platform = "Linux";
+  return { ua: ua.slice(0, 300), platform, at: new Date().toISOString() };
+}
 
 /** Drop server-owned keys from client-supplied metadata. */
 export function sanitizeClientMetadata(

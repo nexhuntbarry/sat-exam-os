@@ -40,7 +40,9 @@ export async function GET(
     .from("submissions")
     .select("id, student_id")
     .eq("test_id", testId)
-    .in("status", ["Submitted", "Late"]);
+    .in("status", ["Submitted", "Late"])
+    // Skip Module 2s the cron closed unopened (no real answers).
+    .or("metadata->auto_closed_unopened.is.null,metadata->auto_closed_unopened.neq.true");
   if (studentAllowlist) {
     submissionsQuery = submissionsQuery.in(
       "student_id",
