@@ -173,6 +173,14 @@ export async function PATCH(
   if (body.answers !== undefined && (body.answers === null || typeof body.answers !== "object")) {
     return NextResponse.json({ error: "answers must be an object" }, { status: 400 });
   }
+  // No real answer is anywhere near this long (MC letters, ≤ 7-char grid-ins);
+  // refuse crafted payloads before they reach grading.
+  if (
+    body.answers &&
+    Object.values(body.answers).some((v) => typeof v === "string" && v.length > 200)
+  ) {
+    return NextResponse.json({ error: "answer too long" }, { status: 400 });
+  }
   const mergeMode = body.answersMode === "merge";
   const clientMetadata =
     body.metadata && typeof body.metadata === "object"

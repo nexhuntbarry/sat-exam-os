@@ -5,6 +5,7 @@
 // explanations) and the explanation's closing "Answer: …" line.
 // Run: npx tsx scripts/test-spr-rules.ts — exits non-zero on any failure.
 
+import { answersMatch as _am } from "../lib/grade-submission";
 import {
   acceptedSprEntries,
   fillDecimalForms,
@@ -119,3 +120,18 @@ eq(".0189 vs 0.018", answersMatch(".0189", "0.018"), false);
 
 console.log(`\n${total - failed}/${total} passed`);
 if (failed > 0) process.exit(1);
+
+// ── Review fixes 2026-11-07 ──
+{
+  const answersMatch = _am;
+  const chk = (n: string, got: boolean, want: boolean) => { if (got !== want) { console.error("FAIL", n, got); process.exitCode = 1; } else console.log("ok", n); };
+  chk("400 digits vs 5", answersMatch("1".repeat(400), "5"), false);
+  chk("400 digits vs 3/4", answersMatch("1".repeat(400), "3/4"), false);
+  chk("309 digits rounding stem", answersMatch("9".repeat(309), "248", "To the nearest whole number, what is x?"), false);
+  chk("2. vs 2", answersMatch("2.", "2"), true);
+  chk("12.85 vs exact 12.86", answersMatch("12.85", "12.86"), false);
+  chk("90/7 vs exact 12.86", answersMatch("90/7", "12.86"), false);
+  chk("12.86 vs 12.86", answersMatch("12.86", "12.86"), true);
+  chk("2/3 vs .6667", answersMatch("2/3", ".6667"), true);
+  chk(".6666 vs .6667", answersMatch(".6666", ".6667"), true);
+}

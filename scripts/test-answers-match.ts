@@ -171,7 +171,9 @@ const cases: Case[] = [
   ["2/3", "0.6667", true, "approximate key"],
   [".6666", "0.6667", true, "approximate key, truncated entry"],
   ["0.67", "0.6667", false],
-  ["214/3", "71.33", true, "approximate key"],
+  ["214/3", "71.33", false, "2-decimal key is treated as exact (review 2026-11-07); real key lists 214/3 too"],
+  ["214/3", "214/3, 71.33", true, "fraction listed alongside"],
+  ["9/13", "0.692", true, "3-decimal fill form of 9/13"],
   ["71.33", "71.33", true],
 
   // ── Question-specific rounding instructions win ──

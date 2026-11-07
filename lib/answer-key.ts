@@ -503,13 +503,19 @@ function compactEntry(raw: string | null | undefined): string {
  * "+", two numbers or a zero denominator → null.
  */
 export function parseSprEntry(raw: string | null | undefined): number | null {
-  const s = compactEntry(raw);
-  if (INT.test(s) || DEC.test(s)) return Number(s);
-  if (FRAC.test(s)) {
+  // No real entry is this long (the box allows ≤ 6, verified long keys ≤ 14).
+  // Caps a crafted autosave: a 309-digit string is Infinity, and a relative
+  // comparison would treat Infinity as equal to every key.
+  if (raw != null && String(raw).length > 32) return null;
+  let s = compactEntry(raw);
+  if (/^-?\d+\.$/.test(s)) s = s.slice(0, -1); // "2." is 2 (the box lets you type it)
+  let v: number | null = null;
+  if (INT.test(s) || DEC.test(s)) v = Number(s);
+  else if (FRAC.test(s)) {
     const [n, d] = s.split("/").map(Number);
-    return d === 0 ? null : n / d;
+    v = d === 0 ? null : n / d;
   }
-  return null;
+  return v !== null && Number.isFinite(v) ? v : null;
 }
 
 /** Can v be entered exactly as a decimal (or integer) within the space? */
@@ -577,7 +583,10 @@ function keyNumber(cand: string): number | null {
  */
 export function impliedExactValue(cand: string): number | null {
   const s = normalizeKeyText(cand);
-  if (!/^-?\d*\.\d{2,}$/.test(s)) return null;
+  // At least 3 decimals: a 2-decimal key ("12.86", "71.33") is far more
+  // often exact than a rounded fraction, and inferring one would credit a
+  // neighbouring wrong value (12.85 for an exact 12.86).
+  if (!/^-?\d*\.\d{3,}$/.test(s)) return null;
   // Only a decimal that exactly fills the space (".6667", "0.667", "71.33").
   const body = s.replace(/^-/, "");
   if (body.length !== SPR_MAX_CHARS && body.replace(/^0(?=\.)/, "").length !== SPR_MAX_CHARS) return null;

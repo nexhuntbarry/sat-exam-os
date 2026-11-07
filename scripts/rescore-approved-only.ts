@@ -115,7 +115,7 @@ async function main() {
   const questions = await fetchAll<Question & { module_id: string }>((a, b) =>
     db
       .from("questions")
-      .select("id, module_id, parsing_status, correct_answer, question_type")
+      .select("id, module_id, parsing_status, correct_answer, question_type, question_text")
       .in("module_id", moduleIds)
       .order("id")
       .range(a, b),
@@ -174,7 +174,7 @@ async function main() {
       const q = questionById.get(r.question_id);
       if (q?.question_type !== "Student Produced Response") return { rec: r, isCorrect: r.is_correct };
       const key = r.correct_answer ?? q.correct_answer;
-      return { rec: r, isCorrect: answersMatch(r.student_answer, key) };
+      return { rec: r, isCorrect: answersMatch(r.student_answer, key, (q as { question_text?: string | null }).question_text) };
     });
     const flips = regraded.filter((x) => x.isCorrect !== x.rec.is_correct);
     if (drop.length === 0 && flips.length === 0) continue;
