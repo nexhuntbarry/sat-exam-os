@@ -4,6 +4,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import "./globals.css";
+import PrintOpenDetails from "@/components/PrintOpenDetails";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -51,6 +52,7 @@ export default async function RootLayout({
     <ClerkProvider afterSignOutUrl="/">
       <html lang={htmlLang} className={inter.variable}>
         <body className="font-sans antialiased bg-cream text-charcoal">
+          <PrintOpenDetails />
           <NextIntlClientProvider locale={locale} messages={messages}>
             {children}
           </NextIntlClientProvider>

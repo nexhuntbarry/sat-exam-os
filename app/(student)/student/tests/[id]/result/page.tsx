@@ -451,7 +451,7 @@ export default async function StudentResultPage({
             {group.records.map((record) => {
               const q = record.questions;
               return (
-                <details key={record.id} className="bg-surface border border-divider rounded-xl overflow-hidden group">
+                <details key={record.id} data-print-open className="bg-surface border border-divider rounded-xl overflow-hidden group">
                   <summary className="flex items-center gap-3 p-4 cursor-pointer hover:bg-surface transition-colors list-none">
                     <div className={clsx(
                       "w-6 h-6 rounded-full flex items-center justify-center shrink-0",
@@ -485,8 +485,8 @@ export default async function StudentResultPage({
                     </MathMarkdown>
 
                     {/* Question figure: recovered crop(s) only — students never see the
-                        raw source scan page (M-20). Lazy so the review list doesn't
-                        download every figure up front (M-25). */}
+                        raw source scan page (M-20). Not lazy: a lazy figure inside a closed
+                        row never loads, so Ctrl/Cmd+P printed the review without diagrams. */}
                     {q.image_urls && q.image_urls.length > 0 && (
                       <div className="flex flex-wrap gap-3">
                         {q.image_urls.map((url, i) => (
@@ -495,8 +495,6 @@ export default async function StudentResultPage({
                             key={url}
                             src={`/api/blob-image?u=${encodeURIComponent(url)}`}
                             alt={q.image_alts?.[i] || `Figure for question ${q.original_question_number}`}
-                            loading="lazy"
-                            decoding="async"
                             className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
                           />
                         ))}
@@ -525,8 +523,6 @@ export default async function StudentResultPage({
                                 <img
                                   src={`/api/blob-image?u=${encodeURIComponent(c.image_url)}`}
                                   alt={`Choice ${c.label} graph`}
-                                  loading="lazy"
-                                  decoding="async"
                                   className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
                                 />
                               )}

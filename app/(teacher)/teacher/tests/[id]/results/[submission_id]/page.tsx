@@ -9,6 +9,7 @@ import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel"
 import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
 import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { waitForImages } from "@/lib/print-images";
 
 interface StudentInfo {
   name: string;
@@ -122,6 +123,8 @@ export default function SubmissionDetailPage() {
   // a "Save" click. Visible status: "Saving…" / "Saved".
   const [tutorNotes, setTutorNotes] = useState("");
   const [tutorStatus, setTutorStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [printProgress, setPrintProgress] = useState<{ loaded: number; total: number } | null>(null);
+  const [printFailed, setPrintFailed] = useState<string[]>([]);
   const tutorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -176,19 +179,18 @@ export default function SubmissionDetailPage() {
   }
   const score = scoreDisplay(scoreModules, submission.scaledSection);
 
-  function handlePrint() {
-    // The per-question rows in SubmissionDetailPanel are gated by
-    // React state, so a plain DOM mutation can't reveal them. Fire a
-    // custom event the panel listens for, then wait two animation
-    // frames so React commits the state update + the layout reflow
-    // before we hand off to the print pipeline.
+  async function handlePrint() {
+    // Open every row on screen too (the bodies are already in the DOM and
+    // printed regardless), then wait for every figure: a print snapshot
+    // draws nothing for an image that is still loading.
     document.querySelectorAll<HTMLDetailsElement>("details").forEach((d) => {
       d.open = true;
     });
     window.dispatchEvent(new Event("submission-detail-expand-all"));
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => window.print());
-    });
+    const res = await waitForImages(document, { onProgress: (loaded, total) => setPrintProgress({ loaded, total }) });
+    setPrintProgress(null);
+    setPrintFailed(res.failed);
+    window.print();
   }
 
   return (
@@ -202,12 +204,18 @@ export default function SubmissionDetailPage() {
         <span className="text-charcoal">{student.name}</span>
         <button
           onClick={handlePrint}
+          disabled={printProgress !== null}
           className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-coral hover:bg-warm-coral-dark text-white text-xs font-semibold transition-colors"
           title="Open every answer and trigger the print dialog (Save as PDF works from there)"
         >
           <Printer size={13} />
-          Print / Save PDF
+          {printProgress ? `Loading images… ${printProgress.loaded}/${printProgress.total}` : "Print / Save PDF"}
         </button>
+        {printFailed.length > 0 && (
+          <p role="alert" className="basis-full text-right text-xs text-status-error">
+            {printFailed.length} image{printFailed.length === 1 ? "" : "s"} didn&apos;t load and will be missing on paper: {printFailed.join(", ")}. Reload and try again.
+          </p>
+        )}
       </div>
 
       {/* Student header */}

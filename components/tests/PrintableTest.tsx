@@ -1,5 +1,5 @@
 import MathMarkdown from "@/components/MathMarkdown";
-import PrintButton from "@/components/analytics/PrintButton";
+import PrintButton, { PrintPendingNotice } from "@/components/analytics/PrintButton";
 import { answerCandidates } from "@/lib/grade-submission";
 
 export interface PrintQuestion {
@@ -44,6 +44,7 @@ export default function PrintableTest({
         </p>
         <PrintButton label="Print" />
       </div>
+      <PrintPendingNotice />
 
       {modules.map((m, mi) => (
         <section key={mi} className={mi > 0 ? "break-before-page pt-2" : ""}>
@@ -105,6 +106,7 @@ function QuestionBlock({ q, n, withKey }: { q: PrintQuestion; n: number; withKey
   const choices = Array.isArray(q.choices) ? q.choices : [];
   const keys = answerCandidates(q.correct_answer);
   const isMC = q.question_type === "Multiple Choice";
+  const hasGraphChoices = choices.some((c) => c.image_url);
   return (
     <li className="break-inside-avoid flex gap-3">
       <span className="shrink-0 w-7 h-7 rounded-md bg-charcoal text-white text-sm font-bold flex items-center justify-center">
@@ -115,21 +117,29 @@ function QuestionBlock({ q, n, withKey }: { q: PrintQuestion; n: number; withKey
           {q.question_text}
         </MathMarkdown>
 
+        {/* A very tall question may break before its figure, never through it. */}
         {q.image_urls && q.image_urls.length > 0 && (
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap gap-3 break-inside-avoid">
             {q.image_urls.map((url, i) => (
               // eslint-disable-next-line @next/next/no-img-element
-              <img key={url} src={imgSrc(url)} alt={`Figure ${i + 1}`} className="max-w-full max-h-80" />
+              <img
+                key={url}
+                src={imgSrc(url)}
+                alt={`Figure ${i + 1} for question ${n}`}
+                className="max-w-full max-h-80 print:max-h-[7in] break-inside-avoid"
+              />
             ))}
           </div>
         )}
 
         {isMC ? (
-          <ul className="space-y-1.5">
+          // Graph answer choices: a 2-column grid so each graph prints at a
+          // readable size (≥1.6in wide) instead of whatever its crop was.
+          <ul className={hasGraphChoices ? "grid grid-cols-2 gap-x-6 gap-y-3" : "space-y-1.5"}>
             {choices.map((c) => {
               const correct = withKey && keys.some((k) => k.toUpperCase() === c.label.toUpperCase());
               return (
-                <li key={c.label} className={`flex items-start gap-2.5 ${correct ? "font-semibold" : ""}`}>
+                <li key={c.label} className={`flex items-start gap-2.5 break-inside-avoid ${correct ? "font-semibold" : ""}`}>
                   <span
                     className={`shrink-0 w-6 h-6 rounded-full border-2 text-xs font-bold flex items-center justify-center ${
                       correct ? "bg-charcoal border-charcoal text-white" : "border-charcoal/50"
@@ -143,7 +153,11 @@ function QuestionBlock({ q, n, withKey }: { q: PrintQuestion; n: number; withKey
                     )}
                     {c.image_url && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={imgSrc(c.image_url)} alt={`Choice ${c.label}`} className="max-w-full max-h-56 mt-1" />
+                      <img
+                        src={imgSrc(c.image_url)}
+                        alt={`Choice ${c.label} for question ${n}`}
+                        className="mt-1 w-full min-w-[1.6in] max-w-[3in] max-h-[3in] object-contain object-left"
+                      />
                     )}
                   </div>
                   {correct && <span className="shrink-0 text-xs font-bold pt-1">✓ Correct</span>}
