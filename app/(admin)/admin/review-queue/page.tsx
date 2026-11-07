@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requireRole } from "@/lib/rbac";
+import { requireQuestionReviewer } from "@/lib/rbac";
 import { forbidQa } from "@/lib/qa";
 import { parseBlobUrl } from "@/lib/blob-url";
 import { getServiceClient } from "@/lib/supabase";
-import type { AutoFixRow } from "@/lib/explanation-autofix";
+import { keyIsOfficial, type AutoFixRow } from "@/lib/explanation-autofix";
 import {
   autoFixedGroup,
   figureProposalUrl,
@@ -14,7 +14,7 @@ import {
   REVIEW_GROUPS,
   type ReviewGroupId,
 } from "@/lib/review-queue";
-import { loadProposal } from "@/lib/figure-compare";
+import { currentStored, loadProposal, proposalIsCurrent, type FigureProposal } from "@/lib/figure-compare";
 import { DECIDE_SELECT } from "@/lib/review-decide";
 import ReviewQueueClient from "./ReviewQueueClient";
 import type { GroupSummary, QueueItem, QueueProposal } from "./types";
@@ -91,45 +91,65 @@ async function pdfReachable(url: string | null): Promise<boolean> {
 
 export default async function ReviewQueuePage({ searchParams }: { searchParams: Promise<{ group?: string }> }) {
   const { group } = await searchParams;
-  const auth = await requireRole("admin");
+  // Same permission as the decide / preview APIs this page calls.
+  const auth = await requireQuestionReviewer();
   if (auth instanceof Response) redirect("/sign-in");
   const { waiting, autoFixed, modules } = await loadRows();
 
-  const items: QueueItem[] = await Promise.all(
-    waiting.map(async (r) => {
-      const g = groupRow(r);
-      const dispute = parseKeyDispute(r.parsing_notes, r.correct_answer, r.official_answer);
-      const url = g.primary === "figure" ? figureProposalUrl(r.parsing_notes) : null;
-      const p = url ? await loadProposal(url).catch(() => null) : null;
-      const proposal: QueueProposal | null =
-        p && p.questionId === r.id ? { parts: p.parts, diffs: p.diffs, pages: p.pages, stored: p.stored, pdf: { choices: p.pdf.choices, table: p.pdf.table, imageUrls: p.pdf.imageUrls } } : null;
-      const mod = modules.get(r.module_id ?? "");
-      return {
-        id: r.id,
-        number: r.original_question_number,
-        moduleId: r.module_id ?? null,
-        moduleName: mod?.name ?? "Unknown module",
-        section: r.section ?? null,
-        questionType: r.question_type,
-        key: r.correct_answer,
-        official: r.official_answer,
-        alternative: dispute?.alternative ? { answer: dispute.alternative, source: dispute.source, ref: dispute.ref ?? null } : null,
-        primary: g.primary,
-        also: g.groups.filter((x) => x !== g.primary),
-        reasons: g.reasons.map((x) => (x.text.length > 220 ? `${x.text.slice(0, 220)}…` : x.text)),
-        stem: (r.question_text ?? "").slice(0, 1500),
-        choices: (Array.isArray(r.choices) ? (r.choices as { label?: string; text?: string; image_url?: string | null }[]) : []).map((c) => ({
-          label: c?.label ?? "?",
-          text: c?.text ?? "",
-          image_url: c?.image_url ?? null,
-        })),
-        pageNumber: r.page_number,
-        hasPdf: !!mod?.pdf,
-        updatedAt: r.updated_at ?? null,
-        proposal,
-      };
-    }),
-  );
+  const groupings = new Map(waiting.map((r) => [r.id, groupRow(r)]));
+  // Figure-check proposals (Vercel Blob), at most 6 loads at a time.
+  const proposals = new Map<string, FigureProposal | null>();
+  const withProposal = waiting
+    .map((r) => ({ r, url: groupings.get(r.id)!.primary === "figure" ? figureProposalUrl(r.parsing_notes) : null }))
+    .filter((x): x is { r: Row; url: string } => !!x.url);
+  for (let i = 0; i < withProposal.length; i += 6) {
+    await Promise.all(withProposal.slice(i, i + 6).map(async ({ r, url }) => proposals.set(r.id, await loadProposal(url).catch(() => null))));
+  }
+
+  const items: QueueItem[] = waiting.map((r) => {
+    const g = groupings.get(r.id)!;
+    const dispute = parseKeyDispute(r.parsing_notes, r.correct_answer, r.official_answer);
+    const p = proposals.get(r.id) ?? null;
+    // "Stored" shows the row as it is now, not as it was when compared.
+    const proposal: QueueProposal | null =
+      p && p.questionId === r.id
+        ? {
+            parts: p.parts,
+            diffs: p.diffs,
+            pages: p.pages,
+            stored: currentStored(r, p.parts),
+            pdf: { choices: p.pdf.choices, table: p.pdf.table, imageUrls: p.pdf.imageUrls },
+            checkMarkLeak: !!p.checkMarkLeak,
+            stale: !proposalIsCurrent(p, r),
+          }
+        : null;
+    const mod = modules.get(r.module_id ?? "");
+    return {
+      id: r.id,
+      number: r.original_question_number,
+      moduleId: r.module_id ?? null,
+      moduleName: mod?.name ?? "Unknown module",
+      section: r.section ?? null,
+      questionType: r.question_type,
+      key: r.correct_answer,
+      official: r.official_answer,
+      keyOverrulesOfficial: !!r.official_answer && !keyIsOfficial(r),
+      alternative: dispute?.alternative ? { answer: dispute.alternative, source: dispute.source, ref: dispute.ref ?? null } : null,
+      primary: g.primary,
+      also: g.groups.filter((x) => x !== g.primary),
+      reasons: g.reasons.map((x) => (x.text.length > 220 ? `${x.text.slice(0, 220)}…` : x.text)),
+      stem: (r.question_text ?? "").slice(0, 1500),
+      choices: (Array.isArray(r.choices) ? (r.choices as { label?: string; text?: string; image_url?: string | null }[]) : []).map((c) => ({
+        label: c?.label ?? "?",
+        text: c?.text ?? "",
+        image_url: c?.image_url ?? null,
+      })),
+      pageNumber: r.page_number,
+      hasPdf: !!mod?.pdf,
+      updatedAt: r.updated_at ?? null,
+      proposal,
+    };
+  });
 
   const summary: GroupSummary[] = REVIEW_GROUPS.map((grp) => {
     const inGroup = items.filter((i) => i.primary === grp.id);

@@ -112,7 +112,22 @@ export function tableBlock(text: string | null | undefined): string {
     .join("\n");
 }
 
-/** `text` with its (first) Markdown table block replaced by `table`. */
+/** How many separate Markdown tables the text has. */
+export function tableBlockCount(text: string | null | undefined): number {
+  let n = 0;
+  let inTable = false;
+  for (const l of (text ?? "").split("\n")) {
+    const row = /^\s*\|.*\|\s*$/.test(l);
+    if (row && !inTable) n++;
+    inTable = row;
+  }
+  return n;
+}
+
+/**
+ * `text` with its (first) Markdown table block replaced by `table`. Only for
+ * a text with one table (tableBlockCount): tableBlock joins every table.
+ */
 export function replaceTableBlock(text: string, table: string): string {
   const lines = text.split("\n");
   const first = lines.findIndex((l) => /^\s*\|.*\|\s*$/.test(l));
@@ -253,6 +268,30 @@ export interface FigureProposal {
   diffs: string[];
   stored: { choices?: Choice[]; table?: string; imageUrls?: string[] };
   pdf: { choices?: Choice[]; table?: string; imageUrls?: string[]; imageAlts?: string[] };
+  /** The PDF crop may show the ✓ answer mark: its images are not offered (and "Use PDF version" refuses). */
+  checkMarkLeak?: boolean;
+}
+
+/** The row's current figure / table / choices for the parts a proposal covers (what "Stored" shows). */
+export function currentStored(
+  row: Pick<AutoFixRow, "question_text" | "choices" | "image_urls">,
+  parts: string[],
+): FigureProposal["stored"] {
+  return {
+    ...(parts.includes("choices") ? { choices: Array.isArray(row.choices) ? (row.choices as Choice[]) : [] } : {}),
+    ...(parts.includes("table") ? { table: tableBlock(row.question_text) } : {}),
+    ...(parts.includes("figure") ? { imageUrls: Array.isArray(row.image_urls) ? (row.image_urls as string[]) : [] } : {}),
+  };
+}
+
+/** The proposal was made for the row as it is now (its "stored" side still matches). */
+export function proposalIsCurrent(p: Pick<FigureProposal, "stored">, row: Pick<AutoFixRow, "question_text" | "choices" | "image_urls">): boolean {
+  const now = currentStored(row, ["choices", "table", "figure"]);
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  if (p.stored.choices !== undefined && !same(p.stored.choices, now.choices)) return false;
+  if (p.stored.table !== undefined && !same(p.stored.table, now.table)) return false;
+  if (p.stored.imageUrls !== undefined && !same(p.stored.imageUrls, now.imageUrls)) return false;
+  return true;
 }
 
 export type FigureCompareResult =
@@ -321,6 +360,7 @@ export async function compareFigureWithPdf(
   // Figure.
   let removeDuplicateImage = false;
   let pdfImages: { urls: string[]; alts: string[] } | null = null;
+  let checkMarkLeak = false;
   if (storedImages.length > 0) {
     if (storedTable) {
       const dup = await repeatsTable(storedImages, tableBlock(row.question_text));
@@ -342,8 +382,14 @@ export async function compareFigureWithPdf(
           detail.push(`figure: ${v.reason}`);
         } else {
           checked.push("figure");
-          pdfImages = { urls: c.urls, alts: c.alts };
-          diffs.push({ part: "figure", key: "figure", text: `figure: ${v.reason}` });
+          // A crop that may show the ✓ answer mark is never offered to students.
+          if (c.checkMarkLeak) checkMarkLeak = true;
+          else pdfImages = { urls: c.urls, alts: c.alts };
+          diffs.push({
+            part: "figure",
+            key: "figure",
+            text: `figure: ${v.reason}${c.checkMarkLeak ? " (the PDF crop may show the ✓ answer mark, so it isn't offered)" : ""}`,
+          });
         }
       } else {
         unverifiable.push(
@@ -362,16 +408,13 @@ export async function compareFigureWithPdf(
       pages: pdfRead?.pages ?? String(row.page_number ?? "?"),
       parts,
       diffs: diffs.map((d) => d.text),
-      stored: {
-        ...(parts.includes("choices") ? { choices: storedChoices } : {}),
-        ...(parts.includes("table") ? { table: tableBlock(row.question_text) } : {}),
-        ...(parts.includes("figure") ? { imageUrls: storedImages } : {}),
-      },
+      stored: currentStored(row, parts),
       pdf: {
         ...(parts.includes("choices") && pdfRead ? { choices: pdfRead.choices as Choice[] } : {}),
         ...(parts.includes("table") && pdfRead ? { table: tableBlock(pdfRead.question_text) } : {}),
         ...(parts.includes("figure") && pdfImages ? { imageUrls: pdfImages.urls, imageAlts: pdfImages.alts } : {}),
       },
+      ...(checkMarkLeak ? { checkMarkLeak: true } : {}),
     };
     return { outcome: "differs", checked, proposal, detail: [...detail, ...diffs.map((d) => d.text), ...unverifiable] };
   }
@@ -491,7 +534,7 @@ export async function loadProposal(url: string): Promise<FigureProposal | null> 
   const tokens = [process.env.PUBLIC_BLOB_READ_WRITE_TOKEN, process.env.BLOB_READ_WRITE_TOKEN].filter((t): t is string => !!t);
   for (const token of tokens.length ? tokens : [undefined]) {
     try {
-      const res = await fetch(parsed.href, { headers: token ? { Authorization: `Bearer ${token}` } : {}, redirect: "error", cache: "no-store" });
+      const res = await fetch(parsed.href, { headers: token ? { Authorization: `Bearer ${token}` } : {}, redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5000) });
       if (!res.ok) continue;
       const json = (await res.json()) as FigureProposal;
       return json?.version === 1 ? json : null;

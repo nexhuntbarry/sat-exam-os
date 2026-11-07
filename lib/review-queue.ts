@@ -22,7 +22,7 @@ import {
 } from "@/lib/explanation-autofix";
 import { findApproveBlocker, stemFigureMissing } from "@/lib/parse-guards";
 import { KEY_DOUBT_PREFIX, parseKeyDoubt } from "@/lib/key-doubt";
-import { LIVE_FIX_TAG } from "@/lib/live-questions";
+import { LIVE_FIX_TAG, stripLiveFixNote } from "@/lib/live-questions";
 import { REGEN_DISAGREE_PREFIX } from "@/lib/ai/solve-question";
 
 // ── Groups ───────────────────────────────────────────────────────────
@@ -151,12 +151,26 @@ export function noteSegments(notes: string | null | undefined): string[] {
 
 const joinNotes = (segs: string[]): string | null => (segs.length ? segs.join("; ") : null);
 
-/** Remove the segments `drop` selects; keeps everything else as-is. */
+/**
+ * The leading "[live-fix] … re-check." sentence (null when there is none)
+ * and the notes after it. The sentence itself contains a ";", so it is cut
+ * off before the notes are split and put back unchanged afterwards.
+ */
+export function splitLiveFixNote(notes: string | null | undefined): { head: string | null; rest: string | null } {
+  if (!notes || !notes.startsWith(LIVE_FIX_TAG)) return { head: null, rest: notes ?? null };
+  const rest = stripLiveFixNote(notes);
+  const head = (rest ? notes.slice(0, notes.lastIndexOf(rest)) : notes).trim();
+  return { head: head || null, rest };
+}
+
+/** Remove the segments `drop` selects; keeps everything else (and the leading [live-fix] sentence) as-is. */
 export function removeNotes(notes: string | null | undefined, drop: (seg: string) => boolean): { notes: string | null; removed: string[] } {
+  const { head, rest } = splitLiveFixNote(notes);
   const kept: string[] = [];
   const removed: string[] = [];
-  for (const s of noteSegments(notes)) (drop(s) ? removed : kept).push(s);
-  return { notes: joinNotes(kept), removed };
+  for (const s of noteSegments(rest)) (drop(s) ? removed : kept).push(s);
+  const body = joinNotes(kept);
+  return { notes: head ? (body ? `${head} ${body}` : head) : body, removed };
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -201,11 +215,26 @@ export function dropStaleKeyNotes(
   return removeNotes(notes, (s) => isStaleKeyNote(s, oldKey));
 }
 
-/** Notes a person settles by confirming the CURRENT key ("Keep key"). */
+/**
+ * Notes a person settles by confirming the CURRENT key ("Keep key"): only
+ * the ones that dispute or question it (the reasons for the key groups).
+ * Verification and auto-fix history ("Answer verified against official
+ * key", "Answer = official key", "Explanation auto-fixed …") stay.
+ */
 export function isKeyQuestionNote(seg: string, key: string | null | undefined): boolean {
-  if (isStaleKeyNote(seg, key)) return true;
-  return /answer key disagrees with the solved answer|key page may be for a different module|answer-key page in this PDF says Module|printed key|Pulled for review .*\bkey\b|differs from the official answer/i.test(seg);
+  const s = seg.trim();
+  if (s.startsWith(LIVE_FIX_TAG) || isHistoryNote(s)) return false;
+  if (s.startsWith(KEY_DOUBT_PREFIX) || s.startsWith(REGEN_DISAGREE_PREFIX)) return true;
+  if (KEY_SAYS_RE.test(s) || MISMATCH_RE.test(s)) return true;
+  if (/answer key disagrees with the solved answer|key page may be for a different module|answer-key page in this PDF says Module|printed key|Pulled for review .*\bkey\b|differs from the official answer/i.test(s)) return true;
+  // A semantic-audit verdict counts only when it is about the key (not the
+  // stem / figure) AND disputes it.
+  if (/^Semantic audit:/i.test(s) && !isStaleKeyNote(s, key)) return false;
+  const rule = RULES.find(([, re]) => re.test(s));
+  return !!rule && KEY_RULE_GROUPS.has(rule[0]);
 }
+
+const KEY_RULE_GROUPS = new Set<ReviewGroupId>(["key_dispute", "module_key", "ai_key"]);
 
 // ── Figure / table / choices notes (owner item 1) ────────────────────
 

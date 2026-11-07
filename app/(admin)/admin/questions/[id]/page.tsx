@@ -7,7 +7,8 @@ import FigureDiff from "@/components/questions/FigureDiff";
 import { getCurrentUser } from "@/lib/auth";
 import { forbidQa } from "@/lib/qa";
 import { figureProposalUrl } from "@/lib/review-queue";
-import { loadProposal } from "@/lib/figure-compare";
+import { currentStored, loadProposal, proposalIsCurrent } from "@/lib/figure-compare";
+import { liveQuestionIds } from "@/lib/live-questions";
 
 async function getQuestion(id: string) {
   const db = getServiceClient();
@@ -90,8 +91,14 @@ export default async function QuestionDetailPage({
 
   if (!question) notFound();
 
-  // Figure check found a difference with the PDF: show both side by side.
-  const proposalUrl = figureProposalUrl(question.parsing_notes);
+  // Figure check found a difference with the PDF: show both side by side —
+  // for a Needs Review question, or for one in a live test (a change then
+  // keeps it Approved with a [live-fix] note). Not for other Approved ones.
+  const live =
+    question.parsing_status === "Approved"
+      ? (await liveQuestionIds(getServiceClient(), [question.id]).catch(() => new Set<string>())).has(question.id)
+      : false;
+  const proposalUrl = question.parsing_status === "Needs Review" || live ? figureProposalUrl(question.parsing_notes) : null;
   const proposal = proposalUrl ? await loadProposal(proposalUrl).catch(() => null) : null;
   const user = proposal ? await getCurrentUser() : null;
 
@@ -125,8 +132,18 @@ export default async function QuestionDetailPage({
           <FigureDiff
             questionId={question.id}
             updatedAt={question.updated_at ?? null}
-            proposal={{ parts: proposal.parts, diffs: proposal.diffs, pages: proposal.pages, stored: proposal.stored, pdf: proposal.pdf }}
+            proposal={{
+              parts: proposal.parts,
+              diffs: proposal.diffs,
+              pages: proposal.pages,
+              // The row as it is now, not as it was when compared.
+              stored: currentStored(question, proposal.parts),
+              pdf: proposal.pdf,
+              checkMarkLeak: !!proposal.checkMarkLeak,
+              stale: !proposalIsCurrent(proposal, question),
+            }}
             canWrite={!!user && forbidQa(user) === null}
+            liveNote={live}
             reloadOnDone
           />
         </section>

@@ -16,6 +16,10 @@ export interface FigureDiffProposal {
   pages: string;
   stored: { choices?: FigureDiffChoice[]; table?: string; imageUrls?: string[] };
   pdf: { choices?: FigureDiffChoice[]; table?: string; imageUrls?: string[] };
+  /** The PDF crop may show the ✓ answer mark: it isn't offered. */
+  checkMarkLeak?: boolean;
+  /** The question changed since the comparison. */
+  stale?: boolean;
 }
 
 export interface DecideResponse {
@@ -24,6 +28,7 @@ export interface DecideResponse {
   nextGroup?: string | null;
   explanation?: string;
   error?: string;
+  warning?: string;
 }
 
 /** POST one review-queue decision. */
@@ -43,10 +48,10 @@ export async function postDecision(body: Record<string, unknown>): Promise<{ ok:
 
 /** "Approved" / "Still in review: …" line for a decision result. */
 export function describeDecision(json: DecideResponse): string {
-  if (json.approved) return "Approved.";
+  if (json.approved) return json.warning ? `Approved. ${json.warning}` : "Approved.";
   const why = json.blockers?.[0] ? ` Still in review: ${json.blockers[0].replace(/^note: /, "")}` : " Still in review.";
   const ex = json.explanation === "ai_disagrees" ? " The AI's own answer differs from the key, so the key is queued for a decision." : json.explanation === "failed" ? " The explanation couldn't be rewritten automatically." : "";
-  return `Saved.${why}${ex}`;
+  return `Saved.${why}${ex}${json.warning ? ` ${json.warning}` : ""}`;
 }
 
 const img = (u: string) => `/api/blob-image?u=${encodeURIComponent(u)}`;
@@ -90,6 +95,7 @@ export default function FigureDiff({
   canWrite,
   onDone,
   reloadOnDone,
+  liveNote,
 }: {
   questionId: string;
   updatedAt: string | null;
@@ -98,10 +104,17 @@ export default function FigureDiff({
   onDone?: (message: string, ok: boolean) => void;
   /** Reload the whole page after a decision (the question editor keeps its own copy). */
   reloadOnDone?: boolean;
+  /** The question is in a live test: a change keeps it Approved with a [live-fix] note. */
+  liveNote?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"use_pdf" | "keep_figure" | null>(null);
   const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const pdfBlocked = proposal.checkMarkLeak
+    ? "The PDF crop may show the ✓ answer mark, so it isn't offered."
+    : proposal.stale
+      ? "The question changed since this comparison. Keep it, or run the figure check again."
+      : null;
 
   async function run(action: "use_pdf" | "keep_figure") {
     setBusy(action);
@@ -129,10 +142,16 @@ export default function FigureDiff({
         <Side title="Stored" v={proposal.stored} />
         <Side title="PDF version" v={proposal.pdf} />
       </div>
+      {liveNote && (
+        <p className="text-xs text-status-warning">
+          This question is in a live test. A change keeps it Approved and adds a [live-fix] note for a re-check.
+        </p>
+      )}
+      {pdfBlocked && <p className="text-xs text-status-warning">{pdfBlocked}</p>}
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          disabled={!canWrite || busy !== null}
+          disabled={!canWrite || busy !== null || pdfBlocked !== null}
           onClick={() => void run("use_pdf")}
           className="rounded-lg bg-warm-coral px-3 py-1.5 text-sm font-semibold text-white hover:bg-warm-coral-dark disabled:opacity-50"
         >

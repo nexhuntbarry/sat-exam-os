@@ -269,7 +269,11 @@ function QueueCard({
           <div className="flex flex-wrap items-center gap-2">
             {decision === "key" && (
               <>
-                <button type="button" className={btnPrimary} disabled={disabled} onClick={() => void run({ action: "keep_key" }, "keep_key")}>
+                <button type="button" className={btnPrimary} disabled={disabled} onClick={() => {
+                    // Keeping a key that differs from the official one overrules it.
+                    if (item.keyOverrulesOfficial && !window.confirm(`Keep key ${item.key ?? "∅"}? This clears the official answer ${item.official} — the kept key overrules it.`)) return;
+                    void run({ action: "keep_key" }, "keep_key");
+                  }}>
                   {busy === "keep_key" ? "Saving…" : "Keep key"}
                 </button>
                 {item.alternative && (

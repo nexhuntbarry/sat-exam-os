@@ -93,7 +93,9 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
     ? `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check. ${noteBody}`
     : noteBody;
 
-  const { error } = await db
+  // Compare-and-set on the key the preview was made for: of two concurrent
+  // changes only one writes (and rescores); the other gets a 409.
+  let upd = db
     .from("questions")
     .update({
       question_type: nextType,
@@ -103,9 +105,14 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
       updated_at: new Date().toISOString(),
     })
     .eq("id", input.id);
+  upd = oldKey === null ? upd.is("correct_answer", null) : upd.eq("correct_answer", oldKey);
+  const { data: written, error } = await upd.select("id");
   if (error) {
     console.error("[key-change] update error:", error);
     return { ok: false, status: 500, error: "Update failed" };
+  }
+  if (!written?.length) {
+    return { ok: false, status: 409, error: "The key changed since the preview. Reload the page and preview again." };
   }
 
   // The old explanation argued the old key: write one for the new key.

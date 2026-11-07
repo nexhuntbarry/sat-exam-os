@@ -27,6 +27,10 @@ export interface QueueProposal {
   pages: string;
   stored: { choices?: QueueChoice[]; table?: string; imageUrls?: string[] };
   pdf: { choices?: QueueChoice[]; table?: string; imageUrls?: string[] };
+  /** The PDF crop may show the ✓ answer mark ("Use PDF version" is off). */
+  checkMarkLeak?: boolean;
+  /** The row changed since the comparison ("Use PDF version" is off). */
+  stale?: boolean;
 }
 
 export interface QueueItem {
@@ -38,6 +42,8 @@ export interface QueueItem {
   questionType: string | null;
   key: string | null;
   official: string | null;
+  /** The key differs from the official answer: "Keep key" clears official_answer. */
+  keyOverrulesOfficial: boolean;
   /** The other answer the notes propose (AI / official / audit). */
   alternative: { answer: string; source: string; ref?: string | null } | null;
   primary: GroupId;

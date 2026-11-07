@@ -19,8 +19,12 @@ import {
   removeNotes,
 } from "../lib/review-queue";
 import {
+  compareFigureWithPdf,
+  currentStored,
   decideFigure,
   diffTables,
+  proposalIsCurrent,
+  tableBlockCount,
   isFigureTarget,
   isStaleChoiceAudit,
   replaceTableBlock,
@@ -28,7 +32,9 @@ import {
   type FigureCompareResult,
   type FigureRow,
 } from "../lib/figure-compare";
-import { decideBlockers } from "../lib/review-decide";
+import { approveRefusal, decide, decideBlockers, liveFixNotes } from "../lib/review-decide";
+import { applyKeyCorrection } from "../lib/key-change";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { AUTO_FIX_NOTE_PREFIX } from "../lib/explanation-autofix";
 import { TRUNCATION_NOTE, REGEN_DISAGREE_PREFIX } from "../lib/ai/solve-question";
 import { keyDoubtNote } from "../lib/key-doubt";
@@ -199,5 +205,164 @@ ok("autoFixedGroup figure", autoFixedGroup({ parsing_status: "Approved", parsing
 ok("autoFixedGroup explanation", autoFixedGroup({ parsing_status: "Approved", parsing_notes: `${AUTO_FIX_NOTE_PREFIX}: x` }) === "explanation");
 ok("autoFixedGroup ignores Needs Review", autoFixedGroup({ parsing_status: "Needs Review", parsing_notes: `${AUTO_FIX_NOTE_PREFIX}: x` }) === null);
 
-console.log(fail ? `\n${fail} FAILED` : "\nall passed");
-process.exit(fail ? 1 : 0);
+// ── Code-review fixes (async: wrapped, the script is CommonJS) ──
+async function reviewFixes() {
+
+// Tiny in-memory stand-in for the Supabase query builder (one table).
+function fakeDb(rows: Record<string, unknown>[]) {
+  const writes: Record<string, unknown>[] = [];
+  const from = () => {
+    const filters: ((r: Record<string, unknown>) => boolean)[] = [];
+    let patch: Record<string, unknown> | null = null;
+    let single = false;
+    const run = () => {
+      const hit = rows.filter((r) => filters.every((f) => f(r)));
+      if (patch) {
+        for (const r of hit) Object.assign(r, patch);
+        writes.push(patch);
+      }
+      return { data: single ? (hit[0] ?? null) : hit.map((r) => ({ ...r })), error: null };
+    };
+    const b: Record<string, unknown> = {
+      select: () => b,
+      update: (u: Record<string, unknown>) => ((patch = u), b),
+      eq: (k: string, v: unknown) => (filters.push((r) => r[k] === v), b),
+      is: (k: string, v: unknown) => (filters.push((r) => (r[k] ?? null) === v), b),
+      in: (k: string, v: unknown[]) => (filters.push((r) => v.includes(r[k])), b),
+      maybeSingle: () => ((single = true), Promise.resolve(run())),
+      then: (res: (x: unknown) => unknown, rej: (e: unknown) => unknown) => Promise.resolve(run()).then(res, rej),
+    };
+    return b;
+  };
+  return { db: { from } as unknown as SupabaseClient, writes };
+}
+
+// HIGH 1: "approve" refuses anything outside the Other / Live-test groups.
+ok("approveRefusal: clean row may be approved", approveRefusal(row()).length === 0);
+ok("approveRefusal: an unclassified note (Other) may be approved", approveRefusal(row({ parsing_notes: "Needs review: something odd about Q19" })).length === 0);
+ok("approveRefusal: live-fix re-check may be approved", approveRefusal(row({ parsing_notes: `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check.` })).length === 0);
+ok("approveRefusal: key dispute refused", approveRefusal(row({ parsing_notes: "Needs review: key says A, AI says C (12)" })).length > 0);
+ok("approveRefusal: key ≠ official refused", approveRefusal(row({ official_answer: "C" })).some((b) => /differs from the official/.test(b)));
+ok("approveRefusal: missing figure refused", approveRefusal(row({ question_text: "The graph above shows f. What is f(2)?", has_image: true, image_urls: [] })).length > 0);
+ok("approveRefusal: cut-off explanation refused", approveRefusal(row({ explanation: "Choice A is correct because the" })).some((b) => b.startsWith("explanation:")));
+{
+  const disputed = { ...row({ parsing_notes: "Needs review: key says A, AI says C (12)" }), image_alts: [], mismatch_with_official: false } as Record<string, unknown>;
+  const { db, writes } = fakeDb([disputed]);
+  const r = await decide(db, "q1", { action: "approve" }, { expectedUpdatedAt: disputed.updated_at as string });
+  ok("decide approve: key-disputed row → 400, nothing written", !r.ok && r.status === 400 && writes.length === 0 && disputed.parsing_status === "Needs Review");
+  const clean = { ...row({ parsing_notes: "Needs review: something odd about Q19" }), image_alts: [], mismatch_with_official: false } as Record<string, unknown>;
+  const f2 = fakeDb([clean]);
+  const r2 = await decide(f2.db, "q1", { action: "approve" }, {});
+  ok("decide approve: Other row → Approved", r2.ok && r2.approved === true && clean.parsing_status === "Approved");
+}
+
+// HIGH 2: content changes on a live row lead with [live-fix].
+ok("liveFixNotes prepends the tag", liveFixNotes("Answer = official key").startsWith(`${LIVE_FIX_TAG} `) && liveFixNotes("Answer = official key").endsWith("Answer = official key"));
+ok("liveFixNotes not twice", liveFixNotes(`${LIVE_FIX_TAG} x; kept Approved — please re-check. y`) === `${LIVE_FIX_TAG} x; kept Approved — please re-check. y`);
+ok("liveFixNotes on empty notes", liveFixNotes(null).startsWith(LIVE_FIX_TAG) && liveFixNotes(null).endsWith("re-check."));
+
+// MEDIUM 3: a crop that may show the ✓ mark is not offered.
+{
+  const spr = row({ question_type: "Student Produced Response", choices: [], correct_answer: "4", official_answer: "4", has_image: true, image_urls: ["https://x.public.blob.vercel-storage.com/old.png"] });
+  const res = await compareFigureWithPdf(spr, "", null, {
+    crop: async () => ({ kind: "cropped", urls: ["https://x.public.blob.vercel-storage.com/new.png"], alts: ["fig"], choiceUrls: {}, checkMarkLeak: true }),
+    same: async () => ({ same: false, reason: "axis cut off" }),
+  });
+  ok("compare: check-mark crop → differs, flagged, no PDF images", res.outcome === "differs" && res.proposal.checkMarkLeak === true && !res.proposal.pdf.imageUrls);
+  const res2 = await compareFigureWithPdf(spr, "", null, {
+    crop: async () => ({ kind: "cropped", urls: ["https://x.public.blob.vercel-storage.com/new.png"], alts: ["fig"], choiceUrls: {}, checkMarkLeak: false }),
+    same: async () => ({ same: false, reason: "axis cut off" }),
+  });
+  ok("compare: clean crop → PDF images offered", res2.outcome === "differs" && !res2.proposal.checkMarkLeak && res2.proposal.pdf.imageUrls?.length === 1);
+}
+
+// MEDIUM 4: "Keep key" drops only dispute notes.
+ok("keep key keeps the auto-fix history", !isKeyQuestionNote(`${AUTO_FIX_NOTE_PREFIX}: regenerated (2026-11-07)`, "A"));
+ok("keep key keeps 'Answer verified against official key'", !isKeyQuestionNote("Answer verified against official key", "A"));
+ok("keep key keeps 'Answer = official key'", !isKeyQuestionNote("Answer = official key", "A"));
+ok("keep key keeps a positive semantic audit", !isKeyQuestionNote("Semantic audit: correct_answer is correct and the explanation supports it", "A"));
+ok("keep key drops a key dispute", isKeyQuestionNote("Needs review: key says A, AI says C (12)", "A"));
+ok("keep key drops a consensus split", isKeyQuestionNote("Consensus solve NOT unanimous (A/A/C) — needs human", "A"));
+ok("keep key drops a key doubt", isKeyQuestionNote(keyDoubtNote("A", "C", "comma splice"), "A"));
+ok("keep key drops a disputing semantic audit", isKeyQuestionNote("Semantic audit: the stored correct_answer is likely wrong; B fits better", "A"));
+ok("keep key drops the official-answer dispute", isKeyQuestionNote("Answer A differs from the official answer C", "A"));
+
+// MEDIUM 5: the [live-fix] sentence (with its ";") survives note cleanup.
+{
+  const live = `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check. Consensus solve NOT unanimous (A/A/C) — needs human; Answer = official key`;
+  const kept = removeNotes(live, (s) => isKeyQuestionNote(s, "A")).notes;
+  ok("removeNotes keeps the whole [live-fix] sentence", kept === `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check. Answer = official key`);
+  const stale = dropStaleKeyNotes(live, "A", "C").notes ?? "";
+  ok("dropStaleKeyNotes keeps the [live-fix] sentence", stale.startsWith(`${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check.`));
+  ok("removeNotes with only the live-fix sentence left", removeNotes(`${LIVE_FIX_TAG} x; kept Approved — please re-check. Consensus solve NOT unanimous (A/A/C)`, (s) => s.startsWith("Consensus")).notes === `${LIVE_FIX_TAG} x; kept Approved — please re-check.`);
+  ok("dropFigureNotes keeps the [live-fix] sentence", dropFigureNotes(`${LIVE_FIX_TAG} x; kept Approved — please re-check. still needs review (figure/choices)`).notes === `${LIVE_FIX_TAG} x; kept Approved — please re-check.`);
+}
+
+// MEDIUM 6: the key change is a compare-and-set on the old key.
+{
+  const q = { id: "k1", question_text: "Which choice?", choices: row().choices, question_type: "Multiple Choice", correct_answer: "A", parsing_status: "Needs Review", parsing_notes: null };
+  // The preview saw A, then someone else changed it to B before this write.
+  const { db, writes } = fakeDb([q]);
+  const origFrom = (db as unknown as { from: () => Record<string, unknown> }).from;
+  let reads = 0;
+  (db as unknown as { from: () => Record<string, unknown> }).from = () => {
+    const b = origFrom();
+    const ms = b.maybeSingle as () => Promise<unknown>;
+    b.maybeSingle = () => ms().then((x) => {
+      if (reads++ === 0) q.correct_answer = "B"; // concurrent change lands after our read
+      return { data: { ...(x as { data: Record<string, unknown> }).data, correct_answer: "A" }, error: null };
+    });
+    return b;
+  };
+  const r = await applyKeyCorrection(db, { id: "k1", correct_answer: "C", expectedKey: "A", rescore: true, source: "test", regenerateExplanation: false });
+  ok("key change: concurrent change → 409, no write applied", !r.ok && r.status === 409 && q.correct_answer === "B" && writes.length === 1);
+}
+
+// MEDIUM 8 / LOW: stale proposals, multiple tables.
+{
+  const r0 = row({ question_text: "Intro\n\n| x | y |\n|---|---|\n| 1 | 4 |\n\nWhat is y?", has_image: true, image_urls: ["https://x.public.blob.vercel-storage.com/a.png"] });
+  const stored = currentStored(r0, ["choices", "table", "figure"]);
+  ok("currentStored", !!(stored.table === "| x | y |\n|---|---|\n| 1 | 4 |" && stored.imageUrls?.[0]?.endsWith("a.png") && stored.choices?.length === 4));
+  ok("proposalIsCurrent: same row", proposalIsCurrent({ stored }, r0));
+  ok("proposalIsCurrent: figure replaced since", !proposalIsCurrent({ stored: { imageUrls: stored.imageUrls } }, { ...r0, image_urls: ["https://x.public.blob.vercel-storage.com/b.png"] }));
+  ok("proposalIsCurrent: choices edited since", !proposalIsCurrent({ stored: { choices: stored.choices } }, { ...r0, choices: [{ label: "A", text: "Ortelius" }] }));
+  ok("proposalIsCurrent: only the compared parts count", proposalIsCurrent({ stored: { imageUrls: stored.imageUrls } }, { ...r0, choices: [] }));
+  ok("tableBlockCount", tableBlockCount(r0.question_text) === 1 && tableBlockCount("| a |\n|---|\n\ntext\n\n| b |\n|---|") === 2 && tableBlockCount("none") === 0);
+
+  // decide use_pdf against a proposal served by a stubbed fetch.
+  const url = "https://x.public.blob.vercel-storage.com/figure-compare/q1.json";
+  const proposalFor = (o: Record<string, unknown>) => ({ version: 1, questionId: "q1", checkedAt: "", pages: "3", parts: ["figure"], diffs: ["figure: cut off"], stored: { imageUrls: r0.image_urls }, pdf: { imageUrls: ["https://x.public.blob.vercel-storage.com/new.png"] }, ...o });
+  const realFetch = globalThis.fetch;
+  const usePdf = async (prop: Record<string, unknown>, o: Partial<FigureRow> = {}) => {
+    globalThis.fetch = (async () => new Response(JSON.stringify(prop), { status: 200 })) as typeof fetch;
+    const r = { ...r0, ...o, parsing_notes: figureDiffNote(["figure"], url), image_alts: [], mismatch_with_official: false } as Record<string, unknown>;
+    const f = fakeDb([r]);
+    try {
+      return { res: await decide(f.db, "q1", { action: "use_pdf" }, {}), writes: f.writes };
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  };
+  const a = await usePdf(proposalFor({ checkMarkLeak: true, pdf: {} }));
+  ok("use_pdf refuses a check-mark crop", !a.res.ok && a.res.status === 400 && /answer mark/.test(a.res.error ?? "") && a.writes.length === 0);
+  const b = await usePdf(proposalFor({}), { image_urls: ["https://x.public.blob.vercel-storage.com/changed.png"] });
+  ok("use_pdf refuses a stale proposal with 409", !b.res.ok && b.res.status === 409 && b.writes.length === 0);
+  const two = "| a |\n|---|\n| 1 |\n\nand\n\n| b |\n|---|\n| 2 |";
+  const c = await usePdf(proposalFor({ parts: ["table"], stored: { table: tableBlock2(two) }, pdf: { table: "| a |\n|---|\n| 9 |" } }), { question_text: two });
+  ok("use_pdf refuses a question with two tables", !c.res.ok && c.res.status === 400 && /more than one table/.test(c.res.error ?? "") && c.writes.length === 0);
+}
+}
+function tableBlock2(t: string) {
+  return currentStored({ question_text: t, choices: [], image_urls: [] }, ["table"]).table;
+}
+
+void reviewFixes().then(
+  () => {
+    console.log(fail ? `\n${fail} FAILED` : "\nall passed");
+    process.exit(fail ? 1 : 0);
+  },
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  },
+);
