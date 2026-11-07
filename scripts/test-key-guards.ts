@@ -12,7 +12,7 @@ import {
 } from "../lib/answer-marks";
 import { extractAnswerKey } from "../lib/ai/parse-pdf";
 import { autoKeyDecision, checksSummary, moduleHasRealKey, type VerifyChecks } from "../lib/verify-ai-key";
-import { rescoreHoldReason } from "../lib/reparse-rescore";
+import { markNotRescored, notRescoredNote, rescoreHoldReason, RESCORE_HELD_PREFIX } from "../lib/reparse-rescore";
 
 let fail = 0;
 const ok = (n: string, c: boolean, detail?: unknown) => {
@@ -133,7 +133,31 @@ ok("rejection note names the questions", note.includes("Q5, Q19, Q20, Q21"), not
   ok("re-parse rescore: key marked as made up → held", rescoreHoldReason({ ...off, parsing_notes: "Needs review: the answer key read from the PDF was not used — x" }, null, null) !== null);
 }
 
-extractorShortCircuit().then(() => {
+// Re-parse: a skipped / failed rescore always leaves the "not rescored" note.
+async function notRescoredNotes() {
+  const rows: Record<string, { parsing_notes: string | null }> = { a: { parsing_notes: "Re-parse: official key=C, solver said B — verify" }, b: { parsing_notes: null } };
+  const db = {
+    from: () => {
+      let id = "";
+      let patch: Record<string, unknown> | null = null;
+      const b: Record<string, unknown> = {
+        select: () => b,
+        update: (u: Record<string, unknown>) => ((patch = u), b),
+        eq: (_k: string, v: string) => ((id = v), patch ? (Object.assign(rows[id], patch), Promise.resolve({ data: null, error: null })) : b),
+        maybeSingle: () => Promise.resolve({ data: rows[id] ?? null, error: null }),
+      };
+      return b;
+    },
+  } as unknown as Parameters<typeof markNotRescored>[0];
+  await markNotRescored(db, ["a", "b"], "the module's key checks didn't finish");
+  await markNotRescored(db, ["a"], "again");
+  ok("not-rescored note appended to existing notes", rows.a.parsing_notes!.startsWith("Re-parse: official key=C") && rows.a.parsing_notes!.includes(RESCORE_HELD_PREFIX), rows.a.parsing_notes);
+  ok("not-rescored note on empty notes", rows.b.parsing_notes === notRescoredNote("the module's key checks didn't finish"), rows.b.parsing_notes);
+  ok("not-rescored note added once", rows.a.parsing_notes!.split(RESCORE_HELD_PREFIX).length === 2);
+  ok("not-rescored note is one segment (no ';')", !notRescoredNote("a; b").includes(";"));
+}
+
+notRescoredNotes().then(extractorShortCircuit).then(() => {
   console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILED`);
   process.exit(fail === 0 ? 0 : 1);
 });

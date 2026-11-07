@@ -23,6 +23,26 @@ export function rescoreHoldReason(
   return officialKeyProblem(row, facts);
 }
 
+/** The "not rescored" note for a held / failed rescore (one parsing_notes segment). */
+export function notRescoredNote(why: string): string {
+  return `${RESCORE_HELD_PREFIX} — ${why.replace(/;/g, ",")}. Confirm the key, then rescore`;
+}
+
+/** Add the "not rescored" note to these rows (once). Never throws. */
+export async function markNotRescored(db: SupabaseClient, ids: string[], why: string): Promise<void> {
+  for (const id of ids) {
+    try {
+      const { data } = await db.from("questions").select("parsing_notes").eq("id", id).maybeSingle();
+      const notes = (data?.parsing_notes as string | null) ?? "";
+      if (notes.includes(RESCORE_HELD_PREFIX)) continue;
+      const note = notRescoredNote(why);
+      await db.from("questions").update({ parsing_notes: notes ? `${notes}; ${note}` : note, updated_at: new Date().toISOString() }).eq("id", id);
+    } catch (e) {
+      console.error(`[reparse-rescore] note ${id}:`, e);
+    }
+  }
+}
+
 export async function rescoreOfficialKeyChanges(
   db: SupabaseClient,
   moduleId: string,
@@ -43,7 +63,7 @@ export async function rescoreOfficialKeyChanges(
     const why = rescoreHoldReason(r as Parameters<typeof rescoreHoldReason>[0], moduleWarning, facts);
     if (why) {
       held++;
-      const note = `${RESCORE_HELD_PREFIX} — ${why.replace(/;/g, ",")}. Confirm the key, then rescore`;
+      const note = notRescoredNote(why);
       const notes = (r.parsing_notes as string | null) ?? "";
       if (!notes.includes(RESCORE_HELD_PREFIX)) {
         await db.from("questions").update({ parsing_notes: notes ? `${notes}; ${note}` : note, updated_at: new Date().toISOString() }).eq("id", id);
@@ -55,6 +75,8 @@ export async function rescoreOfficialKeyChanges(
       rescored++;
     } catch (e) {
       console.error(`[reparse-rescore] ${id}:`, e);
+      held++;
+      await markNotRescored(db, [id], `rescoring failed (${e instanceof Error ? e.message.slice(0, 80) : "error"})`);
     }
   }
   return { rescored, held };
