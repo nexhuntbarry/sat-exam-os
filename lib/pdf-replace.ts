@@ -91,12 +91,10 @@ export async function replaceModulePdf(
   }
 
   const now = new Date().toISOString();
-  const { error: mErr } = await db
-    .from("modules")
-    .update({ pdf_url: pdfUrl, pdf_size_bytes: size, updated_at: now })
-    .eq("id", moduleId);
-  if (mErr) throw new ReplacePdfError(`Module update failed: ${mErr.message}`, 500);
-
+  // Questions first, module row last: if a question batch fails, the module
+  // still points at the old PDF, so the admin can simply retry the same
+  // upload (the "already this module's source" guard won't block it) and
+  // every question gets re-tagged.
   const { data: rows, error: qErr } = await db
     .from("questions")
     .select("id, parsing_notes")
@@ -119,6 +117,12 @@ export async function replaceModulePdf(
     const failed = results.find((r) => r.error);
     if (failed?.error) throw new ReplacePdfError(`Question update failed: ${failed.error.message}`, 500);
   }
+  const { error: mErr } = await db
+    .from("modules")
+    .update({ pdf_url: pdfUrl, pdf_size_bytes: size, updated_at: now })
+    .eq("id", moduleId);
+  if (mErr) throw new ReplacePdfError(`Module update failed: ${mErr.message}`, 500);
+
   return { questions: list.length, backups, backupWarnings };
 }
 
