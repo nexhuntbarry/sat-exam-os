@@ -31,13 +31,15 @@
 // demotes it to Needs Review with a plain-language note.
 
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 import sharp from "sharp";
 import { readPrintoutLayout, type LayoutElement, type LayoutLine, type PrintoutLayout, type Rect } from "@/lib/printout-layout";
 import { renderPdfPages } from "@/lib/ai/extract-images";
-import { MATH_FORMAT_RULES, QUOTE_RULE, logUsage, type ModuleMetadata, type ParsedQuestion, type ParsedImageRegion } from "@/lib/ai/parse-pdf";
+import { MATH_FORMAT_RULES, logUsage, type ModuleMetadata, type ParsedQuestion, type ParsedImageRegion } from "@/lib/ai/parse-pdf";
 import { normalizeChoiceText } from "@/lib/pdf-text-choices";
+import { TAGGED_TEXT_RULES, cleanTagText, readTag, readTags } from "@/lib/ai/tagged-output";
+import { answerMarkFactsFromText, noAnswerMarksReason } from "@/lib/answer-marks";
 import { FIGURE_DESCRIPTION } from "@/lib/parse-guards";
 
 type Label = "A" | "B" | "C" | "D";
@@ -247,30 +249,8 @@ export function linesToText(lines: LayoutLine[]): string {
 
 // ── Crop transcription ───────────────────────────────────────────────
 
-const TranscribeSchema = z.object({
-  parts: z.array(
-    z.object({
-      id: z.string().describe("The slot id exactly as given, e.g. STEM-2, A, B"),
-      text: z
-        .string()
-        .describe(
-          "All readable text/math in this piece, verbatim, in reading order, with math in $…$ and any data table as a GitHub-Flavored Markdown table. Empty string if the piece is only a figure. Never describe a figure here.",
-        ),
-      figures: z
-        .array(
-          z.object({
-            alt: z.string().describe("One-line neutral description of the figure. Never say which choice is correct (no \"correct answer\", no ✓)."),
-            x0: z.number().describe("Left edge as a fraction (0..1) of THIS piece's width"),
-            y0: z.number().describe("Top edge as a fraction (0..1) of THIS piece's height"),
-            x1: z.number().describe("Right edge as a fraction (0..1) of THIS piece's width"),
-            y1: z.number().describe("Bottom edge as a fraction (0..1) of THIS piece's height"),
-          }),
-        )
-        .describe("Graphs, charts, diagrams, geometric figures, number lines, pictures inside this piece. Empty when there are none."),
-    }),
-  ),
-});
-
+// Transcription comes back as plain text in tags, not JSON (lib/ai/tagged-output):
+// in a JSON string the model ended passages at the first quotation mark.
 const TRANSCRIBE_SYSTEM = `You transcribe small pieces of ONE SAT question. Each piece is labelled with a slot id (STEM-n for parts of the question stem, A/B/C/D for the answer choices). You see only that question's pieces, so transcribe each piece exactly where it is labelled — never move content between slots.
 
 For each IMAGE piece:
@@ -280,19 +260,48 @@ For each IMAGE piece:
 - alt is shown to students: describe the figure neutrally and never hint at the answer.
 This applies equally to Math and to Reading & Writing pieces.
 
-For each TEXT piece (plain text already extracted from the PDF): return the SAME words and numbers in text, only adding the math formatting below (wrap expressions in $…$, LaTeX for fractions/exponents/roots), and figures=[]. Do not reword, add, or drop anything.
+For each TEXT piece (plain text already extracted from the PDF): return the SAME words and numbers in text, only adding the math formatting below (wrap expressions in $…$, LaTeX for fractions/exponents/roots), and no <figure>. Do not reword, add, or drop anything.
 
 Blanks are written as exactly six underscores "______". Keep <u>…</u> underline tags that appear in text pieces.
 
 ${MATH_FORMAT_RULES}
 
-${QUOTE_RULE}
+${TAGGED_TEXT_RULES}
 
-Return one entry per slot id you were given, in the same order.`;
+Reply with one <part> per slot id you were given, in the same order:
+<part id="STEM-1">
+<text>all readable text of this piece (empty when it is only a figure)</text>
+<figure box="x0,y0,x1,y1">one-line neutral alt text</figure>
+</part>
+box = the figure's left, top, right, bottom edges as fractions (0..1) of THIS piece's width / height. One <figure> per figure; none when there are no figures.`;
 
-type Transcribed = z.infer<typeof TranscribeSchema>["parts"][number];
+export interface Transcribed {
+  id: string;
+  text: string;
+  figures: { alt: string; x0: number; y0: number; x1: number; y1: number }[];
+}
 
-interface Slot {
+/**
+ * Parse the tagged transcription reply (TRANSCRIBE_SYSTEM). Text comes from
+ * inside <text> tags, never from a JSON string, so a quotation mark in the
+ * passage can't cut it short.
+ */
+export function parseTranscription(raw: string): Map<string, Transcribed> {
+  const map = new Map<string, Transcribed>();
+  for (const part of readTags(raw, "part")) {
+    const id = (part.attrs.id ?? "").trim().toUpperCase();
+    if (!id) continue;
+    const figures: Transcribed["figures"] = [];
+    for (const f of readTags(part.body, "figure")) {
+      const [x0, y0, x1, y1] = (f.attrs.box ?? "").split(",").map((v) => Number(v.trim()));
+      figures.push({ alt: cleanTagText(f.body), x0, y0, x1, y1 });
+    }
+    map.set(id, { id, text: cleanTagText(readTag(part.body, "text")), figures });
+  }
+  return map;
+}
+
+export interface Slot {
   id: string;
   kind: "text" | "image";
   text?: string;
@@ -301,7 +310,7 @@ interface Slot {
   rect?: Rect;
 }
 
-async function transcribeSlots(
+export async function transcribeSlots(
   questionNumber: number,
   slots: Slot[],
   callerUserId?: string,
@@ -317,9 +326,8 @@ async function transcribeSlots(
       content.push({ type: "text", text: `[${s.id}] TEXT:\n${s.text ?? ""}` });
     }
   }
-  const res = await generateObject({
+  const res = await generateText({
     model: anthropic(MODEL),
-    schema: TranscribeSchema,
     system: TRANSCRIBE_SYSTEM,
     messages: [{ role: "user", content }],
     maxRetries: 2,
@@ -336,9 +344,7 @@ async function transcribeSlots(
     costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500),
     metadata: { question_number: questionNumber, slots: slots.length },
   });
-  const map = new Map<string, Transcribed>();
-  for (const p of res.object.parts) map.set(p.id.trim().toUpperCase(), p);
-  return map;
+  return parseTranscription(res.text);
 }
 
 /** Formatting may add $, \frac, braces — never words or digits. */
@@ -678,6 +684,18 @@ export async function parsePrintoutPdf(
     };
   };
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, segs.length) }, worker));
+
+  // The student copy of a printout (no answer_token / no ✓ marks) carries no
+  // answers: whatever was read as one is dropped, so it gets solved and
+  // labelled AI-only instead of becoming an "official" key (lib/answer-marks).
+  const marks = answerMarkFactsFromText(layout.elements.map((e) => (e.kind === "text" ? e.plain : "")).join("\n"));
+  marks.checkMarks = layout.elements.filter((e) => e.kind === "text" && e.checked).length;
+  if (noAnswerMarksReason(marks)) {
+    for (const b of built) {
+      if (b.correct_answer) stats.answersDetected--;
+      b.correct_answer = null;
+    }
+  }
 
   // Domain / skill / difficulty — text-only, one call for the module.
   try {

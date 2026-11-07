@@ -89,7 +89,8 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
       const res = await fetch(`/api/admin/modules/${moduleId}/parse`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: answerKey ? JSON.stringify({ answerKey }) : undefined,
+        // No key from the probe: tell the parser so it doesn't extract one again.
+        body: JSON.stringify(answerKey ? { answerKey } : { noKey: true }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {

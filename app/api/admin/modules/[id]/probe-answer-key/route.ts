@@ -53,6 +53,8 @@ export async function POST(
   }
 
   try {
+    // A PDF with no answer marks (student printout: no answer_token / ✓)
+    // returns found=false with the reason in notes (lib/answer-marks).
     const key = await extractAnswerKey(pdfBase64, authResult.userId);
     // Key page for a different module: don't offer it. The admin then parses
     // without a key and the parse route flags every question for review.
