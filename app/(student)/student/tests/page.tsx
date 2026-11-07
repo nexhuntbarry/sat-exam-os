@@ -7,7 +7,7 @@ import { ClipboardList } from "lucide-react";
 import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatShortDate } from "@/lib/datetime";
-import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
+import { getAssignedTestIds, getInProgressOrPendingM2TestIds, isModule2Track } from "@/lib/student-exam";
 import { getTestSections } from "@/lib/teacher-access";
 import { attemptScore } from "@/lib/score-display";
 import { ScoreCell } from "@/components/ui/ScoreCell";
@@ -172,17 +172,33 @@ async function getStudentTests(studentId: string) {
   const db = getServiceClient();
 
   // Tests assigned directly or via one of the student's class groups.
-  const matchedTestIds = await getAssignedTestIds(db, studentId);
+  // Also include tests where the student has an unfinished attempt even if
+  // they were later unassigned (resumeOnly).
+  const [matchedTestIds, inProgressTestIds] = await Promise.all([
+    getAssignedTestIds(db, studentId),
+    getInProgressOrPendingM2TestIds(db, studentId),
+  ]);
 
   // QA isolation: a student never sees a test from the other side.
   const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
+  const isQaUser = qaUsers.has(studentId);
   for (const id of Array.from(matchedTestIds)) {
-    if (!onSide(id, qaTests, qaUsers.has(studentId))) matchedTestIds.delete(id);
+    if (!onSide(id, qaTests, isQaUser)) matchedTestIds.delete(id);
+  }
+  for (const id of Array.from(inProgressTestIds)) {
+    if (!onSide(id, qaTests, isQaUser)) inProgressTestIds.delete(id);
   }
 
-  if (matchedTestIds.size === 0) return [];
+  // resumeOnly = in inProgressTestIds but NOT in matchedTestIds
+  const resumeOnlyIds = new Set<string>();
+  for (const id of inProgressTestIds) {
+    if (!matchedTestIds.has(id)) resumeOnlyIds.add(id);
+  }
 
-  const testIds = Array.from(matchedTestIds);
+  const allTestIds = new Set([...matchedTestIds, ...inProgressTestIds]);
+  if (allTestIds.size === 0) return [];
+
+  const testIds = Array.from(allTestIds);
 
   const [{ data: tests }, { data: submissions }, sectionOf] = await Promise.all([
     db.from("tests")
@@ -247,7 +263,7 @@ async function getStudentTests(studentId: string) {
     const score = latestRows.length > 0
       ? attemptScore(latestRows.map((r) => ({ ...r, student_id: studentId })), sectionOf.get(t.id)).score
       : null;
-    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score };
+    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score, resumeOnly: resumeOnlyIds.has(t.id) };
   });
 }
 
@@ -445,7 +461,7 @@ export default async function StudentTestsPage() {
                           href={continueHref}
                           className="px-3 py-1.5 rounded-lg bg-warm-coral/15 text-warm-coral-text hover:bg-warm-coral/25 text-xs font-medium whitespace-nowrap transition-colors"
                         >
-                          {t("actions.continue")}
+                          {test.resumeOnly ? "Finish your attempt" : t("actions.continue")}
                         </Link>
                         {test.attempt?.partialResultSubmissionId && (
                           <Link

@@ -67,37 +67,39 @@ export async function GET(
 
 /** Atomically adds/removes ids from a jsonb string-array column via compare-and-swap.
  * Retries up to 5 times on CAS conflict (concurrent writer changed the value).
- * Returns an error string on failure, null on success. */
+ * Returns {message, status} on failure, null on success. */
 async function casArrayOp(
   db: ReturnType<typeof getServiceClient>,
   testId: string,
   jsonField: "class_group_ids" | "student_ids",
   toAdd: string[],
   toRemove: Set<string>,
-): Promise<string | null> {
+): Promise<{ message: string; status: number } | null> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const { data: row, error: readErr } = await db
       .from("test_assignments")
       .select(jsonField)
       .eq("test_id", testId)
       .maybeSingle();
-    if (readErr) return "Could not read test assignment";
-    if (!row) return "Test assignment not found"; // no ?? [] fallback
+    if (readErr) return { message: "Could not read test assignment", status: 500 };
+    if (!row) return { message: "Test assignment not found", status: 404 };
     const rowRecord = row as Record<string, unknown>;
     const old: string[] = Array.isArray(rowRecord[jsonField]) ? (rowRecord[jsonField] as string[]) : [];
     const next = [...new Set([...old.filter((v) => !toRemove.has(v)), ...toAdd])];
     if (JSON.stringify(old) === JSON.stringify(next)) return null; // no-op
     // CAS: only commit if no concurrent writer changed the field between read and write.
-    const { data: updated } = await db
+    const { data: updated, error: updErr } = await db
       .from("test_assignments")
       .update({ [jsonField]: next })
       .eq("test_id", testId)
       .filter(jsonField, "eq", JSON.stringify(old))
       .select("test_id");
+    // A real write error is not a conflict — report it instead of retrying.
+    if (updErr) return { message: `Assignment update failed: ${updErr.message}`, status: 500 };
     if ((updated ?? []).length > 0) return null; // committed
     if (attempt < 4) await new Promise((r) => setTimeout(r, 15 * (attempt + 1)));
   }
-  return "Concurrent update conflict — please retry";
+  return { message: "Concurrent update conflict — please retry", status: 409 };
 }
 
 // PATCH /api/admin/tests/[id]
@@ -134,6 +136,14 @@ export async function PATCH(
   const db = getServiceClient();
   const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
 
+  // classGroupIds (full replacement) is mutually exclusive with add/remove delta fields.
+  if (
+    body.classGroupIds !== undefined &&
+    (body.addClassGroupIds !== undefined || body.removeClassGroupIds !== undefined)
+  ) {
+    return bad("classGroupIds and addClassGroupIds/removeClassGroupIds are mutually exclusive");
+  }
+
   const { data: current } = await db
     .from("tests")
     .select("is_adaptive, status, open_date, due_date, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
@@ -141,7 +151,7 @@ export async function PATCH(
     .maybeSingle();
   if (!current) return bad("Test not found", 404);
 
-  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  const updates: Record<string, unknown> = {};
 
   // Same field rules as POST /api/admin/tests.
   if (body.testName !== undefined) {
@@ -282,10 +292,14 @@ export async function PATCH(
     (await roleError(db, Array.isArray(body.studentIds) ? (body.studentIds as string[]) : undefined, "student"));
   if (roleErr) return bad(roleErr);
 
-  const { error } = await db.from("tests").update(updates).eq("id", id);
-  if (error) {
-    console.error("[admin/tests/patch]", error);
-    return NextResponse.json({ error: "Failed to update test" }, { status: 500 });
+  const testFieldsChanged = Object.keys(updates).length > 0;
+  if (testFieldsChanged) {
+    updates.updated_at = new Date().toISOString();
+    const { error } = await db.from("tests").update(updates).eq("id", id);
+    if (error) {
+      console.error("[admin/tests/patch]", error);
+      return NextResponse.json({ error: "Failed to update test" }, { status: 500 });
+    }
   }
 
   // Update assignment if provided.
@@ -312,8 +326,14 @@ export async function PATCH(
   // Atomic class-group add/remove — CAS loop so concurrent assign/unassign
   // operations never silently overwrite each other.
   if (body.addClassGroupIds !== undefined || body.removeClassGroupIds !== undefined) {
-    const toAdd = Array.isArray(body.addClassGroupIds) ? (body.addClassGroupIds as string[]) : [];
-    const toRemove = new Set(Array.isArray(body.removeClassGroupIds) ? (body.removeClassGroupIds as string[]) : []);
+    const toAdd = Array.isArray(body.addClassGroupIds)
+      ? (body.addClassGroupIds as unknown[]).filter((v): v is string => typeof v === "string")
+      : [];
+    const toRemove = new Set(
+      Array.isArray(body.removeClassGroupIds)
+        ? (body.removeClassGroupIds as unknown[]).filter((v): v is string => typeof v === "string")
+        : [],
+    );
 
     // Additional cross-side guard for the ids being added.
     if (toAdd.length > 0) {
@@ -323,7 +343,13 @@ export async function PATCH(
     }
 
     const casErr = await casArrayOp(db, id, "class_group_ids", toAdd, toRemove);
-    if (casErr) return bad(casErr, casErr.includes("not found") ? 404 : 409);
+    if (casErr) return bad(casErr.message, casErr.status);
+
+    // Write updated_at now that the CAS succeeded (skipped above when no test
+    // fields changed so we don't timestamp a no-op before CAS).
+    if (!testFieldsChanged) {
+      await db.from("tests").update({ updated_at: new Date().toISOString() }).eq("id", id);
+    }
   }
 
   return NextResponse.json({ success: true });

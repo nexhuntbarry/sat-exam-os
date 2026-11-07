@@ -195,6 +195,60 @@ export async function getAssignedTestIds(
   return new Set((await getStudentAssignments(db, studentId)).keys());
 }
 
+/**
+ * Test IDs for which the student has an unfinished attempt even if no longer
+ * assigned: either any In Progress submission, or a graded Module 1 whose
+ * Module 2 row hasn't been created yet (the M1→M2 handoff case).
+ * These should appear in the student's test list marked "finish your attempt"
+ * and must be accessible via the student test landing page.
+ */
+export async function getInProgressOrPendingM2TestIds(
+  db: SupabaseClient,
+  studentId: string,
+): Promise<Set<string>> {
+  const { data: subs } = await db
+    .from("submissions")
+    .select("test_id, status, adaptive_track, attempt_number")
+    .eq("student_id", studentId)
+    .in("status", ["In Progress", "Submitted", "Late"])
+    .order("attempt_number", { ascending: false });
+
+  if (!subs || subs.length === 0) return new Set();
+
+  // Group by (test_id, latest attempt_number)
+  const latestByTest = new Map<string, { attempt: number; rows: { status: string; adaptive_track: string | null }[] }>();
+  for (const s of subs) {
+    const tid = s.test_id as string;
+    const att = (s.attempt_number as number) ?? 1;
+    const cur = latestByTest.get(tid);
+    if (!cur || att > cur.attempt) {
+      latestByTest.set(tid, { attempt: att, rows: [] });
+    }
+    if (latestByTest.get(tid)!.attempt === att) {
+      latestByTest.get(tid)!.rows.push({
+        status: s.status as string,
+        adaptive_track: s.adaptive_track as string | null,
+      });
+    }
+  }
+
+  const result = new Set<string>();
+  for (const [testId, { rows }] of latestByTest) {
+    // Case 1: any module is In Progress
+    if (rows.some((r) => r.status === "In Progress")) {
+      result.add(testId);
+      continue;
+    }
+    // Case 2: graded M1 with no M2 yet (needsModule2 / handoff pending)
+    const hasGradedM1 = rows.some(
+      (r) => r.adaptive_track === "module_1" && (r.status === "Submitted" || r.status === "Late"),
+    );
+    const hasM2 = rows.some((r) => r.adaptive_track && r.adaptive_track !== "module_1");
+    if (hasGradedM1 && !hasM2) result.add(testId);
+  }
+  return result;
+}
+
 /** Is this one test assigned to the student? (Same rule as above.) */
 export async function isTestAssignedToStudent(
   db: SupabaseClient,

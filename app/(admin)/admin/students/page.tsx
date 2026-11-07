@@ -69,6 +69,7 @@ export default async function StudentsPage() {
         .select("student_id, class_group_id")
         .in("class_group_id", cgKeys)
         .order("student_id")
+        .order("class_group_id")
         .range(from, to),
     );
     for (const m of members ?? []) {

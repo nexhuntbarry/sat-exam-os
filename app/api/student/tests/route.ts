@@ -3,7 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
-import { getAssignedTestIds } from "@/lib/student-exam";
+import { getAssignedTestIds, getInProgressOrPendingM2TestIds } from "@/lib/student-exam";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -21,19 +21,35 @@ export async function GET() {
   const db = getServiceClient();
 
   // Tests assigned directly or via one of the student's class groups.
-  const matchedTestIds = await getAssignedTestIds(db, user.userId);
+  // Also include tests where the student has an unfinished attempt (In Progress
+  // or graded M1 awaiting M2) even if they were later unassigned.
+  const [matchedTestIds, inProgressTestIds] = await Promise.all([
+    getAssignedTestIds(db, user.userId),
+    getInProgressOrPendingM2TestIds(db, user.userId),
+  ]);
 
   // QA isolation: a student never sees a test from the other side.
   const [qaTests, qaUsers] = await Promise.all([getQaTestIds(), getQaUserIds()]);
+  const isQaUser = qaUsers.has(user.userId);
   for (const id of Array.from(matchedTestIds)) {
-    if (!onSide(id, qaTests, qaUsers.has(user.userId))) matchedTestIds.delete(id);
+    if (!onSide(id, qaTests, isQaUser)) matchedTestIds.delete(id);
+  }
+  for (const id of Array.from(inProgressTestIds)) {
+    if (!onSide(id, qaTests, isQaUser)) inProgressTestIds.delete(id);
   }
 
-  if (matchedTestIds.size === 0) {
+  // resumeOnly = in inProgressTestIds but NOT in matchedTestIds
+  const resumeOnlyIds = new Set<string>();
+  for (const id of inProgressTestIds) {
+    if (!matchedTestIds.has(id)) resumeOnlyIds.add(id);
+  }
+
+  const allTestIds = new Set([...matchedTestIds, ...inProgressTestIds]);
+  if (allTestIds.size === 0) {
     return NextResponse.json({ data: [] });
   }
 
-  const testIds = Array.from(matchedTestIds);
+  const testIds = Array.from(allTestIds);
 
   const { data: tests, error } = await db
     .from("tests")
@@ -214,6 +230,7 @@ export async function GET() {
         : null,
       attempt,
       testStatus,
+      resumeOnly: resumeOnlyIds.has(t.id),
     };
   });
 

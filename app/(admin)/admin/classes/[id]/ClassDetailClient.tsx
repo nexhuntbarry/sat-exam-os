@@ -586,8 +586,9 @@ export default function ClassDetailClient({
                     <>
                       <h3 className="font-bold text-charcoal text-base">Remove test from this class?</h3>
                       <p className="text-mid-gray text-xs mt-0.5 leading-relaxed">
-                        <strong>{unassignTarget.name}</strong> will no longer be accessible to students in{" "}
-                        <strong>{classGroup.name}</strong> (unless they are individually assigned).
+                        Students in <strong>{classGroup.name}</strong> who haven&apos;t started{" "}
+                        <strong>{unassignTarget.name}</strong> will lose access. Students mid-exam can still finish
+                        their current attempt. (Individual assignments are unaffected.)
                       </p>
                       {unassignTarget.submitted > 0 && (
                         <p className="text-status-warning text-xs mt-2 font-medium">
@@ -598,7 +599,7 @@ export default function ClassDetailClient({
                       {unassignTarget.inProgress > 0 && (
                         <p className="text-status-warning text-xs mt-1 font-medium">
                           {unassignTarget.inProgress} student{unassignTarget.inProgress !== 1 ? "s are" : " is"} currently
-                          taking this test.
+                          mid-exam and can still finish.
                         </p>
                       )}
                     </>

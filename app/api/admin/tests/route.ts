@@ -14,12 +14,33 @@ import {
 } from "../_shared";
 
 // GET /api/admin/tests
+// ?list=1 — lightweight list for pickers (id, test_name, status, section only).
+//           Skips assignment + submission count lookups for fast load.
 export async function GET(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
   const admin = authResult;
 
   const { searchParams } = new URL(req.url);
+
+  if (searchParams.get("list") === "1") {
+    const db = getServiceClient();
+    const { data: tests, error } = await scopeIds(
+      db
+        .from("tests")
+        .select("id, test_name, status, modules!module_id(section)"),
+      "id",
+      await getQaTestIds(),
+      admin.isQa,
+    )
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("[admin/tests/list]", error);
+      return NextResponse.json({ error: "Failed to fetch tests" }, { status: 500 });
+    }
+    return NextResponse.json({ data: tests ?? [] });
+  }
+
   const status = searchParams.get("status") ?? "";
   const moduleId = searchParams.get("moduleId") ?? "";
 

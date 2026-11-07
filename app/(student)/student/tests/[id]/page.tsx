@@ -17,20 +17,28 @@ async function getTestInfo(testId: string, studentId: string) {
   const db = getServiceClient();
 
   // Check access: assigned students always get in. Unassigned students who
-  // have an In Progress submission may still resume — we show the page but
-  // mark isAssigned=false so the render suppresses "Start new attempt".
+  // have an unfinished attempt may still resume — either an In Progress
+  // submission OR a graded M1 awaiting M2 (the handoff case). We show the
+  // page but mark isAssigned=false so the render suppresses "Start new attempt".
   const isAssigned = await isTestAssignedToStudent(db, testId, studentId);
   if (!isAssigned) {
-    // Check for any in-progress submission (single or multi-module).
-    const { data: inProg } = await db
+    // Check for any In Progress submission or graded M1 missing M2.
+    const { data: subs } = await db
       .from("submissions")
-      .select("id")
+      .select("status, adaptive_track, attempt_number")
       .eq("test_id", testId)
       .eq("student_id", studentId)
-      .eq("status", "In Progress")
-      .limit(1)
-      .maybeSingle();
-    if (!inProg) return null;
+      .in("status", ["In Progress", "Submitted", "Late"])
+      .order("attempt_number", { ascending: false });
+    if (!subs || subs.length === 0) return null;
+    const latestAttempt = (subs[0].attempt_number as number) ?? 1;
+    const latestRows = subs.filter((s) => (s.attempt_number as number ?? 1) === latestAttempt);
+    const hasInProgress = latestRows.some((s) => s.status === "In Progress");
+    const hasGradedM1 = latestRows.some(
+      (s) => s.adaptive_track === "module_1" && (s.status === "Submitted" || s.status === "Late"),
+    );
+    const hasM2 = latestRows.some((s) => s.adaptive_track && s.adaptive_track !== "module_1");
+    if (!hasInProgress && !(hasGradedM1 && !hasM2)) return null;
   }
 
   const { data: test } = await db

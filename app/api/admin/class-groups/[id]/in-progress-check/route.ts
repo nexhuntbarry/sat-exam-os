@@ -3,12 +3,14 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 
-// GET /api/admin/class-groups/[id]/in-progress-check?studentIds=a,b,c
+// POST /api/admin/class-groups/[id]/in-progress-check
+// Body: { studentIds: string[] }
 //
 // Returns the tests assigned via this class group that have at least one
 // of the given students with an In Progress submission.  Used by the
 // Students-page "Remove from class" modal to warn admins before removing.
-export async function GET(
+// POST body avoids URL length limits for large student lists.
+export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -16,11 +18,16 @@ export async function GET(
   if (authResult instanceof NextResponse) return authResult;
 
   const { id: cgId } = await params;
-  const { searchParams } = new URL(req.url);
-  const studentIds = (searchParams.get("studentIds") ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  let body: { studentIds?: unknown };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  const studentIds = Array.isArray(body.studentIds)
+    ? (body.studentIds as unknown[])
+        .filter((s): s is string => typeof s === "string" && s.length > 0)
+    : [];
 
   if (studentIds.length === 0) return NextResponse.json({ tests: [] });
 
@@ -29,7 +36,7 @@ export async function GET(
     classGroupIds: [cgId],
     userIds: studentIds,
   });
-  if (crossSide) return NextResponse.json({ error: crossSide }, { status: 403 });
+  if (crossSide) return crossSide;
 
   const db = getServiceClient();
 

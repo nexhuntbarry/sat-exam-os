@@ -78,7 +78,7 @@ async function getAllStudentsForPicker(viewerIsQa: boolean) {
         .select("id, email, display_name, account_status, student_profiles(grade, school)")
         .eq("role", "student"),
       viewerIsQa,
-    ).order("display_name").range(from, to),
+    ).order("display_name").order("id").range(from, to),
   );
 
   type RawRow = {
@@ -268,6 +268,7 @@ async function getAllTests(viewerIsQa: boolean): Promise<AvailableTest[]> {
         .from("tests")
         .select("id, test_name, status, open_date, due_date, modules!module_id(section)")
         .order("created_at", { ascending: false })
+        .order("id")
         .range(from, to),
     ),
     fetchAllRows((from, to) =>

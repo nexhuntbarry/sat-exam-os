@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useState, useEffect, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -405,16 +405,16 @@ function AssignTestModal({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/admin/tests")
+    fetch("/api/admin/tests?list=1")
       .then((r) => r.json())
       .then((j) => {
         const list = Array.isArray(j.data) ? j.data : [];
         setTests(
-          list.map((t: { id: string; test_name: string; status: string | null; modules?: { section?: string }[] | null }) => ({
+          list.map((t: { id: string; test_name: string; status: string | null; modules?: { section?: string } | { section?: string }[] | null }) => ({
             id: t.id,
             name: t.test_name,
             status: t.status,
-            section: Array.isArray(t.modules) ? t.modules[0]?.section ?? null : null,
+            section: Array.isArray(t.modules) ? t.modules[0]?.section ?? null : (t.modules as { section?: string } | null)?.section ?? null,
           }))
         );
       })
@@ -557,32 +557,42 @@ function RemoveFromClassModal({
 
   const [selectedClassId, setSelectedClassId] = useState("");
   const [inProgressCheck, setInProgressCheck] = useState<
-    null | "loading" | InProgressTest[]
+    null | "loading" | "check-failed" | InProgressTest[]
   >(null);
   const [confirmStep, setConfirmStep] = useState<"pick" | "warn-inprogress">("pick");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Track the latest check request to discard stale responses.
+  const checkRequestIdRef = useRef(0);
 
   async function pickClass(cgId: string) {
     setSelectedClassId(cgId);
     setConfirmStep("pick");
     setInProgressCheck("loading");
+    const requestId = ++checkRequestIdRef.current;
     const studentIds = students
       .filter((s) => s.classMemberships.some((m) => m.id === cgId))
       .map((s) => s.id);
     try {
       const res = await fetch(
-        `/api/admin/class-groups/${cgId}/in-progress-check?studentIds=${studentIds.join(",")}`,
+        `/api/admin/class-groups/${cgId}/in-progress-check`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ studentIds }),
+        },
       );
+      if (checkRequestIdRef.current !== requestId) return; // stale — discard
       if (res.ok) {
         const j = (await res.json()) as { tests?: InProgressTest[] };
         setInProgressCheck(j.tests ?? []);
       } else {
-        setInProgressCheck([]); // non-fatal; skip warning on error
+        setInProgressCheck("check-failed");
       }
     } catch {
-      setInProgressCheck([]);
+      if (checkRequestIdRef.current !== requestId) return;
+      setInProgressCheck("check-failed");
     }
   }
 
@@ -628,7 +638,7 @@ function RemoveFromClassModal({
     const testsWithInProgress = Array.isArray(inProgressCheck)
       ? inProgressCheck.filter((t) => t.inProgressCount > 0)
       : [];
-    if (confirmStep === "pick" && testsWithInProgress.length > 0) {
+    if (confirmStep === "pick" && (testsWithInProgress.length > 0 || inProgressCheck === "check-failed")) {
       setConfirmStep("warn-inprogress");
       return;
     }
@@ -639,6 +649,7 @@ function RemoveFromClassModal({
     ? inProgressCheck.filter((t) => t.inProgressCount > 0)
     : [];
   const checkingNow = inProgressCheck === "loading";
+  const checkFailed = inProgressCheck === "check-failed";
 
   return (
     <Portal>
@@ -679,21 +690,28 @@ function RemoveFromClassModal({
         </div>
 
         {/* In-progress warning (shown after check completes with > 0 results) */}
-        {confirmStep === "warn-inprogress" && testsWithInProgress.length > 0 && (
-          <div className="mx-5 mb-0 mt-0 rounded-xl bg-status-warning/10 border border-status-warning/30 px-4 py-3 text-sm space-y-1.5">
-            <p className="font-semibold text-charcoal">
-              {testsWithInProgress.reduce((s, t) => s + t.inProgressCount, 0)} student
-              {testsWithInProgress.reduce((s, t) => s + t.inProgressCount, 0) !== 1 ? "s have" : " has"} an In Progress submission:
-            </p>
-            <ul className="text-soft-mute text-xs space-y-0.5 ml-2">
-              {testsWithInProgress.map((t) => (
-                <li key={t.id}>· {t.name} ({t.inProgressCount} student{t.inProgressCount !== 1 ? "s" : ""})</li>
-              ))}
-            </ul>
-            <p className="text-xs text-soft-mute">
-              They can finish their current attempt but cannot start a new one after removal.
-            </p>
-          </div>
+        {confirmStep === "warn-inprogress" && (
+          checkFailed ? (
+            <div className="mx-5 mb-0 mt-0 rounded-xl bg-status-warning/10 border border-status-warning/30 px-4 py-3 text-sm space-y-1">
+              <p className="font-semibold text-charcoal">Couldn&apos;t check who is mid-test — remove anyway?</p>
+              <p className="text-xs text-soft-mute">The in-progress check failed. Students mid-exam can still finish their current attempt after removal.</p>
+            </div>
+          ) : testsWithInProgress.length > 0 ? (
+            <div className="mx-5 mb-0 mt-0 rounded-xl bg-status-warning/10 border border-status-warning/30 px-4 py-3 text-sm space-y-1.5">
+              <p className="font-semibold text-charcoal">
+                {testsWithInProgress.reduce((s, t) => s + t.inProgressCount, 0)} student
+                {testsWithInProgress.reduce((s, t) => s + t.inProgressCount, 0) !== 1 ? "s have" : " has"} an In Progress submission:
+              </p>
+              <ul className="text-soft-mute text-xs space-y-0.5 ml-2">
+                {testsWithInProgress.map((t) => (
+                  <li key={t.id}>· {t.name} ({t.inProgressCount} student{t.inProgressCount !== 1 ? "s" : ""})</li>
+                ))}
+              </ul>
+              <p className="text-xs text-soft-mute">
+                They can finish their current attempt but cannot start a new one after removal.
+              </p>
+            </div>
+          ) : null
         )}
 
         <div className="p-5 border-t border-divider flex items-center justify-between gap-3">
@@ -708,7 +726,7 @@ function RemoveFromClassModal({
               disabled={!selectedClassId || loading || classes.length === 0 || checkingNow}
               className="px-4 py-2 rounded-xl bg-status-error hover:bg-status-error/90 text-white font-semibold text-sm disabled:opacity-50 transition-colors"
             >
-              {loading ? "Removing…" : checkingNow ? "Checking…" : confirmStep === "warn-inprogress" ? "Remove anyway" : "Remove"}
+              {loading ? "Removing…" : checkingNow ? "Checking…" : confirmStep === "warn-inprogress" ? (checkFailed ? "Remove anyway" : "Remove anyway") : "Remove"}
             </button>
           </div>
         </div>

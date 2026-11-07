@@ -46,6 +46,7 @@ export async function POST(
   // Retries handle concurrent callers (e.g. two admins adding different students
   // at the same time) without either silently losing the other's additions.
   let added = 0;
+  let mergedTotal = incoming.length; // fallback: at minimum all incoming were added
   for (let attempt = 0; attempt < 5; attempt++) {
     const { data: row, error: readErr } = await db
       .from("test_assignments")
@@ -61,6 +62,7 @@ export async function POST(
     }
     const existing: string[] = Array.isArray(row.student_ids) ? (row.student_ids as string[]) : [];
     const merged = Array.from(new Set([...existing, ...incoming]));
+    mergedTotal = merged.length;
     added = merged.length - existing.length;
     if (added === 0) break; // all already present, nothing to do
 
@@ -79,5 +81,5 @@ export async function POST(
     else return NextResponse.json({ error: "Concurrent update conflict — please retry" }, { status: 409 });
   }
 
-  return NextResponse.json({ ok: true, added, total: (incoming.length + added) });
+  return NextResponse.json({ ok: true, added, total: mergedTotal });
 }
