@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { forbidQa } from "@/lib/qa";
 import { choicesWithStoredImages, regenerateExplanation } from "@/lib/ai/solve-question";
 
-// Up to two Claude calls (one retry when the first explanation looks cut off).
-export const maxDuration = 120;
+// AI calls: an independent solve, then the explanation (one retry when it
+// looks cut off); figure questions add a high-resolution re-read of the
+// figure and a second read that checks the values used.
+export const maxDuration = 300;
 
 // POST /api/admin/questions/[id]/regenerate-explanation
 // Body: { question_text, choices, correct_answer, question_type } — the
@@ -19,6 +22,8 @@ export async function POST(
 ) {
   const authResult = await requireQuestionReviewer();
   if (authResult instanceof NextResponse) return authResult;
+  const qaBlock = forbidQa(authResult);
+  if (qaBlock) return qaBlock;
   const { id } = await params;
   const body = await req.json().catch(() => ({}));
 
@@ -55,5 +60,18 @@ export async function POST(
     authResult.userId,
   );
   if (!res.ok) return NextResponse.json(res, { status: 422 });
+  // The AI solves first without the answer; when it reaches another one, no
+  // explanation is written (it would only argue an answer it can't reproduce).
+  if (!res.agrees && !res.explanation.trim()) {
+    return NextResponse.json(
+      {
+        ok: false,
+        ai_answer: res.aiAnswer,
+        agrees: false,
+        error: `Working it out on its own, the AI got ${res.aiAnswer ?? "a different answer"}, not ${answer}, so no explanation was written. Check the answer key.`,
+      },
+      { status: 422 },
+    );
+  }
   return NextResponse.json({ ok: true, explanation: res.explanation, ai_answer: res.aiAnswer, agrees: res.agrees });
 }

@@ -6,7 +6,7 @@
 //
 //   npx tsx scripts/test-choice-crop-check.ts
 import sharp from "sharp";
-import { checkChoiceCropPixels, checkGreyPixels, choiceCropProblems, cropHasOtherQuestion } from "../lib/choice-crop-check";
+import { checkChoiceCropPixels, checkGreyPixels, choiceCropProblems, cropHasOtherQuestion, figureMayContinue } from "../lib/choice-crop-check";
 import type { ExclusionZone } from "../lib/printout-layout";
 
 let failures = 0;
@@ -85,6 +85,25 @@ async function main() {
   const p = choiceCropProblems("B", { blank: true, cutEdges: [] }, true);
   check("problems: blank + other question", p.length === 2 && /blank/.test(p[0]) && /another question/.test(p[1]), p);
   check("problems: none for a good crop", choiceCropProblems("A", g, false).length === 0);
+
+  // Page-break rule: Q12's bar is the last on p9, p10 starts with an image (the figure's continuation).
+  const bar = (page: number, y: number): ExclusionZone => ({ page, kind: "bar", x0: 100, y0: y, x1: 500, y1: y + 20 });
+  const num = (page: number, n: number, y: number) => ({ kind: "text" as const, page, plain: String(n), text: String(n), x0: 105, y0: y + 3, x1: 120, y1: y + 17, checked: false, bullet: false, fontSize: 10 });
+  const pages = Array.from({ length: 10 }, () => ({ width: 612, height: 792 }));
+  const ownImg = (y1: number) => ({ kind: "image" as const, page: 9, x0: 100, y0: 540, x1: 400, y1 });
+  const layout = {
+    pages,
+    elements: [num(9, 11, 100), num(9, 12, 500), ownImg(780), { kind: "image" as const, page: 10, x0: 100, y0: 60, x1: 400, y1: 300 }, num(10, 13, 400)],
+  };
+  const zones2 = [bar(9, 100), bar(9, 500), bar(10, 400)];
+  check("page break: last question on its page + image atop next page → may continue", figureMayContinue(layout, zones2, 9, 12));
+  check("page break: stored page_number off by one still finds the bar", figureMayContinue(layout, zones2, 8, 12));
+  check("page break: a question followed by another on the same page → no", !figureMayContinue(layout, zones2, 9, 11));
+  check("page break: unknown question number → no", !figureMayContinue(layout, zones2, 9, 99));
+  const ends = { ...layout, elements: layout.elements.map((e) => (e.kind === "image" && e.page === 9 ? ownImg(650) : e)) };
+  check("page break: own figure ends well above the page bottom → no", !figureMayContinue(ends, zones2, 9, 12));
+  const choiceZone: ExclusionZone = { page: 10, kind: "choice", x0: 90, y0: 50, x1: 450, y1: 320 };
+  check("page break: next page's top image is an answer choice → no", !figureMayContinue(layout, [...zones2, choiceZone], 9, 12));
 
   console.log(failures ? `\n${failures} FAILED` : "\nall passed");
   process.exit(failures ? 1 : 0);

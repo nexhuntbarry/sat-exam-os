@@ -21,8 +21,11 @@ import {
   TRUNCATION_NOTE,
 } from "@/lib/ai/solve-question";
 import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
-import { SPR_TYPE, answersAgreeForQuestion, checkComputedAnswer, keyFormNote, keyTypeProblem, sprValue, withSprAnswerLine } from "@/lib/answer-key";
+import { SPR_TYPE, answersAgreeForQuestion, checkComputedAnswer, keyFormNote, keyTypeProblem, sprValue } from "@/lib/answer-key";
 import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
+import { KEY_ROW_SELECT, prepareKeyChange } from "@/lib/key-change";
+import { rescoreQuestion } from "@/lib/rescore";
+import type { AutoFixRow } from "@/lib/explanation-autofix";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -253,15 +256,35 @@ export async function consensusResolve(
       continue;
     }
     if (v && v.ok && !looksTruncated(v.explanation)) {
-      settled++;
-      await db.from("questions").update({
-        correct_answer: a1,
-        // Fill-in: end on the key and its other accepted entries.
-        explanation: q.question_type === SPR_TYPE ? withSprAnswerLine(v.explanation, a1, q.question_text) : v.explanation,
-        parsing_status: "Approved",
-        parsing_notes: "Auto-settled: 3 independent solves agreed + verified (no answer key available)",
-        updated_at: new Date().toISOString(),
-      }).eq("id", q.id);
+      // The key goes through the one key-change path (lib/key-change.ts): the
+      // explanation is written after a solve that never saw the key, checked,
+      // and saved in the same write. No checked explanation → not approved.
+      const { data: full } = await db.from("questions").select(KEY_ROW_SELECT).eq("id", q.id).maybeSingle();
+      if (!full) continue;
+      const cur = full as AutoFixRow;
+      const settledNote = "Auto-settled: 3 independent solves agreed + verified (no answer key available)";
+      const keyChanged = (cur.correct_answer ?? "") !== a1;
+      const prepared = await prepareKeyChange(
+        db as unknown as Parameters<typeof prepareKeyChange>[0],
+        { ...cur, correct_answer: a1, parsing_notes: settledNote },
+        { live: false, keyChanged, route: "consensus-solve" },
+      );
+      const update: Record<string, unknown> = { correct_answer: a1, parsing_notes: settledNote, ...prepared.patch, updated_at: new Date().toISOString() };
+      if (prepared.ok) {
+        settled++;
+        update.parsing_status = "Approved";
+      } else {
+        unresolved++;
+      }
+      const { data: written } = await db.from("questions").update(update).eq("id", q.id).eq("parsing_status", "Needs Review").select("id");
+      // Answers already graded against the old key are re-graded (same as every key-change path).
+      if (keyChanged && written?.length) {
+        try {
+          await rescoreQuestion(db as unknown as Parameters<typeof rescoreQuestion>[0], q.id);
+        } catch (e) {
+          console.error(`[consensus-resolve] rescore ${q.id}:`, e);
+        }
+      }
     } else if (v && v.ok && looksTruncated(v.explanation)) {
       // Verifier agreed but its explanation is still truncated after retry.
       unresolved++;

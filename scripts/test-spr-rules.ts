@@ -9,6 +9,7 @@ import { answersMatch as _am } from "../lib/grade-submission";
 import {
   acceptedSprEntries,
   fillDecimalForms,
+  gradedAsCorrect,
   impliedExactValue,
   keyTypeProblem,
   acceptedAnswersText,
@@ -117,6 +118,40 @@ eq("implied 1905.12", impliedExactValue("1905.12"), null);
 eq("11.26 vs 11.25", answersMatch("11.26", "11.25"), false);
 eq("1/53 vs 0.018", answersMatch("1/53", "0.018"), false);
 eq(".0189 vs 0.018", answersMatch(".0189", "0.018"), false);
+
+// ── "Graded as correct" on the review page (gradedAsCorrect) ──
+// Every listed entry must be credited by the grader, and fit the box;
+// near-misses must not be.
+{
+  const cases: Array<{ key: string; q?: string; summary: string; miss: string[] }> = [
+    { key: "6/13", summary: "Graded as correct: 6/13, .4615, 0.461, 0.462 (also 12/26). Any equal fraction that fits is also accepted.", miss: [".46", "0.46", ".4614", "0.463", "6/12", ".462"] },
+    { key: "6.8", q: "What is the area of the shaded region, to the nearest tenth?", summary: "Graded as correct: 6.8 (also 6.80, 34/5). Rounding rule from the question: nearest tenth.", miss: ["6.85", "6.9", "6.7", "7", "6.79"] },
+    { key: "21.5", summary: "Graded as correct: 21.5 (also 21.50, 43/2).", miss: ["21", "22", "21.4", "21.6"] },
+    { key: "0.5", summary: "Graded as correct: 0.5 (also .5, 0.50, 1/2).", miss: [".05", "5", "0.55"] },
+    { key: "12", summary: "Graded as correct: 12 (also 12.0).", miss: ["12.1", "11", "1.2"] },
+    { key: "-1/3", summary: "Graded as correct: -1/3, -.3333, -0.333 (also -2/6). Any equal fraction that fits is also accepted.", miss: ["-.33", "-0.33", "1/3", "-.3334"] },
+    { key: "3 or 5", summary: "Graded as correct: answer 1: 3 (also 3.0); answer 2: 5 (also 5.0).", miss: ["4", "35", "3 or 5", "8"] },
+    { key: ".6667", summary: "Graded as correct: 2/3, .6666, .6667, 0.666, 0.667 (also 4/6). Any equal fraction that fits is also accepted.", miss: [".67", "0.66", ".6665"] },
+    { key: "248", q: "To the nearest whole number, what is the value of x?", summary: "Graded as correct: 248 (also 248.0). Rounding rule from the question: nearest whole number.", miss: ["248.2", "249", "247"] },
+    { key: "248.2", q: "To the nearest whole number, what is the value of x?", summary: "Graded as correct: 248, 248.2 (also 248.0). Rounding rule from the question: nearest whole number.", miss: ["249", "248.3"] },
+    { key: "214/3", summary: "Graded as correct: 214/3, 71.33 (also 428/6). Any equal fraction that fits is also accepted.", miss: ["71.3", "71.34", "71"] },
+    { key: "1905.12", summary: "Graded as correct: 1905.12.", miss: ["1905.1", "1905"] },
+  ];
+  for (const c of cases) {
+    const g = gradedAsCorrect(c.key, c.q);
+    eq(`graded summary ${c.key}`, g.summary, c.summary);
+    for (const a of g.answers) {
+      for (const f of [...a.forms, ...a.also]) {
+        eq(`graded ${c.key}: "${f}" credited`, answersMatch(f, c.key, c.q), true);
+        // The box takes 5 characters (6 with "-"); a longer verified key is its own form.
+        if (f !== c.key) eq(`graded ${c.key}: "${f}" fits the box`, f.replace(/^-/, "").length <= 5, true);
+      }
+    }
+    for (const m of c.miss) eq(`graded ${c.key}: near-miss "${m}" not credited`, answersMatch(m, c.key, c.q), false);
+  }
+  eq("graded MC letter", gradedAsCorrect("B").answers[0].text, true);
+  eq("graded empty", gradedAsCorrect("").summary, "");
+}
 
 console.log(`\n${total - failed}/${total} passed`);
 if (failed > 0) process.exit(1);

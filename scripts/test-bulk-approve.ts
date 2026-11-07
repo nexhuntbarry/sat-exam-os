@@ -8,7 +8,7 @@
 //   set -a; source <(grep -E '^[A-Z_]+=' .env.local); set +a
 //   npx tsx scripts/test-bulk-approve.ts
 import { createClient } from "@supabase/supabase-js";
-import { BULK_APPROVE_STATUSES, planBulkApprove, type BulkApproveRow } from "../lib/bulk-approve";
+import { BULK_APPROVE_STATUSES, EXPLANATION_KEY_NOTE_PREFIX, planBulkApprove, type BulkApproveRow } from "../lib/bulk-approve";
 import { liveQuestionIds, LIVE_FIX_TAG } from "../lib/live-questions";
 
 // In published test a58f0bb8… with a class assigned (same as test-live-guard).
@@ -57,6 +57,25 @@ async function main() {
     const first = planBulkApprove([spr({ id: "a" })], new Set(), now).holds[0].update.parsing_notes as string;
     const second = planBulkApprove([spr({ id: "a", parsing_notes: first })], new Set(), now).holds[0].update.parsing_notes as string;
     check("same key-check note isn't appended twice", first === second, { first, second });
+  }
+  {
+    // An explanation that argues another answer / computes something else holds the row.
+    const mc = (over: Partial<BulkApproveRow>): BulkApproveRow => ({
+      id: "m", question_text: "What is the net percentage increase?", question_type: "Multiple Choice", correct_answer: "A",
+      choices: [{ label: "A", text: "100%" }, { label: "B", text: "120%" }, { label: "C", text: "140%" }, { label: "D", text: "150%" }],
+      parsing_status: "Needs Review", parsing_notes: null, ...over,
+    });
+    const plan = planBulkApprove(
+      [
+        mc({ id: "contradicts", explanation: "$\\frac{200 - 100}{100} \\times 100\\% = 120\\%$. Only choice B is correct." }),
+        mc({ id: "fine", explanation: "$\\frac{200 - 100}{100} \\times 100\\% = 100\\%$.\n\nAnswer: A" }),
+        mc({ id: "no-explanation" }),
+      ],
+      new Set(),
+      now,
+    );
+    check("explanation contradicting the key is held", plan.holds.some((h) => h.id === "contradicts" && String(h.update.parsing_notes).startsWith(EXPLANATION_KEY_NOTE_PREFIX)), plan.holds);
+    check("consistent explanation / no explanation are approved", JSON.stringify(plan.clean) === JSON.stringify(["fine", "no-explanation"]), plan.clean);
   }
   check("only Draft / Needs Review are in scope", JSON.stringify(BULK_APPROVE_STATUSES) === JSON.stringify(["Draft", "Needs Review"]));
 

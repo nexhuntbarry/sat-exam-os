@@ -28,7 +28,7 @@ import {
 } from "@/lib/ai/solve-question";
 import { clearReviewTags } from "@/lib/key-doubt";
 import { findApproveBlocker } from "@/lib/parse-guards";
-import { applyKeyCorrection, type KeyCorrectionResult } from "@/lib/key-change";
+import { applyKeyCorrection, keyExplanationWarning, type ExplainFn, type KeyCorrectionResult } from "@/lib/key-change";
 import { loadProposal, proposalIsCurrent, replaceTableBlock, tableBlockCount } from "@/lib/figure-compare";
 import { LIVE_FIX_TAG, liveQuestionIds } from "@/lib/live-questions";
 import {
@@ -116,11 +116,11 @@ type Refresh = {
   notesFor: (r: Row) => string | null | undefined;
 };
 
-async function refreshExplanation(row: Row, userId?: string): Promise<Refresh> {
+async function refreshExplanation(row: Row, userId?: string, explain: ExplainFn = regenerateExplanation): Promise<Refresh> {
   const key = row.correct_answer ?? "";
   const none = { outcome: "failed" as const, notesFor: () => undefined };
   if (!key) return none;
-  const res = await regenerateExplanation(
+  const res = await explain(
     {
       questionId: row.id,
       questionNumber: row.original_question_number,
@@ -139,7 +139,8 @@ async function refreshExplanation(row: Row, userId?: string): Promise<Refresh> {
     const notesFor = (r: Row) => [removeNotes(r.parsing_notes, (s) => s.startsWith(REGEN_DISAGREE_PREFIX)).notes, disagree].filter(Boolean).join("; ");
     return { notes: notesFor(row), outcome: "ai_disagrees", notesFor };
   }
-  if (draftRejection(row, res.explanation)) return none;
+  // Written only after a solve that never saw the key agreed with it.
+  if (res.independent === false || draftRejection(row, res.explanation)) return none;
   // The old explanation-problem notes are settled by the new explanation.
   const explanation = res.explanation;
   const notesFor = (r: Row) => {
@@ -180,6 +181,8 @@ async function finish(
   userId: string | undefined,
   extra: Partial<DecideResult> = {},
   live = false,
+  /** false: never approve (the key has no checked explanation). */
+  allowApprove = true,
 ): Promise<DecideResult> {
   if (live && CONTENT_FIELDS.some((f) => f in patch)) {
     patch = { ...patch, parsing_notes: liveFixNotes("parsing_notes" in patch ? (patch.parsing_notes as string | null) : before.parsing_notes) };
@@ -188,7 +191,7 @@ async function finish(
   const next = { ...before, ...patch } as Row;
   const blockers = decideBlockers(next);
   const update: Record<string, unknown> = { ...patch, updated_at: new Date().toISOString() };
-  if (blockers.length === 0 && next.parsing_status !== "Approved") {
+  if (allowApprove && blockers.length === 0 && next.parsing_status !== "Approved") {
     update.parsing_status = "Approved";
     update.reviewed_by = userId ?? null;
     update.reviewed_at = new Date().toISOString();
@@ -200,7 +203,7 @@ async function finish(
   const { data, error } = await q.select("id");
   if (error) return { ok: false, status: 500, error: "Update failed" };
   if (!data?.length) return { ok: false, status: 409, error: "This question changed since the page loaded. Reload and try again." };
-  const approved = update.parsing_status === "Approved" || next.parsing_status === "Approved";
+  const approved = allowApprove && (update.parsing_status === "Approved" || next.parsing_status === "Approved");
   const after = { ...next, ...update } as Row;
   return { ok: true, approved, blockers, nextGroup: approved ? null : groupRow(after).primary, ...extra };
 }
@@ -209,7 +212,7 @@ export async function decide(
   db: SupabaseClient,
   id: string,
   act: DecideAction,
-  opts: { userId?: string; expectedUpdatedAt?: string | null },
+  opts: { userId?: string; expectedUpdatedAt?: string | null; explain?: ExplainFn },
 ): Promise<DecideResult> {
   let row = await loadRow(db, id);
   if (!row) return { ok: false, status: 404, error: "Question not found" };
@@ -235,14 +238,33 @@ export async function decide(
         const cur = { ...row, ...patch } as Row;
         let explanation: DecideResult["explanation"] = "kept";
         if (draftRejection(cur, cur.explanation ?? "")) {
-          const ex = await refreshExplanation(cur, opts.userId);
+          const ex = await refreshExplanation(cur, opts.userId, opts.explain);
           explanation = ex.outcome;
           if (ex.explanation) patch.explanation = ex.explanation;
           if (ex.notes !== undefined) patch.parsing_notes = ex.notes;
         }
-        return finish(db, row, patch, opts.userId, { explanation }, live);
+        // The key stands, but without a checked explanation it is never
+        // reported as approved.
+        const exOk = explanation === "kept" || explanation === "regenerated";
+        const res = await finish(db, row, patch, opts.userId, { explanation }, live, exOk);
+        if (!exOk && res.ok) {
+          return {
+            ...res,
+            approved: false,
+            warning:
+              explanation === "ai_disagrees"
+                ? "Key kept, but solving it without the key the AI got another answer, so no explanation was written. Check the key."
+                : "Key kept, but the explanation couldn't be rewritten and checked. Edit it by hand.",
+          };
+        }
+        return res;
       }
 
+      // The key is saved together with an explanation that was written from
+      // an independent solve and checked (lib/key-change.ts). If none could
+      // be, the key still stands but the question is NOT approved: it goes to
+      // Needs Review (or, in a live test, stays Approved with the
+      // explanation hidden and a [live-fix] note).
       const keyRes = await applyKeyCorrection(db, {
         id,
         correct_answer: act.key,
@@ -250,34 +272,34 @@ export async function decide(
         rescore: act.rescore,
         userId: opts.userId,
         source: "a reviewer (review queue)",
-        // Written below with the checked regenerateExplanation instead.
-        regenerateExplanation: false,
+        explain: opts.explain,
       });
       if (!keyRes.ok) return { ok: false, status: keyRes.status, error: keyRes.error, key: keyRes };
 
       // The key changed and answers were rescored: from here on the result
       // is a success; a later step that fails only adds a warning.
-      const keyDone: Partial<DecideResult> = { key: keyRes, live: keyRes.live };
-      const notUpdated = "Key changed and answers rescored, but the explanation/notes weren't updated. Reload and check the question.";
-      let fresh = await loadRow(db, id);
-      if (!fresh) return { ok: true, approved: false, ...keyDone, explanation: "failed", warning: notUpdated };
-      const ex = await refreshExplanation({ ...fresh, ...keyPatch(fresh) } as Row, opts.userId);
-      const fullPatch = (r: Row) => {
+      const exOk = keyRes.explanationOk;
+      const outcome: DecideResult["explanation"] = keyRes.explanation?.outcome ?? "failed";
+      const extra: Partial<DecideResult> = { key: keyRes, live: keyRes.live, explanation: outcome };
+      const exWarning = keyExplanationWarning(keyRes.live, keyRes.explanation);
+      const notUpdated = "Key changed and answers rescored, but the notes weren't updated. Reload and check the question.";
+      // After a failure the notes this step wrote (why, AI's answer) stay:
+      // only the official-answer columns are settled.
+      const patchFor = (r: Row): Record<string, unknown> => {
         const patch = keyPatch(r);
-        if (ex.explanation) patch.explanation = ex.explanation;
-        const notes = ex.notesFor({ ...r, ...patch } as Row);
-        if (notes !== undefined) patch.parsing_notes = notes;
+        if (!exOk) delete patch.parsing_notes;
         return patch;
       };
-      const extra: Partial<DecideResult> = { ...keyDone, explanation: ex.outcome };
+      let fresh = await loadRow(db, id);
+      if (!fresh) return { ok: true, approved: false, ...extra, warning: exWarning ?? notUpdated };
       // applyKeyCorrection already led the notes with [live-fix] for a live row.
-      let res = await finish(db, fresh, fullPatch(fresh), opts.userId, extra, keyRes.live);
+      let res = await finish(db, fresh, patchFor(fresh), opts.userId, extra, keyRes.live, exOk);
       if (!res.ok && res.status === 409) {
         fresh = await loadRow(db, id);
-        if (fresh) res = await finish(db, fresh, fullPatch(fresh), opts.userId, extra, keyRes.live);
+        if (fresh) res = await finish(db, fresh, patchFor(fresh), opts.userId, extra, keyRes.live, exOk);
       }
-      if (!res.ok) return { ok: true, approved: false, ...extra, warning: notUpdated };
-      if (ex.outcome === "failed") return { ...res, warning: "Key changed and answers rescored, but the explanation couldn't be rewritten automatically. Edit it by hand." };
+      if (!res.ok) return { ok: true, approved: false, ...extra, warning: exWarning ?? notUpdated };
+      if (!exOk) return { ...res, approved: false, warning: exWarning ?? undefined };
       return res;
     }
 
@@ -312,7 +334,7 @@ export async function decide(
       const notes = dropFigureNotes(row.parsing_notes).notes;
       patch.parsing_notes = [notes, `${FIGURE_USED_PDF_PREFIX} (${p.parts.join(", ")}, ${new Date().toISOString().slice(0, 10)})`].filter(Boolean).join("; ");
       // New content: the explanation is rewritten (and checked) for it.
-      const ex = await refreshExplanation({ ...row, ...patch } as Row, opts.userId);
+      const ex = await refreshExplanation({ ...row, ...patch } as Row, opts.userId, opts.explain);
       if (ex.explanation) patch.explanation = ex.explanation;
       if (ex.notes !== undefined) patch.parsing_notes = ex.notes;
       return finish(db, row, patch, opts.userId, { explanation: ex.outcome }, await isLive(db, row));
@@ -331,14 +353,14 @@ export async function decide(
         question_text: text,
         parsing_notes: [removeNotes(row.parsing_notes, isStemNote).notes, `${STEM_REPLACED_PREFIX} (${new Date().toISOString().slice(0, 10)})`].filter(Boolean).join("; "),
       };
-      const ex = await refreshExplanation({ ...row, ...patch } as Row, opts.userId);
+      const ex = await refreshExplanation({ ...row, ...patch } as Row, opts.userId, opts.explain);
       if (ex.explanation) patch.explanation = ex.explanation;
       if (ex.notes !== undefined) patch.parsing_notes = ex.notes;
       return finish(db, row, patch, opts.userId, { explanation: ex.outcome }, await isLive(db, row));
     }
 
     case "regen_explanation": {
-      const ex = await refreshExplanation(row, opts.userId);
+      const ex = await refreshExplanation(row, opts.userId, opts.explain);
       const patch: Record<string, unknown> = {};
       if (ex.explanation) patch.explanation = ex.explanation;
       if (ex.notes !== undefined) patch.parsing_notes = ex.notes;

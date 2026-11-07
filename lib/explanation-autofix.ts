@@ -37,6 +37,7 @@ import { answersAgreeForQuestion, SPR_TYPE } from "@/lib/answer-key";
 import { answersMatch } from "@/lib/grade-submission";
 import { CHECKS, type AuditRow } from "@/lib/post-parse-cleanup";
 import { renderProblems } from "@/lib/math/render-problems";
+import { chainMismatches, explanationNumericProblems, keyLetters } from "@/lib/explanation-consistency";
 
 // ── Rows ─────────────────────────────────────────────────────────────
 
@@ -77,9 +78,51 @@ export function keyIsOfficial(r: Pick<AutoFixRow, "official_answer" | "correct_a
 
 // ── Detectors (explanation text) ─────────────────────────────────────
 
-/** Self-correcting narration anywhere in the text ("Wait, …", "let me re-check"). */
-const RAMBLE =
-  /\b(?:wait[,!.—–-]|let me (?:re-?check|re-?examine|reconsider|double-check|verify|re-?read|redo|recompute|re-?calculate|try again|recount|look again)|hold on\b|hmm\b|on second thought|I made an? (?:error|mistake)|that(?:'s| is) not right|actually,? (?:wait|no|that|let)|re-?examining|reconsidering)/i;
+/**
+ * Thinking aloud anywhere in the text ("Wait —", "let me re-check",
+ * "Hmm", "Actually, …", "looking more carefully"): students must only see
+ * settled reasoning ([Test #21] Oct 2024 INT B Math M1 Q21: "Wait — looking
+ * more carefully at the graph…" then misread the minimum).
+ */
+export const RAMBLE = new RegExp(
+  [
+    // "Wait" as an interruption: at a sentence start ("Wait —", "… Wait,"),
+    // or "wait," + I / we / no / actually …. Not "Customers wait, on
+    // average", "wait-time", "she will wait."
+    String.raw`(?:^|[.!?:]\s+|\n\s*|[—–]\s*|\(\s*)wait\b(?!-)`,
+    String.raw`\bwait\s*[,—–]\s*(?:I|I'm|we|that|this|no|actually|let|let's|hold|hmm|so|the (?:answer|question))\b`,
+    String.raw`\bhmm+\b`,
+    String.raw`\blet me (?:re-?check|re-?examine|reconsider|double-check|verify|re-?read|redo|recompute|re-?calculate|try again|recount|look again|check|think|see|re-?evaluate|start over|correct|be precise)`,
+    String.raw`\blet'?s (?:re-?check|double-check|re-?examine|reconsider|try again|redo|start over)`,
+    String.raw`\bhold on[,.!—–]`,
+    String.raw`\bon second thought`,
+    String.raw`\bon (?:closer|further) (?:inspection|look|reading)`,
+    // "Looking closely at the graph," is fine; looking AGAIN / MORE carefully is a re-do.
+    String.raw`\blooking more (?:carefully|closely)|\blooking (?:carefully|closely) again|\blook(?:ing)? again\b`,
+    String.raw`\bI made an? (?:error|mistake)|\bmy (?:mistake|error)\b|\bthat(?:'s| is) not right\b|\bscratch that\b|\bcorrection\s*:`,
+    String.raw`\bactually,? (?:wait\b|no[,.!]|let me|let's|I (?:made|was wrong|mis\w+))`,
+    // Process words only as a sentence of their own ("Re-examining the graph, …").
+    String.raw`(?:^|[.!?]\s+|\n\s*)(?:re-?examining|reconsidering|re-?checking|double-checking)\b`,
+  ].join("|"),
+  "i",
+);
+
+/** Hedging about the answer ("approximately 5 or so", "the answer is probably C"). */
+export const HEDGE = /(?:\d[\d,.%]*\s*(?:[a-z]+\s+)?or so\b|\bthe answer (?:is|might be|could be) (?:probably|possibly|maybe)|\b(?:probably|maybe|possibly) (?:the )?(?:answer|correct answer|choice [A-D]\b))/i;
+
+/** Explanations stay short: ~150–250 words; more than this is rewritten. */
+export const MAX_EXPLANATION_WORDS = 350;
+
+/** Words a student reads (a math span counts as one). */
+export function explanationWords(explanation: string | null | undefined): number {
+  return (explanation ?? "")
+    .replace(/\$\$[\s\S]+?\$\$/g, " M ")
+    .replace(/\$[^$\n]+?\$/g, " M ")
+    .split(/\s+/)
+    .filter((w) => /[A-Za-z0-9]/.test(w)).length;
+}
+
+export const TOO_LONG_PREFIX = "too long";
 
 /** Broken formatting a student would see in this explanation (empty = fine). */
 export function formattingProblems(explanation: string | null | undefined): string[] {
@@ -88,8 +131,13 @@ export function formattingProblems(explanation: string | null | undefined): stri
   const out: string[] = [];
   if (stripMetaNarration(ex) !== ex) out.push("starts with meta narration");
   // Quoted passage text may legitimately say "wait," — only the explanation's own words count.
-  const ramble = ex.replace(/"[^"\n]*"|“[^”]*”|'[^'\n]{3,}'/g, " ").match(RAMBLE);
+  const own = ex.replace(/"[^"\n]*"|“[^”]*”|'[^'\n]{3,}'|‘[^’\n]{3,}’/g, " ");
+  const ramble = own.match(RAMBLE);
   if (ramble) out.push(`self-correcting narration ("${ramble[0]}")`);
+  const hedge = own.match(HEDGE);
+  if (hedge) out.push(`hedges about the answer ("${hedge[0]}")`);
+  const words = explanationWords(ex);
+  if (words > MAX_EXPLANATION_WORDS) out.push(`${TOO_LONG_PREFIX} (${words} words, max ${MAX_EXPLANATION_WORDS})`);
   // The renderer itself (normalizeMath + remark-math + KaTeX, as students see it).
   try {
     const raw = renderProblems(ex);
@@ -108,9 +156,26 @@ export function concludedLetters(explanation: string): string[] {
     /\b(?:therefore|thus|hence),?\s+(?:choice\s*|option\s*)?\(?([A-D])\)?\s+is\s+(?:the\s+)?(?:correct|best|right|only|answer)\b/gi,
     /\bthe answer is\s*(?:choice\s*|option\s*)?\(?([A-D])\b/gi,
     /Final answer\s*:\s*\(?([A-D])\b/gi,
+    // The closing line "Answer: B" (the format explanations are written in).
+    /(?:^|\n)[ \t]*\**Answer\**\s*:\s*\**\s*\(?([A-D])\b(?![\w'’])/g,
+    // A bare "B is correct because …" at the start of a sentence.
+    /(?:^|[.!?]\s+|\n\s*|[:—–]\s*)\**\(?([A-D])\)?\**\s+is\s+(?:the\s+)?(?:correct|right|best)\b/g,
+  ];
+  // These two also appear in a choice-by-choice walk-through ("**A** — …,
+  // **B** — …", "this matches choice C … this matches choice D"): they count
+  // only when a single letter is named that way.
+  const listing = [
+    // "… which matches option B."
+    /\bmatch(?:es|ing)?\s+(?:[Cc]hoice|[Oo]ption|[Aa]nswer)\s*\(?([A-D])\b(?![\w'’])/g,
+    // "**B** — the passage says …" (not a wrong-choice line: "**A** — incorrect, …").
+    /\*\*\s*\(?([A-D])\)?\s*\*\*\s*[—–]\s*(?![^.\n]{0,60}\b(?:[Ii]ncorrect|[Ww]rong|not|[Ff]ails?|doesn't|does not|too|[Mm]isreads?|[Ii]gnores?|[Cc]onfuses?|would)\b)/g,
   ];
   const out = new Set<string>();
   for (const p of pats) for (const m of explanation.matchAll(p)) out.add(m[1].toUpperCase());
+  for (const p of listing) {
+    const letters = new Set([...explanation.matchAll(p)].map((m) => m[1].toUpperCase()));
+    if (letters.size === 1) out.add([...letters][0]);
+  }
   return [...out];
 }
 
@@ -128,12 +193,21 @@ export function explanationArguesOther(
   const ex = explanation ?? "";
   if (!ex.trim() || !key) return null;
   if (questionType !== SPR_TYPE) {
-    const k = key.trim().replace(/^\(?\s*([A-D])\b.*$/i, "$1").toUpperCase();
-    if (!/^[A-D]$/.test(k)) return null;
-    const other = concludedLetters(ex).filter((l) => l !== k);
-    return other.length ? `explanation concludes ${other.join("/")}, key is ${k}` : null;
+    // A key may accept several letters ("C, D"): any of them is the key.
+    const ks = keyLetters(key);
+    if (ks.length === 0) return null;
+    const other = concludedLetters(ex).filter((l) => !ks.includes(l));
+    if (other.length) return `explanation concludes ${other.join("/")}, key is ${ks.join(", ")}`;
+    // It calls the key itself wrong ("Choice C is incorrect", "C is wrong").
+    for (const k of ks) {
+      const keyWrong = new RegExp(String.raw`(?:\b(?:[Cc]hoice|[Oo]ption|[Aa]nswer)\s*|(?:^|[.!?]\s+|\n\s*)\**)\(?${k}\)?\**\s+is\s+(?:incorrect|wrong|not (?:the )?(?:correct|right|best))\b`);
+      if (keyWrong.test(ex)) return `explanation says ${k} (the key) is incorrect`;
+    }
+    return null;
   }
-  const m = ex.match(/Final answer\s*:\s*([^\n]+)/i);
+  // "Final answer: v" or the closing "Answer: v; … also accepted." line.
+  const lines = [...ex.matchAll(/(?:Final answer|(?:^|\n)[ \t]*\**Answer\**)\s*:\s*([^\n]+)/gi)];
+  const m = lines[lines.length - 1];
   if (!m) return null;
   const v = m[1].replace(/\*\*|\\mathbf|[{}$]/g, "").trim().replace(/[.;)]+$/, "").trim();
   if (!v || sameAnswer(v, key, questionText)) return null;
@@ -253,7 +327,15 @@ export function explanationTargetReasons(r: AutoFixRow): TargetReasons | null {
   if (splitNotes(r.parsing_notes).some((s) => s.startsWith(REGEN_DISAGREE_PREFIX))) return null;
   const cutOff = looksTruncated(r.explanation, explanationSource(r.question_text, r.choices)) || !(r.explanation ?? "").trim();
   const formatting = formattingProblems(r.explanation);
-  const contradicts = keyIsOfficial(r) ? explanationArguesOther(r.explanation, r.correct_answer, r.question_type, r.question_text) : null;
+  // A computation that doesn't add up ("(200 − 100)/100 = 120%") is wrong
+  // whoever set the key; the stated answer vs the key only counts against an
+  // official key (otherwise the key itself may be what's wrong).
+  const numeric = numericProblems(r, r.explanation ?? "");
+  const contradicts = keyIsOfficial(r)
+    ? (explanationArguesOther(r.explanation, r.correct_answer, r.question_type, r.question_text) ?? numeric[0] ?? null)
+    : chainMismatches(r.explanation).length > 0
+      ? numeric[0]
+      : null;
   const note = r.parsing_status === "Needs Review" && hasExplanationNote(r);
   if (!cutOff && formatting.length === 0 && !contradicts && !note) return null;
   return { cutOff, formatting, contradicts, noteOnly: !cutOff && formatting.length === 0 && !contradicts };
@@ -277,12 +359,19 @@ export function targetGroup(t: TargetReasons): "cut-off" | "formatting" | "contr
 
 // ── Decision after a regenerated explanation ─────────────────────────
 
+/** lib/explanation-consistency.ts on this row with `explanation`. */
+export function numericProblems(r: Pick<AutoFixRow, "correct_answer" | "question_type" | "choices" | "question_text">, explanation: string): string[] {
+  return explanationNumericProblems({ explanation, key: r.correct_answer, questionType: r.question_type, choices: r.choices, questionText: r.question_text });
+}
+
 /** Why the new explanation can't be saved (null = it can). */
 export function draftRejection(r: AutoFixRow, explanation: string): string | null {
   if (!explanation.trim()) return "empty";
   if (looksTruncated(explanation, explanationSource(r.question_text, r.choices))) return "still cut off";
   const other = explanationArguesOther(explanation, r.correct_answer, r.question_type, r.question_text);
   if (other) return `does not support the key (${other})`;
+  const numeric = numericProblems(r, explanation);
+  if (numeric.length) return `its numbers don't match the key (${numeric[0]})`;
   const fmt = formattingProblems(explanation);
   if (fmt.length) return `formatting: ${fmt[0]}`;
   return null;
@@ -373,6 +462,8 @@ export function decideAutoFix(
   if (!res.ok) return none(res.kind === "cut_off" ? "still_cut_off" : "failed", res.error);
   const key = r.correct_answer as string;
   if (!res.aiAnswer) return none("unverified", "the AI gave no independent answer");
+  // The agreement must come from a solve that never saw the key.
+  if (res.independent === false && res.agrees) return none("unverified", "the independent solve gave no answer (only the writer's, who saw the key)");
   // It must be a bare letter / value; sometimes the model writes its working
   // there instead, which can't be compared — no verdict, row left as-is.
   if (res.aiAnswer.length > 40 || res.aiAnswer.includes("\n")) return none("unverified", "the AI's independent answer was working, not a value");

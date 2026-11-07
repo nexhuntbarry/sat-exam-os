@@ -5,7 +5,7 @@ import { forbidQa } from "@/lib/qa";
 import { decide, type DecideAction } from "@/lib/review-decide";
 
 // One AI explanation call (with a retry), plus rescoring on a key change.
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // POST /api/admin/review-queue/decide
 // Body: { id, action, updated_at?, key?, expected_key?, rescore?, question_text? }

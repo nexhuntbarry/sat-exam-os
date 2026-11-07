@@ -9,6 +9,7 @@ import { forbidQa } from "@/lib/qa";
 import { figureProposalUrl } from "@/lib/review-queue";
 import { currentStored, loadProposal, proposalIsCurrent } from "@/lib/figure-compare";
 import { liveQuestionIds } from "@/lib/live-questions";
+import { moduleKeyFacts, type ModuleKeyFacts } from "@/lib/key-source";
 
 async function getQuestion(id: string) {
   const db = getServiceClient();
@@ -19,6 +20,18 @@ async function getQuestion(id: string) {
     .single();
   if (error || !data) return null;
   return data;
+}
+
+// What the module's extracted answer key looks like (lib/key-source): a key
+// that gives letters to fill-in questions, or that disagrees with most solved
+// answers, isn't shown as an official key.
+async function getModuleKeyFacts(moduleId: string | null): Promise<ModuleKeyFacts | null> {
+  if (!moduleId) return null;
+  const { data } = await getServiceClient()
+    .from("questions")
+    .select("original_question_number, question_type, official_answer, parsing_notes")
+    .eq("module_id", moduleId);
+  return data ? moduleKeyFacts(data) : null;
 }
 
 // Build the in-module review stepper: the pending (Draft / Needs Review)
@@ -102,11 +115,10 @@ export default async function QuestionDetailPage({
   const proposal = proposalUrl ? await loadProposal(proposalUrl).catch(() => null) : null;
   const user = proposal ? await getCurrentUser() : null;
 
-  const nav = await getReviewNav(
-    question.module_id,
-    question.id,
-    question.original_question_number,
-  );
+  const [nav, keyFacts] = await Promise.all([
+    getReviewNav(question.module_id, question.id, question.original_question_number),
+    getModuleKeyFacts(question.module_id),
+  ]);
 
   return (
     <div className="max-w-7xl mx-auto space-y-4">
@@ -148,7 +160,7 @@ export default async function QuestionDetailPage({
           />
         </section>
       )}
-      <QuestionReviewPanel key={question.id} question={question} nav={nav} />
+      <QuestionReviewPanel key={question.id} question={question} nav={nav} moduleKeyFacts={keyFacts} />
     </div>
   );
 }

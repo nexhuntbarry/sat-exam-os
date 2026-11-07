@@ -16,7 +16,8 @@ import QuestionRenderer from "@/components/tests/QuestionRenderer";
 import ReviewQuestionCard from "@/components/tests/ReviewQuestionCard";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
 import { hasMarkdownTable } from "@/lib/markdown-table";
-import { SPR_FORM_HELP, SPR_TYPE, MC_TYPE, keyTypeProblem } from "@/lib/answer-key";
+import { SPR_FORM_HELP, SPR_TYPE, MC_TYPE, gradedAsCorrect, keyTypeProblem } from "@/lib/answer-key";
+import { keySource, type ModuleKeyFacts } from "@/lib/key-source";
 
 
 const SAT_DOMAINS = [
@@ -89,6 +90,8 @@ interface QuestionReviewPanelProps {
   question: Question;
   /** When present, enables in-module "Approve & Next" review stepping. */
   nav?: ReviewNav;
+  /** The module's extracted-key facts (lib/key-source), for the key's source label. */
+  moduleKeyFacts?: ModuleKeyFacts | null;
 }
 
 const statusStyles: Record<string, string> = {
@@ -117,7 +120,7 @@ function editableFields(q: Question) {
   };
 }
 
-export default function QuestionReviewPanel({ question: initial, nav }: QuestionReviewPanelProps) {
+export default function QuestionReviewPanel({ question: initial, nav, moduleKeyFacts }: QuestionReviewPanelProps) {
   const router = useRouter();
 
   // Jump to the next pending question in this module (or back to the module
@@ -153,6 +156,10 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   const dirty = JSON.stringify(editableFields(q)) !== saved;
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
+  // The key / explanation as last loaded or saved: sent as `base` so the
+  // server refuses a save made on top of a newer key or explanation.
+  const savedRef = useRef(saved);
+  savedRef.current = saved;
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   // "Report to dev" box: closed | open | sent (with the support thread id).
   const [report, setReport] = useState<{ open: boolean; sent: { message: string; supportId: string | null } | null }>({ open: false, sent: null });
@@ -231,17 +238,44 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   const qRef = useRef(q);
   qRef.current = q;
   const handleSave = useCallback(async (): Promise<boolean> => {
-    const fields = editableFields(qRef.current);
+    const sent = qRef.current;
+    const fields = editableFields(sent);
+    const last = JSON.parse(savedRef.current) as { correct_answer: string | null; explanation: string | null };
     setSaving(true);
     try {
-      const res = await fetch(`/api/admin/questions/${qRef.current.id}`, {
+      const res = await fetch(`/api/admin/questions/${sent.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(fields),
+        body: JSON.stringify({ ...fields, base: { correct_answer: last.correct_answer, explanation: last.explanation } }),
       });
       if (res.ok) {
-        setSaved(JSON.stringify(fields));
-        showToast("Saved");
+        const json = await res.json().catch(() => ({}));
+        // A key change rewrites (or hides) the explanation and may change the
+        // status and notes on the server: take what was actually saved, so a
+        // later save never sends the old explanation back.
+        const d = (json.data ?? {}) as Partial<Question>;
+        const server = {
+          ...sent,
+          ...("explanation" in d ? { explanation: d.explanation ?? null } : {}),
+          ...("correct_answer" in d ? { correct_answer: d.correct_answer ?? null } : {}),
+          ...("parsing_status" in d && d.parsing_status ? { parsing_status: d.parsing_status } : {}),
+          ...("parsing_notes" in d ? { parsing_notes: d.parsing_notes ?? null } : {}),
+          ...("official_answer" in d ? { official_answer: d.official_answer ?? null } : {}),
+        } as Question;
+        // The saved baseline is the server's version either way.
+        setSaved(JSON.stringify(editableFields(server)));
+        const editedSince = JSON.stringify(editableFields(qRef.current)) !== JSON.stringify(fields);
+        if (!editedSince) {
+          setQ(server);
+        } else {
+          // Never overwrite what the admin typed during a long save: take only
+          // the fields the page doesn't edit, and say the server changed text.
+          setQ((cur) => ({ ...cur, parsing_status: server.parsing_status, parsing_notes: server.parsing_notes, official_answer: server.official_answer }));
+        }
+        const serverChangedText = (server.explanation ?? "") !== (sent.explanation ?? "");
+        if (json.warning) showToast(`Saved, but: ${json.warning}`, false);
+        else if (editedSince && serverChangedText) showToast("Saved. The server also rewrote the explanation while you were typing — reload to see it before saving again.", false);
+        else showToast("Saved");
         return true;
       }
       const json = await res.json().catch(() => ({}));
@@ -340,11 +374,19 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           mismatch_with_official: false,
           parsing_status: json.data.parsing_status,
           parsing_notes: json.data.parsing_notes,
+          explanation: json.data.explanation ?? null,
         }));
-        setSaved((prev) => JSON.stringify({ ...JSON.parse(prev), correct_answer: json.data.correct_answer }));
-        showToast(
-          trust === "ai" ? "Approved using AI's answer" : "Approved using answer key",
-        );
+        setSaved((prev) => JSON.stringify({ ...JSON.parse(prev), correct_answer: json.data.correct_answer, explanation: json.data.explanation ?? null }));
+        if (json.approved === false || json.warning) {
+          showToast(
+            `Key saved, not approved: ${json.warning ?? "the explanation couldn't be checked"}`,
+            false,
+          );
+        } else {
+          showToast(
+            trust === "ai" ? "Approved using AI's answer" : "Approved using answer key",
+          );
+        }
         router.refresh();
       } else {
         showToast(json.error ?? "Resolve failed", false);
@@ -370,6 +412,10 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
     }
     return null;
   })();
+  // Where the saved key came from (not the unsaved edit in the field).
+  const savedKey = (JSON.parse(saved) as { correct_answer: string | null }).correct_answer;
+  const keySrc = keySource({ ...q, correct_answer: savedKey }, moduleKeyFacts);
+
   const aiAnswer =
     (q.parsing_notes
       ? q.parsing_notes.match(/Mismatch:\s*AI answered\s+([^,;]+?)\s*,\s*official/i)?.[1]?.trim() ?? null
@@ -806,7 +852,7 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                 Answer mismatch — pick which one to trust
               </p>
               <p className="text-mid-gray text-xs mt-0.5">
-                The AI solver disagreed with the answer key on this question. Read both, then
+                The AI solver disagreed with {keySrc.officialFromPdf ? "the PDF\u2019s answer key" : "the stored key"}{" "}on this question. Read both, then
                 approve the correct one. Choosing &ldquo;Trust AI&rdquo; will overwrite
                 <code className="px-1"> correct_answer</code> with the AI&rsquo;s value.
               </p>
@@ -838,27 +884,48 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
               </button>
             </div>
 
-            <div className="bg-surface border border-divider rounded-xl p-3 space-y-2">
-              <p className="text-xs uppercase tracking-wider text-soft-mute font-semibold flex items-center gap-1.5">
-                <KeyRound size={12} className="text-status-success" />
-                Official answer key
-              </p>
-              <p className="text-2xl font-bold text-status-success">
-                {q.official_answer ?? "?"}
-              </p>
-              <p className="text-mid-gray text-xs leading-relaxed border-t border-divider pt-2">
-                Pulled from the answer key on the last page of the source PDF. Currently set as{" "}
-                <code className="px-1">correct_answer</code>.
-              </p>
-              <button
-                onClick={() => handleResolveMismatch("official")}
-                disabled={actionLoading !== null || !q.official_answer}
-                className="w-full mt-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-status-success hover:bg-status-success/90 text-white text-sm font-semibold transition-colors disabled:opacity-50"
-              >
-                <KeyRound size={13} />
-                {actionLoading === "resolve-official" ? "Resolving..." : "Trust answer key"}
-              </button>
-            </div>
+            {keySrc.officialFromPdf ? (
+              <div className="bg-surface border border-divider rounded-xl p-3 space-y-2">
+                <p className="text-xs uppercase tracking-wider text-soft-mute font-semibold flex items-center gap-1.5">
+                  <KeyRound size={12} className="text-status-success" />
+                  Official key (from PDF)
+                </p>
+                <p className="text-2xl font-bold text-status-success">
+                  {q.official_answer}
+                </p>
+                <p className="text-mid-gray text-xs leading-relaxed border-t border-divider pt-2">
+                  Read from the answer key page / ✓ marks of the source PDF.
+                  {moduleKeyFacts?.keyDisagreement && (
+                    <span className="block mt-1 text-status-warning">
+                      Caution: this module&rsquo;s key disagrees with the solved answers on {moduleKeyFacts.keyDisagreement} questions — check it is the key for this module.
+                    </span>
+                  )}
+                </p>
+                <button
+                  onClick={() => handleResolveMismatch("official")}
+                  disabled={actionLoading !== null}
+                  className="w-full mt-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-status-success hover:bg-status-success/90 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+                >
+                  <KeyRound size={13} />
+                  {actionLoading === "resolve-official" ? "Resolving..." : "Trust answer key"}
+                </button>
+              </div>
+            ) : (
+              <div className="bg-surface border border-divider rounded-xl p-3 space-y-2" aria-label="Current key">
+                <p className="text-xs uppercase tracking-wider text-soft-mute font-semibold flex items-center gap-1.5">
+                  <KeyRound size={12} className="text-soft-mute" />
+                  Current key · {keySrc.label}
+                </p>
+                <p className="text-2xl font-bold text-charcoal">
+                  {savedKey ?? "?"}
+                </p>
+                <p className="text-mid-gray text-xs leading-relaxed border-t border-divider pt-2">
+                  No official key from the PDF to trust here
+                  {keySrc.officialProblem ? <> (the stored &ldquo;official&rdquo; value {q.official_answer ?? ""} isn&rsquo;t one: {keySrc.officialProblem})</> : null}.
+                  {" "}{keySrc.detail} Check the answer yourself, then use the AI&rsquo;s answer or edit the key below.
+                </p>
+              </div>
+            )}
           </div>
 
           <p className="text-soft-mute text-xs italic">
@@ -1228,6 +1295,14 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label htmlFor="correct-answer" className="block text-xs text-soft-mute mb-1">Correct Answer</label>
+              {savedKey && (
+                <p className="mb-1 text-[11px] leading-snug text-soft-mute" title={keySrc.detail} data-testid="key-source">
+                  <span className={clsx("font-semibold", keySrc.kind === "official-pdf" ? "text-status-success" : keySrc.kind === "ai-parsed" || keySrc.kind === "ai" ? "text-status-warning" : "text-charcoal")}>
+                    {keySrc.label}
+                  </span>
+                  {keySrc.kind !== "official-pdf" && <> · {keySrc.detail}</>}
+                </p>
+              )}
               {q.correct_answer && (
                 <MathMarkdown className="prose prose-sm max-w-none text-charcoal bg-light-bg border border-divider rounded-lg px-3 py-1.5 mb-1 [&_p]:my-0">
                   {q.correct_answer}
@@ -1246,9 +1321,21 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
                 )}
                 placeholder={q.question_type === SPR_TYPE ? "e.g. 12, 3.5, 7/2" : "A, B, C or D"}
               />
-              {q.question_type === SPR_TYPE && (
-                <p className="mt-1 text-[11px] leading-snug text-soft-mute">{SPR_FORM_HELP}</p>
-              )}
+              {q.question_type === SPR_TYPE && (() => {
+                // Same code as grading (lib/answer-key gradedAsCorrect), for the key in the field.
+                const graded = gradedAsCorrect(q.correct_answer, q.question_text).summary;
+                return (
+                  <>
+                    {graded && (
+                      <p className="mt-1 text-xs leading-snug text-charcoal" data-testid="graded-as-correct">{graded}</p>
+                    )}
+                    <details className="mt-1 text-[11px] leading-snug text-soft-mute">
+                      <summary className="cursor-pointer">Allowed answer formats</summary>
+                      {SPR_FORM_HELP}
+                    </details>
+                  </>
+                );
+              })()}
               <div className="mt-1.5 flex flex-wrap items-center gap-2">
                 <button
                   type="button"

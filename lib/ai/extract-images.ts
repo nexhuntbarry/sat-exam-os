@@ -55,6 +55,8 @@ export interface ExtractImagesResult {
 export async function renderPdfPages(
   pdfBase64: string,
   pageNumbers: Set<number>,
+  /** Render scale (default 200 DPI; lib/figure-hires.ts re-reads figures at 400). */
+  scale: number = RENDER_SCALE,
 ): Promise<Map<number, { png: Buffer; widthPx: number; heightPx: number }>> {
   // pdfjs-dist v5 references DOMMatrix at module-evaluation time but
   // some Vercel function runtimes (the smaller image used for short
@@ -132,7 +134,7 @@ export async function renderPdfPages(
   for (const pageNum of pageNumbers) {
     if (pageNum < 1 || pageNum > doc.numPages) continue;
     const page = await doc.getPage(pageNum);
-    const viewport = page.getViewport({ scale: RENDER_SCALE });
+    const viewport = page.getViewport({ scale });
     const widthPx = Math.ceil(viewport.width);
     const heightPx = Math.ceil(viewport.height);
 

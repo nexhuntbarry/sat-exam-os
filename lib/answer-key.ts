@@ -727,6 +727,108 @@ export function acceptedAnswersText(key: string | null | undefined, questionText
     .join("  ·  or  ·  ");
 }
 
+export interface GradedAnswer {
+  /** The key candidate as written. */
+  candidate: string;
+  /** Main accepted entries (exact form first, then fill-the-space decimals). */
+  forms: string[];
+  /** Other entries graded the same way (trailing zero, other exact forms, an equal fraction). */
+  also: string[];
+  /** A non-numeric key compared as text. */
+  text: boolean;
+}
+
+export interface GradedAsCorrect {
+  answers: GradedAnswer[];
+  rule: RoundingRule | null;
+  /** "Graded as correct: 6/13, .4615, 0.461, 0.462 (also 12/26)…" */
+  summary: string;
+}
+
+/** Fits the answer box: 5 characters, 6 with a leading minus. */
+function fitsBox(s: string): boolean {
+  return s.replace(/^-/, "").length <= SPR_MAX_CHARS;
+}
+
+/** Same value with one trailing zero ("6.8" → "6.80", "12" → "12.0"), when it fits. */
+function trailingZeroForm(s: string): string | null {
+  if (!/^-?\d*\.?\d+$/.test(s)) return null;
+  const t = s.includes(".") ? `${s}0` : `${s}.0`;
+  return fitsBox(t) ? t : null;
+}
+
+/** An unreduced fraction equal to v ("6/13" → "12/26"), when one fits. */
+function equalFractionForm(v: number): string | null {
+  if (Number.isInteger(v)) return null;
+  const f = exactFraction(v);
+  if (!f) return null;
+  const s = `${2 * f.p}/${2 * f.q}`;
+  return fitsBox(s) ? s : null;
+}
+
+/**
+ * Every entry the grader (lib/grade-submission answersMatch →
+ * sprEntryCreditedForCandidate) credits for a fill-in key, for the review
+ * page: e.g. "6/13" → 6/13, .4615, 0.461, 0.462 (also 12/26); "6.8" with
+ * "nearest tenth" in the question → 6.8 (also 6.80, 34/5). Built from the
+ * same helpers the grader uses (keyNumber, roundingInstruction,
+ * impliedExactValue, fillDecimalForms), and scripts/test-spr-rules.ts checks
+ * every listed entry against answersMatch so the two can't drift. Only
+ * entries that fit the answer box are listed.
+ */
+export function gradedAsCorrect(key: string | null | undefined, questionText?: string | null): GradedAsCorrect {
+  const rule = roundingInstruction(questionText);
+  const answers: GradedAnswer[] = keyCandidates(key).map((cand) => {
+    const kv = keyNumber(cand);
+    if (kv === null) return { candidate: cand, forms: [normalizeKeyText(cand)], also: [], text: true };
+    const forms: string[] = [];
+    const also: string[] = [];
+    const push = (list: string[], s: string | null) => {
+      if (s && fitsBox(s) && !forms.includes(s) && !also.includes(s)) list.push(s);
+    };
+    // The grader credits the key's exact value, plus (with a rounding rule)
+    // the rounded value or (without one) the implied fraction and its
+    // fill-the-space decimals.
+    const values: number[] = [];
+    if (rule) {
+      const r = applyRounding(kv, rule.places);
+      values.push(r);
+      if (!nearlyEqual(r, kv, 1e-9)) values.push(kv);
+    } else {
+      values.push(impliedExactValue(cand) ?? kv);
+      if (!nearlyEqual(values[0], kv, 1e-9)) values.push(kv);
+    }
+    for (const v of values) {
+      const exact = exactForms(v);
+      if (fitsExactDecimal(v)) {
+        // A decimal key: the decimal is the answer; the other spellings are extras.
+        // Order: 6.8 (also 6.80, 34/5); 0.5 (also .5, 0.50, 1/2).
+        push(forms, exact[0] ?? null);
+        for (const e of exact.slice(1)) if (!e.includes("/")) push(also, e);
+        push(also, trailingZeroForm(exact[0] ?? ""));
+        for (const e of exact.slice(1)) if (e.includes("/")) push(also, e);
+      } else {
+        // A fraction key whose decimal doesn't fit: the fraction and the
+        // decimals that fill every space, plus an unreduced fraction.
+        for (const e of exact) push(forms, e);
+        if (!rule) for (const f of fillDecimalForms(v)) push(forms, f);
+        push(also, equalFractionForm(v));
+      }
+    }
+    if (forms.length === 0) forms.push(normalizeKeyText(cand));
+    return { candidate: cand, forms, also, text: false };
+  });
+
+  const one = (a: GradedAnswer) => `${a.forms.join(", ")}${a.also.length ? ` (also ${a.also.join(", ")})` : ""}`;
+  let summary = "";
+  if (answers.length > 0) {
+    summary = `Graded as correct: ${answers.length > 1 ? answers.map((a, i) => `answer ${i + 1}: ${one(a)}`).join("; ") : one(answers[0])}.`;
+    if (rule) summary += ` Rounding rule from the question: ${rule.label}.`;
+    else if (answers.some((a) => !a.text && a.forms.some((f) => f.includes("/")))) summary += " Any equal fraction that fits is also accepted.";
+  }
+  return { answers, rule, summary };
+}
+
 /**
  * Why a fill-in entry wasn't credited, in student words, or null when
  * there's nothing specific to say (blank, credited, or a different value).

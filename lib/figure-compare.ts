@@ -530,6 +530,8 @@ export async function auditGraphChoices(
 }
 
 const StemFigureVisionSchema = z.object({
+  is_chart: z.boolean(),
+  chart_incomplete: z.boolean(),
   question_number_box: z.boolean(),
   page_header_or_footer: z.boolean(),
   other_question: z.boolean(),
@@ -566,7 +568,7 @@ export async function auditStemFigure(
           { type: "image", image: f.base64, mediaType: f.mediaType },
           {
             type: "text",
-            text: `This should be the figure of question ${questionNumber ?? "?"} only. question_number_box: the crop includes a question-number box/bar (a boxed number like "19", or "Question 19" / "Mark for Review" banner). page_header_or_footer: it includes a browser/print page header or footer (date and time, "Survey: print page", a URL, "n/m" page count). other_question: it includes another question's text or answer choices. cut_off: the figure itself is visibly incomplete — a shape, axis, label or table row sliced by the image border (as at a page break); a faint watermark doesn't count. reason: one short sentence.`,
+            text: `This should be the figure of question ${questionNumber ?? "?"} only. question_number_box: the crop includes a question-number box/bar (a boxed number like "19", or "Question 19" / "Mark for Review" banner). page_header_or_footer: it includes a browser/print page header or footer (date and time, "Survey: print page", a URL, "n/m" page count). other_question: it includes another question's text or answer choices. cut_off: the figure itself is visibly incomplete — a shape, axis, label or table row sliced by the image border (as at a page break); a faint watermark doesn't count. is_chart: the figure is a graph, scatterplot, bar/line chart or other plot with axes. chart_incomplete (charts only): something a student needs to read values is missing or cut — the title is partly cut, an axis (line, tick labels or axis title) that the chart has is missing, e.g. y-axis labels present but no x-axis tick labels, or the outer gridlines/ticks are cut off. reason: one short sentence.`,
           },
         ],
       },
@@ -576,6 +578,8 @@ export async function auditStemFigure(
   if (object.page_header_or_footer) problems.push("figure includes a page header/footer");
   if (object.other_question) problems.push(`figure includes another question (${object.reason})`);
   if (object.cut_off) problems.push(`figure looks cut off (${object.reason})`);
+  // Owner rule: a chart must show its full title, both axes and their tick labels.
+  if (object.is_chart && object.chart_incomplete) problems.push(`FAIL chart incomplete: title, axis or tick labels missing/cut (${object.reason})`);
   return { problems, blank: px.blank, cutEdges: px.cutEdges, vision: object };
 }
 

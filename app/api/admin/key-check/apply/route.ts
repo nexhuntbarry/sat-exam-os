@@ -2,10 +2,13 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
-import { applyKeyCorrection } from "@/lib/key-change";
+import { applyKeyCorrection, keyExplanationWarning } from "@/lib/key-change";
 
-// The explanation is regenerated for a new key (one AI call).
-export const maxDuration = 120;
+// A new key is saved with an explanation written from an independent solve
+// and checked: per attempt (at most two) an independent solve + the
+// explanation; figure questions add one high-resolution re-read (once per
+// key change) and a figure check per attempt.
+export const maxDuration = 300;
 
 // POST /api/admin/key-check/apply
 // Body: { id, correct_answer?, question_type?, clear_choices?, expected_key, rescore }
@@ -38,8 +41,14 @@ export async function POST(req: Request) {
     source: "an admin",
   });
   if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status });
+  const ex = {
+    explanationUpdated: res.explanationUpdated,
+    explanationOk: res.explanationOk,
+    explanation: res.explanation?.outcome ?? null,
+    warning: keyExplanationWarning(res.live, res.explanation) ?? undefined,
+  };
   if (res.rescoreError) {
-    return NextResponse.json({ ok: true, live: res.live, explanationUpdated: res.explanationUpdated, rescoreError: res.rescoreError });
+    return NextResponse.json({ ok: true, live: res.live, ...ex, rescoreError: res.rescoreError });
   }
-  return NextResponse.json({ ok: true, live: res.live, explanationUpdated: res.explanationUpdated, rescore: res.rescore });
+  return NextResponse.json({ ok: true, live: res.live, ...ex, rescore: res.rescore });
 }

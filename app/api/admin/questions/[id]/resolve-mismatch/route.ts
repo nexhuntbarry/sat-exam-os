@@ -2,13 +2,17 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
-import { extractFinalAnswer, inferImpliedAnswer, explainOneAnswer } from "@/lib/ai/solve-question";
+import { extractFinalAnswer, inferImpliedAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
 import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
 import { clearReviewTags } from "@/lib/key-doubt";
 import { dropStaleKeyNotes } from "@/lib/review-queue";
+import { isLiveQuestion, KEY_ROW_SELECT, keyExplanationWarning, prepareKeyChange } from "@/lib/key-change";
+import type { AutoFixRow } from "@/lib/explanation-autofix";
+import { moduleKeyFacts, officialKeyProblem } from "@/lib/key-source";
 
-export const maxDuration = 60;
+// Writes + checks the explanation for the settled key (AI) — allow headroom.
+export const maxDuration = 300;
 
 // POST /api/admin/questions/[id]/resolve-mismatch
 //
@@ -54,9 +58,7 @@ export async function POST(
   const db = getServiceClient();
   const { data: q, error: fetchErr } = await db
     .from("questions")
-    .select(
-      "id, correct_answer, official_answer, parsing_notes, mismatch_with_official, explanation, question_type, question_text, choices",
-    )
+    .select(`${KEY_ROW_SELECT}, mismatch_with_official`)
     .eq("id", id)
     .single();
 
@@ -119,7 +121,19 @@ export async function POST(
     // Overruling the key: drop official_answer so the student UI never shows it.
     update.official_answer = null;
   } else {
-    // trust === "official"
+    // trust === "official": only a key that really came from the PDF's
+    // answer page / ✓ marks (lib/key-source). A value the AI made up while
+    // reading a PDF without a key must not be restored by one click.
+    if (!q.official_answer) {
+      return NextResponse.json({ error: "This question has no official key from the PDF. Choose the AI's answer or edit the key." }, { status: 400 });
+    }
+    const { data: modRows } = q.module_id
+      ? await db.from("questions").select("original_question_number, question_type, official_answer, parsing_notes").eq("module_id", q.module_id)
+      : { data: null };
+    const problem = officialKeyProblem(q, modRows ? moduleKeyFacts(modRows) : null);
+    if (problem) {
+      return NextResponse.json({ error: `The stored "official" key isn't from the PDF: ${problem}. Choose the AI's answer or edit the key.` }, { status: 400 });
+    }
     finalAnswer = (q.official_answer as string | null) ?? (q.correct_answer as string | null);
   }
 
@@ -139,6 +153,30 @@ export async function POST(
     update.parsing_notes = dropStaleKeyNotes(base, q.correct_answer as string | null, finalAnswer).notes;
   }
 
+  // The settled key is saved together with an explanation written from an
+  // independent solve and checked (lib/key-change.ts). The current one is
+  // kept only when the key didn't change and it passes every check. If no
+  // checked explanation can be had, the key is still saved but the question
+  // is NOT approved (a live one stays Approved, explanation hidden).
+  const keyChanged = finalAnswer !== (q.correct_answer as string | null);
+  const live = await isLiveQuestion(db, id, q.parsing_status as string | null);
+  const prepared = await prepareKeyChange(
+    db,
+    {
+      ...(q as AutoFixRow),
+      correct_answer: finalAnswer,
+      official_answer: "official_answer" in update ? (update.official_answer as string | null) : (q.official_answer as string | null),
+      parsing_notes: "parsing_notes" in update ? (update.parsing_notes as string | null) : (q.parsing_notes as string | null),
+    },
+    { live, keepCurrent: !keyChanged, keyChanged, userId: reviewer.userId, route: "key-change" },
+  );
+  Object.assign(update, prepared.patch);
+  if (!prepared.ok) {
+    delete update.reviewed_by;
+    delete update.reviewed_at;
+    if (live) delete update.parsing_status;
+  }
+
   const { data: updated, error: updateErr } = await db
     .from("questions")
     .update(update)
@@ -151,20 +189,10 @@ export async function POST(
     return NextResponse.json({ error: "Update failed" }, { status: 500 });
   }
 
-  // Regenerate the explanation to justify the chosen answer, so the stored
-  // answer and its explanation can never contradict each other (the reported
-  // bug: pick the key = A but the old explanation still argued D). Best effort:
-  // if it fails, the answer is still correct, just with the prior explanation.
-  let newExplanation = updated.explanation as string | null;
-  if (finalAnswer) {
-    const regenerated = await explainOneAnswer(id, finalAnswer, db, reviewer.userId);
-    if (regenerated) newExplanation = regenerated;
-  }
-
   // Settling the key can flip already-submitted answers — re-grade them so
   // past score reports reflect the resolved answer.
   let rescore;
-  if (finalAnswer !== (q.correct_answer as string | null)) {
+  if (keyChanged) {
     try {
       rescore = await rescoreQuestion(db, id);
     } catch (e) {
@@ -172,7 +200,13 @@ export async function POST(
     }
   }
 
-  return NextResponse.json({ data: { ...updated, correct_answer: finalAnswer, explanation: newExplanation }, rescore });
+  return NextResponse.json({
+    data: updated,
+    rescore,
+    approved: prepared.ok && updated.parsing_status === "Approved",
+    explanation: prepared.explanation.outcome,
+    warning: keyExplanationWarning(live, prepared.explanation) ?? undefined,
+  });
 }
 
 /**

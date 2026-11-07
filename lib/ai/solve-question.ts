@@ -23,7 +23,7 @@ import type { ParsedQuestion } from "./parse-pdf";
 import { logUsage, QUOTE_RULE } from "./parse-pdf";
 import type { getServiceClient } from "@/lib/supabase";
 import { findParsePlaceholder, placeholderNote, stemFigureMissing } from "@/lib/parse-guards";
-import { applyLiveHold, holdLiveDemotion, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
+import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { answersMatch } from "@/lib/grade-submission";
 import {
   SPR_TYPE,
@@ -39,6 +39,8 @@ import {
 } from "@/lib/answer-key";
 import { keyDoubtNote } from "@/lib/key-doubt";
 import { parseBlobUrl } from "@/lib/blob-url";
+import { highResFigure } from "@/lib/figure-hires";
+import { keyLetters } from "@/lib/explanation-consistency";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -124,6 +126,17 @@ If the problem genuinely requires you to construct or sketch a figure from scrat
 This rule does NOT apply when the figure is already provided in the question image; in that case treat the figure as known and solve normally.
 
 Return JSON only matching the schema. No prose outside the JSON.`;
+
+/**
+ * Graph / figure questions: read exact points, fit, verify, transform — never
+ * estimate by eye ([Test #13] L Test 1 Math M2 Q9: the graph of y = 2f(x) − 3
+ * through (0,−3), (1,−1), (4,1), (9,3) was read as 7, 2 and 3; the answer is 4).
+ */
+export const FIGURE_READ_RULE = `FIGURE / GRAPH QUESTIONS — READ, DON'T ESTIMATE:
+1. First list the EXACT points the graph passes through: where the curve or line crosses grid-line intersections, plus labelled points, intercepts and the maximum/minimum. Use a high-resolution image when one is attached. Never estimate a value by eye between grid lines.
+2. Fit the function from those points (line through two points, vertex form, √x, exponential …) and check that the fitted function reproduces EVERY listed point. If one doesn't fit, re-read the points before going on.
+3. Apply any transformation the question states BEFORE reading off the answer (e.g. the graph shows y = 2f(x) − 3, so f(x) = (y + 3)/2).
+4. Only then compute the answer.`;
 
 export type SolvedAnswer = {
   correct_answer: string;
@@ -789,13 +802,15 @@ export async function solveQuestionsAndPersist(
 // explanation (2026-11-07: Test #20 Aug 2024 ENG M1 Q27, even with
 // QUOTE_RULE and curly-quoted input). So explanation calls ask for plain text
 // in XML-style tags instead, which needs no escaping at all.
-type TaggedField = "explanation" | "independent_answer";
+type TaggedField = "explanation" | "independent_answer" | "figure_values";
 
 const TAG_HINTS: Record<TaggedField, string> = {
   independent_answer:
     "<independent_answer>Solve the question yourself first, IGNORING the given answer. Multiple Choice: the single letter A/B/C/D only. Student Produced Response: the value only (no units, no $). Leave it empty if it cannot be determined.</independent_answer>",
   explanation:
     "<explanation>The complete explanation, as plain Markdown/KaTeX text.</explanation>",
+  figure_values:
+    "<figure_values>BEFORE solving: the exact points / values you read from the attached figure(s), one per line as \"label: value\" (e.g. \"grid point: (4, 1)\", \"y-intercept: (0, -3)\", \"minimum: (2, -4)\", \"row 2019: 145\"), then one line \"fit: <the function fitted from those points>\" when there is a curve or line. Only values the figure shows exactly.</figure_values>",
 };
 
 export function parseTagged<F extends TaggedField>(text: string, fields: readonly F[]): Record<F, string> | null {
@@ -841,6 +856,14 @@ Write ONLY the explanation itself, starting immediately with the reasoning. Thes
 
 Explain clearly why the given answer is correct and briefly why the other choices are wrong.
 
+NO THINKING ALOUD: never interrupt or correct yourself in the text ("Wait —", "Hmm", "Actually, no", "let me check / re-check", "looking more carefully", "on closer inspection", "my mistake"), and never change your mind mid-explanation. (Words that belong to the question itself — "customers wait 5 minutes" — are fine.) Work it out before you write; the student sees only the final, settled reasoning. Never hedge about the answer ("approximately … or so", "probably").
+
+FORMAT (always this order, 150–250 words, never more than 300):
+1. Setup: one or two sentences on what the question asks and the given facts. For a question with a graph, figure or table image, first state the key values you read from it (intercepts, maximum/minimum, labelled points, table values) — and use exactly those values in the steps.
+2. Steps: the solution, one short step per line.
+3. Wrong choices (Multiple Choice): one short line for each other choice saying why it is wrong.
+4. Last line, exactly: "Answer: X" (the letter, or the value for a fill-in question) — nothing after it.
+
 FORMATTING — this renders through a Markdown + KaTeX pipeline where $…$ means math mode:
 - MONEY / CURRENCY: never write a bare dollar amount like $170 — a bare $ opens math mode and corrupts the rest of the line. Write money as "170 dollars" or with an escaped sign "\\$170". This applies to every dollar amount.
 - Use $…$ ONLY for actual algebra/equations (e.g. $x \\leq 300$), and make sure every $ you open you also close.
@@ -854,7 +877,10 @@ ${QUOTE_RULE}`;
 // a clean explanation passes through untouched.
 export function stripMetaNarration(raw: string | null | undefined): string {
   if (!raw) return raw ?? "";
-  const META = /\b(wait|let me|re-?examine|reconsider|re-?reading|hold on|i must|i need to|as required|the instructions|answer key says|second-guess|let me construct|let me write|let me carefully|the correct answer given|the stored (correct )?answer)\b/i;
+  // Narration only at the START of a sentence ("Wait —", "Let me …", "I need
+  // to …"); "Customers wait, on average" or "the wait-time function" is
+  // content. Prompt/meta talk counts anywhere.
+  const META = /^\s*(?:wait\b(?!-)|let me\b|let's (?:re|double)|hmm+\b|hold on[,.!—–]|i must\b|i need to\b|re-?examin|reconsider|re-?reading)|\b(?:as required|the instructions|answer key says|second-guess|the correct answer given|the stored (?:correct )?answer)\b/i;
   const parts = raw.match(/[^.!?]+[.!?]+|\s*[^.!?]+$/g) ?? [raw];
   const kept: string[] = [];
   let started = false;
@@ -864,7 +890,7 @@ export function stripMetaNarration(raw: string | null | undefined): string {
     kept.push(p);
   }
   let out = kept.join("").trim();
-  out = out.replace(/^(wait|actually|hmm|okay|ok)[\s,—-]+/i, "").trim();
+  out = out.replace(/^(?:wait|actually|hmm+|okay|ok)\s*[,—–]\s*/i, "").trim();
   return out || raw;
 }
 
@@ -935,7 +961,7 @@ export async function explainOfficialAndPersist(
           );
           // An API/schema failure says nothing about the question: skip the
           // row and leave its status and notes alone.
-          if (!res.ok && res.kind === "failed") {
+          if (!res.ok && res.kind !== "cut_off") {
             skipped++;
             console.warn(`[explain-official] q${q.original_question_number}: AI call failed; row left unchanged`);
             return;
@@ -1036,6 +1062,7 @@ export function looksTruncated(ex: string | null, source?: string | null): boole
   // one-line math explanation ends in punctuation and passes below.
   if (/^[.\s…]*$/.test(t)) return true;
   if (/Final answer\s*:\s*\S+$/i.test(t)) return false; // ends with the answer trailer
+  if (/(?:^|\n)[ \t]*\**Answer\**\s*:\s*\**\s*\(?[A-D]\)?(?:\s*(?:,|and|or)\s*\(?[A-D]\)?)*\**\s*$/.test(t)) return false; // "Answer: B" / "Answer: C, D" closing line
   // Unbalanced opening typographic quote “ (U+201C) means the string was cut
   // inside a quoted passage.
   const openQuotes = (t.match(/“/g) ?? []).length;
@@ -1124,75 +1151,9 @@ export async function regenerateTruncatedExplanations(
   return { checked: targets.length, regenerated };
 }
 
-/**
- * Regenerate ONE question's explanation so it justifies `answer` (and set
- * correct_answer to it). Used when a reviewer picks/changes the answer so the
- * explanation can never contradict the stored answer. Returns the new
- * explanation, or null on failure (leaves the row untouched).
- */
-export async function explainOneAnswer(
-  questionId: string,
-  answer: string,
-  db: DbClient,
-  callerUserId?: string,
-): Promise<string | null> {
-  const { data: q } = await db
-    .from("questions")
-    .select("id, original_question_number, question_text, choices, question_type")
-    .eq("id", questionId)
-    .maybeSingle();
-  if (!q) return null;
-  const ch = Array.isArray(q.choices)
-    ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`)).join("\n")
-    : "";
-  const explainOneParams = {
-    model: anthropic("claude-sonnet-4-6"),
-    system: EXPLAIN_OFFICIAL_SYSTEM,
-    maxOutputTokens: 3000,
-    maxRetries: 2,
-    messages: [{ role: "user" as const, content: [{ type: "text" as const, text: curlyQuotes(`Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${answer}\n\nWrite a COMPLETE explanation of why ${answer} is correct.`) }] }],
-  };
-  try {
-    const res = await generateTagged(explainOneParams, ["explanation"] as const);
-    const usage = res.usage;
-    if (usage) {
-      const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
-      await logUsage({ userId: callerUserId, route: "explain-one", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: questionId } });
-    }
-    let cleaned = stripMetaNarration(res.object.explanation);
-    // Truncation guard: retry once if explanation looks cut off.
-    if (looksTruncated(cleaned)) {
-      try {
-        const retry = await generateTagged(explainOneParams, ["explanation"] as const);
-        const retried = stripMetaNarration(retry.object.explanation);
-        if (!looksTruncated(retried)) {
-          cleaned = retried;
-        } else {
-          // Still truncated: persist as Needs Review with a note.
-          console.warn(`[explain-one] ${questionId}: explanation still truncated after retry`);
-          // `answer` was picked by a person, so it is written as-is; only
-          // the automatic demotion is held for a live question.
-          const hold = await holdLiveDemotion(
-            db,
-            questionId,
-            { explanation: cleaned, parsing_status: "Needs Review", parsing_notes: TRUNCATION_NOTE, updated_at: new Date().toISOString() },
-            "Explanation looks cut off",
-          );
-          await db.from("questions").update({ ...hold.update, correct_answer: answer }).eq("id", questionId);
-          return cleaned;
-        }
-      } catch {
-        console.warn(`[explain-one] ${questionId}: truncation retry failed`);
-      }
-    }
-    if (q.question_type === SPR_TYPE) cleaned = withSprAnswerLine(cleaned, answer, q.question_text as string | null);
-    await db.from("questions").update({ correct_answer: answer, explanation: cleaned, updated_at: new Date().toISOString() }).eq("id", questionId);
-    return cleaned;
-  } catch (e) {
-    console.error(`[explain-one] ${questionId}:`, e instanceof Error ? e.message : e);
-    return null;
-  }
-}
+// (explainOneAnswer, which rewrote an explanation to defend a given key with
+// no independent solve and no checks, was removed 2026-11-07: every key
+// change goes through lib/key-change.ts prepareKeyChange.)
 
 // ── Reviewer "Regenerate explanation" ────────────────────────────────
 // Writes a fresh explanation for the question AS GIVEN (the review page sends
@@ -1238,13 +1199,72 @@ export interface RegenExplanationInput {
   answer: string;
   /** Stem figure URLs (stored on the question). */
   imageUrls?: string[] | null;
+  /**
+   * High-resolution figure crops already made by the caller
+   * (lib/figure-hires.ts; [] = tried, none). Omitted: made here.
+   */
+  hires?: { image: string; mediaType: string }[];
 }
 
 export type RegenExplanationResult =
-  | { ok: true; explanation: string; aiAnswer: string | null; agrees: boolean }
+  // `independent`: aiAnswer came from a solve that never saw the key
+  // (independentAnswer). On a disagreement `explanation` is "" — nothing is
+  // written that argues a key the AI can't reproduce.
+  | { ok: true; explanation: string; aiAnswer: string | null; agrees: boolean; independent?: boolean }
   // kind "cut_off": the model answered but every explanation looked cut off;
-  // "failed": the API call or schema parse failed (nothing to judge).
-  | { ok: false; error: string; kind: "cut_off" | "failed"; partial?: string | null };
+  // "failed": the API call or schema parse failed (nothing to judge);
+  // "figure_conflict": a second read of the figure disagrees with the values
+  // the explanation used (flag for a person, don't save).
+  | { ok: false; error: string; kind: "cut_off" | "failed" | "figure_conflict"; partial?: string | null };
+
+/**
+ * MC explanation ending in exactly one "Answer: X" line (replaces "Final
+ * answer: X"); a multi-letter key is written in full ("Answer: C, D").
+ */
+export function withAnswerLine(explanation: string, key: string): string {
+  const letters = keyLetters(key);
+  if (letters.length === 0) return explanation;
+  const line = `Answer: ${letters.join(", ")}`;
+  const body = explanation.replace(/(?:^|\n)[ \t]*(?:\*\*)?(?:final\s+)?answer(?:\*\*)?\s*:[^\n]*\s*$/i, "").trimEnd();
+  return body ? `${body}\n\n${line}` : line;
+}
+
+/**
+ * Second, independent read of the figure: the model checks each value the
+ * explanation's writer read (it also sees the question text, i.e. the PDF
+ * text layer). Returns what conflicts (null = every value confirmed).
+ */
+async function checkFigureRead(
+  imageBlocks: Array<{ type: "image"; image: string; mediaType: string } | { type: "text"; text: string }>,
+  input: RegenExplanationInput,
+  values: string,
+  callerUserId?: string,
+): Promise<string | null> {
+  const lines = values.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 12);
+  if (lines.length === 0) return "no values were read from the figure";
+  try {
+    const res = await generateText({
+      model: anthropic("claude-sonnet-4-6"),
+      system: `You check values someone read from an SAT figure (graph, table or diagram). Look at the attached image(s) yourself — use the high-resolution re-render when there is one — and at the question text (the PDF's text layer). Check each point against the grid lines exactly; never accept an estimate between grid lines. For a "fit:" line, check that the function passes through every listed point. For EACH numbered value reply on its own line: "N. OK" if the figure (and the question text) show exactly that, or "N. WRONG: <what it actually shows>". If a value can't be read from the figure at all, write "N. WRONG: not shown". Nothing else.`,
+      maxOutputTokens: 600,
+      maxRetries: 2,
+      messages: [{ role: "user", content: [...imageBlocks, { type: "text", text: curlyQuotes(`Question text:\n${input.questionText}\n\nValues read from the figure:\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}`) }] }],
+    });
+    const u = res.usage;
+    if (u) {
+      const inTok = u.inputTokens ?? 0, outTok = u.outputTokens ?? 0;
+      await logUsage({ userId: callerUserId, route: "figure-read-check", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: input.questionId } });
+    }
+    const text = res.text.replace(/\*\*/g, "");
+    const wrong = [...text.matchAll(/^\s*(\d+)\s*[.):-]?\s*WRONG\b\s*:?\s*(.*)$/gim)].map((m) => `${lines[Number(m[1]) - 1] ?? `value ${m[1]}`} → ${m[2].trim() || "differs"}`);
+    if (wrong.length) return wrong.join(" | ").slice(0, 300);
+    const oks = (text.match(/^\s*\d+\s*[.):-]?\s*OK\b/gim) ?? []).length;
+    if (oks < lines.length) console.warn(`[figure-read-check] ${input.questionId}: unparsed reply: ${JSON.stringify(res.text.slice(0, 300))}`);
+    return oks >= lines.length ? null : "the second read could not confirm the values";
+  } catch (e) {
+    return `the second read failed (${e instanceof Error ? e.message.slice(0, 60) : "error"})`;
+  }
+}
 
 /** Does the model's own answer match the saved key (letters or values)? */
 export function aiAnswerAgrees(aiAnswer: string | null, saved: string, isMcq: boolean, questionText?: string | null): boolean {
@@ -1289,12 +1309,45 @@ export async function regenerateExplanation(
     }
   }
 
+  // 1. Solve WITHOUT the key (incident 2026-11-07, J Test M1 Q10: an
+  // explanation written to defend a new key computed 100% and wrote 120%).
+  // When the independent solve reaches another answer, no explanation is
+  // written at all: the caller flags "AI disagrees" for a person.
+  // Figure questions: add a high-resolution re-render of the figure from
+  // the source PDF; every read below (solve, explanation, check) sees it.
+  const hasFigure = imageBlocks.some((b) => b.type === "image");
+  if (hasFigure) {
+    const hires = input.hires ?? (await highResFigure(input.questionId, callerUserId));
+    if (hires.length) {
+      imageBlocks.push({ type: "text", text: "High-resolution re-render of the figure from the source PDF — read exact values from this one:" });
+      for (const h of hires) imageBlocks.push({ type: "image", image: h.image, mediaType: h.mediaType });
+    }
+  }
+  const solo = await independentAnswer(
+    { questionId: input.questionId, questionText: input.questionText, choices: input.choices, questionType: input.questionType, imageUrls: input.imageUrls, blocks: imageBlocks },
+    callerUserId,
+  );
+  // A fill-in "answer" that is really working ("… = 54/5 = 10.8") counts as
+  // its last value; anything else unreadable counts as no answer.
+  const rawSolo = solo.ok ? (solo.answer ?? "").trim() : "";
+  const independent = !rawSolo
+    ? null
+    : rawSolo.length <= 40 && !rawSolo.includes("\n")
+      ? rawSolo
+      : !isMcq
+        ? (rawSolo.match(/-?\d+(?:\.\d+)?(?:\s*\/\s*\d+)?(?=[^\d]*$)/)?.[0].replace(/\s+/g, "") ?? null)
+        : null;
+  if (independent && !aiAnswerAgrees(independent, input.answer, isMcq, input.questionText)) {
+    return { ok: true, explanation: "", aiAnswer: independent, agrees: false, independent: true };
+  }
+
+  // 2. They agree (or the solve gave no answer): write the explanation.
   const prompt = curlyQuotes(`Question ${input.questionNumber ?? ""} (${isMcq ? "Multiple Choice" : "Student Produced Response"}):\n${input.questionText}${ch ? `\n\nChoices:\n${ch}` : ""}\n\nThe correct answer is: ${input.answer}\n\nWrite a COMPLETE explanation of why ${input.answer} is correct — do not cut off.`);
   const source = `${input.questionText}\n${ch}`;
   const RETRY_REMINDER = "\n\nREMINDER: your previous explanation was cut off. Write the WHOLE explanation inside the <explanation> tag and close the tag.";
   const params = {
     model: anthropic("claude-sonnet-4-6"),
-    system: REGEN_EXPLANATION_SYSTEM,
+    system: hasFigure ? `${REGEN_EXPLANATION_SYSTEM}\n\n${FIGURE_READ_RULE}\nThe explanation's setup states the points you read and the fitted function; the steps use exactly those.` : REGEN_EXPLANATION_SYSTEM,
     maxOutputTokens: 3000,
     maxRetries: 2,
     messages: [{ role: "user" as const, content: [...imageBlocks, { type: "text" as const, text: prompt }] }],
@@ -1309,7 +1362,7 @@ export async function regenerateExplanation(
         attempt === 0
           ? params
           : { ...params, messages: [{ role: "user" as const, content: [...imageBlocks, { type: "text" as const, text: prompt + RETRY_REMINDER }] }] },
-        ["independent_answer", "explanation"] as const,
+        hasFigure ? (["figure_values", "independent_answer", "explanation"] as const) : (["independent_answer", "explanation"] as const),
       );
       const usage = res.usage;
       if (usage) {
@@ -1330,13 +1383,30 @@ export async function regenerateExplanation(
         sawCutOff = true;
         continue;
       }
-      const aiAnswer = res.object.independent_answer.trim() || null;
+      const inPrompt = res.object.independent_answer.trim() || null;
+      // The writer's own cross-check must agree too: a writer that reaches
+      // another answer may bend its reasoning toward the key.
+      if (inPrompt && !aiAnswerAgrees(inPrompt, input.answer, isMcq, input.questionText)) {
+        return { ok: true, explanation: "", aiAnswer: inPrompt, agrees: false, independent: false };
+      }
+      // Figure questions: a second, separate read of the figure must confirm
+      // the values the explanation is built on; otherwise flag, don't save.
+      if (hasFigure) {
+        const values = ((res.object as Record<string, string>).figure_values ?? "").trim();
+        const conflict = values ? await checkFigureRead(imageBlocks, input, values, callerUserId) : "no values were read from the figure";
+        if (conflict) {
+          console.warn(`[regen-explanation] ${input.questionId}: figure read conflict: ${conflict}`);
+          return { ok: false, error: `Figure read conflict: ${conflict}`, kind: "figure_conflict", partial: null };
+        }
+      }
       return {
         ok: true,
-        // Fill-in: end on the answer and its other accepted entries.
-        explanation: isMcq ? explanation : withSprAnswerLine(explanation, input.answer, input.questionText),
-        aiAnswer,
-        agrees: aiAnswerAgrees(aiAnswer, input.answer, isMcq, input.questionText),
+        // One closing line in every explanation: "Answer: X" (fill-in: the
+        // answer and its other accepted entries).
+        explanation: isMcq ? withAnswerLine(explanation, input.answer) : withSprAnswerLine(explanation, input.answer, input.questionText),
+        aiAnswer: independent ?? inPrompt,
+        agrees: true,
+        independent: !!independent,
       };
     } catch (e) {
       console.error(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} failed:`, e instanceof Error ? e.message : e);
@@ -1350,7 +1420,7 @@ export const REGEN_EXPLANATION_NOTE = "Needs review: explanation was cut off and
 export const REGEN_DISAGREE_PREFIX = "Needs review: AI's own answer is";
 
 export function regenDisagreeNote(aiAnswer: string, saved: string): string {
-  return `${REGEN_DISAGREE_PREFIX} ${aiAnswer} but the saved key is ${saved} — check the key (the explanation argues ${saved}).`;
+  return `${REGEN_DISAGREE_PREFIX} ${aiAnswer} but the saved key is ${saved} — check the key (no explanation was written for ${saved}).`;
 }
 
 interface CutOffRow {
@@ -1457,10 +1527,11 @@ export async function regenerateCutOffExplanationsBatch(
           .filter((p) => p && p !== TRUNCATION_NOTE && p !== REGEN_EXPLANATION_NOTE && !p.startsWith(REGEN_DISAGREE_PREFIX));
         const notes = [...prior, REGEN_EXPLANATION_NOTE, ...(disagree ? [regenDisagreeNote(disagree, answer)] : [])].join("; ");
         const update: Record<string, unknown> = {
-          explanation: res.explanation,
           parsing_notes: notes,
           updated_at: new Date().toISOString(),
         };
+        // On a disagreement no explanation was written: keep the old one.
+        if (!disagree && res.explanation.trim()) update.explanation = res.explanation;
         // Keep it in review: an Approved row goes back to Needs Review (held
         // for a live question). Draft / Needs Review keep their status.
         if (q.parsing_status === "Approved") update.parsing_status = "Needs Review";
@@ -1504,6 +1575,8 @@ export interface IndependentAnswerInput {
   choices: unknown;
   questionType: string | null;
   imageUrls?: string[] | null;
+  /** Image blocks already fetched (incl. a high-resolution re-render); replaces imageUrls. */
+  blocks?: Array<{ type: "image"; image: string; mediaType: string } | { type: "text"; text: string }>;
 }
 
 export type IndependentAnswerResult =
@@ -1518,12 +1591,12 @@ export async function independentAnswer(
   const choices = Array.isArray(input.choices)
     ? (input.choices as { label?: string; text?: string; image_url?: string | null }[])
     : [];
-  const imageBlocks: Array<{ type: "image"; image: string; mediaType: string } | { type: "text"; text: string }> = [];
-  for (const url of (input.imageUrls ?? []).slice(0, 4)) {
+  const imageBlocks: Array<{ type: "image"; image: string; mediaType: string } | { type: "text"; text: string }> = input.blocks ? [...input.blocks] : [];
+  for (const url of input.blocks ? [] : (input.imageUrls ?? []).slice(0, 4)) {
     const f = await fetchImageAsBase64(url);
     if (f) imageBlocks.push({ type: "image", image: f.base64, mediaType: f.mediaType });
   }
-  for (const c of isSpr ? [] : choices) {
+  for (const c of isSpr || input.blocks ? [] : choices) {
     if (!c.image_url) continue;
     const f = await fetchImageAsBase64(c.image_url);
     if (f) imageBlocks.push({ type: "text", text: `Choice ${c.label}:` }, { type: "image", image: f.base64, mediaType: f.mediaType });
@@ -1536,7 +1609,7 @@ export async function independentAnswer(
     const res = await generateObject({
       model: anthropic("claude-sonnet-4-6"),
       schema: IndependentAnswerSchema,
-      system: `You are an expert SAT solver. Solve the question rigorously and independently. For Multiple Choice give one letter A/B/C/D.\n\n${SPR_COMPUTATION_RULE}\n\n${QUOTE_RULE}`,
+      system: `You are an expert SAT solver. Solve the question rigorously and independently. For Multiple Choice give one letter A/B/C/D.\n\n${SPR_COMPUTATION_RULE}${imageBlocks.some((b) => b.type === "image") ? `\n\n${FIGURE_READ_RULE}` : ""}\n\n${QUOTE_RULE}`,
       maxOutputTokens: 2000,
       maxRetries: 2,
       messages: [{ role: "user", content: [...imageBlocks, { type: "text", text: prompt }] }],

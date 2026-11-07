@@ -16,6 +16,7 @@ import {
 } from "@/lib/review-queue";
 import { currentStored, loadProposal, proposalIsCurrent, type FigureProposal } from "@/lib/figure-compare";
 import { DECIDE_SELECT } from "@/lib/review-decide";
+import { moduleKeyFacts, officialKeyProblem, type ModuleKeyFacts } from "@/lib/key-source";
 import ReviewQueueClient from "./ReviewQueueClient";
 import type { GroupSummary, QueueItem, QueueProposal } from "./types";
 
@@ -24,7 +25,7 @@ export const maxDuration = 60;
 
 type Row = AutoFixRow & { page_number: number | null; source_pdf_url: string | null };
 
-async function loadRows(): Promise<{ waiting: Row[]; autoFixed: Map<ReviewGroupId, number>; modules: Map<string, { name: string; pdf: boolean }> }> {
+async function loadRows(): Promise<{ waiting: Row[]; autoFixed: Map<ReviewGroupId, number>; modules: Map<string, { name: string; pdf: boolean }>; keyFacts: Map<string, ModuleKeyFacts> }> {
   const db = getServiceClient();
   const waiting: Row[] = [];
   for (let from = 0; ; from += 1000) {
@@ -65,7 +66,25 @@ async function loadRows(): Promise<{ waiting: Row[]; autoFixed: Map<ReviewGroupI
       ] as const),
     ),
   );
-  return { waiting, autoFixed, modules };
+  // The extracted-key facts of each module in the queue (lib/key-source): an
+  // "official" key the AI made up isn't offered as the official answer.
+  const keyRows: Array<{ module_id: string; original_question_number: number | null; question_type: string | null; official_answer: string | null; parsing_notes: string | null }> = [];
+  const usedIds = [...used].filter(Boolean) as string[];
+  for (let i = 0; i < usedIds.length; i += 50) {
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await db
+        .from("questions")
+        .select("id, module_id, original_question_number, question_type, official_answer, parsing_notes")
+        .in("module_id", usedIds.slice(i, i + 50))
+        .order("id")
+        .range(from, from + 999);
+      if (error) throw new Error(error.message);
+      keyRows.push(...((data ?? []) as typeof keyRows));
+      if (!data || data.length < 1000) break;
+    }
+  }
+  const keyFacts = new Map(usedIds.map((id) => [id, moduleKeyFacts(keyRows.filter((r) => r.module_id === id))] as const));
+  return { waiting, autoFixed, modules, keyFacts };
 }
 
 /** The module PDF can be fetched (some old uploads 404), so its page can be shown. */
@@ -94,7 +113,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   // Same permission as the decide / preview APIs this page calls.
   const auth = await requireQuestionReviewer();
   if (auth instanceof Response) redirect("/sign-in");
-  const { waiting, autoFixed, modules } = await loadRows();
+  const { waiting, autoFixed, modules, keyFacts } = await loadRows();
 
   const groupings = new Map(waiting.map((r) => [r.id, groupRow(r)]));
   // Figure-check proposals (Vercel Blob), at most 6 loads at a time.
@@ -108,7 +127,10 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
 
   const items: QueueItem[] = waiting.map((r) => {
     const g = groupings.get(r.id)!;
-    const dispute = parseKeyDispute(r.parsing_notes, r.correct_answer, r.official_answer);
+    // A stored "official" value that isn't from the PDF is not shown as official.
+    const officialProblem = officialKeyProblem(r, keyFacts.get(r.module_id ?? "") ?? null);
+    const official = officialProblem ? null : r.official_answer;
+    const dispute = parseKeyDispute(r.parsing_notes, r.correct_answer, official);
     const p = proposals.get(r.id) ?? null;
     // "Stored" shows the row as it is now, not as it was when compared.
     const proposal: QueueProposal | null =
@@ -132,9 +154,15 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
       section: r.section ?? null,
       questionType: r.question_type,
       key: r.correct_answer,
-      official: r.official_answer,
-      keyOverrulesOfficial: !!r.official_answer && !keyIsOfficial(r),
-      alternative: dispute?.alternative ? { answer: dispute.alternative, source: dispute.source, ref: dispute.ref ?? null } : null,
+      official,
+      keyOverrulesOfficial: !!official && !keyIsOfficial(r),
+      alternative: dispute?.alternative
+        ? {
+            answer: dispute.alternative,
+            source: officialProblem && dispute.source === "official key" ? "AI-read key (not from the PDF)" : dispute.source,
+            ref: dispute.ref ?? null,
+          }
+        : null,
       primary: g.primary,
       also: g.groups.filter((x) => x !== g.primary),
       reasons: g.reasons.map((x) => (x.text.length > 220 ? `${x.text.slice(0, 220)}…` : x.text)),

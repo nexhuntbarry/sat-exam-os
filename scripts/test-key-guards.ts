@@ -11,6 +11,8 @@ import {
   KEY_REJECTED_PREFIX,
 } from "../lib/answer-marks";
 import { extractAnswerKey } from "../lib/ai/parse-pdf";
+import { autoKeyDecision, checksSummary, moduleHasRealKey, type VerifyChecks } from "../lib/verify-ai-key";
+import { rescoreHoldReason } from "../lib/reparse-rescore";
 
 let fail = 0;
 const ok = (n: string, c: boolean, detail?: unknown) => {
@@ -82,6 +84,54 @@ const note = keyRejectedNote(sprLetterKeyReason([5, 19, 20, 21]));
 ok("rejection note is one parsing_notes segment (no ';')", !note.includes(";"), note);
 ok("rejection note starts with the Needs review prefix", note.startsWith(KEY_REJECTED_PREFIX) && note.startsWith("Needs review:"), note);
 ok("rejection note names the questions", note.includes("Q5, Q19, Q20, Q21"), note);
+
+// ── Auto-key for modules with no real answer key (lib/verify-ai-key.ts) ──
+{
+  const mc = { question_type: "Multiple Choice", question_text: "What is the net percentage increase?", correct_answer: "B", official_answer: null };
+  const ch = (o: Partial<VerifyChecks> = {}): VerifyChecks => ({
+    section: "Math",
+    first: { answer: "A", value: 100, mapped: true, method: "code", problems: [] },
+    plugBack: { status: "fail", detail: "2.5*0.8 == 2.2" },
+    second: { answer: "A", method: "math-alt", problems: [] },
+    ...o,
+  });
+  const noKey = { moduleHasRealKey: false, live: false };
+  const d = autoKeyDecision(mc, ch(), noKey);
+  ok("no-key module, code solve + second solve agree on A → set key A", d.action === "set_key" && d.key === "A", d);
+  ok("module with a real key → a person decides", autoKeyDecision(mc, ch(), { ...noKey, moduleHasRealKey: true }).action === "none");
+  ok("question with an official answer → a person decides", autoKeyDecision({ ...mc, official_answer: "B" }, ch(), noKey).action === "none");
+  ok("live-test question → queued, key not changed", autoKeyDecision(mc, ch(), { ...noKey, live: true }).action === "queue_live");
+  ok("solves disagree with each other → none", autoKeyDecision(mc, ch({ second: { answer: "C", method: "math-alt", problems: [] } }), noKey).action === "none");
+  ok("first solve not code-checked (model letter) → none", autoKeyDecision(mc, ch({ first: { answer: "A", value: null, mapped: false, method: "code", problems: [] } }), noKey).action === "none");
+  ok("stored key's plug-back holds → none (split evidence)", autoKeyDecision(mc, ch({ plugBack: { status: "pass", detail: "1 condition" } }), noKey).action === "none");
+  ok("both give the stored key → none", autoKeyDecision({ ...mc, correct_answer: "A" }, ch(), noKey).action === "none");
+  ok("Reading & Writing (no code check) → none", autoKeyDecision(mc, { section: "Reading & Writing", first: { answer: "A", method: "rw-standard", problems: [] }, plugBack: null, second: { answer: "A", method: "rw-eliminate", problems: [] } }, noKey).action === "none");
+  const spr = { question_type: "Student Produced Response", question_text: "What is x?", correct_answer: "4224", official_answer: null };
+  const ds = autoKeyDecision(spr, ch({ first: { answer: "990", value: 990, method: "code", problems: [] }, second: { answer: "990", value: 990, method: "math-alt", problems: [] } }), noKey);
+  ok("fill-in: 4224 → 990 when both solves give 990", ds.action === "set_key" && ds.key === "990", ds);
+  // [Test #13] L Test 1 Math M2 Q9 (graph of y = 2f(x) − 3; f(x) = 2 at x = 4):
+  // stored 7, code solve 2, second solve 3 → never auto-picked.
+  const q9 = { question_type: "Student Produced Response", question_text: "The graph of y = 2f(x) − 3 is shown. For what value of x is f(x) = 2?", correct_answer: "7", official_answer: null, image_urls: ["https://x.public.blob.vercel-storage.com/q9.png"] };
+  const q9ch = ch({ first: { answer: "2", value: 2, method: "code", problems: [], figurePoints: "(0,-3), (1,-1), fit: 2x-3" }, plugBack: { status: "fail", detail: "x" }, second: { answer: "3", value: 3, method: "math-alt", problems: [] } });
+  const q9d = autoKeyDecision(q9, q9ch, noKey);
+  ok("L Test M2 Q9: 7 / 2 / 3 → a person decides (no auto-pick)", q9d.action === "none" && /disagree/.test(q9d.reason), q9d);
+  const q9agree = ch({ first: { answer: "4", value: 4, method: "code", problems: [] }, second: { answer: "4", value: 4, method: "math-alt", problems: [] } });
+  ok("figure question without read points → no auto-pick even if solves agree", autoKeyDecision(q9, q9agree, noKey).action === "none");
+  const q9pts = ch({ first: { answer: "4", value: 4, method: "code", problems: [], figurePoints: "(0,-3), (1,-1), (4,1), (9,3), fit: y = 2*sqrt(x) - 3" }, second: { answer: "4", value: 4, method: "math-alt", problems: [] } });
+  ok("figure question: exact points read + both solves 4 → set key 4", autoKeyDecision(q9, q9pts, noKey).key === "4");
+  ok("read points shown in the queue note", /read points 0,-3 , 1,-1 , fit: 2x-3/.test(checksSummary(q9ch, "7")), checksSummary(q9ch, "7"));
+  ok("moduleHasRealKey", moduleHasRealKey([{ official_answer: null }, { official_answer: "B" }]) && !moduleHasRealKey([{ official_answer: null }, { official_answer: " " }]));
+}
+
+// ── Re-parse: rescore to the official key only when it can be trusted ──
+{
+  const off = { question_type: "Multiple Choice", correct_answer: "C", official_answer: "C", parsing_notes: null };
+  ok("re-parse rescore: clean official key → rescore", rescoreHoldReason(off, null, { sprLetterQuestions: [], keyDisagreement: null }) === null);
+  ok("re-parse rescore: module key in doubt → held", /in doubt/.test(rescoreHoldReason(off, "Needs review: the PDF's answer key disagrees with the solved answer on 9 of 22 questions", null) ?? ""));
+  ok("re-parse rescore: letter key on a fill-in → held", rescoreHoldReason({ ...off, question_type: "Student Produced Response", correct_answer: "B", official_answer: "B" }, null, null) !== null);
+  ok("re-parse rescore: module key gives letters to fill-ins → held", rescoreHoldReason(off, null, { sprLetterQuestions: [5, 19], keyDisagreement: null }) !== null);
+  ok("re-parse rescore: key marked as made up → held", rescoreHoldReason({ ...off, parsing_notes: "Needs review: the answer key read from the PDF was not used — x" }, null, null) !== null);
+}
 
 extractorShortCircuit().then(() => {
   console.log(fail === 0 ? "\nALL PASS" : `\n${fail} FAILED`);

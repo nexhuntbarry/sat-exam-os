@@ -110,8 +110,11 @@ export interface LiveHoldResult {
 /** Drop a leading "[live-fix] …" sentence (used when a person approves). */
 export function stripLiveFixNote(notes: string | null | undefined): string | null {
   if (!notes || !notes.startsWith(LIVE_FIX_TAG)) return notes ?? null;
-  const rest = notes.replace(/^\[live-fix\][^\n]*?re-check\.\s*/, "");
-  const out = rest !== notes ? rest : notes.replace(/^\[live-fix\][^.]*\.?\s*/, "");
+  // The tag sentence ends at its "re-check." (it may span a line break).
+  const rest = notes.replace(/^\[live-fix\][\s\S]*?re-check\.(?!\d)\s*/, "");
+  // Otherwise at the first sentence end — a "." inside a number ("0.018",
+  // "3.5") is not one.
+  const out = rest !== notes ? rest : notes.replace(/^\[live-fix\](?:[^.]|\.(?=\d))*(?:\.(?!\d))?\s*/, "");
   return out.trim() || null;
 }
 

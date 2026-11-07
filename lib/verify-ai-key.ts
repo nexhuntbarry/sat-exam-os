@@ -43,6 +43,7 @@ import {
   sprValue,
 } from "@/lib/answer-key";
 import { nearlyEqual, tryEvaluate } from "@/lib/math/safe-eval";
+import { choiceValue, mapValueToChoice, type ChoiceLike } from "@/lib/math/choice-values";
 import { findApproveBlocker, stemFigureMissing } from "@/lib/parse-guards";
 import { LIVE_FIX_TAG } from "@/lib/live-questions";
 import { hasKeyDoubt } from "@/lib/key-doubt";
@@ -59,10 +60,12 @@ import {
   curlyQuotes,
   explanationSource,
   fetchImageAsBase64,
+  FIGURE_READ_RULE,
   looksTruncated,
   SPR_COMPUTATION_RULE,
 } from "@/lib/ai/solve-question";
 import { logUsage } from "@/lib/ai/parse-pdf";
+import { highResFigure } from "@/lib/figure-hires";
 import { cleanTagText, readTag } from "@/lib/ai/tagged-output";
 
 // ── Structured disagreement note (shared contract) ───────────────────
@@ -125,57 +128,9 @@ export function isAiOnlyKeyNote(seg: string): boolean {
 }
 
 // ── Choice values (code) ─────────────────────────────────────────────
-
-/** LaTeX / plain choice text → arithmetic expression for safe-eval (null = not a plain value). */
-export function latexToExpr(text: string): string | null {
-  let s = (text ?? "").trim();
-  if (!s) return null;
-  s = s.replace(/\$/g, "").replace(/\\left|\\right|\\displaystyle|\\,|\\!|\\;/g, "").replace(/\\(?:text|mathrm)\{([^{}]*)\}/g, "$1");
-  // Innermost first, so \frac{\sqrt{3}}{2} and \sqrt{\frac{1}{4}} both resolve.
-  for (let i = 0; i < 8 && /\\(?:[dt]?frac|sqrt)/.test(s); i++) {
-    s = s
-      .replace(/\\[dt]?frac\{([^{}]*)\}\{([^{}]*)\}/g, "(($1)/($2))")
-      .replace(/\\sqrt\[([^\]]*)\]\{([^{}]*)\}/g, "(($2)^(1/($1)))")
-      .replace(/\\sqrt\{([^{}]*)\}/g, "sqrt($1)");
-  }
-  s = s
-    .replace(/\^\{([^{}]*)\}/g, "^($1)")
-    .replace(/\\cdot|\\times/g, "*")
-    .replace(/\\div/g, "/")
-    .replace(/\\pi/g, "pi")
-    .replace(/[{}]/g, "")
-    .replace(/(\d),(?=\d{3}\b)/g, "$1")
-    .replace(/\\%|%/g, "")
-    .replace(/\s+/g, "");
-  if (/\\|[a-oq-zA-Z_]/.test(s.replace(/sqrt|pi/g, ""))) return null; // a variable / word: not a plain value
-  // Implicit multiplication: 2sqrt(3), 3pi, 2(4), )(.
-  s = s.replace(/(\d|\))(?=sqrt|pi|\()/g, "$1*");
-  return s || null;
-}
-
-export function choiceValue(text: string | null | undefined): number | null {
-  const e = latexToExpr(text ?? "");
-  return e ? tryEvaluate(e) : null;
-}
-
-/** Decimals printed in a choice (2 for "51.12") — sets the matching tolerance. */
-function printedDecimals(text: string): number {
-  const m = text.match(/\d\.(\d+)/);
-  return m ? m[1].length : 0;
-}
-
-type ChoiceLike = { label?: string; text?: string | null; image_url?: string | null };
-
-/** The one choice whose value equals `value` (null = none or ambiguous, or choices aren't values). */
-export function mapValueToChoice(value: number, choices: ChoiceLike[]): string | null {
-  const vals = choices.map((c) => ({ label: (c.label ?? "").toUpperCase(), text: c.text ?? "", v: c.image_url ? null : choiceValue(c.text) }));
-  if (vals.length === 0 || vals.some((c) => c.v === null)) return null;
-  const hits = vals.filter((c) => {
-    const d = printedDecimals(c.text);
-    return nearlyEqual(c.v as number, value, 1e-6) || (d > 0 && Math.abs((c.v as number) - value) <= 0.5 * 10 ** -d + 1e-12);
-  });
-  return hits.length === 1 ? hits[0].label : null;
-}
+// Moved to lib/math/choice-values.ts (also used by the explanation
+// consistency check); re-exported here for existing callers.
+export { latexToExpr, choiceValue, mapValueToChoice } from "@/lib/math/choice-values";
 
 // ── Answers ──────────────────────────────────────────────────────────
 
@@ -202,6 +157,8 @@ export interface SolveCheck {
   mapped?: boolean;
   method: string;
   problems: string[];
+  /** Figure questions: the exact points the solve read off the figure (shown to the person deciding). */
+  figurePoints?: string | null;
 }
 
 export interface PlugBackCheck {
@@ -246,7 +203,8 @@ function describe(c: SolveCheck | null): string {
 export function checksSummary(ch: VerifyChecks, key: string): string {
   if (ch.section === "Reading & Writing") return `solve 1 ${describe(ch.first)}, solve 2 ${describe(ch.second)}`;
   const pb = ch.plugBack ? `plug-back of ${key} ${ch.plugBack.status === "pass" ? "holds" : ch.plugBack.status === "fail" ? `fails (${ch.plugBack.detail})` : "n/a"}` : "plug-back n/a";
-  return `code ${describe(ch.first)}, ${pb}, second solve ${describe(ch.second)}`;
+  const pts = ch.first?.figurePoints ? `, read points ${ch.first.figurePoints.replace(/[;()[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 140)}` : "";
+  return `code ${describe(ch.first)}, ${pb}, second solve ${describe(ch.second)}${pts}`;
 }
 
 /** What still blocks approval once the AI-only-key notes are gone (empty = may approve). */
@@ -341,6 +299,66 @@ export function decideVerification(
   return { outcome: "verified", update, blockers, summary, approved };
 }
 
+// ── Auto-key for modules with NO real answer key (pure) ──────────────
+//
+// Owner rule 2026-11-07: a module whose PDF carries no answer key
+// (official_answer null on every question — lib/answer-marks.ts refuses
+// keys "read" from student printouts) has only AI-solved keys. There, when
+// the code-checked solve and a second independent solve agree with EACH
+// OTHER on an answer other than the stored key, the key is set to it
+// automatically (lib/key-change.ts applyKeyCorrection: explanation written +
+// checked, answers rescored). Only disagreements go to a person. Never:
+//   - a module with any real key (a key from an answer page needs a person),
+//   - a question in a live test (queued with a [live-fix] note instead),
+//   - Reading & Writing (no code check),
+//   - when the stored key's plug-back holds (the evidence is split),
+//   - when the solves reach different numbers ([Test #13] L Test 1 Math M2
+//     Q9: stored 7, code 2, second solve 3, true answer 4 — a person decides,
+//     with the points the solve read shown in the note),
+//   - a figure question whose code solve didn't list the exact points it
+//     read off the figure (no evidence the figure was read, not estimated).
+
+export type AutoKeyAction = "set_key" | "queue_live" | "none";
+
+export interface AutoKeyDecision {
+  action: AutoKeyAction;
+  /** The answer both solves reached (set_key / queue_live). */
+  key?: string;
+  reason: string;
+}
+
+/** Does any question of the module have a key from the PDF? */
+export function moduleHasRealKey(rows: { official_answer: string | null }[]): boolean {
+  return rows.some((r) => !!(r.official_answer ?? "").trim());
+}
+
+export function autoKeyDecision(
+  r: Pick<VerifyRow, "question_type" | "question_text" | "correct_answer" | "official_answer"> & { image_urls?: unknown },
+  ch: VerifyChecks,
+  ctx: { moduleHasRealKey: boolean; live: boolean },
+): AutoKeyDecision {
+  const key = (r.correct_answer ?? "").trim();
+  const isMc = r.question_type !== SPR_TYPE;
+  if (ctx.moduleHasRealKey || (r.official_answer ?? "").trim()) return { action: "none", reason: "the module has a real answer key — a person decides" };
+  if (ch.section !== "Math") return { action: "none", reason: "no code check for Reading & Writing" };
+  const a = ch.first;
+  const b = ch.second;
+  if (!a?.answer || !b?.answer) return { action: "none", reason: "a solve gave no answer" };
+  // The first solve must be the code-checked one.
+  const codeChecked = isMc ? a.mapped === true && a.value != null : a.value != null;
+  if (!codeChecked || a.problems.length > 0) return { action: "none", reason: "the first solve is not code-checked" };
+  if (!sameKey(a.answer, b.answer, isMc, r.question_text) || !sameKey(b.answer, a.answer, isMc, r.question_text)) {
+    return { action: "none", reason: `the two solves disagree (${a.answer} vs ${b.answer})` };
+  }
+  if (sameKey(a.answer, key, isMc, r.question_text)) return { action: "none", reason: "both solves give the stored key" };
+  const figure = Array.isArray(r.image_urls) && r.image_urls.length > 0;
+  if (figure && !(a.figurePoints ?? "").trim()) return { action: "none", reason: "figure question: the code solve listed no exact points read from the figure" };
+  if (ch.plugBack?.status === "pass") return { action: "none", reason: `the stored key ${key} still passes its plug-back` };
+  const next = isMc ? (letterOf(a.answer) as string) : a.answer.trim();
+  if (ctx.live) return { action: "queue_live", key: next, reason: `both solves give ${next}, but the question is in a live test` };
+  return { action: "set_key", key: next, reason: `code solve ${a.answer}${a.value != null ? ` (${+a.value.toPrecision(8)})` : ""} and second solve ${b.answer} agree` };
+}
+
 // ── AI calls ─────────────────────────────────────────────────────────
 
 export interface VerifyQuestion {
@@ -366,6 +384,14 @@ async function figureBlocks(q: VerifyQuestion): Promise<Block[]> {
     if (!c.image_url) continue;
     const f = await fetchImageAsBase64(c.image_url);
     if (f) out.push({ type: "text", text: `Choice ${c.label}:` }, { type: "image", image: f.base64, mediaType: f.mediaType });
+  }
+  // A stem figure is re-read at high resolution from the source PDF.
+  if (urls.length > 0) {
+    const hires = await highResFigure(q.id);
+    if (hires.length) {
+      out.push({ type: "text", text: "High-resolution re-render of the figure from the source PDF — read exact values from this one:" });
+      for (const h of hires) out.push({ type: "image", image: h.image, mediaType: h.mediaType });
+    }
   }
   return out;
 }
@@ -413,17 +439,22 @@ async function ask(
 
 const TAG_OUTPUT = `Reply with ONLY these tags (plain text inside, no JSON, quotes need no escaping):`;
 
+const hasImage = (blocks: Block[]) => blocks.some((b) => b.type === "image");
+/** The figure-reading rule, for prompts that see an image. */
+const figureRule = (blocks: Block[]) => (hasImage(blocks) ? `\n\n${FIGURE_READ_RULE}\n` : "");
+
 /** Math check 1: the model writes the computation; code evaluates it and maps it to a choice. */
 export async function codeSolve(q: VerifyQuestion, blocks: Block[], callerUserId?: string): Promise<SolveCheck> {
   const isSpr = q.question_type === SPR_TYPE;
+  const fig = hasImage(blocks);
   const system = `You are an expert SAT math solver. Solve the question independently and rigorously.
 
 ${SPR_COMPUTATION_RULE}
-
+${figureRule(blocks)}
 For Multiple Choice too: put in <answer_expression> a plain arithmetic expression (numbers, + - * / ** ( ), sqrt(), abs(), pi) whose value is the quantity the question asks for — the value of the correct choice — unrounded. Leave it empty only when the choices are not numbers (equations, expressions with variables, words, graphs).
 
 ${TAG_OUTPUT}
-<work>a few lines of working</work>
+${fig ? "<figure_points>the exact points you read from the figure, then \"fit: <function>\" (one line, comma-separated)</figure_points>\n" : ""}<work>a few lines of working</work>
 <answer>${isSpr ? "the value to enter" : "the single letter A/B/C/D"}</answer>
 <answer_expression>the arithmetic expression, or empty</answer_expression>
 <check_equation>optional: one equation from the problem the answer must satisfy, with ans for the answer (e.g. 3*ans + 7 == 31), or empty</check_equation>`;
@@ -431,10 +462,11 @@ ${TAG_OUTPUT}
   const declared = cleanTagText(readTag(raw, "answer")).replace(/\$/g, "");
   const expression = cleanTagText(readTag(raw, "answer_expression"));
   const checkEquation = cleanTagText(readTag(raw, "check_equation"));
+  const figurePoints = fig ? cleanTagText(readTag(raw, "figure_points")) || null : null;
   if (isSpr) {
     const c = checkComputedAnswer({ declared, expression, checkEquation, questionText: q.question_text });
     if (!expression) c.problems.push("no computation given");
-    return { answer: c.answer, value: c.value, method: "code", problems: c.problems };
+    return { answer: c.answer, value: c.value, method: "code", problems: c.problems, figurePoints };
   }
   const letter = letterOf(declared);
   const value = expression ? tryEvaluate(expression) : null;
@@ -443,15 +475,15 @@ ${TAG_OUTPUT}
     const mapped = mapValueToChoice(value, choices);
     if (mapped) {
       const problems = letter && letter !== mapped ? [`the model said ${letter} but its computation ${+value.toPrecision(8)} is choice ${mapped}`] : [];
-      return { answer: mapped, value, mapped: true, method: "code", problems };
+      return { answer: mapped, value, mapped: true, method: "code", problems, figurePoints };
     }
     const numericChoices = choices.length > 0 && choices.every((c) => !c.image_url && choiceValue(c.text) !== null);
     if (numericChoices) {
       // The computation matches no choice: no code answer (inconclusive, not a vote).
-      return { answer: null, value, mapped: true, method: "code", problems: [`computed ${+value.toPrecision(8)} matches no choice`] };
+      return { answer: null, value, mapped: true, method: "code", problems: [`computed ${+value.toPrecision(8)} matches no choice`], figurePoints };
     }
   }
-  return { answer: letter, value: null, mapped: false, method: "code", problems: letter ? [] : [`no letter answer ("${declared.slice(0, 40)}")`] };
+  return { answer: letter, value: null, mapped: false, method: "code", problems: letter ? [] : [`no letter answer ("${declared.slice(0, 40)}")`], figurePoints };
 }
 
 /** Evaluate one condition ("2*ans+3 == 11", "ans > 4") with ans = value. Null = unreadable. */
@@ -491,7 +523,7 @@ export async function plugBackKey(q: VerifyQuestion, blocks: Block[], callerUser
   const system = `You check a PROPOSED answer to an SAT math question by substituting it back into the problem. Do not solve the problem from scratch and do not judge the other choices.
 
 1. <key_value>: the exact numeric value of the proposed answer as a plain arithmetic expression (numbers, + - * / ** ( ), sqrt(), pi). If the proposed answer was rounded ("to the nearest tenth"), give the UNROUNDED exact value that it is the rounding of. Empty if the proposed answer is not a single number (an equation, an expression with variables, words, a graph).
-2. <conditions>: 1–4 conditions from the problem that the proposed answer must satisfy, one per line, each a plain arithmetic comparison using ==, <, >, <= or >= (Python/JS style). Use ans for key_value when there is one. When the answer is an equation or expression, substitute concrete numbers from the problem instead (e.g. for "y = 2x + 3" through (1, 5): 2*1 + 3 == 5). Each condition must check the PROPOSED answer against the GIVEN information — never restate the proposed answer itself (no "ans == 6").
+${figureRule(blocks)}2. <conditions>: 1–4 conditions from the problem that the proposed answer must satisfy, one per line, each a plain arithmetic comparison using ==, <, >, <= or >= (Python/JS style). Use ans for key_value when there is one. When the answer is an equation or expression, substitute concrete numbers from the problem instead (e.g. for "y = 2x + 3" through (1, 5): 2*1 + 3 == 5). Each condition must check the PROPOSED answer against the GIVEN information — never restate the proposed answer itself (no "ans == 6").
 
 ${TAG_OUTPUT}
 <key_value>expression or empty</key_value>
@@ -541,7 +573,7 @@ export async function independentSolve(
         ? `Method: go through ALL FOUR choices. For each, quote the words of the text that rule it out or support it. Keep the only choice the text fully supports.`
         : `Read the text closely, decide what the question requires, and pick the best-supported choice.`;
   const system = `You are an expert SAT ${variant === "math-alt" ? "math" : "Reading and Writing"} solver. Solve independently. ${method}
-${isSpr ? `\nThe answer is a number in SAT grid form (integer, decimal or fraction such as 7/2); apply any rounding the question asks for.\n` : ""}
+${figureRule(blocks)}${isSpr ? `\nThe answer is a number in SAT grid form (integer, decimal or fraction such as 7/2); apply any rounding the question asks for.\n` : ""}
 ${TAG_OUTPUT}
 <work>your reasoning, briefly</work>
 <answer>${isSpr ? "the value only (no units, no $)" : "the single letter A/B/C/D"}</answer>`;

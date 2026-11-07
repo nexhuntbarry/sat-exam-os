@@ -33,12 +33,13 @@ import {
   type FigureRow,
 } from "../lib/figure-compare";
 import { approveRefusal, decide, decideBlockers, liveFixNotes } from "../lib/review-decide";
-import { applyKeyCorrection } from "../lib/key-change";
+import { applyKeyCorrection, explanationForKey, keyExplanationPatch, KEY_EXPLANATION_FAILED_PREFIX, type ExplainFn } from "../lib/key-change";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AUTO_FIX_NOTE_PREFIX } from "../lib/explanation-autofix";
 import { TRUNCATION_NOTE, REGEN_DISAGREE_PREFIX } from "../lib/ai/solve-question";
 import { keyDoubtNote } from "../lib/key-doubt";
-import { LIVE_FIX_TAG } from "../lib/live-questions";
+import { LIVE_FIX_TAG, stripLiveFixNote } from "../lib/live-questions";
+import { editedExplanationProblem, staleSave } from "../lib/question-save-guard";
 import { STEM_CUT_OFF_NOTE } from "../lib/parse-guards";
 
 let fail = 0;
@@ -314,8 +315,137 @@ ok("keep key drops the official-answer dispute", isKeyQuestionNote("Answer A dif
     });
     return b;
   };
-  const r = await applyKeyCorrection(db, { id: "k1", correct_answer: "C", expectedKey: "A", rescore: true, source: "test", regenerateExplanation: false });
+  const explain = async () => ({ ok: true as const, explanation: "Choice C is correct because the comma closes the phrase.\n\nAnswer: C", aiAnswer: "C", agrees: true, independent: true });
+  const r = await applyKeyCorrection(db, { id: "k1", correct_answer: "C", expectedKey: "A", rescore: true, source: "test", explain });
   ok("key change: concurrent change → 409, no write applied", !r.ok && r.status === 409 && q.correct_answer === "B" && writes.length === 1);
+}
+
+// Incident 2026-11-07 (J Test M1 Q10): a key change from the queue must
+// save a checked explanation WITH the key, or never report "approved".
+{
+  const goodC = "Choice C is correct: a semicolon joins the two independent clauses.\n\nAnswer: C";
+  const stub = (r: Partial<{ explanation: string; aiAnswer: string | null; agrees: boolean; independent: boolean }>) => async () =>
+    ({ ok: true as const, explanation: goodC, aiAnswer: "C", agrees: true, independent: true, ...r });
+  const setKey = async (explain: ExplainFn, o: Partial<FigureRow> = {}) => {
+    const r = { ...row({ official_answer: null, ...o }), image_alts: [], mismatch_with_official: false } as Record<string, unknown>;
+    const f = fakeDb([r]);
+    const res = await decide(f.db, "q1", { action: "set_key", key: "C", expectedKey: "A", rescore: true }, { explain });
+    return { res, r, writes: f.writes };
+  };
+
+  const a = await setKey(stub({}));
+  ok("set_key + checked explanation → approved", a.res.ok && a.res.approved === true && a.res.explanation === "regenerated");
+  ok("set_key: key and explanation saved in ONE write", a.writes[0]?.correct_answer === "C" && a.writes[0]?.explanation === goodC);
+
+  const b = await setKey(stub({ explanation: "", aiAnswer: "A", agrees: false }));
+  ok("set_key, AI disagrees → NOT approved", b.res.ok && b.res.approved === false && b.res.explanation === "ai_disagrees" && !!b.res.warning);
+  ok("set_key, AI disagrees → key kept, old explanation removed, Needs Review", b.r.correct_answer === "C" && b.r.explanation === null && b.r.parsing_status === "Needs Review");
+  ok("set_key, AI disagrees → note names the AI's answer", String(b.r.parsing_notes).includes(`${REGEN_DISAGREE_PREFIX} A but the saved key is C`));
+
+  // The Q10 failure mode: the draft computes one value and states another.
+  const c = await setKey(stub({ explanation: "Net change: $\\frac{200 - 100}{100} \\times 100\\% = 120\\%$. Only choice C fits.\n\nAnswer: C" }));
+  ok("set_key, draft fails the numeric check twice → failed, NOT approved", c.res.approved === false && c.res.explanation === "failed" && c.r.parsing_status === "Needs Review" && c.r.explanation === null);
+  ok("set_key failure note says why", String(c.r.parsing_notes).includes(KEY_EXPLANATION_FAILED_PREFIX));
+
+  const d = await setKey(stub({ independent: false }));
+  ok("set_key, answer not from an independent solve → NOT approved", d.res.approved === false && d.res.explanation === "failed");
+
+  const e = await setKey(stub({}), { parsing_status: "Approved" });
+  ok("set_key on an Approved (not live) row with a checked explanation stays Approved", e.res.approved === true && e.r.parsing_status === "Approved");
+  const e2 = await setKey(stub({ explanation: "", aiAnswer: "B", agrees: false }), { parsing_status: "Approved" });
+  ok("set_key failure on an Approved, NOT live row → Needs Review", e2.res.approved === false && e2.r.parsing_status === "Needs Review");
+
+  // Live rows (pure patch): never demoted, explanation hidden, [live-fix] leads.
+  const liveRow = { ...row({ parsing_status: "Approved", correct_answer: "C", official_answer: null, parsing_notes: "Answer key check: key A → C (applied by x)" }) };
+  const lp = keyExplanationPatch(liveRow, { outcome: "failed", explanation: null, aiAnswer: null, reason: "the AI call failed" }, true);
+  ok("live failure: status untouched", !("parsing_status" in lp.patch) && !lp.ok);
+  ok("live failure: stale explanation hidden", lp.patch.explanation === null);
+  ok("live failure: [live-fix] note leads", String(lp.patch.parsing_notes).startsWith(LIVE_FIX_TAG) && String(lp.patch.parsing_notes).includes("re-check."));
+  const fits = keyExplanationPatch({ ...liveRow, explanation: goodC }, { outcome: "failed", explanation: null, aiAnswer: null, reason: "x" }, true, false);
+  ok("key unchanged: a current explanation that passes every check is kept on failure", !("explanation" in fits.patch));
+  // H1: after a REAL key change, text written for the old key never stays,
+  // even when the checks can't tell how it argues.
+  const oldTexts = ["B is correct because the semicolon joins two clauses.", "The comma closes the phrase, which matches option B.", "**B** — the passage says beta.", "The phrase is closed by the comma after the name."];
+  for (const t of oldTexts) {
+    const p = keyExplanationPatch({ ...liveRow, correct_answer: "C", explanation: t }, { outcome: "failed", explanation: null, aiAnswer: null, reason: "x" }, false, true);
+    ok(`key changed + failure: old text removed ("${t.slice(0, 28)}…")`, p.patch.explanation === null && p.patch.parsing_status === "Needs Review");
+  }
+  // L2: key unchanged and the current text only too long → status left alone.
+  const longOk = `${Array.from({ length: 360 }, () => "word").join(" ")}. Choice C is correct.\n\nAnswer: C`;
+  const lp2 = keyExplanationPatch({ ...liveRow, parsing_status: "Approved", explanation: longOk }, { outcome: "failed", explanation: null, aiAnswer: null, reason: "x" }, false, false);
+  ok("key unchanged, current text only too long → kept, not demoted", !("explanation" in lp2.patch) && !("parsing_status" in lp2.patch));
+  const okp = keyExplanationPatch({ ...liveRow, parsing_notes: `${KEY_EXPLANATION_FAILED_PREFIX} C (x) — write and check it by hand` }, { outcome: "regenerated", explanation: goodC, aiAnswer: "C", reason: null }, false);
+  ok("success: explanation saved, failure note cleared", okp.ok && okp.patch.explanation === goodC && !String(okp.patch.parsing_notes ?? "").includes(KEY_EXPLANATION_FAILED_PREFIX));
+
+  const ek = await explanationForKey(row({ explanation: goodC, correct_answer: "C" }), "C", { keepCurrent: true, explain: async () => { throw new Error("not called"); } });
+  ok("keepCurrent: a current explanation that passes is kept without an AI call", ek.outcome === "kept");
+}
+
+// Decimal keys in notes: "0.018" is not a sentence end (live row, set_key).
+{
+  const live = {
+    ...row({ question_type: "Student Produced Response", choices: [], correct_answer: "0.018", official_answer: null, parsing_status: "Approved", question_text: "What is the probability, as a fraction?", parsing_notes: "Answer = official key; checked 0.5 times" }),
+    image_alts: [], mismatch_with_official: false,
+  } as Record<string, unknown>;
+  const test = { id: "t1", status: "Published", is_adaptive: false, module_id: "m1", module_1_id: null, module_2_id: null, module_2_easy_id: null, module_2_hard_id: null, question_ids: [] };
+  const assignment = { test_id: "t1", student_ids: ["s1"], class_group_ids: [] };
+  const f = fakeDb([live, test, assignment]);
+  const goodSpr = "The probability is 4 out of 225.\n\nAnswer: 4/225";
+  const res = await decide(f.db, "q1", { action: "set_key", key: "4/225", expectedKey: "0.018", rescore: true }, {
+    explain: async () => ({ ok: true as const, explanation: goodSpr, aiAnswer: "4/225", agrees: true, independent: true }),
+  });
+  const notes = String(live.parsing_notes);
+  ok("live set_key: stays Approved, key saved", res.ok && live.parsing_status === "Approved" && live.correct_answer === "4/225");
+  ok("live set_key: [live-fix] note leads", notes.startsWith(LIVE_FIX_TAG));
+  ok("decimal key kept whole in the note (0.018 → 4/225)", notes.includes("key 0.018 → 4/225") && !/re-check\. 018/.test(notes));
+  ok("other decimals in notes untouched", notes.includes("checked 0.5 times"));
+}
+
+// Review round 2.
+{
+  // M3: no second (paid) attempt after a figure conflict or a disagreement.
+  let calls = 0;
+  const fig = await explanationForKey(row({ correct_answer: "C" }), "C", { explain: async () => { calls++; return { ok: false as const, error: "Figure read conflict: min (2,-3) → (2,-4)", kind: "figure_conflict" as const }; } });
+  ok("figure conflict → failed after ONE attempt, reason kept", fig.outcome === "failed" && calls === 1 && /Figure read conflict/.test(fig.reason ?? ""));
+  calls = 0;
+  const dis = await explanationForKey(row({ correct_answer: "C" }), "C", { explain: async () => { calls++; return { ok: true as const, explanation: "", aiAnswer: "B", agrees: false, independent: true }; } });
+  ok("AI disagrees → stops after ONE attempt", dis.outcome === "ai_disagrees" && calls === 1);
+
+  // M4: keep_key whose explanation refresh fails is never reported approved.
+  const bad = { ...row({ parsing_status: "Approved", official_answer: null, explanation: "Choice B is correct because the comma is wrong." }), image_alts: [], mismatch_with_official: false } as Record<string, unknown>;
+  const fk = fakeDb([bad]);
+  const kk = await decide(fk.db, "q1", { action: "keep_key" }, { explain: async () => ({ ok: false as const, error: "x", kind: "failed" as const }) });
+  ok("keep_key + failed refresh → approved:false + warning", kk.ok && kk.approved === false && !!kk.warning);
+
+  // H2: a stale page can't write its old key / explanation back.
+  const prior = row({ correct_answer: "C", explanation: "new text", updated_at: "2026-11-07T10:00:00Z" });
+  ok("stale: base key differs → 409", staleSave(prior, { base: { correct_answer: "A", explanation: "new text" } }));
+  ok("stale: base explanation differs (hidden live one = null) → 409", staleSave({ ...prior, explanation: null }, { base: { correct_answer: "C", explanation: "old text" } }));
+  ok("stale: expected_updated_at differs → 409", staleSave(prior, { expected_updated_at: "2026-11-07T09:00:00Z" }));
+  ok("fresh page → not stale", !staleSave(prior, { base: { correct_answer: "C", explanation: "new text" }, expected_updated_at: "2026-11-07T10:00:00Z" }));
+  ok("no base (API caller) → not stale", !staleSave(prior, {}));
+  const next = { ...prior, correct_answer: "C" };
+  ok("changed explanation that argues another letter (key unchanged) → refused", editedExplanationProblem(prior, next, { explanation: "Choice A is correct because the comma closes it." }) !== null);
+  ok("changed explanation that fits → allowed", editedExplanationProblem(prior, next, { explanation: "Choice C is correct because a semicolon joins two independent clauses.\n\nAnswer: C" }) === null);
+  ok("L3: emptied explanation → no check (it gets rewritten)", editedExplanationProblem(prior, next, { explanation: "" }) === null);
+  ok("unchanged explanation → no check", editedExplanationProblem(prior, next, { explanation: "new text" }) === null);
+
+  // L1: an automatic key change refuses a question that is live right now.
+  {
+    const lr = { ...row({ parsing_status: "Approved", official_answer: null }), image_alts: [], mismatch_with_official: false } as Record<string, unknown>;
+    const t = { id: "t1", status: "Published", is_adaptive: false, module_id: "m1", module_1_id: null, module_2_id: null, module_2_easy_id: null, module_2_hard_id: null, question_ids: [] };
+    const f = fakeDb([lr, t, { test_id: "t1", student_ids: ["s1"], class_group_ids: [] }]);
+    const r = await applyKeyCorrection(f.db, { id: "q1", correct_answer: "C", expectedKey: "A", rescore: true, source: "auto", refuseLive: true, explain: async () => { throw new Error("not called"); } });
+    ok("refuseLive: live question → 409, nothing written", !r.ok && r.status === 409 && f.writes.length === 0 && lr.correct_answer === "A");
+  }
+
+  // Decimal-safe live-fix tag (the splitter cut "0.018" at "0.").
+  ok("stripLiveFixNote: tag without 're-check.' keeps decimals", stripLiveFixNote("[live-fix] Key 0.018 changed in a live test. Answer key check: key 0.018 → 4/225") === "Answer key check: key 0.018 → 4/225");
+  ok("stripLiveFixNote: tag spanning a line break", stripLiveFixNote("[live-fix] Key/type corrected;\nkept Approved — please re-check. Answer key check: key 0.018 → 4/225") === "Answer key check: key 0.018 → 4/225");
+  const withDec = "[live-fix] Key 0.018 changed in a live test. Answer key check: key 0.018 → 4/225; Needs review: key says 0.018, AI says 0.02";
+  ok("removeNotes keeps the whole decimal note", removeNotes(withDec, (x) => x.startsWith("Needs review: key says")).notes === "[live-fix] Key 0.018 changed in a live test. Answer key check: key 0.018 → 4/225");
+  ok("noteSegments with decimals", JSON.stringify(noteSegments("Answer key check: key 0.018 → 4/225; checked 3.5 times")) === JSON.stringify(["Answer key check: key 0.018 → 4/225", "checked 3.5 times"]));
+  ok("liveFixNotes keeps decimals", liveFixNotes("Answer key check: key 0.018 → 4/225").endsWith("re-check. Answer key check: key 0.018 → 4/225"));
 }
 
 // MEDIUM 8 / LOW: stale proposals, multiple tables.

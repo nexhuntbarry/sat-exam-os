@@ -6,6 +6,16 @@
 
 import { findApproveBlocker } from "@/lib/parse-guards";
 import { applyLiveHold } from "@/lib/live-questions";
+import { explanationArguesOther, numericProblems } from "@/lib/explanation-autofix";
+
+export const EXPLANATION_KEY_NOTE_PREFIX = "Needs review: the explanation doesn't match the key";
+
+/** The explanation argues another answer or its numbers don't add up (null = fine / no explanation). */
+export function explanationKeyProblem(r: Pick<BulkApproveRow, "explanation" | "correct_answer" | "question_type" | "question_text" | "choices">): string | null {
+  const ex = r.explanation ?? "";
+  if (!ex.trim() || !(r.correct_answer ?? "").trim()) return null;
+  return explanationArguesOther(ex, r.correct_answer, r.question_type, r.question_text) ?? numericProblems(r, ex)[0] ?? null;
+}
 
 /** Only these statuses are ever touched by Bulk Approve. */
 export const BULK_APPROVE_STATUSES = ["Draft", "Needs Review"] as const;
@@ -17,6 +27,8 @@ export interface BulkApproveRow {
   question_type: string | null;
   correct_answer: string | null;
   official_answer?: string | null;
+  /** When present, an explanation that contradicts the key also holds the row. */
+  explanation?: string | null;
   parsing_status: string | null;
   parsing_notes: string | null;
 }
@@ -43,7 +55,9 @@ export function planBulkApprove(rows: BulkApproveRow[], live: Set<string>, now: 
       plan.skipped.push(r.id);
       continue;
     }
-    const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer, r.official_answer);
+    const found = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer, r.official_answer);
+    const exProblem = found ? null : explanationKeyProblem(r);
+    const blocker = found ?? (exProblem ? { note: `${EXPLANATION_KEY_NOTE_PREFIX} (${exProblem.replace(/[;()]/g, ",")}) — rewrite it, then approve` } : null);
     if (!blocker) {
       plan.clean.push(r.id);
       continue;

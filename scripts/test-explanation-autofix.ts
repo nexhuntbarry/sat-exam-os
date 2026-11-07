@@ -7,13 +7,17 @@ import {
   decideAutoFix,
   explanationTargetReasons,
   explanationArguesOther,
+  concludedLetters,
   formattingProblems,
+  draftRejection,
+  MAX_EXPLANATION_WORDS,
   AUTO_FIX_NOTE_PREFIX,
   type AutoFixRow,
   type NoteContext,
 } from "../lib/explanation-autofix";
-import { TRUNCATION_NOTE, REGEN_EXPLANATION_NOTE, REGEN_DISAGREE_PREFIX } from "../lib/ai/solve-question";
+import { TRUNCATION_NOTE, REGEN_EXPLANATION_NOTE, REGEN_DISAGREE_PREFIX, looksTruncated, stripMetaNarration, withAnswerLine } from "../lib/ai/solve-question";
 import { keyDoubtNote } from "../lib/key-doubt";
+import { chainMismatches, explanationNumericProblems, keyLetters, statedLetters } from "../lib/explanation-consistency";
 import { LIVE_FIX_TAG } from "../lib/live-questions";
 
 let fail = 0;
@@ -136,6 +140,100 @@ ok("raw LaTeX detected", formattingProblems("We get 3x \\Rightarrow x = 3.").len
 ok("clean math passes", formattingProblems("Solve $3x = 9$ to get $x = 3$. It costs \\$5.").length === 0);
 ok("approved clean row is not a target", explanationTargetReasons(row({ parsing_status: "Approved", parsing_notes: null, explanation: GOOD })) === null);
 ok("row waiting on a disagreement is not a target", explanationTargetReasons(row({ parsing_notes: `${TRUNCATION_NOTE}; ${REGEN_DISAGREE_PREFIX} B but the saved key is A` })) === null);
+
+// ── Numeric consistency (lib/explanation-consistency.ts) ──
+// Incident 2026-11-07: [Test #14] J Test Math M1 Q10, key changed B → A, the
+// old explanation stayed: it computes (200 − 100)/100 = 100% and writes 120%.
+const Q10_TEXT = "The value of a rare stamp increased by 150% from the end of 2018 to the end of 2019 and then decreased by 20% from the end of 2019 to the end of 2020. What was the net percentage increase in the value of the rare stamp from the end of 2018 to the end of 2020?";
+const Q10_CHOICES = [{ label: "A", text: "100.00%" }, { label: "B", text: "120.00%" }, { label: "C", text: "140.00%" }, { label: "D", text: "150.00%" }];
+const Q10_OLD = "Start with an arbitrary base value of 100 dollars at the end of 2018.\n\n**Step 1 — Increase of 150% from 2018 to 2019:**\nA 150% increase means the value grows by 1.5 times its current amount, so the new value is $100 \\times (1 + 1.50) = 100 \\times 2.50 = 250$ dollars.\n\n**Step 2 — Decrease of 20% from 2019 to 2020:**\nA 20% decrease means the value is multiplied by 0.80, so the new value is $250 \\times 0.80 = 200$ dollars.\n\n**Step 3 — Net percentage change from 2018 to 2020:**\nThe value went from 100 dollars to 200 dollars, which is an increase of 100 dollars on a base of 100 dollars.\n$$\\text{Net \\% increase} = \\frac{200 - 100}{100} \\times 100\\% = 120\\%$$\n\nThe combined multiplier $(2.50 \\times 0.80 = 2.00)$ confirms the final value is exactly double the original, representing a **120% net increase**.\n\nChoice A (100%) is too low — it would correspond to only doubling without correctly accounting for the 150% rise. Choices C (140%) and D (150%) ignore the compounding effect of the 20% decrease on the already-elevated 2019 value. Only choice B correctly applies both percentage changes in sequence to arrive at **120%**.";
+const Q10_GOOD = "Start with a value of 100 dollars at the end of 2018.\n\n1. A 150% increase multiplies it by 2.5: $100 \\times 2.5 = 250$.\n2. A 20% decrease multiplies it by 0.8: $250 \\times 0.8 = 200$.\n3. Net change: $\\frac{200 - 100}{100} \\times 100\\% = 100\\%$.\n\nChoice B (120%) adds 150% and subtracts 20%. Choice C (140%) and choice D (150%) ignore the decrease or apply it to the original value.\n\nAnswer: A";
+const q10 = (o: Partial<AutoFixRow> = {}) => row({ original_question_number: 10, question_text: Q10_TEXT, choices: Q10_CHOICES, correct_answer: "A", official_answer: null, explanation: Q10_OLD, parsing_status: "Approved", parsing_notes: null, ...o });
+const q10Problems = explanationNumericProblems({ explanation: Q10_OLD, key: "A", questionType: "Multiple Choice", choices: Q10_CHOICES });
+ok("Q10: '(200−100)/100 × 100% = 120%' is caught (computes 100)", chainMismatches(Q10_OLD).some((m) => m.computed === 100 && m.stated === 120));
+ok("Q10: stated 120% maps to choice B ≠ key A", q10Problems.some((p) => /final value 120 is choice B, key is A/.test(p)));
+ok("Q10: 'Only choice B …' ≠ key A", q10Problems.some((p) => /names B as the answer/.test(p)));
+ok("Q10: the old text check alone missed it", explanationArguesOther(Q10_OLD, "A", "Multiple Choice", Q10_TEXT) === null);
+ok("Q10 old explanation fails draftRejection for key A", /numbers don't match/.test(draftRejection(q10(), Q10_OLD) ?? ""));
+ok("Q10 old explanation fails even for key B (computes 100, says 120)", draftRejection(q10({ correct_answer: "B" }), Q10_OLD) !== null);
+ok("Q10 old explanation is an auto-fix target (non-official key too)", explanationTargetReasons(q10())?.contradicts != null);
+ok("Q10 corrected explanation passes for key A", draftRejection(q10(), Q10_GOOD) === null && explanationNumericProblems({ explanation: Q10_GOOD, key: "A", questionType: "Multiple Choice", choices: Q10_CHOICES }).length === 0);
+ok("Q10 corrected explanation fails for key B", draftRejection(q10({ correct_answer: "B" }), Q10_GOOD) !== null);
+// No false alarms on deliberate wrong / non-computations.
+const clean = (ex: string) => chainMismatches(ex).length === 0;
+ok("contradiction '0 = 54' is not a computation", clean("The equation reduces to $0 = 54$, which is a contradiction, so there is no solution."));
+ok("'gives 5 = 2' (no solution) is not flagged", clean("Subtracting $8x$ from both sides gives $5 = 2$, a false statement."));
+ok("a distractor's mistake is not flagged", clean("Choice C would result from mistakenly using $\\sqrt{64} = 16$."));
+ok("'3/6 = 1/2' in plain text", clean("So the ratio is 3/6 = 1/2 of the total."));
+ok("'−3 + 12 = 9' (unicode minus)", clean("r = 2 gives −3 + 12 = 9 ≠ 0."));
+ok("'0.25 = 25%'", clean("The probability is $\\frac{1}{4} = 0.25 = 25\\%$."));
+ok("'≈' to the printed rounding", clean("The area is $115.375 \\times 48 \\approx 5500$ square meters, and $6\\pi - 12 \\approx 6.85$."));
+ok("'= 39.3' to one decimal", clean("Divide: 5900 / 150 = 39.3 hours."));
+ok("a real slip is flagged: 110 + 330 = 270", !clean("Therefore $p + w = 110 + 330 = 270$."));
+ok("SPR: 'Answer: 12' vs key 8.5", explanationNumericProblems({ explanation: "So x = 12.\n\nAnswer: 12", key: "8.5", questionType: "Student Produced Response", choices: [] }).length > 0);
+ok("SPR: 'Answer: 2/3; .6666 also accepted' vs key 2/3", explanationNumericProblems({ explanation: "x = 2/3.\n\nAnswer: 2/3; .6666, .6667 also accepted.", key: "2/3", questionType: "Student Produced Response", choices: [] }).length === 0);
+ok("'Answer: C' closing line counts as a conclusion", explanationArguesOther("Steps…\n\nAnswer: C", "A", "Multiple Choice", null) !== null);
+ok("'option consistent' is not option C", statedLetters("It is the only option consistent with the table.").length === 0);
+
+// ── Independent solve first (req: explanations are not written to defend the key) ──
+{
+  const t = explanationTargetReasons(row())!;
+  const dep = decideAutoFix(row(), t, { ok: true, explanation: GOOD, aiAnswer: "A", agrees: true, independent: false }, false);
+  ok("agreement only from the writer (saw the key) → not saved", dep.group === "unverified" && dep.update === null);
+  const dis = decideAutoFix(row(), t, { ok: true, explanation: "", aiAnswer: "C", agrees: false, independent: true }, false);
+  ok("independent solve disagrees → no explanation written, key queued", dis.group === "disagree" && !(dis.update && "explanation" in dis.update));
+  const fig = decideAutoFix(row(), t, { ok: false, error: "Figure read conflict: minimum: (2, -3) → (2, -4)", kind: "figure_conflict" }, false);
+  ok("figure read conflict → nothing saved", fig.update === null && /Figure read conflict/.test(fig.detail ?? ""));
+}
+
+// ── Thinking aloud / format ──
+ok("'Wait — looking more carefully' rejected", formattingProblems("The minimum is at (2, 3). Wait — looking more carefully at the graph, the minimum is at (2, -3).").length > 0);
+ok("'Hmm' rejected", formattingProblems("Hmm, the slope is 2.").length > 0);
+ok("'let's re-check' rejected", formattingProblems("x = 4. Let's re-check: x = 4.").length > 0);
+ok("'actually indicates' (R&W) is not narration", formattingProblems("The passage actually indicates the opposite, so choice B is wrong.").length === 0);
+ok("hedge 'approximately 5 or so' rejected", formattingProblems("The answer is approximately 5 or so.").length > 0);
+ok("too long (> max words) rejected", formattingProblems(Array.from({ length: MAX_EXPLANATION_WORDS + 20 }, () => "word").join(" ")).some((p) => p.startsWith("too long")));
+ok("Q10 corrected text has no format problem", formattingProblems(Q10_GOOD).length === 0);
+
+// ── Review round 2 ──
+// M1: narration only in narration form.
+for (const t of ["Customers wait, on average, 5 minutes in line.", "The wait-time is 4 minutes.", "Then she will wait.", "The narrator is not sure whether to go.", "Looking closely at the graph, the minimum is at (2, -3).", "I think the author argues X, the student wrote.", "Students recheck their work before submitting."]) {
+  ok(`not narration: "${t.slice(0, 40)}"`, formattingProblems(t).length === 0);
+}
+for (const t of ["Wait — looking more carefully at the graph, the minimum is (2, -4).", "So x = 9... wait — adding the equations gives 2a = 2.", "x = 4. Wait, that is wrong.", "Hmm, the slope is 2.", "Let me re-check: x = 4.", "On second thought, B fits better.", "Actually, no, the slope is negative."]) {
+  ok(`narration: "${t.slice(0, 40)}"`, formattingProblems(t).length > 0);
+}
+// H1: more ways an explanation names an answer.
+ok("bare 'B is correct because'", concludedLetters("B is correct because the semicolon joins two clauses.").includes("B"));
+ok("'which matches option B.'", concludedLetters("The comma closes the phrase, which matches option B.").includes("B"));
+ok("'**B** — the passage says'", concludedLetters("**B** — the passage says beta.").includes("B"));
+ok("'**A** — incorrect, …' is a wrong-choice line", !concludedLetters("**A** — incorrect, it misreads the text.").includes("A"));
+ok("choice-by-choice walk-through (**A** — … **B** — …) names no answer", concludedLetters("**A** — Both texts agree.\n**B** — Text 2 disagrees.").length === 0);
+ok("'<key> is incorrect' contradicts the key", explanationArguesOther("Choice C is incorrect because the colon introduces a list.", "C", "Multiple Choice", null) !== null);
+ok("another choice 'is incorrect' is fine", explanationArguesOther("Choice A is incorrect because the colon introduces a list. Choice C is correct.", "C", "Multiple Choice", null) === null);
+// M2: mixed numbers.
+ok("mixed number: 3.6 = 3\\frac{3}{5}", chainMismatches("So $3.6 = 3\\frac{3}{5}$ hours.").length === 0);
+ok("mixed number: 2\\frac{1}{2} × 4 = 10", chainMismatches("Then $2\\frac{1}{2} \\times 4 = 10$.").length === 0);
+ok("mixed number slip still caught: 2\\frac{1}{2} × 4 = 8", chainMismatches("Then $2\\frac{1}{2} \\times 4 = 8$.").length === 1);
+
+// ── Review round 3 ──
+// R2: multi-answer keys ("C, D") are a set, not their first letter.
+{
+  const twoKey = "**C) Mean — increases**\nRemoving 0.98 raises the mean, so C is correct.\n\n**D) Range — decreases**\nThe range shrinks, so choice D is correct.\n\n**A is wrong.** **B is wrong.**\n\nAnswer: C, D";
+  const ch4 = [{ label: "A", text: "median" }, { label: "B", text: "mode" }, { label: "C", text: "mean" }, { label: "D", text: "range" }];
+  ok("multi-answer key: concluding C and D doesn't argue another answer", explanationArguesOther(twoKey, "C, D", "Multiple Choice", null) === null);
+  ok("multi-answer key: numeric/letter check finds nothing", explanationNumericProblems({ explanation: twoKey, key: "C, D", questionType: "Multiple Choice", choices: ch4 }).length === 0);
+  ok("multi-answer key: naming B is still caught", explanationArguesOther("Choice B is correct.", "C, D", "Multiple Choice", null) !== null);
+  ok("multi-answer key: 'D is incorrect' contradicts the key", explanationArguesOther("Choice D is incorrect because the range grows.", "C, D", "Multiple Choice", null) !== null);
+  ok("keyLetters: 'C, D' / 'C or D' / 'B'", JSON.stringify(keyLetters("C, D")) === '["C","D"]' && JSON.stringify(keyLetters("C or D")) === '["C","D"]' && JSON.stringify(keyLetters("B")) === '["B"]' && keyLetters("12").length === 0);
+  ok("withAnswerLine writes the full key", withAnswerLine("Steps.\n\nFinal answer: C", "C, D").endsWith("Answer: C, D") && withAnswerLine("Steps.", "B").endsWith("Answer: B"));
+  ok("'Answer: C, D' closing line is not cut off", !looksTruncated("Steps here.\n\nAnswer: C, D"));
+}
+// M1 leftover: leading-narration stripper only at a sentence start.
+ok("strip: 'Customers wait, on average' kept", stripMetaNarration("Customers wait, on average, 5 minutes. So x = 5.") === "Customers wait, on average, 5 minutes. So x = 5.");
+ok("strip: 'The wait-time function' kept", stripMetaNarration("The wait-time function is linear. Its slope is 2.") === "The wait-time function is linear. Its slope is 2.");
+ok("strip: leading 'Wait — let me re-check.' removed", stripMetaNarration("Wait — let me re-check. The slope is 2.") === "The slope is 2.");
+ok("strip: leading 'I need to find x.' removed", stripMetaNarration("I need to find x. Then x = 5.") === "Then x = 5.");
 
 console.log(fail ? `${fail} FAILED` : "ALL PASSED");
 process.exit(fail ? 1 : 0);

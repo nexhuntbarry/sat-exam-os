@@ -22,6 +22,8 @@ import {
 } from "@/lib/parse-guards";
 import { autoPromoteModule } from "@/lib/auto-promote";
 import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
+import { KEY_ROW_SELECT } from "@/lib/key-change";
+import { rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
 
 export const maxDuration = 800;
 
@@ -191,11 +193,13 @@ export async function POST(
   let reconciled = 0;
   const { data: rows } = await db
     .from("questions")
-    .select("id, original_question_number, question_type, correct_answer, official_answer, parsing_status, parsing_notes")
+    .select(KEY_ROW_SELECT)
     .eq("module_id", id)
     .not("official_answer", "is", null);
   let keyCompared = 0;
   const keyDisagreeNums: number[] = [];
+  /** Rows whose key was set to the official one here (rescored after the key guards). */
+  const keyChangedIds: string[] = [];
   for (const r of rows ?? []) {
     const off = r.official_answer as string;
     const ai = r.correct_answer as string | null;
@@ -209,22 +213,29 @@ export async function POST(
     if (!agree) {
       if (isMc && ai) keyDisagreeNums.push(r.original_question_number as number);
       reconciled++;
-      const { update } = applyLiveHold(
+      const notes = `Re-parse: official key=${off}, solver said ${ai ?? "?"} — verify`;
+      const { update, held } = applyLiveHold(
         r as LiveHoldRow,
-        {
-          correct_answer: off,
-          parsing_status: "Needs Review",
-          parsing_notes: `Re-parse: official key=${off}, solver said ${ai ?? "?"} — verify`,
-          updated_at: new Date().toISOString(),
-        },
+        { correct_answer: off, parsing_status: "Needs Review", parsing_notes: notes, updated_at: new Date().toISOString() },
         "Official key disagrees with the stored answer",
         live,
       );
+      // A live question keeps its key (held above). Otherwise the official
+      // key is saved with NO explanation (the old one argued the solver's
+      // answer) and the row stays in Needs Review; the explanation is written
+      // and checked later by the explain / auto-fix passes. No AI here and no
+      // rescoring yet: the key is only trusted after the module-level key
+      // guards below.
+      if (!held) {
+        update.explanation = null;
+        keyChangedIds.push(r.id as string);
+      }
       await db.from("questions").update(update).eq("id", r.id);
     }
   }
 
   let cleanup, explained, audit, figures, choicesRecovery, promote;
+  let rescored: { rescored: number; held: number } | undefined;
   try { cleanup = await runPostParseCleanup(id, db); } catch (e) { cleanup = { error: String(e) }; }
   // Explain toward the official answer BEFORE the audit — same as the parse
   // pipeline's Phase 4b — so the audit sees consistent answer↔explanation pairs.
@@ -243,6 +254,7 @@ export async function POST(
     const disagreeNote = keyDisagreementNote(keyDisagreeNums.length, keyCompared);
     if (disagreeNote) await flagQuestionsForReview(id, db, disagreeNote, keyDisagreeNums);
     await enforceStemIntegrity(id, db);
+    rescored = await rescoreOfficialKeyChanges(db, id, keyChangedIds, keyModuleNote ?? disagreeNote ?? null);
   } catch (e) { console.error("[reparse-inplace] key/stem guards:", e); }
   try { await checkNumberContiguity(id, db); } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
   try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
@@ -258,6 +270,7 @@ export async function POST(
     orphanQnums: orphans,
     solver: solverStats,
     reconciledToOfficial: reconciled,
+    rescored,
     cleanup,
     explained,
     audit,

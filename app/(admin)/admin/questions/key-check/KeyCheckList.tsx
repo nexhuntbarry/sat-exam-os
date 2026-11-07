@@ -73,7 +73,7 @@ export default function KeyCheckList({ findings, canApply }: { findings: KeyChec
       const r = json.rescore as { recordsUpdated: number; submissionsRescored: number } | null;
       setDone((d) => ({
         ...d,
-        [open.id]: `Applied${r ? ` · ${r.submissionsRescored} attempt${r.submissionsRescored === 1 ? "" : "s"} rescored` : ""}${json.live ? " · kept Approved ([live-fix])" : ""}${json.rescoreError ? ` · ${json.rescoreError}` : ""}`,
+        [open.id]: `Applied${r ? ` · ${r.submissionsRescored} attempt${r.submissionsRescored === 1 ? "" : "s"} rescored` : ""}${json.live ? " · kept Approved ([live-fix])" : ""}${json.rescoreError ? ` · ${json.rescoreError}` : ""}${json.warning ? ` · ${json.warning}` : ""}`,
       }));
       setOpen(null);
       setPreview(null);

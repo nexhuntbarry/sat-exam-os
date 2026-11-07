@@ -90,12 +90,14 @@ export function choiceCropProblems(label: string, px: CropPixelCheck | null, oth
 
 /**
  * Pure (text layer): question `questionNumber`'s figure may run across a page
- * break — the question is the last one on `page` and the next page starts
- * with an image before its first question-number bar. `zones` =
+ * break — the question is the last one on its page (found by its number bar;
+ * `page` = the stored page, a hint), its own image reaches the bottom of that
+ * page, and the next page starts with an image before its first
+ * question-number bar. `zones` =
  * figureExclusionZones(layout).
  */
 export function figureMayContinue(
-  layout: Pick<PrintoutLayout, "elements">,
+  layout: Pick<PrintoutLayout, "elements" | "pages">,
   zones: ExclusionZone[],
   page: number,
   questionNumber: number,
@@ -105,9 +107,20 @@ export function figureMayContinue(
     layout.elements.some(
       (e) => e.kind === "text" && e.page === b.page && e.plain === String(questionNumber) && (e.x0 + e.x1) / 2 > b.x0 && (e.x0 + e.x1) / 2 < b.x1 && (e.y0 + e.y1) / 2 > b.y0 && (e.y0 + e.y1) / 2 < b.y1,
     );
-  const own = bars.find((b) => b.page === page && numberIn(b));
+  // The stored page_number is sometimes off (it can point at the previous
+  // question's page), so find the question's own number bar on any page;
+  // `page` only breaks a tie.
+  const mine = bars.filter(numberIn);
+  const own = mine.find((b) => b.page === page) ?? mine[0];
   if (!own) return false;
-  if (bars.some((b) => b.page === page && b.y0 > own.y1)) return false; // another question follows on the same page
-  const nextBarY = Math.min(Infinity, ...bars.filter((b) => b.page === page + 1).map((b) => b.y0));
-  return layout.elements.some((e) => e.kind === "image" && e.page === page + 1 && e.y0 < nextBarY);
+  const p = own.page;
+  if (bars.some((b) => b.page === p && b.y0 > own.y1)) return false; // another question follows on the same page
+  // The question's own figure must run to the bottom of its page (a break cut it there).
+  const pageH = layout.pages[p - 1]?.height ?? 792;
+  if (!layout.elements.some((e) => e.kind === "image" && e.page === p && e.y0 > own.y0 && e.y1 >= pageH * 0.88)) return false;
+  const nextBarY = Math.min(Infinity, ...bars.filter((b) => b.page === p + 1).map((b) => b.y0));
+  // An image inside an answer-choice frame is a choice, not the figure's continuation.
+  const inChoice = (e: { page: number; x0: number; y0: number; x1: number; y1: number }) =>
+    zones.some((z) => (z.kind === "choice" || z.kind === "answer") && z.page === e.page && (e.x0 + e.x1) / 2 > z.x0 && (e.x0 + e.x1) / 2 < z.x1 && (e.y0 + e.y1) / 2 > z.y0 && (e.y0 + e.y1) / 2 < z.y1);
+  return layout.elements.some((e) => e.kind === "image" && e.page === p + 1 && e.y0 < nextBarY && !inChoice(e));
 }

@@ -1023,8 +1023,12 @@ function letterFromExplanationTrailer(
   explanation: string | null,
 ): string | null {
   if (!explanation) return null;
-  const m = explanation.match(/Final answer:\s*([^\n]+)/i);
+  // "Final answer: X" or the closing "Answer: X" line (fill-in: "Answer: 2/3;
+  // … also accepted." — only the value before the ";").
+  const all = [...explanation.matchAll(/(?:Final answer|(?:^|\n)[ \t]*\**Answer\**)\s*:\s*([^\n]+)/gi)];
+  const m = all[all.length - 1];
   if (!m) return null;
+  if (!/final answer/i.test(m[0])) m[1] = m[1].split(";")[0].replace(/\*\*/g, "");
   const value = m[1].trim().replace(/[.,;)]+$/, "");
   return value || null;
 }

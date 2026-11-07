@@ -18,7 +18,7 @@
 //   3. Answer key: where the PDF ticks a different letter, official_answer and
 //      correct_answer become the ticked letter. Then — exactly like the admin
 //      question PATCH — the explanation is regenerated for the key
-//      (explainOneAnswer) and rescoreQuestion regrades answer_records and
+//      (settleExplanationForKey) and rescoreQuestion regrades answer_records and
 //      submissions. Rows whose choices changed also get a fresh explanation
 //      (the old one argued about the wrong options).
 //   4. Rows the audit could not verify (blank AI re-read of a scanned page,
@@ -287,7 +287,7 @@ async function main() {
   writeFileSync(backup, JSON.stringify({ questions: fullRows, answer_records: subRecordsAll, submissions: subsAll }, null, 2));
   console.log(`\nBackup written: ${backup}`);
 
-  const { explainOneAnswer } = await import("../lib/ai/solve-question");
+  const { KEY_ROW_SELECT, prepareKeyChange } = await import("../lib/key-change");
   const { rescoreQuestion } = await import("../lib/rescore");
   const now = () => new Date().toISOString();
   for (const p of plans) {
@@ -310,16 +310,21 @@ async function main() {
       update.correct_answer = p.newAnswer;
       update.mismatch_with_official = false;
     }
+    // The key (and new choices) are saved in ONE write together with an
+    // explanation written from an independent solve and checked
+    // (lib/key-change.ts); on failure the row goes to Needs Review (live:
+    // explanation hidden + [live-fix]).
+    const finalKey = p.newAnswer ?? r.correct_answer;
+    if (finalKey && (p.newAnswer || p.newChoices)) {
+      const { data: full } = await db.from("questions").select(KEY_ROW_SELECT).eq("id", r.id).single();
+      const prepared = await prepareKeyChange(db, { ...full, ...update } as Parameters<typeof prepareKeyChange>[1], { route: "key-change", keyChanged: true });
+      Object.assign(update, prepared.patch);
+      if (!prepared.ok) console.warn(`Q${r.original_question_number} ${p.module}: no checked explanation — ${prepared.explanation.reason}`);
+    }
     const { error } = await db.from("questions").update(update).eq("id", r.id);
     if (error) {
       console.error(`Q${r.original_question_number} ${p.module}: update failed — ${error.message}`);
       continue;
-    }
-    // Same downstream steps as the admin question PATCH.
-    const finalKey = p.newAnswer ?? r.correct_answer;
-    if (finalKey && (p.newAnswer || p.newChoices)) {
-      const expl = await explainOneAnswer(r.id, finalKey, db);
-      if (!expl) console.warn(`Q${r.original_question_number} ${p.module}: explanation regen failed — old explanation kept`);
     }
     let rescore = "";
     if (p.newAnswer) {
