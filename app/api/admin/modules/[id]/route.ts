@@ -164,7 +164,32 @@ export async function DELETE(
     }
   }
 
+  // Only delete the PDF blob when nothing else points at it. Another module
+  // (e.g. a duplicate upload created with the same pdfUrl) or questions in
+  // other modules (source_pdf_url) may still depend on this file — deleting it
+  // then leaves those modules with a 404 source PDF (2026-11-07 incident:
+  // June 2024 A SAT English Module 2).
+  let pdfShared = false;
   if (mod.pdf_url) {
+    const [{ count: otherMods }, { count: otherQs }] = await Promise.all([
+      db
+        .from("modules")
+        .select("id", { count: "exact", head: true })
+        .eq("pdf_url", mod.pdf_url)
+        .neq("id", id),
+      db
+        .from("questions")
+        .select("id", { count: "exact", head: true })
+        .eq("source_pdf_url", mod.pdf_url)
+        .neq("module_id", id),
+    ]);
+    pdfShared = (otherMods ?? 0) > 0 || (otherQs ?? 0) > 0;
+    if (pdfShared) {
+      console.warn("[modules DELETE] PDF still referenced elsewhere — keeping blob:", mod.pdf_url);
+    }
+  }
+
+  if (mod.pdf_url && !pdfShared) {
     try {
       await del(mod.pdf_url);
     } catch (err) {
