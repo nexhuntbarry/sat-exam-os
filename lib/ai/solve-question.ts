@@ -24,6 +24,7 @@ import { logUsage, QUOTE_RULE } from "./parse-pdf";
 import type { getServiceClient } from "@/lib/supabase";
 import { findParsePlaceholder, placeholderNote, stemFigureMissing } from "@/lib/parse-guards";
 import { applyLiveHold, holdLiveDemotion, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
+import { answersMatch } from "@/lib/grade-submission";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -974,4 +975,253 @@ export async function explainOneAnswer(
     console.error(`[explain-one] ${questionId}:`, e instanceof Error ? e.message : e);
     return null;
   }
+}
+
+// ── Reviewer "Regenerate explanation" ────────────────────────────────
+// Writes a fresh explanation for the question AS GIVEN (the review page sends
+// its current, possibly unsaved, text/choices/answer). The explanation always
+// argues the given answer; the model separately reports the answer it gets on
+// its own so the page can warn when the two differ. Never changes the answer.
+
+const RegenExplanationSchema = z.object({
+  independent_answer: z
+    .string()
+    .describe(
+      "Solve the question yourself first, IGNORING the given answer. For Multiple Choice: the single letter A/B/C/D only. For Student Produced Response: the value only (no units, no $). Empty string if it cannot be determined.",
+    ),
+  explanation: z
+    .string()
+    .describe(
+      "A clear, complete, self-contained explanation of WHY the GIVEN correct answer is correct, and briefly why the others are wrong. Never contradict it or name a different answer.",
+    ),
+});
+
+const REGEN_EXPLANATION_SYSTEM = `${EXPLAIN_OFFICIAL_SYSTEM}
+
+INDEPENDENT CHECK: before writing the explanation, solve the question on your own as if no answer were given, and put that result in independent_answer. This is only a cross-check for the reviewer — it never changes what the explanation argues. The explanation must still justify the GIVEN answer.`;
+
+export const REGEN_EXPLANATION_FAILED = "Couldn't produce a complete explanation.";
+
+export interface RegenExplanationInput {
+  questionId: string;
+  questionNumber: number | null;
+  questionText: string;
+  choices: unknown;
+  questionType: string | null;
+  answer: string;
+  /** Stem figure URLs (stored on the question). */
+  imageUrls?: string[] | null;
+}
+
+export type RegenExplanationResult =
+  | { ok: true; explanation: string; aiAnswer: string | null; agrees: boolean }
+  | { ok: false; error: string };
+
+/** Does the model's own answer match the saved key (letters or values)? */
+export function aiAnswerAgrees(aiAnswer: string | null, saved: string, isMcq: boolean): boolean {
+  if (!aiAnswer) return true; // nothing to compare — no warning
+  if (isMcq) {
+    const letter = (s: string) => s.trim().replace(/^\(?\s*([A-D])\b.*$/i, "$1").toUpperCase();
+    return letter(aiAnswer) === letter(saved);
+  }
+  const clean = (s: string) => s.replace(/\$/g, "").trim();
+  return answersMatch(clean(aiAnswer), clean(saved)) || answersAgree(clean(aiAnswer), clean(saved));
+}
+
+export async function regenerateExplanation(
+  input: RegenExplanationInput,
+  callerUserId?: string,
+): Promise<RegenExplanationResult> {
+  const isMcq = input.questionType !== "Student Produced Response";
+  const choices = Array.isArray(input.choices)
+    ? (input.choices as { label?: string; text?: string; image_url?: string | null }[])
+    : [];
+  const ch = choices
+    .map((c) => `${c.label}) ${c.text || (c.image_url ? `(a graph — see the attached image labelled "Choice ${c.label}")` : "")}`)
+    .join("\n");
+
+  const imageBlocks: Array<{ type: "image"; image: string; mediaType: string } | { type: "text"; text: string }> = [];
+  for (const url of (input.imageUrls ?? []).slice(0, 4)) {
+    const f = await fetchImageAsBase64(url);
+    if (f) imageBlocks.push({ type: "image", image: f.base64, mediaType: f.mediaType });
+  }
+  for (const c of choices) {
+    if (!c.image_url) continue;
+    const f = await fetchImageAsBase64(c.image_url);
+    if (f) {
+      imageBlocks.push({ type: "text", text: `Choice ${c.label}:` });
+      imageBlocks.push({ type: "image", image: f.base64, mediaType: f.mediaType });
+    }
+  }
+
+  const prompt = `Question ${input.questionNumber ?? ""} (${isMcq ? "Multiple Choice" : "Student Produced Response"}):\n${input.questionText}${ch ? `\n\nChoices:\n${ch}` : ""}\n\nThe correct answer is: ${input.answer}\n\nWrite a COMPLETE explanation of why ${input.answer} is correct — do not cut off.`;
+  const params = {
+    model: anthropic("claude-sonnet-4-6"),
+    schema: RegenExplanationSchema,
+    system: REGEN_EXPLANATION_SYSTEM,
+    maxOutputTokens: 3000,
+    maxRetries: 2,
+    messages: [{ role: "user" as const, content: [...imageBlocks, { type: "text" as const, text: prompt }] }],
+  };
+
+  // Same cut-off check as the pipeline (looksTruncated); one retry, then give up.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await generateObject(params);
+      const usage = res.usage;
+      if (usage) {
+        const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
+        await logUsage({ userId: callerUserId, route: "regenerate-explanation", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: input.questionId, attempt } });
+      }
+      // A LaTeX command whose backslash got read as a JSON escape ("\times" →
+      // TAB + "imes", "\frac" → form feed + "rac"): put the backslash back.
+      const explanation = stripMetaNarration(res.object.explanation)
+        .replace(/\t(?=[a-z])/g, "\\t")
+        .replace(/\f(?=[a-z])/g, "\\f")
+        .replace(/\x08(?=[a-z])/g, "\\b")
+        .replace(/\r(?=[a-z])/g, "\\r")
+        .trim();
+      if (!explanation || looksTruncated(explanation)) {
+        console.warn(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} looks cut off`);
+        continue;
+      }
+      const aiAnswer = res.object.independent_answer.trim() || null;
+      return { ok: true, explanation, aiAnswer, agrees: aiAnswerAgrees(aiAnswer, input.answer, isMcq) };
+    } catch (e) {
+      console.error(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+  return { ok: false, error: REGEN_EXPLANATION_FAILED };
+}
+
+export const REGEN_EXPLANATION_NOTE = "Needs review: explanation was cut off and regenerated by AI — check it.";
+
+const REGEN_DISAGREE_PREFIX = "Needs review: AI's own answer is";
+
+export function regenDisagreeNote(aiAnswer: string, saved: string): string {
+  return `${REGEN_DISAGREE_PREFIX} ${aiAnswer} but the saved key is ${saved} — check the key (the explanation argues ${saved}).`;
+}
+
+interface CutOffRow {
+  id: string;
+  original_question_number: number | null;
+  question_text: string | null;
+  choices: unknown;
+  question_type: string | null;
+  correct_answer: string | null;
+  explanation: string | null;
+  parsing_status: string | null;
+  parsing_notes: string | null;
+  image_urls: unknown;
+}
+
+function isCutOffTarget(r: { parsing_status: string | null; correct_answer: string | null; explanation: string | null }): boolean {
+  return r.parsing_status !== "Rejected" && !!r.correct_answer && looksTruncated(r.explanation);
+}
+
+/** Questions in a module whose explanation looks cut off and that have a key to explain. */
+export async function listCutOffExplanations(
+  moduleId: string,
+  db: DbClient,
+): Promise<{ id: string; number: number | null }[]> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, original_question_number, explanation, correct_answer, parsing_status")
+    .eq("module_id", moduleId)
+    .order("original_question_number");
+  if (error) throw new Error(`listCutOffExplanations: ${error.message}`);
+  return (data ?? [])
+    .filter((r) => isCutOffTarget(r))
+    .map((r) => ({ id: r.id as string, number: r.original_question_number as number | null }));
+}
+
+export interface BulkRegenOutcome {
+  id: string;
+  number: number | null;
+  status: "regenerated" | "failed" | "skipped";
+  /** Set when the AI's own answer differs from the saved key. */
+  aiAnswer?: string;
+  /** Kept Approved with a [live-fix] note because it is in a live test. */
+  liveFix?: boolean;
+}
+
+/**
+ * Bulk-regenerate cut-off explanations for `ids` (all in `moduleId`). Writes
+ * only the explanation and a review note — never the answer, never approves.
+ * Draft / Needs Review rows keep their status; an Approved row goes back to
+ * Needs Review, unless it is in a live test: then it stays Approved and gets
+ * a "[live-fix]" note (lib/live-questions).
+ */
+export async function regenerateCutOffExplanationsBatch(
+  moduleId: string,
+  ids: string[],
+  db: DbClient,
+  callerUserId?: string,
+): Promise<BulkRegenOutcome[]> {
+  const { data, error } = await db
+    .from("questions")
+    .select("id, original_question_number, question_text, choices, question_type, correct_answer, explanation, parsing_status, parsing_notes, image_urls")
+    .eq("module_id", moduleId)
+    .in("id", ids);
+  if (error) throw new Error(`regenerateCutOffExplanationsBatch: ${error.message}`);
+  const rows = (data ?? []) as CutOffRow[];
+  const live = await liveQuestionIds(db, rows.filter((r) => r.parsing_status === "Approved").map((r) => r.id));
+  const out: BulkRegenOutcome[] = [];
+  const CHUNK = 4;
+  for (let i = 0; i < rows.length; i += CHUNK) {
+    await Promise.all(
+      rows.slice(i, i + CHUNK).map(async (q) => {
+        const base = { id: q.id, number: q.original_question_number };
+        // Re-check: someone may have fixed it since the list was made.
+        if (!isCutOffTarget(q)) {
+          out.push({ ...base, status: "skipped" });
+          return;
+        }
+        const answer = q.correct_answer as string;
+        const res = await regenerateExplanation(
+          {
+            questionId: q.id,
+            questionNumber: q.original_question_number,
+            questionText: q.question_text ?? "",
+            choices: q.choices,
+            questionType: q.question_type,
+            answer,
+            imageUrls: Array.isArray(q.image_urls) ? (q.image_urls as string[]) : null,
+          },
+          callerUserId,
+        );
+        if (!res.ok) {
+          out.push({ ...base, status: "failed" });
+          return;
+        }
+        const disagree = !res.agrees && res.aiAnswer ? res.aiAnswer : null;
+        const prior = (q.parsing_notes ?? "")
+          .split(/;\s*/)
+          .filter((p) => p && p !== TRUNCATION_NOTE && p !== REGEN_EXPLANATION_NOTE && !p.startsWith(REGEN_DISAGREE_PREFIX));
+        const notes = [...prior, REGEN_EXPLANATION_NOTE, ...(disagree ? [regenDisagreeNote(disagree, answer)] : [])].join("; ");
+        const update: Record<string, unknown> = {
+          explanation: res.explanation,
+          parsing_notes: notes,
+          updated_at: new Date().toISOString(),
+        };
+        // Keep it in review: an Approved row goes back to Needs Review (held
+        // for a live question). Draft / Needs Review keep their status.
+        if (q.parsing_status === "Approved") update.parsing_status = "Needs Review";
+        const hold = applyLiveHold(q, update, "Cut-off explanation regenerated by AI", live);
+        const { error: upErr } = await db.from("questions").update(hold.update).eq("id", q.id);
+        if (upErr) {
+          console.error(`[regen-explanation] bulk write ${q.id}:`, upErr.message);
+          out.push({ ...base, status: "failed" });
+          return;
+        }
+        out.push({
+          ...base,
+          status: "regenerated",
+          ...(disagree ? { aiAnswer: disagree } : {}),
+          ...(hold.held ? { liveFix: true } : {}),
+        });
+      }),
+    );
+  }
+  return out.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
 }

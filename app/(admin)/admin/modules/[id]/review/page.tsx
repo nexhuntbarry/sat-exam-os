@@ -5,6 +5,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { Suspense } from "react";
 import QuestionBankTable from "@/components/questions/QuestionBankTable";
 import BulkApproveHighConfidence from "./BulkApproveHighConfidence";
+import RegenerateCutOffExplanations from "./RegenerateCutOffExplanations";
 
 async function getModuleSummary(id: string) {
   const db = getServiceClient();
@@ -72,6 +73,7 @@ export default async function ModuleReviewPage({
           </span>
         </div>
 
+        <RegenerateCutOffExplanations moduleId={id} />
         <BulkApproveHighConfidence moduleId={id} />
       </div>
 

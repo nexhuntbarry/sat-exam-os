@@ -165,6 +165,11 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
   // to the saved copy until the reviewer applies or closes it.
   const [reextracting, setReextracting] = useState(false);
   const [reextract, setReextract] = useState<ReextractProposal | null>(null);
+  // "Regenerate explanation": an AI-written explanation for the question as
+  // it is on the page now, previewed until the reviewer picks Use or Discard.
+  const [regenBusy, setRegenBusy] = useState(false);
+  const [regenError, setRegenError] = useState<string | null>(null);
+  const [regen, setRegen] = useState<{ explanation: string; forAnswer: string; aiAnswer: string | null; agrees: boolean } | null>(null);
 
   // Delete or replace one extracted image (reviewer cleanup of bad crops).
   async function editImage(index: number, action: "delete" | "replace", png?: Blob) {
@@ -444,6 +449,41 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
       showToast("Couldn't read the PDF", false);
     } finally {
       setReextracting(false);
+    }
+  }
+
+  // Sends the page's current (possibly unsaved) text, choices and answer.
+  // Nothing is saved: the preview only fills the field on Use.
+  async function runRegenerateExplanation() {
+    const answer = (q.correct_answer ?? "").trim();
+    setRegen(null);
+    setRegenError(null);
+    if (!answer) {
+      setRegenError("Set the correct answer first.");
+      return;
+    }
+    setRegenBusy(true);
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}/regenerate-explanation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_text: q.question_text,
+          choices: q.choices,
+          correct_answer: answer,
+          question_type: q.question_type,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json.ok) {
+        setRegen({ explanation: json.explanation, forAnswer: answer, aiAnswer: json.ai_answer ?? null, agrees: json.agrees !== false });
+      } else {
+        setRegenError(json.error ?? "Couldn't produce a complete explanation.");
+      }
+    } catch {
+      setRegenError("Couldn't produce a complete explanation.");
+    } finally {
+      setRegenBusy(false);
     }
   }
 
@@ -1090,11 +1130,65 @@ export default function QuestionReviewPanel({ question: initial, nav }: Question
           </div>
 
           <div>
-            <label className="block text-xs text-soft-mute mb-1">
-              Explanation {q.explanation && (
-                <span className="text-soft-mute/70">({q.explanation.length} chars)</span>
-              )}
-            </label>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label className="block text-xs text-soft-mute">
+                Explanation {q.explanation && (
+                  <span className="text-soft-mute/70">({q.explanation.length} chars)</span>
+                )}
+              </label>
+              <button
+                type="button"
+                onClick={runRegenerateExplanation}
+                disabled={regenBusy}
+                title="Write a new explanation from the question, choices and answer as they are on this page (unsaved edits included). Nothing is saved until you click Use and then Save."
+                className="inline-flex items-center gap-1.5 rounded-lg border border-divider bg-surface px-2.5 py-1 text-xs font-medium text-charcoal hover:bg-light-bg disabled:opacity-60"
+              >
+                <Sparkles size={13} />
+                {regenBusy ? "Writing… (about 10–40 s)" : "Regenerate explanation"}
+              </button>
+            </div>
+            {regenError && (
+              <p role="alert" className="mb-2 rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error">
+                {regenError}
+              </p>
+            )}
+            {regen && (
+              <section aria-label="Regenerated explanation" className="mb-2 rounded-xl border border-warm-amber/40 bg-warm-amber/5 p-3 space-y-2">
+                <p className="text-xs font-medium text-charcoal">
+                  New explanation (preview — not saved) · explains answer {regen.forAnswer}
+                </p>
+                {!regen.agrees && regen.aiAnswer && (
+                  <p role="alert" className="rounded-lg border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs text-status-warning">
+                    Warning: working it out on its own, the AI got <strong>{regen.aiAnswer}</strong>, but the answer on this page is{" "}
+                    <strong>{regen.forAnswer}</strong>. The explanation still argues {regen.forAnswer} — check the answer key. The answer was not changed.
+                  </p>
+                )}
+                {(q.correct_answer ?? "").trim() !== regen.forAnswer && (
+                  <p className="text-xs text-status-warning">The answer on the page has changed since this was written.</p>
+                )}
+                <MathMarkdown className="prose prose-sm max-w-none text-charcoal">{regen.explanation}</MathMarkdown>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQ((prev) => ({ ...prev, explanation: regen.explanation }));
+                      setRegen(null);
+                      showToast("Explanation filled in. Review it, then Save.");
+                    }}
+                    className="rounded-lg bg-warm-coral px-3 py-1 text-xs font-medium text-white hover:opacity-90"
+                  >
+                    Use
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRegen(null)}
+                    className="rounded-lg border border-divider bg-surface px-3 py-1 text-xs font-medium text-charcoal hover:bg-light-bg"
+                  >
+                    Discard
+                  </button>
+                </div>
+              </section>
+            )}
             <EditableMath
               label="Explanation"
               value={q.explanation ?? ""}
