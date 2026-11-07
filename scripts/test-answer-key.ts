@@ -16,6 +16,7 @@ import {
   answersAgreeForQuestion,
   mcKeyProblem,
   normalizeKeyText,
+  keyCandidates,
 } from "../lib/answer-key";
 import { safeEvaluate, tryEvaluate, equationHolds, SafeEvalError } from "../lib/math/safe-eval";
 import { findApproveBlocker } from "../lib/parse-guards";
@@ -81,6 +82,31 @@ eq(
   0,
   "last instruction wins",
 );
+// Only the question sentence carries the instruction (review M2).
+eq(
+  roundingInstruction("The table shows values rounded to the nearest tenth. What is the exact value of x?"),
+  null,
+  "rounding in a data description is not an instruction",
+);
+eq(
+  keyTypeProblem({
+    question_type: "Student Produced Response",
+    question_text: "The table shows values rounded to the nearest tenth. What is the exact value of x?",
+    correct_answer: "1/3",
+    choices: [],
+  }),
+  null,
+  "M2: exact value 1/3 passes despite 'nearest tenth' in the data description",
+);
+eq(roundingInstruction("What is x? Round your answer to the nearest tenth.")?.places, 1, "instruction after the question");
+eq(roundingInstruction("A population of 3.5 million grew. Round to the nearest hundredth.")?.places, 2, "no '?': final sentence");
+eq(roundingInstruction("Prices were rounded to the nearest dollar.\nWhat is the exact mean price?"), null, "line break separates sentences");
+// L3: larger place values.
+eq(roundingInstruction("to the nearest ten thousand")?.places, -4, "nearest ten thousand");
+eq(roundingInstruction("to the nearest ten-thousand")?.places, -4, "nearest ten-thousand");
+eq(roundingInstruction("to the nearest hundred thousand")?.places, -5, "nearest hundred thousand");
+eq(roundingInstruction("to the nearest million")?.places, -6, "nearest million");
+eq(roundingInstruction("to the nearest thousand")?.places, -3, "nearest thousand still");
 eq(applyRounding(248.2, 0), 248, "248.2 → 248");
 eq(applyRounding(248.5, 0), 249, "248.5 → 249 (half up)");
 eq(applyRounding(2.675, 2), 2.68, "2.675 → 2.68 (float-safe)");
@@ -163,6 +189,23 @@ eq(aiAnswerAgrees("C", "B", true), false, "aiAnswerAgrees MC");
 // ── Key / type mismatch + approve gate ───────────────────────────────
 const sprBase = { question_type: "Student Produced Response", question_text: "What is x?", choices: [] };
 eq(keyTypeProblem({ ...sprBase, correct_answer: "C" })?.code, "spr-letter-key", "SPR letter key");
+// L2: overlong keys are refused before any candidate split.
+eq(keyTypeProblem({ ...sprBase, correct_answer: "1".repeat(201) })?.code, "key-too-long", "key over 200 chars");
+eq(keyTypeProblem({ question_type: "Multiple Choice", correct_answer: "x, ".repeat(5000), choices: [] })?.code, "key-too-long", "huge MC key");
+eq(keyCandidates("1, ".repeat(10000)).length <= 200, true, "keyCandidates caps its input");
+// L1: prototype names aren't functions, variables or constants.
+const evalError = (e: string) => {
+  try {
+    safeEvaluate(e);
+    return "no error";
+  } catch (x) {
+    return x instanceof SafeEvalError ? x.message.replace(/".*"/, "…") : "other error";
+  }
+};
+for (const name of ["constructor", "valueOf", "hasOwnProperty"]) {
+  eq(evalError(name), "unknown name …", `"${name}" is not a variable or constant`);
+  eq(evalError(`${name}(1)`), "unknown function …", `"${name}(1)" is not a function`);
+}
 eq(keyTypeProblem({ ...sprBase, correct_answer: "1,000" })?.code, "spr-invalid-form", "SPR comma");
 eq(keyTypeProblem({ ...sprBase, correct_answer: "7/2 or 3.5" }), null, "SPR multiple answers ok");
 eq(keyTypeProblem({ ...sprBase, correct_answer: "5 | -13" }), null, "SPR pipe-separated ok");

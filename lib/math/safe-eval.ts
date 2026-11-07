@@ -175,7 +175,7 @@ export function safeEvaluate(expression: string, vars: Record<string, number> = 
     if (t.t === "name") {
       pos++;
       if (isOp("(")) {
-        const f = FUNCTIONS[t.v];
+        const f = Object.hasOwn(FUNCTIONS, t.v) ? FUNCTIONS[t.v] : undefined;
         if (!f) throw new SafeEvalError(`unknown function "${t.v}"`);
         pos++;
         const args: number[] = [];
@@ -192,8 +192,8 @@ export function safeEvaluate(expression: string, vars: Record<string, number> = 
         }
         return f.fn(...args);
       }
-      if (t.v in scope) return scope[t.v];
-      if (t.v in CONSTANTS) return CONSTANTS[t.v];
+      if (Object.hasOwn(scope, t.v)) return scope[t.v];
+      if (Object.hasOwn(CONSTANTS, t.v)) return CONSTANTS[t.v];
       throw new SafeEvalError(`unknown name "${t.v}"`);
     }
     if (t.v === "(") {

@@ -86,6 +86,8 @@ const ParsedQuestionSchema = z.object({
   question_type: z.enum(["Multiple Choice", "Student Produced Response"]),
   has_answer_box: z
     .boolean()
+    .optional()
+    .default(false)
     .describe(
       "True when this question's own area shows a student-response answer box / entry field / \"Answer Preview\" instead of A–D options (a fill-in question).",
     ),

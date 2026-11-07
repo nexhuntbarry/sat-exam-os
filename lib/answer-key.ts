@@ -36,13 +36,19 @@ export function normalizeKeyText(s: string | null | undefined): string {
     .trim();
 }
 
+/** Longest answer key accepted (PATCH rejects longer; checks cap here). */
+export const MAX_KEY_LENGTH = 200;
+
 /**
  * The acceptable answers listed in one key — same split as
  * lib/grade-submission answerCandidates (" or ", "|", ";", newline, ", ").
  */
 export function keyCandidates(key: string | null | undefined): string[] {
   if (!key) return [];
+  // A real key is a few characters; cap the input so a pasted essay can't
+  // make the split regex do much work.
   return String(key)
+    .slice(0, MAX_KEY_LENGTH)
     .split(/\s*(?:\bor\b|[\n;|])\s*|,\s+|(?<=\D),(?=\D)/i)
     .map((c) => c.trim())
     .filter((c) => c.length > 0);
@@ -108,21 +114,48 @@ const ROUNDING_PATTERNS: Array<[RegExp, number, string]> = [
   ],
   [/\btenths?\s+place\b/gi, 1, "nearest tenth"],
   [/\bhundredths?\s+place\b/gi, 2, "nearest hundredth"],
+  [/nearest\s+million\b/gi, -6, "nearest million"],
+  [/nearest\s+hundred[-\s]thousand\b/gi, -5, "nearest hundred thousand"],
+  [/nearest\s+ten[-\s]thousand\b/gi, -4, "nearest ten thousand"],
   [/nearest\s+thousand\b/gi, -3, "nearest thousand"],
-  [/nearest\s+hundred\b/gi, -2, "nearest hundred"],
-  [/nearest\s+ten\b/gi, -1, "nearest ten"],
+  [/nearest\s+hundred\b(?![-\s]thousand\b)/gi, -2, "nearest hundred"],
+  [/nearest\s+ten\b(?![-\s]thousand\b)/gi, -1, "nearest ten"],
   [/\b(?:to\s+)?(one|1)\s+decimal\s+places?\b/gi, 1, "one decimal place"],
   [/\b(?:to\s+)?(two|2)\s+decimal\s+places\b/gi, 2, "two decimal places"],
   [/\b(?:to\s+)?(three|3)\s+decimal\s+places\b/gi, 3, "three decimal places"],
 ];
 
 /**
+ * The part of a stem that holds the question: from the last sentence with a
+ * "?" to the end (so a trailing "Round to the nearest tenth." still counts),
+ * or the final sentence when there is no "?". Data descriptions earlier in
+ * the stem ("values rounded to the nearest tenth") are not instructions.
+ */
+export function questionSentence(questionText: string | null | undefined): string {
+  // Split after . ? ! followed by whitespace (so "3.5" stays whole), and on
+  // line breaks (tables, separate lines).
+  const sentences = (questionText ?? "")
+    .split(/(?<=[.?!])\s+|\n+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (sentences.length === 0) return "";
+  let q = -1;
+  for (let i = sentences.length - 1; i >= 0; i--) {
+    if (sentences[i].includes("?")) {
+      q = i;
+      break;
+    }
+  }
+  return q >= 0 ? sentences.slice(q).join(" ") : sentences[sentences.length - 1];
+}
+
+/**
  * The rounding the question asks for ("…to the nearest tenth"), or null.
- * When several appear, the LAST one wins: the answer instruction is part of
- * the question sentence, which comes after any passage or data description.
+ * Only the question sentence is read (questionSentence); when it names
+ * several, the LAST one wins.
  */
 export function roundingInstruction(questionText: string | null | undefined): RoundingRule | null {
-  const text = questionText ?? "";
+  const text = questionSentence(questionText);
   let best: { index: number; rule: RoundingRule } | null = null;
   for (const [re, places, label] of ROUNDING_PATTERNS) {
     re.lastIndex = 0;
@@ -226,7 +259,7 @@ function hasChoices(choices: unknown): boolean {
   );
 }
 
-export type KeyProblemCode = "spr-letter-key" | "spr-invalid-form" | "spr-rounding" | "spr-has-choices" | "mc-invalid-key";
+export type KeyProblemCode = "key-too-long" | "spr-letter-key" | "spr-invalid-form" | "spr-rounding" | "spr-has-choices" | "mc-invalid-key";
 
 export interface KeyProblem {
   code: KeyProblemCode;
@@ -245,6 +278,9 @@ export function keyTypeProblem(q: {
   choices?: unknown;
 }): KeyProblem | null {
   const key = (q.correct_answer ?? "").trim();
+  if (key.length > MAX_KEY_LENGTH) {
+    return { code: "key-too-long", reason: `the answer key is longer than ${MAX_KEY_LENGTH} characters` };
+  }
   if (q.question_type === SPR_TYPE) {
     if (key) {
       const cands = keyCandidates(key);
