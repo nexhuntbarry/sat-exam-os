@@ -189,6 +189,8 @@ export async function DELETE(
     }
   }
 
+  // Only the module's own pdf_url blob is removed; its copies under
+  // backups/modules/<id>/ (lib/pdf-backup.ts) are never deleted.
   if (mod.pdf_url && !pdfShared) {
     try {
       await del(mod.pdf_url);

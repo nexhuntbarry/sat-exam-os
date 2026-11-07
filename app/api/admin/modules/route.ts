@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
+import { backupModulePdf } from "@/lib/pdf-backup";
 
 // GET /api/admin/modules
 export async function GET() {
@@ -76,6 +77,14 @@ export async function POST(req: Request) {
   if (error) {
     console.error("[modules/post] DB error:", error);
     return NextResponse.json({ error: "Failed to create module" }, { status: 500 });
+  }
+
+  // Keep a recoverable copy of every source PDF (backups/modules/<id>/…).
+  // Best effort: a failed backup must not lose the upload the admin just made.
+  try {
+    await backupModulePdf(data.id, body.pdfUrl);
+  } catch (err) {
+    console.warn("[modules/post] PDF backup failed:", err);
   }
 
   return NextResponse.json(
