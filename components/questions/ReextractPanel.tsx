@@ -4,10 +4,14 @@ import { useState } from "react";
 import { clsx } from "clsx";
 import { FileSearch, X } from "lucide-react";
 import MathMarkdown from "@/components/MathMarkdown";
+import { answersAgreeForQuestion, keyTypeProblem } from "@/lib/answer-key";
 
 type Label = "A" | "B" | "C" | "D";
+type QType = "Multiple Choice" | "Student Produced Response";
 
 export interface ReextractProposal {
+  /** Older responses may not carry it. */
+  question_type?: QType;
   question_text: string;
   choices: { label: Label; text: string; image_url?: string | null }[];
   marked_answer: string | null;
@@ -20,6 +24,7 @@ interface Current {
   question_text: string;
   choices: { label: Label; text: string; image_url?: string | null }[];
   correct_answer: string | null;
+  question_type?: QType | null;
 }
 
 export interface ReextractPatch {
@@ -27,7 +32,12 @@ export interface ReextractPatch {
   /** Choice label → new text (graph choices are never in here). */
   choices?: Partial<Record<Label, string>>;
   correct_answer?: string;
+  /** Switch the question type to what the PDF shows. */
+  question_type?: QType;
 }
+
+const typeLabel = (t: QType | null | undefined) =>
+  t === "Student Produced Response" ? "Fill-in (SPR)" : t === "Multiple Choice" ? "Multiple choice" : "not set";
 
 const same = (a: string | null | undefined, b: string | null | undefined) =>
   (a ?? "").replace(/\s+/g, " ").trim() === (b ?? "").replace(/\s+/g, " ").trim();
@@ -62,9 +72,25 @@ export default function ReextractPanel({
     });
   }
   const differs = rows.filter((r) => !r.imageChoice && !same(r.now, r.pdf));
-  const answerDiffers = !!proposal.marked_answer && !same(proposal.marked_answer, current.correct_answer);
+  // Answers compare as values (7/2 = 3.5, rounding as the stem asks), not text.
+  const answerDiffers =
+    !!proposal.marked_answer &&
+    !same(proposal.marked_answer, current.correct_answer) &&
+    !answersAgreeForQuestion(proposal.marked_answer, current.correct_answer, proposal.question_text);
+  const pdfType = proposal.question_type ?? null;
+  const typeDiffers = !!pdfType && !!current.question_type && pdfType !== current.question_type;
+  // Does the SAVED key fit the type the PDF shows? (e.g. a letter key on a fill-in question)
+  const keyProblem = keyTypeProblem({
+    question_type: pdfType ?? current.question_type,
+    correct_answer: current.correct_answer,
+    question_text: current.question_text,
+    choices: pdfType === "Student Produced Response" ? [] : current.choices,
+  });
+  const diffCount = differs.length + (answerDiffers ? 1 : 0) + (typeDiffers ? 1 : 0) + (keyProblem && !answerDiffers ? 1 : 0);
 
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(differs.map((r) => r.key)));
+  const [picked, setPicked] = useState<Set<string>>(
+    () => new Set([...differs.map((r) => r.key), ...(typeDiffers ? ["type"] : [])]),
+  );
   const toggle = (key: string) =>
     setPicked((prev) => {
       const next = new Set(prev);
@@ -81,10 +107,13 @@ export default function ReextractPanel({
       else (patch.choices ??= {})[r.key.slice(7) as Label] = r.pdf;
     }
     if (answerDiffers && picked.has("answer")) patch.correct_answer = proposal.marked_answer!;
+    if (typeDiffers && picked.has("type") && pdfType) patch.question_type = pdfType;
     onApply(patch);
   }
 
-  const count = [...picked].filter((k) => (k === "answer" ? answerDiffers : differs.some((r) => r.key === k))).length;
+  const count = [...picked].filter((k) =>
+    k === "answer" ? answerDiffers : k === "type" ? typeDiffers : differs.some((r) => r.key === k),
+  ).length;
 
   return (
     <section
@@ -98,9 +127,9 @@ export default function ReextractPanel({
             Re-extracted from the PDF (page {proposal.pages})
           </h3>
           <p className="mt-0.5 text-xs text-soft-mute">
-            {differs.length === 0 && !answerDiffers
+            {diffCount === 0
               ? "Matches the saved copy. Nothing to change."
-              : `${differs.length + (answerDiffers ? 1 : 0)} difference${differs.length + (answerDiffers ? 1 : 0) === 1 ? "" : "s"}. Tick what to use, then Apply. Nothing is saved until you click Save.`}
+              : `${diffCount} difference${diffCount === 1 ? "" : "s"}. Tick what to use, then Apply. Nothing is saved until you click Save.`}
           </p>
         </div>
         <button type="button" onClick={onClose} aria-label="Close" className="rounded-md p-1 text-soft-mute hover:bg-light-bg hover:text-charcoal">
@@ -115,6 +144,29 @@ export default function ReextractPanel({
       )}
 
       <div className="space-y-2">
+        {pdfType && (
+          <div className={clsx("rounded-xl border bg-surface p-3", typeDiffers ? "border-status-warning/40" : "border-divider")}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-charcoal">
+                Question type in the PDF: {typeLabel(pdfType)}
+                <span className="font-normal text-soft-mute"> · saved: {typeLabel(current.question_type)}</span>
+              </span>
+              {typeDiffers ? (
+                <label className="flex items-center gap-1.5 text-xs text-charcoal">
+                  <input type="checkbox" checked={picked.has("type")} onChange={() => toggle("type")} />
+                  Use {typeLabel(pdfType)}
+                </label>
+              ) : (
+                <span className="text-[11px] text-soft-mute">Same as saved</span>
+              )}
+            </div>
+          </div>
+        )}
+        {keyProblem && (
+          <p role="alert" className="rounded-lg border border-status-warning/40 bg-status-warning/10 px-3 py-2 text-xs text-status-warning">
+            The saved answer key doesn&rsquo;t fit {pdfType ? "the type the PDF shows" : "the question type"}: {keyProblem.reason}.
+          </p>
+        )}
         {rows.map((r) => {
           const diff = differs.includes(r);
           return (
@@ -181,7 +233,7 @@ export default function ReextractPanel({
         <button type="button" onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-charcoal hover:bg-light-bg">
           Close
         </button>
-        {(differs.length > 0 || answerDiffers) && (
+        {(differs.length > 0 || answerDiffers || typeDiffers) && (
           <button
             type="button"
             onClick={apply}

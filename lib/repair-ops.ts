@@ -1024,7 +1024,7 @@ const REEXTRACT_SYSTEM = `You are re-reading ONE SAT question from its source PD
 Return the question exactly as printed:
 - question_text: the full stem: any passage, notes or bullet list, then the question sentence itself. Keep paragraph breaks as blank lines and bullets as "- " lines. Copy every word; never summarise, shorten or fix the wording.
 - choices: for Multiple Choice, the four A/B/C/D choices that FOLLOW this question's stem, verbatim. Ignore any A–D boxes printed ABOVE the stem; they belong to the previous question. If a choice is a graph or picture with no text, return text "".
-- question_type: "Multiple Choice" when there are A–D choices, otherwise "Student Produced Response".
+- question_type: "Multiple Choice" when there are A–D choices, otherwise "Student Produced Response". A question showing an answer box / entry field / "Answer Preview" is "Student Produced Response" (choices = []), even when A–D boxes of the previous question are printed above it.
 - marked_answer: the choice the PDF marks as correct (a checkmark or tick next to it), or the printed answer under a Student Produced Response box. null when nothing is marked.
 - Underlined text in the passage is wrapped in <u>…</u>.
 - found=false when this question number isn't on these pages.
@@ -1044,6 +1044,8 @@ const ReextractSchema = z.object({
 });
 
 export interface ReextractProposal {
+  /** How the PDF reads the question (compared with the saved type on the review page). */
+  question_type: "Multiple Choice" | "Student Produced Response";
   question_text: string;
   choices: { label: "A" | "B" | "C" | "D"; text: string; image_url?: string | null }[];
   marked_answer: string | null;
@@ -1131,6 +1133,7 @@ export async function reextractQuestionFromPdf(
     return {
       ok: true,
       proposal: {
+        question_type: o.question_type,
         question_text: o.question_text.trim(),
         choices,
         marked_answer: o.marked_answer?.trim() || null,
