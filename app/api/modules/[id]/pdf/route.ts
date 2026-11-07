@@ -35,7 +35,7 @@ export async function GET(
   if (blobToken) {
     headers.Authorization = `Bearer ${blobToken}`;
   }
-  const upstream = await fetch(pdfUrl.href, { headers });
+  const upstream = await fetch(pdfUrl.href, { headers, redirect: "error" });
   if (!upstream.ok || !upstream.body) {
     return NextResponse.json(
       { error: `Upstream ${upstream.status}` },
