@@ -25,6 +25,18 @@ import type { getServiceClient } from "@/lib/supabase";
 import { findParsePlaceholder, placeholderNote, stemFigureMissing } from "@/lib/parse-guards";
 import { applyLiveHold, holdLiveDemotion, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { answersMatch } from "@/lib/grade-submission";
+import {
+  SPR_TYPE,
+  answersAgreeForQuestion,
+  applyRounding,
+  checkComputedAnswer,
+  keyFormNote,
+  keyTypeProblem,
+  roundingInstruction,
+  sprValue,
+  type ComputedAnswerCheck,
+} from "@/lib/answer-key";
+import { keyDoubtNote } from "@/lib/key-doubt";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -39,6 +51,16 @@ const SolverSchema = z.object({
     .describe(
       "Step-by-step solution in plain prose, suitable for a student review. Include the key insight that gets to the answer. Markdown allowed for formula notation.",
     ),
+  answer_expression: z
+    .string()
+    .describe(
+      "Student Produced Response only: the final computation as a plain arithmetic expression (Python/JS style: numbers, + - * / ** ( ), sqrt(), abs(), pi) whose value is the answer BEFORE any rounding the question asks for — e.g. \"(3*412 + 5)/5\" or \"2*sqrt(3)\". No variables, units, words or $. Empty string for Multiple Choice.",
+    ),
+  check_equation: z
+    .string()
+    .describe(
+      "Student Produced Response only, optional: one equation from the problem that the answer must satisfy, with `ans` standing for the answer, e.g. \"3*ans + 7 == 31\". Empty string when there is none or for Multiple Choice.",
+    ),
   confidence: z.number().describe("Solver self-confidence between 0 and 1"),
   needs_drawing: z
     .boolean()
@@ -47,9 +69,23 @@ const SolverSchema = z.object({
     ),
 });
 
+/**
+ * Fill-in answers: the model writes the arithmetic, code evaluates it
+ * (lib/math/safe-eval) and applies the question's rounding (lib/answer-key).
+ * Shared by the pipeline solver, consensus solve and the review page's
+ * "AI suggestion".
+ */
+export const SPR_COMPUTATION_RULE = `STUDENT PRODUCED RESPONSE — ARITHMETIC IS CHECKED IN CODE:
+- Put the final computation in answer_expression as a plain arithmetic expression (numbers, + - * / ** ( ), sqrt(), abs(), pi). It is evaluated by a program, so never do long arithmetic in your head and never pre-round inside it.
+- Write the UNROUNDED value's expression; if the question says "round to the nearest tenth / whole number / …", the program applies that rounding. Still give your rounded answer in correct_answer.
+- When the problem gives an equation the answer must satisfy, put it in check_equation with ans for the answer (e.g. 3*ans + 7 == 31); the program plugs your answer back in.
+- The answer is a number in SAT grid form: an integer, a decimal or a fraction such as 7/2, optional leading minus; at most 5 characters (6 with the minus); no %, $, commas or units. Never a letter A–D.`;
+
 const SOLVER_SYSTEM_PROMPT = `You are an expert SAT tutor who solves SAT problems for the official answer key.
 
 Solve the supplied SAT question rigorously. For Multiple Choice questions, identify the single correct option (A/B/C/D). For Student Produced Response questions, give the exact answer the student should grid in (decimal or fraction; no units).
+
+${SPR_COMPUTATION_RULE}
 
 Your explanation must be the kind a student review tool would show after they answer — concise, step by step, and pointing out the key insight. Use plain prose with markdown allowed for formulas.
 
@@ -96,6 +132,8 @@ export type SolvedAnswer = {
   needsDrawing: boolean;
   /** True when the explanation still looks truncated after one retry. */
   truncatedExplanation: boolean;
+  /** Fill-in only: the code-evaluated computation (null when not a fill-in). */
+  computed: ComputedAnswerCheck | null;
 };
 
 /**
@@ -387,6 +425,33 @@ async function solveOneQuestion(
       });
     }
 
+    // Fill-in: evaluate the model's computation in code, apply the stem's
+    // rounding in code, plug the value back in, and compare with both the
+    // declared answer and the explanation's final answer.
+    let computed: ComputedAnswerCheck | null = null;
+    if (q.question_type === SPR_TYPE && !result.object.needs_drawing) {
+      computed = checkComputedAnswer({
+        declared,
+        expression: result.object.answer_expression,
+        checkEquation: result.object.check_equation,
+        questionText: q.question_text,
+      });
+      if (!result.object.answer_expression?.trim()) {
+        computed.problems.push("the solver gave no computation to check");
+      }
+      if (
+        computed.answer &&
+        explainedAnswer &&
+        sprValue(explainedAnswer) !== null &&
+        !answersAgreeForQuestion(explainedAnswer, computed.answer, q.question_text)
+      ) {
+        computed.problems.push(`the explanation ends with ${explainedAnswer} but the computation gives ${computed.answer}`);
+      }
+      if (computed.problems.length > 0) {
+        console.warn(`[solve-question] q${q.original_question_number}: computed-answer check: ${computed.problems.join("; ")}`);
+      }
+    }
+
     return {
       correct_answer: declared,
       explanation: explanationText,
@@ -394,6 +459,7 @@ async function solveOneQuestion(
       consistencyMismatch,
       needsDrawing: Boolean(result.object.needs_drawing),
       truncatedExplanation,
+      computed,
     };
   } catch (err) {
     console.error(
@@ -552,14 +618,54 @@ export async function solveQuestionsAndPersist(
         // answer out so the admin sees an empty field and the verbatim
         // "requires drawing" explanation. The Needs Review status below
         // surfaces it in the review queue.
+        // Fill-in: the key is the code-evaluated computation, rounded in code
+        // as the stem asks — never the model's mental arithmetic. Any
+        // disagreement (computation vs declared vs explanation, plug-back,
+        // unreadable computation) → a person decides.
+        const computed = solved.computed;
+        if (!needsDrawing && computed?.answer) savedAnswer = computed.answer;
+        const computeProblems = !needsDrawing && computed ? computed.problems : [];
+        // The key to save must fit the type (accepted SPR form, A–D for MC).
+        const keyProblem = needsDrawing
+          ? null
+          : keyTypeProblem({ question_type: q.question_type, correct_answer: savedAnswer, question_text: q.question_text, choices: q.choices });
+
         if (needsDrawing) {
           savedAnswer = null as unknown as string;
         }
 
+        const cur = currentByNumber.get(q.original_question_number);
         const needsReview =
-          solved.consistencyMismatch || sprLetterAnswer || blindImage || needsDrawing || solved.truncatedExplanation;
+          solved.consistencyMismatch ||
+          sprLetterAnswer ||
+          blindImage ||
+          needsDrawing ||
+          solved.truncatedExplanation ||
+          computeProblems.length > 0 ||
+          !!keyProblem ||
+          // A reason found at insert (e.g. choices moved across a page break) still stands.
+          cur?.parsing_status === "Needs Review";
 
         const noteParts: string[] = [];
+        // Keep the insert-time reasons (minus the placeholder and anything a
+        // previous solver run wrote) so a re-solve doesn't erase why the row
+        // is in review.
+        const priorNotes = (cur?.parsing_notes ?? "")
+          .split(/;\s*/)
+          .map((s) => s.trim())
+          .filter(
+            (s) =>
+              s &&
+              s !== "Pending AI answer" &&
+              !/^(Solver |Answer & explanation generated|has_image=true but|Needs review: computed-answer check|Needs review: answer key check|Needs review: the generated explanation looks cut off)/.test(s),
+          );
+        if (priorNotes.length > 0) noteParts.push(`${priorNotes.join("; ")};`);
+        if (computeProblems.length > 0) {
+          noteParts.push(
+            `Needs review: computed-answer check disagrees — ${computeProblems.join(", ").replace(/;/g, ",")}; stored ${savedAnswer ?? "no answer"} (needs human, no majority vote).`,
+          );
+        }
+        if (keyProblem) noteParts.push(`${keyFormNote(keyProblem)}`);
         if (needsDrawing) {
           noteParts.push(
             "Solver said this problem requires drawing/constructing a figure — no answer generated. Please solve and enter manually.",
@@ -594,7 +700,6 @@ export async function solveQuestionsAndPersist(
           parsing_notes: notes,
           parsing_status: status,
         };
-        const cur = currentByNumber.get(q.original_question_number);
         if (cur) update = applyLiveHold(cur, update, "Re-solved by the AI solver", live).update;
         const { error } = await db
           .from("questions")
@@ -684,12 +789,16 @@ interface ExplainRow {
   parsing_notes: string | null;
   has_image: boolean | null;
   image_urls: unknown;
+  question_type: string | null;
 }
 
 /**
  * For every question in the module that has an official answer, (re)write its
- * explanation to justify that answer and set correct_answer to it. Approves
- * rows with no other defect; leaves figure/choices ones Needs Review.
+ * explanation to justify that answer and set correct_answer to it. The model
+ * solves independently first; when its answer differs from the key the row
+ * gets a key-doubt note (Needs Review) instead of an explanation that argues
+ * the key. Approves rows with no other defect; leaves figure/choices/key ones
+ * Needs Review (a live-test row stays Approved with [live-fix]).
  */
 export async function explainOfficialAndPersist(
   moduleId: string,
@@ -699,7 +808,7 @@ export async function explainOfficialAndPersist(
   const { data } = await db
     .from("questions")
     .select(
-      "id, original_question_number, question_text, choices, correct_answer, official_answer, parsing_status, parsing_notes, has_image, image_urls",
+      "id, original_question_number, question_text, choices, correct_answer, official_answer, parsing_status, parsing_notes, has_image, image_urls, question_type",
     )
     .eq("module_id", moduleId)
     .not("official_answer", "is", null);
@@ -714,85 +823,62 @@ export async function explainOfficialAndPersist(
       chunk.map(async (q) => {
         const ans = q.official_answer || q.correct_answer;
         if (!ans) { skipped++; return; }
-        const ch = Array.isArray(q.choices)
-          ? (q.choices as unknown[])
-              .map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`))
-              .join("\n")
-          : "";
         try {
-          const explainParams = {
-            model: anthropic("claude-sonnet-4-6"),
-            schema: ExplainOfficialSchema,
-            system: EXPLAIN_OFFICIAL_SYSTEM,
-            maxOutputTokens: 3000,
-            maxRetries: 3,
-            messages: [
-              {
-                role: "user" as const,
-                content: [
-                  {
-                    type: "text" as const,
-                    text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${ch}\n\nThe correct answer is: ${ans}\n\nExplain why ${ans} is correct.`,
-                  },
-                ],
-              },
-            ],
-          };
-          const res = await generateObject(explainParams);
-          let explainText = stripMetaNarration(res.object.explanation);
-          // Truncation guard: retry once if explanation looks cut off.
-          let truncatedOfficial = false;
-          if (looksTruncated(explainText)) {
-            try {
-              const retry = await generateObject(explainParams);
-              const retried = stripMetaNarration(retry.object.explanation);
-              if (!looksTruncated(retried)) {
-                explainText = retried;
-              } else {
-                truncatedOfficial = true;
-                console.warn(`[explain-official] q${q.original_question_number}: explanation still truncated after retry`);
-              }
-            } catch {
-              truncatedOfficial = true;
-            }
-          }
-          rewrote++;
+          // Solve independently FIRST (independent_answer), then explain the
+          // key. If the two disagree, the key gets a conflict note and goes to
+          // a person — the explanation is NOT rewritten to justify a key the
+          // AI can't reproduce (Math Module 001 Q17: the explanation argued 249).
+          const res = await regenerateExplanation(
+            {
+              questionId: q.id,
+              questionNumber: q.original_question_number,
+              questionText: q.question_text ?? "",
+              choices: q.choices,
+              questionType: q.question_type,
+              answer: ans,
+              imageUrls: Array.isArray(q.image_urls) ? (q.image_urls as string[]) : null,
+            },
+            callerUserId,
+            "explain-official",
+          );
+          const conflict = res.ok && !res.agrees && res.aiAnswer ? res.aiAnswer : null;
+          const truncatedOfficial = !res.ok;
+          const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: ans, question_text: q.question_text, choices: q.choices });
+          if (truncatedOfficial) console.warn(`[explain-official] q${q.original_question_number}: explanation still cut off after retry`);
           const blindFigure = stemFigureMissing(q);
           const placeholder = findParsePlaceholder(q.question_text, q.choices);
-          const keep = EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") || blindFigure || placeholder !== null || truncatedOfficial;
+          const keep =
+            EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") ||
+            blindFigure ||
+            placeholder !== null ||
+            truncatedOfficial ||
+            !!conflict ||
+            !!keyProblem;
           if (keep) keptReview++; else approved++;
-          const usage = res.usage;
-          if (usage) {
-            const inTok = usage.inputTokens ?? 0;
-            const outTok = usage.outputTokens ?? 0;
-            await logUsage({
-              userId: callerUserId,
-              route: "explain-official",
-              tokensInput: inTok,
-              tokensOutput: outTok,
-              model: "claude-sonnet-4-6",
-              costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500),
-              metadata: { question_number: q.original_question_number },
-            });
+          const parts: string[] = [];
+          if (keep && q.parsing_notes) parts.push(q.parsing_notes);
+          if (placeholder && !(q.parsing_notes || "").includes("parser placeholder text")) parts.push(placeholderNote(placeholder));
+          if (truncatedOfficial) parts.push(TRUNCATION_NOTE);
+          if (conflict) {
+            parts.push(keyDoubtNote(ans, conflict, "solving it independently before writing the explanation gave a different answer, so the explanation was not rewritten"));
           }
-          const truncNote = truncatedOfficial ? `${TRUNCATION_NOTE}; ` : "";
-          const { update } = applyLiveHold(
-            q,
-            {
-              correct_answer: ans,
-              explanation: explainText,
-              parsing_status: keep ? "Needs Review" : "Approved",
-              // Keep the original defect note on rows staying in review — it
-              // names WHAT to fix (e.g. the PDF's real choices).
-              parsing_notes: keep
-                ? `${q.parsing_notes ? `${q.parsing_notes}; ` : ""}${placeholder && !(q.parsing_notes || "").includes("parser placeholder text") ? `${placeholderNote(placeholder)}; ` : ""}${truncNote}Explanation matches official answer; still needs review (figure/choices)`
-                : "Answer = official key; explanation matches (verified)",
-              updated_at: new Date().toISOString(),
-            },
-            "Explanation rewritten toward the official answer",
-            live,
-          );
-          await db.from("questions").update(update).eq("id", q.id);
+          if (keyProblem) parts.push(keyFormNote(keyProblem));
+          const update: Record<string, unknown> = {
+            correct_answer: ans,
+            parsing_status: keep ? "Needs Review" : "Approved",
+            // Keep the original defect note on rows staying in review — it
+            // names WHAT to fix (e.g. the PDF's real choices).
+            parsing_notes: keep
+              ? [...parts, ...(conflict || keyProblem ? [] : ["Explanation matches official answer; still needs review (figure/choices)"])].join("; ")
+              : "Answer = official key; explanation matches (verified)",
+            updated_at: new Date().toISOString(),
+          };
+          if (res.ok && !conflict) {
+            update.explanation = res.explanation;
+            rewrote++;
+          }
+          const { update: held } = applyLiveHold(q, update, "Explanation rewritten toward the official answer", live);
+          await db.from("questions").update(held).eq("id", q.id);
         } catch (e) {
           skipped++;
           console.error(`[explain-official] q${q.original_question_number}:`, e instanceof Error ? e.message : e);
@@ -1018,19 +1104,25 @@ export type RegenExplanationResult =
   | { ok: false; error: string };
 
 /** Does the model's own answer match the saved key (letters or values)? */
-export function aiAnswerAgrees(aiAnswer: string | null, saved: string, isMcq: boolean): boolean {
+export function aiAnswerAgrees(aiAnswer: string | null, saved: string, isMcq: boolean, questionText?: string | null): boolean {
   if (!aiAnswer) return true; // nothing to compare — no warning
   if (isMcq) {
     const letter = (s: string) => s.trim().replace(/^\(?\s*([A-D])\b.*$/i, "$1").toUpperCase();
     return letter(aiAnswer) === letter(saved);
   }
   const clean = (s: string) => s.replace(/\$/g, "").trim();
-  return answersMatch(clean(aiAnswer), clean(saved)) || answersAgree(clean(aiAnswer), clean(saved));
+  // Apply the stem's rounding to the AI's value first ("nearest whole
+  // number": 248.2 → 248) so it's compared the way students are graded.
+  const rule = roundingInstruction(questionText);
+  const v = sprValue(clean(aiAnswer));
+  const ai = rule && v !== null ? String(applyRounding(v, rule.places)) : clean(aiAnswer);
+  return answersMatch(ai, clean(saved)) || answersAgree(ai, clean(saved));
 }
 
 export async function regenerateExplanation(
   input: RegenExplanationInput,
   callerUserId?: string,
+  usageRoute = "regenerate-explanation",
 ): Promise<RegenExplanationResult> {
   const isMcq = input.questionType !== "Student Produced Response";
   const choices = Array.isArray(input.choices)
@@ -1071,7 +1163,7 @@ export async function regenerateExplanation(
       const usage = res.usage;
       if (usage) {
         const inTok = usage.inputTokens ?? 0, outTok = usage.outputTokens ?? 0;
-        await logUsage({ userId: callerUserId, route: "regenerate-explanation", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: input.questionId, attempt } });
+        await logUsage({ userId: callerUserId, route: usageRoute, tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: input.questionId, attempt } });
       }
       // A LaTeX command whose backslash got read as a JSON escape ("\times" →
       // TAB + "imes", "\frac" → form feed + "rac"): put the backslash back.
@@ -1086,7 +1178,7 @@ export async function regenerateExplanation(
         continue;
       }
       const aiAnswer = res.object.independent_answer.trim() || null;
-      return { ok: true, explanation, aiAnswer, agrees: aiAnswerAgrees(aiAnswer, input.answer, isMcq) };
+      return { ok: true, explanation, aiAnswer, agrees: aiAnswerAgrees(aiAnswer, input.answer, isMcq, input.questionText) };
     } catch (e) {
       console.error(`[regen-explanation] ${input.questionId}: attempt ${attempt + 1} failed:`, e instanceof Error ? e.message : e);
     }
@@ -1224,4 +1316,82 @@ export async function regenerateCutOffExplanationsBatch(
     );
   }
   return out.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+}
+
+// ── Independent answer ("AI suggestion" on the review page) ──────────
+// Solves the question as given on the page, without seeing the stored key.
+// A fill-in answer comes from the model's computation evaluated in code with
+// the stem's rounding applied (checkComputedAnswer); any disagreement is
+// returned as a warning, never hidden.
+
+const IndependentAnswerSchema = z.object({
+  work: z.string().describe("Brief working: the key steps only (a few lines)."),
+  answer: z
+    .string()
+    .describe("Multiple Choice: the single letter A/B/C/D. Student Produced Response: the value to enter (no units, no $)."),
+  answer_expression: SolverSchema.shape.answer_expression,
+  check_equation: SolverSchema.shape.check_equation,
+});
+
+export interface IndependentAnswerInput {
+  questionId: string;
+  questionText: string;
+  choices: unknown;
+  questionType: string | null;
+  imageUrls?: string[] | null;
+}
+
+export type IndependentAnswerResult =
+  | { ok: true; answer: string | null; work: string; warnings: string[]; expression: string | null }
+  | { ok: false; error: string };
+
+export async function independentAnswer(
+  input: IndependentAnswerInput,
+  callerUserId?: string,
+): Promise<IndependentAnswerResult> {
+  const isSpr = input.questionType === SPR_TYPE;
+  const choices = Array.isArray(input.choices)
+    ? (input.choices as { label?: string; text?: string; image_url?: string | null }[])
+    : [];
+  const imageBlocks: Array<{ type: "image"; image: string; mediaType: string } | { type: "text"; text: string }> = [];
+  for (const url of (input.imageUrls ?? []).slice(0, 4)) {
+    const f = await fetchImageAsBase64(url);
+    if (f) imageBlocks.push({ type: "image", image: f.base64, mediaType: f.mediaType });
+  }
+  for (const c of isSpr ? [] : choices) {
+    if (!c.image_url) continue;
+    const f = await fetchImageAsBase64(c.image_url);
+    if (f) imageBlocks.push({ type: "text", text: `Choice ${c.label}:` }, { type: "image", image: f.base64, mediaType: f.mediaType });
+  }
+  const ch = isSpr
+    ? ""
+    : choices.map((c) => `${c.label}) ${c.text || (c.image_url ? `(a graph — see the attached image labelled "Choice ${c.label}")` : "")}`).join("\n");
+  const prompt = `Question (${isSpr ? "Student Produced Response" : "Multiple Choice"}):\n${input.questionText}${ch ? `\n\nChoices:\n${ch}` : ""}\n\nSolve it yourself from scratch.`;
+  try {
+    const res = await generateObject({
+      model: anthropic("claude-sonnet-4-6"),
+      schema: IndependentAnswerSchema,
+      system: `You are an expert SAT solver. Solve the question rigorously and independently. For Multiple Choice give one letter A/B/C/D.\n\n${SPR_COMPUTATION_RULE}\n\n${QUOTE_RULE}`,
+      maxOutputTokens: 2000,
+      maxRetries: 2,
+      messages: [{ role: "user", content: [...imageBlocks, { type: "text", text: prompt }] }],
+    });
+    const u = res.usage;
+    if (u) {
+      const inTok = u.inputTokens ?? 0, outTok = u.outputTokens ?? 0;
+      await logUsage({ userId: callerUserId, route: "independent-answer", tokensInput: inTok, tokensOutput: outTok, model: "claude-sonnet-4-6", costCents: Math.round((inTok / 1_000_000) * 300 + (outTok / 1_000_000) * 1500), metadata: { question_id: input.questionId } });
+    }
+    const o = res.object;
+    if (!isSpr) {
+      const letter = o.answer.trim().replace(/^\(?\s*([A-D])\b.*$/i, "$1").toUpperCase();
+      const ok = /^[A-D]$/.test(letter);
+      return { ok: true, answer: ok ? letter : null, work: o.work, warnings: ok ? [] : [`the AI answered "${o.answer}", not a letter`], expression: null };
+    }
+    const computed = checkComputedAnswer({ declared: o.answer, expression: o.answer_expression, checkEquation: o.check_equation, questionText: input.questionText });
+    if (!o.answer_expression?.trim()) computed.problems.push("the AI gave no computation to check");
+    return { ok: true, answer: computed.answer, work: o.work, warnings: computed.problems, expression: o.answer_expression?.trim() || null };
+  } catch (e) {
+    console.error(`[independent-answer] ${input.questionId}:`, e instanceof Error ? e.message : e);
+    return { ok: false, error: "Couldn't get an AI answer. Try again." };
+  }
 }

@@ -25,6 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { stripRedundantEquationFiguresForModule } from "@/lib/repair-ops";
 import { incompleteGraphChoices, stemFigureMissing } from "@/lib/parse-guards";
 import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
+import { keyTypeProblem } from "@/lib/answer-key";
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
@@ -1201,6 +1202,12 @@ export const CHECKS: Array<{
     failed: (r) =>
       r.question_type === "Student Produced Response" &&
       /^[A-D]$/i.test((r.correct_answer ?? "").trim()),
+  },
+  {
+    // The key must fit the type: fill-in = an accepted number (rounded as
+    // the stem asks), Multiple choice = A–D (lib/answer-key).
+    id: "answer-key-form",
+    failed: (r) => keyTypeProblem(r) !== null,
   },
   {
     id: "empty-text",

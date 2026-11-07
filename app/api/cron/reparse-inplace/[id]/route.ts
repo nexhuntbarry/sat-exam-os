@@ -17,6 +17,7 @@ import {
   keyDisagreementNote,
   flagQuestionsForReview,
   enforceStemIntegrity,
+  enforceAnswerKeyForm,
 } from "@/lib/parse-guards";
 import { autoPromoteModule } from "@/lib/auto-promote";
 import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
@@ -232,6 +233,7 @@ export async function POST(
   try { figures = await recoverMissingFigures(id, db); } catch (e) { figures = { error: String(e) }; }
   try { choicesRecovery = await recoverBrokenChoices(id, db); } catch (e) { choicesRecovery = { error: String(e) }; }
   try { await enforceCompleteness(id, db); } catch (e) { console.error("[reparse-inplace] completeness-gate:", e); }
+  try { await enforceAnswerKeyForm(id, db); } catch (e) { console.error("[reparse-inplace] key-form gate:", e); }
   // Answer-key + stem guards — after every pass that can Approve, before auto-promote.
   try {
     if (keyModuleNote) await flagQuestionsForReview(id, db, keyModuleNote);

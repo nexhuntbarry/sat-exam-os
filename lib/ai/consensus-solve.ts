@@ -12,8 +12,16 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
 import { z } from "zod";
 import type { getServiceClient } from "@/lib/supabase";
-import { fetchImageAsBase64, looksTruncated, TRUNCATION_NOTE } from "@/lib/ai/solve-question";
+import {
+  SPR_COMPUTATION_RULE,
+  extractFinalAnswer,
+  fetchImageAsBase64,
+  inferImpliedAnswer,
+  looksTruncated,
+  TRUNCATION_NOTE,
+} from "@/lib/ai/solve-question";
 import { findParsePlaceholder, placeholderNote } from "@/lib/parse-guards";
+import { SPR_TYPE, answersAgreeForQuestion, checkComputedAnswer, keyFormNote, keyTypeProblem, sprValue } from "@/lib/answer-key";
 import { QUOTE_RULE } from "@/lib/ai/parse-pdf";
 
 type DbClient = ReturnType<typeof getServiceClient>;
@@ -22,18 +30,27 @@ type DbClient = ReturnType<typeof getServiceClient>;
 type ImageBlock = { type: "image"; image: string; mediaType: string } | { type: "text"; text: string };
 
 const SolveSchema = z.object({
-  answer: z.string().describe("The final answer. MCQ: single letter A/B/C/D. SPR: the numeric/text value."),
+  answer: z.string().describe("The final answer. MCQ: single letter A/B/C/D. SPR: the numeric value."),
+  answer_expression: z
+    .string()
+    .describe("SPR only: the final computation as a plain arithmetic expression (numbers, + - * / ** ( ), sqrt(), abs(), pi), UNROUNDED. Empty for MCQ."),
+  check_equation: z
+    .string()
+    .describe("SPR only, optional: an equation the answer must satisfy, with ans for the answer (e.g. 3*ans + 7 == 31). Empty if none."),
   explanation: z.string().describe("Complete step-by-step solution."),
 });
 const VerifySchema = z.object({
+  own_answer: z.string().describe("The answer YOU get working the problem from scratch (MCQ letter or SPR value)."),
   correct: z.boolean().describe("Is the proposed answer actually correct for this question?"),
   reason: z.string(),
 });
 
 const SOLVE_SYS = `You are an expert SAT solver. Solve the question rigorously and independently. For MCQ give a single letter A/B/C/D; for student-produced response give the exact value. Show your work in the explanation.
 
+${SPR_COMPUTATION_RULE}
+
 ${QUOTE_RULE}`;
-const VERIFY_SYS = `You are a strict SAT answer checker. You are given a question and a PROPOSED answer. Work the problem yourself from scratch, then judge whether the proposed answer is correct. Be skeptical — only say correct=true if you independently arrive at the same answer.
+const VERIFY_SYS = `You are a strict SAT answer checker. You are given a question and a PROPOSED answer. Work the problem yourself from scratch, put your own result in own_answer, then judge whether the proposed answer is correct. Be skeptical — only say correct=true if you independently arrive at the same answer. Your reason is shown to students as the explanation: end it with the answer.
 
 ${QUOTE_RULE}`;
 
@@ -75,7 +92,13 @@ function choicesText(q: QRow): string {
     : "";
 }
 
-async function solveOnce(q: QRow, variant: number, images: ImageBlock[]): Promise<string | null> {
+/**
+ * One independent solve. Fill-in: the answer is the run's computation
+ * evaluated in code with the stem's rounding applied; a run whose own
+ * computation, stated answer, plug-back check or explanation disagree comes
+ * back with `problems` (→ needs human).
+ */
+async function solveOnce(q: QRow, variant: number, images: ImageBlock[]): Promise<{ answer: string | null; problems: string[] } | null> {
   // Vary the framing per attempt so the three solves are genuinely independent
   // rather than the same cached reasoning.
   const framings = [
@@ -91,13 +114,21 @@ async function solveOnce(q: QRow, variant: number, images: ImageBlock[]): Promis
       maxRetries: 2,
       messages: [{ role: "user", content: [...images, { type: "text", text: `${framings[variant % framings.length]}\n\nQuestion ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${choicesText(q)}${images.length ? "\n\n(Refer to the attached figure.)" : ""}` }] }],
     });
-    return r.object.answer;
+    const o = r.object;
+    if (q.question_type !== SPR_TYPE) return { answer: o.answer, problems: [] };
+    const c = checkComputedAnswer({ declared: o.answer, expression: o.answer_expression, checkEquation: o.check_equation, questionText: q.question_text });
+    if (!o.answer_expression?.trim()) c.problems.push("no computation to check");
+    const explained = extractFinalAnswer(o.explanation) ?? inferImpliedAnswer(o.explanation, false);
+    if (c.answer && explained && sprValue(explained) !== null && !answersAgreeForQuestion(explained, c.answer, q.question_text)) {
+      c.problems.push(`explanation ends with ${explained}, computation gives ${c.answer}`);
+    }
+    return { answer: c.answer, problems: c.problems };
   } catch {
     return null;
   }
 }
 
-async function verify(q: QRow, answer: string, images: ImageBlock[]): Promise<{ ok: boolean; explanation: string } | null> {
+async function verify(q: QRow, answer: string, images: ImageBlock[]): Promise<{ ok: boolean; explanation: string; ownAnswer: string } | null> {
   try {
     const r = await generateObject({
       model: anthropic("claude-sonnet-4-6"),
@@ -106,7 +137,7 @@ async function verify(q: QRow, answer: string, images: ImageBlock[]): Promise<{ 
       maxRetries: 2,
       messages: [{ role: "user", content: [...images, { type: "text", text: `Question ${q.original_question_number}:\n${q.question_text}\n\nChoices:\n${choicesText(q)}${images.length ? "\n\n(Refer to the attached figure.)" : ""}\n\nProposed answer: ${answer}\n\nIs it correct?` }] }],
     });
-    return { ok: r.object.correct, explanation: r.object.reason };
+    return { ok: r.object.correct, explanation: r.object.reason, ownAnswer: r.object.own_answer };
   } catch {
     return null;
   }
@@ -175,12 +206,26 @@ export async function consensusResolve(
       }).eq("id", q.id);
       continue;
     }
-    const [a1, a2, a3] = await Promise.all([solveOnce(q, 0, images), solveOnce(q, 1, images), solveOnce(q, 2, images)]);
-    const unanimous = a1 && a2 && a3 && agree(a1, a2) && agree(a2, a3);
+    const runs = await Promise.all([solveOnce(q, 0, images), solveOnce(q, 1, images), solveOnce(q, 2, images)]);
+    const [a1, a2, a3] = runs.map((r) => r?.answer ?? null);
+    // Unanimous or nothing — never a majority vote (Math Module 001 Q17 got
+    // 249 from a 2-of-3 vote; the computed value was 248.2 → 248).
+    const runProblems = runs.flatMap((r, i) => (r?.problems ?? []).map((p) => `run ${i + 1}: ${p}`));
+    const unanimous = a1 && a2 && a3 && agree(a1, a2) && agree(a2, a3) && runProblems.length === 0;
     if (!unanimous) {
       unresolved++;
       await db.from("questions").update({
-        parsing_notes: `Consensus solve NOT unanimous (${a1 ?? "?"}/${a2 ?? "?"}/${a3 ?? "?"}) — needs human`,
+        parsing_notes: `Consensus solve NOT unanimous (${a1 ?? "?"}/${a2 ?? "?"}/${a3 ?? "?"})${runProblems.length ? ` — ${runProblems.join(", ").replace(/;/g, ",")}` : ""} — needs human`,
+        updated_at: new Date().toISOString(),
+      }).eq("id", q.id);
+      continue;
+    }
+    // The settled key must fit the type (accepted SPR form, rounding, A–D).
+    const keyProblem = keyTypeProblem({ question_type: q.question_type, correct_answer: a1, question_text: q.question_text, choices: q.choices });
+    if (keyProblem) {
+      unresolved++;
+      await db.from("questions").update({
+        parsing_notes: `3 solves agreed on ${a1} but ${keyFormNote(keyProblem)} — needs human`,
         updated_at: new Date().toISOString(),
       }).eq("id", q.id);
       continue;
@@ -190,6 +235,22 @@ export async function consensusResolve(
     if (v && v.ok && looksTruncated(v.explanation)) {
       const retry = await verify(q, a1, images);
       if (retry) v = retry;
+    }
+    // The verifier's own answer and the answer its explanation ends on must
+    // both match too (solve vs explanation disagreement → needs human).
+    const explained = v ? extractFinalAnswer(v.explanation) : null;
+    const verifierDisagrees =
+      !!v &&
+      v.ok &&
+      ((v.ownAnswer.trim() !== "" && !answersAgreeForQuestion(v.ownAnswer, a1, q.question_text)) ||
+        (explained !== null && !answersAgreeForQuestion(explained, a1, q.question_text)));
+    if (v && verifierDisagrees) {
+      unresolved++;
+      await db.from("questions").update({
+        parsing_notes: `3 solves agreed on ${a1} but the verifier's own work gives ${explained ?? v.ownAnswer} — needs human`,
+        updated_at: new Date().toISOString(),
+      }).eq("id", q.id);
+      continue;
     }
     if (v && v.ok && !looksTruncated(v.explanation)) {
       settled++;

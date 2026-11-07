@@ -4,7 +4,8 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { explainOneAnswer } from "@/lib/ai/solve-question";
 import { rescoreQuestion } from "@/lib/rescore";
-import { findApproveBlocker } from "@/lib/parse-guards";
+import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
+import { keyTypeProblem } from "@/lib/answer-key";
 import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
 
 // Answer-key edits may regenerate the explanation (AI) — allow headroom.
@@ -85,15 +86,31 @@ export async function PATCH(
   // Never let an edit flip a question to Approved while it still carries
   // parser placeholder text or looks cut off (checked against the post-edit
   // stem/choices).
+  const next = {
+    question_text: "question_text" in update ? (update.question_text as string | null) : prior?.question_text,
+    choices: "choices" in update ? update.choices : prior?.choices,
+    question_type: "question_type" in update ? (update.question_type as string | null) : prior?.question_type,
+    correct_answer: "correct_answer" in update ? (update.correct_answer as string | null) : prior?.correct_answer,
+  };
   if (update.parsing_status === "Approved") {
-    const blocker = findApproveBlocker(
-      "question_text" in update ? (update.question_text as string | null) : prior?.question_text,
-      "choices" in update ? update.choices : prior?.choices,
-      "question_type" in update ? (update.question_type as string | null) : prior?.question_type,
-    );
+    const blocker = findApproveBlocker(next.question_text, next.choices, next.question_type, next.correct_answer ?? null);
     if (blocker) {
+      return NextResponse.json({ error: approveBlockedMessage(blocker) }, { status: 400 });
+    }
+  }
+
+  // An Approved question stays Approved through a save, so a key or type
+  // edit that leaves the two mismatched (a letter key on a fill-in
+  // question…) is refused the same way an approve would be.
+  const keyOrTypeChanged =
+    (prior?.correct_answer ?? null) !== (next.correct_answer ?? null) ||
+    (prior?.question_type ?? null) !== (next.question_type ?? null);
+  const resultIsApproved = ("parsing_status" in update ? update.parsing_status : prior?.parsing_status) === "Approved";
+  if (resultIsApproved && keyOrTypeChanged && update.parsing_status !== "Approved") {
+    const p = keyTypeProblem(next);
+    if (p) {
       return NextResponse.json(
-        { error: `Can't approve: ${blocker.reason}. Fix the text first.` },
+        { error: `Can't save this Approved question: ${p.reason}. Fix it, or mark it Needs Review first.` },
         { status: 400 },
       );
     }
