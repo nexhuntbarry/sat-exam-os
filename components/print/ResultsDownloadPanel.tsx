@@ -96,7 +96,8 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
     );
     const ok = results.filter((r): r is { name: string; bytes: Uint8Array } => r !== null);
     const date = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-    const base = `${testName} – results – ${date}`.replace(/[\\/:*?"<>|]+/g, " ");
+    // "Jane Doe – Test – date" for one student, "4 students – Test – date" for several.
+    const base = (ok.length === 1 && format === "combined" ? ok[0].name.replace(/\.pdf$/, "") : `${ok.length} students – ${testName} – ${date}`).replace(/[\\/:*?"<>|]+/g, " ");
     if (ok.length > 0) {
       let blob: Blob;
       let file: string;

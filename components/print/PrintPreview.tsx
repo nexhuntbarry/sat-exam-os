@@ -32,9 +32,12 @@ export interface PreviewOption {
 export interface PreviewStudent {
   id: string;
   name: string;
-  className: string | null;
+  /** Every class the student is in; they're listed under each. */
+  classNames: string[];
   checked: boolean;
 }
+
+const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));
 
 // What prints, page by page at Letter size. The printable content (server
 // rendered into a hidden source) is paginated with Paged.js into real
@@ -68,7 +71,34 @@ export default function PrintPreview({
   const [failed, setFailed] = useState<string[]>([]);
   const [pages, setPages] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [picked, setPicked] = useState(() => new Set((students ?? []).filter((s) => s.checked).map((s) => s.id)));
+  // `rendered` = the students in the document on screen; `picked` = the
+  // current choice. Whenever they differ the preview is out of date: it
+  // re-renders after 600 ms of no changes, and Print/Save stay disabled
+  // until it does, so a stale preview is never printed.
+  const [rendered] = useState(() => new Set((students ?? []).filter((s) => s.checked).map((s) => s.id)));
+  const [picked, setPicked] = useState(rendered);
+  const [showList, setShowList] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const stale = !sameSet(picked, rendered);
+
+  // Tab title = the browser's default file name for "Save as PDF".
+  useEffect(() => {
+    const set = () => {
+      if (document.title !== title) document.title = title;
+    };
+    set();
+    const head = document.querySelector("head");
+    const mo = head ? new MutationObserver(set) : null;
+    mo?.observe(head!, { subtree: true, childList: true, characterData: true });
+    return () => mo?.disconnect();
+  }, [title]);
+
+  useEffect(() => {
+    if (!stale || picked.size === 0 || !students) return;
+    const t = setTimeout(() => applyStudents(picked), 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [picked]);
 
   useEffect(() => {
     if (started.current || !sourceRef.current || !targetRef.current) return;
@@ -109,9 +139,34 @@ export default function PrintPreview({
     const url = new URL(window.location.href);
     if (value == null || value === "") url.searchParams.delete(param);
     else url.searchParams.set(param, value);
+    setUpdating(true);
     // Full reload: Paged.js has already paginated this document.
     window.location.assign(url.toString());
   }
+
+  function applyStudents(ids: Set<string>) {
+    if (!students || ids.size === 0) return;
+    setParam("subs", students.filter((s) => ids.has(s.id)).map((s) => s.id).join(","));
+  }
+
+  function setMany(ids: string[], on: boolean) {
+    const next = new Set(picked);
+    for (const id of ids) {
+      if (on) next.add(id);
+      else next.delete(id);
+    }
+    setPicked(next);
+  }
+
+  // Students grouped by class (a student in two classes is listed under both).
+  const groups = (() => {
+    if (!students) return [];
+    const byClass = new Map<string, PreviewStudent[]>();
+    for (const st of students) {
+      for (const c of st.classNames.length ? st.classNames : ["No class"]) byClass.set(c, [...(byClass.get(c) ?? []), st]);
+    }
+    return Array.from(byClass).sort(([a], [b]) => (a === "No class" ? 1 : b === "No class" ? -1 : a.localeCompare(b)));
+  })();
 
   async function saveAsPdf() {
     if (!pdfUrl) return window.print();
@@ -135,6 +190,8 @@ export default function PrintPreview({
   }
 
   const busy = phase === "images" || phase === "paging";
+  const blocked = busy || stale || updating;
+  const blockedLabel = updating ? "Updating preview…" : stale ? "Preview out of date" : null;
   return (
     <>
       <div className="no-print sticky top-0 z-30 bg-white border-b border-divider shadow-sm">
@@ -168,15 +225,16 @@ export default function PrintPreview({
           ))}
           <button
             onClick={() => window.print()}
-            disabled={busy}
+            disabled={blocked}
+            title={blockedLabel ?? undefined}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral text-white text-sm font-semibold hover:bg-warm-coral-dark disabled:opacity-60 disabled:cursor-wait"
           >
-            {busy ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
+            {busy || updating ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
             {phase === "images" ? `Loading images… ${progress.loaded}/${progress.total}` : busy ? "Preparing…" : "Print"}
           </button>
           <button
             onClick={saveAsPdf}
-            disabled={busy || saving}
+            disabled={blocked || saving}
             title={pdfUrl ? "Download this exact document as a PDF file" : "Opens the print dialog — choose “Save as PDF”"}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-light-bg text-charcoal text-sm font-semibold hover:bg-divider disabled:opacity-60 disabled:cursor-wait"
           >
@@ -190,35 +248,70 @@ export default function PrintPreview({
           </p>
         )}
         {students && students.length > 1 && (
-          <details className="max-w-5xl mx-auto px-4 pb-3 text-sm">
-            <summary className="cursor-pointer text-mid-gray">
-              Students: {picked.size} of {students.length}
-            </summary>
-            <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-1 max-h-60 overflow-auto">
-              {students.map((s) => (
-                <label key={s.id} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={picked.has(s.id)}
-                    onChange={(e) => {
-                      const next = new Set(picked);
-                      if (e.target.checked) next.add(s.id);
-                      else next.delete(s.id);
-                      setPicked(next);
-                    }}
-                  />
-                  <span className="truncate">{s.name}{s.className ? <span className="text-soft-mute"> · {s.className}</span> : null}</span>
-                </label>
-              ))}
+          <div className="max-w-5xl mx-auto px-4 pb-3 text-sm">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <button type="button" onClick={() => setShowList((v) => !v)} className="text-mid-gray hover:text-charcoal" aria-expanded={showList}>
+                {showList ? "▾" : "▸"} Students: {picked.size} of {students.length}
+              </button>
+              <button type="button" onClick={() => setMany(students.map((st) => st.id), true)} className="text-warm-coral-text hover:underline">
+                Select all
+              </button>
+              <button type="button" onClick={() => setPicked(new Set())} className="text-warm-coral-text hover:underline">
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => applyStudents(picked)}
+                disabled={!stale || picked.size === 0 || updating}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+                  stale || updating ? "bg-warm-amber text-charcoal ring-2 ring-warm-amber/50 animate-pulse" : "bg-light-bg text-soft-mute"
+                }`}
+              >
+                {updating ? "Updating preview…" : "Update preview"}
+              </button>
+              {picked.size === 0 && <span className="text-xs text-status-error">Select at least one student.</span>}
+              {stale && picked.size > 0 && !updating && <span className="text-xs text-mid-gray">The preview updates in a moment…</span>}
             </div>
-            <button
-              onClick={() => setParam("subs", students.filter((s) => picked.has(s.id)).map((s) => s.id).join(","))}
-              disabled={picked.size === 0}
-              className="mt-2 px-3 py-1.5 rounded-lg bg-charcoal text-white text-xs font-semibold disabled:opacity-50"
-            >
-              Update preview
-            </button>
-          </details>
+            {showList && (
+              <div className="mt-2 max-h-72 overflow-auto space-y-3 pr-1">
+                {groups.map(([cls, list]) => {
+                  const ids = list.map((st) => st.id);
+                  const n = ids.filter((id) => picked.has(id)).length;
+                  return (
+                    <div key={cls}>
+                      <label className="flex items-start gap-2 w-full border-b border-divider pb-1 mb-1 font-semibold text-charcoal">
+                        <input
+                          type="checkbox"
+                          className="mt-1"
+                          checked={n === ids.length}
+                          ref={(el) => {
+                            if (el) el.indeterminate = n > 0 && n < ids.length;
+                          }}
+                          onChange={(e) => setMany(ids, e.target.checked)}
+                          aria-label={`Select class ${cls}`}
+                        />
+                        <span className="break-words">{cls}</span>
+                        <span className="ml-auto shrink-0 text-xs font-normal text-soft-mute">{n} of {ids.length}</span>
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1 pl-6">
+                        {list.map((st) => (
+                          <label key={st.id} className="flex items-start gap-2">
+                            <input
+                              type="checkbox"
+                              className="mt-1"
+                              checked={picked.has(st.id)}
+                              onChange={(e) => setMany([st.id], e.target.checked)}
+                            />
+                            <span className="break-words">{st.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
       </div>
 

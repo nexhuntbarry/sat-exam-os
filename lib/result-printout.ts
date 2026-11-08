@@ -105,23 +105,32 @@ type SubRow = {
 };
 
 /** studentId → display name and class name(s) (class groups, else the profile's class). */
-async function namesAndClasses(db: SupabaseClient, ids: string[]) {
+/** For a teacher, only their own class groups' names are shown (null = no limit). */
+async function visibleClassIds(db: SupabaseClient, viewer: Viewer): Promise<Set<string> | null> {
+  if (viewer.role !== "teacher") return null;
+  const { data } = await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", viewer.userId);
+  return new Set(((data ?? []) as { class_group_id: string }[]).map((r) => r.class_group_id));
+}
+
+async function namesAndClasses(db: SupabaseClient, ids: string[], onlyClassIds: Set<string> | null = null) {
   const [usersRes, membersRes, profilesRes] = await Promise.all([
     db.from("users").select("id, display_name, email").in("id", ids),
-    db.from("class_group_members").select("student_id, class_groups(name)").in("student_id", ids),
+    db.from("class_group_members").select("student_id, class_group_id, class_groups(name)").in("student_id", ids),
     db.from("student_profiles").select("user_id, class_group").in("user_id", ids),
   ]);
   const nameOf = new Map(((usersRes.data ?? []) as { id: string; display_name: string | null; email: string }[]).map((u) => [u.id, u.display_name || u.email]));
   const classesOf = new Map<string, string[]>();
-  for (const m of (membersRes.data ?? []) as unknown as { student_id: string; class_groups: { name: string } | { name: string }[] | null }[]) {
+  for (const m of (membersRes.data ?? []) as unknown as { student_id: string; class_group_id: string; class_groups: { name: string } | { name: string }[] | null }[]) {
+    // A teacher sees only their own classes' names, not other teachers'.
+    if (onlyClassIds && !onlyClassIds.has(m.class_group_id)) continue;
     const cg = Array.isArray(m.class_groups) ? m.class_groups[0] : m.class_groups;
     if (cg?.name) classesOf.set(m.student_id, [...(classesOf.get(m.student_id) ?? []), cg.name]);
   }
   const profileClass = new Map(((profilesRes.data ?? []) as { user_id: string; class_group: string | null }[]).map((p) => [p.user_id, p.class_group]));
-  return (id: string) => ({
-    studentName: nameOf.get(id) ?? "Student",
-    className: classesOf.get(id)?.join(", ") ?? profileClass.get(id) ?? null,
-  });
+  return (id: string) => {
+    const classNames = classesOf.get(id) ?? (!onlyClassIds && profileClass.get(id) ? [profileClass.get(id)!] : []);
+    return { studentName: nameOf.get(id) ?? "Student", className: classNames.join(", ") || null, classNames };
+  };
 }
 
 /**
@@ -194,7 +203,7 @@ export async function loadResultPrintouts(
   const [section, visInputs, people] = await Promise.all([
     getTestSections(db, [testId]).then((m) => m.get(testId) ?? null),
     loadAnswerVisibilityInputs(db, [testId], studentIds),
-    namesAndClasses(db, studentIds),
+    namesAndClasses(db, studentIds, await visibleClassIds(db, viewer)),
   ]);
 
   const out: StudentResultPrintout[] = [];
@@ -293,6 +302,8 @@ export interface PrintableAttempt {
   studentId: string;
   studentName: string;
   className: string | null;
+  /** Each class the student is in (the picker groups by these). */
+  classNames: string[];
 }
 
 /** Every finished attempt (latest per student) the viewer may print, by name. */
@@ -320,7 +331,7 @@ export async function listPrintableAttempts(db: SupabaseClient, viewer: Viewer, 
     picks.push({ studentId, submissionId: last.id });
   }
   if (picks.length === 0) return [];
-  const people = await namesAndClasses(db, picks.map((p) => p.studentId));
+  const people = await namesAndClasses(db, picks.map((p) => p.studentId), await visibleClassIds(db, viewer));
   return picks
     .map((p) => ({ submissionId: p.submissionId, studentId: p.studentId, ...people(p.studentId) }))
     .sort((a, b) => a.studentName.localeCompare(b.studentName));

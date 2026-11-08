@@ -115,10 +115,10 @@ export default async function PrintResultsPage({
 
     return (
       <PrintPreview
-        title={single ? `${printouts[0].studentName} – ${printouts[0].testName}` : `${printouts[0].testName} — ${printouts.length} students`}
+        title={single ? `${printouts[0].studentName} – ${printouts[0].testName}` : `${printouts.length} students – ${printouts[0].testName}`}
         pageCss={printPageCss({ header: { studentName: true }, totalPages: single })}
         options={options}
-        students={candidates.length > 1 ? candidates.map((c) => ({ id: c.submissionId, name: c.studentName, className: c.className, checked: printouts.some((p) => p.studentId === c.studentId) })) : undefined}
+        students={candidates.length > 1 ? candidates.map((c) => ({ id: c.submissionId, name: c.studentName, classNames: c.classNames, checked: printouts.some((p) => p.studentId === c.studentId) })) : undefined}
         pdfUrl={single && !ticketMode ? `/api/print/results/${testId}/pdf?${qs}` : undefined}
       >
         <div className="bg-white text-charcoal">
