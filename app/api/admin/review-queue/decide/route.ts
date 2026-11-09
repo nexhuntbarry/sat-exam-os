@@ -12,7 +12,8 @@ export const maxDuration = 300;
 //
 // Applies the one decision the review queue asked for (lib/review-decide.ts):
 //   keep_key | set_key (after the rescore preview) | use_pdf | keep_figure |
-//   use_pdf_text | regen_explanation | approve
+//   use_pdf_text | regen_explanation | approve |
+//   confirm_live_fix | undo_live_fix (restore_key + rescore after the preview)
 // then regenerates the explanation when needed, clears the settled notes and
 // approves the question when nothing else blocks. Never lowers a status.
 export async function POST(req: Request) {
@@ -32,7 +33,15 @@ export async function POST(req: Request) {
     case "keep_figure":
     case "regen_explanation":
     case "approve":
+    case "confirm_live_fix":
       act = { action: body.action };
+      break;
+    case "undo_live_fix":
+      act = {
+        action: "undo_live_fix",
+        restoreKey: typeof body.restore_key === "string" ? body.restore_key : null,
+        rescore: body.rescore === true,
+      };
       break;
     case "set_key": {
       const key = typeof body.key === "string" ? body.key.trim() : "";
@@ -52,6 +61,7 @@ export async function POST(req: Request) {
   try {
     const res = await decide(getServiceClient(), id, act, {
       userId: auth.userId,
+      userName: auth.displayName || auth.email || null,
       expectedUpdatedAt: typeof body.updated_at === "string" ? body.updated_at : null,
     });
     if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status ?? 400 });

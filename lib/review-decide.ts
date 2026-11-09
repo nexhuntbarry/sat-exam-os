@@ -32,8 +32,20 @@ import { applyKeyCorrection, keyExplanationWarning, type ExplainFn, type KeyCorr
 import { loadProposal, proposalIsCurrent, replaceTableBlock, tableBlockCount } from "@/lib/figure-compare";
 import { LIVE_FIX_TAG, liveQuestionIds } from "@/lib/live-questions";
 import {
+  changedFields,
+  clearLiveFixSnapshot,
+  loadLiveFixSnapshots,
+  LIVE_FIX_CONFIRMED_PREFIX,
+  LIVE_FIX_UNDONE_PREFIX,
+  saveLiveFixSnapshot,
+  snapshotValid,
+  stripAllLiveFix,
+  type SnapshotField,
+} from "@/lib/live-fix";
+import {
   approvalBlockers,
   dropFigureNotes,
+  dropSettledNotes,
   EXPLANATION_CHECK_NOTE,
   STEM_REPLACED_PREFIX,
   figureProposalUrl,
@@ -57,7 +69,10 @@ export type DecideAction =
   | { action: "keep_figure" }
   | { action: "use_pdf_text"; questionText: string }
   | { action: "regen_explanation" }
-  | { action: "approve" };
+  | { action: "approve" }
+  | { action: "confirm_live_fix" }
+  /** `restoreKey`: the key before the live fix, after the rescore preview (rescore must be true). */
+  | { action: "undo_live_fix"; restoreKey?: string | null; rescore?: boolean };
 
 export interface DecideResult {
   ok: boolean;
@@ -160,7 +175,7 @@ export function decideBlockers(row: AutoFixRow): string[] {
 
 /**
  * Whether a person may approve this row as it is ("Looks right"): only the
- * "Other" / "Live-test re-check" reasons may be left. Returns the blockers
+ * "ready" / "A note to resolve" / "Live-test re-check" reasons may be left. Returns the blockers
  * that stop it (empty = may approve).
  */
 export function approveRefusal(row: AutoFixRow): string[] {
@@ -169,7 +184,7 @@ export function approveRefusal(row: AutoFixRow): string[] {
   // Any blocker that isn't a note (approve check, missing figure, key ≠
   // official, failing check, unchecked explanation) always stops it.
   for (const b of decideBlockers(row)) if (!b.startsWith("note: ")) out.push(b);
-  for (const r of g.reasons) if (r.group !== "other" && r.group !== "live_fix" && !out.some((b) => b.endsWith(r.text))) out.push(r.text);
+  for (const r of g.reasons) if (r.group !== "ready" && r.group !== "note" && r.group !== "live_fix" && !out.some((b) => b.endsWith(r.text))) out.push(r.text);
   return out;
 }
 
@@ -203,6 +218,11 @@ async function finish(
   const { data, error } = await q.select("id");
   if (error) return { ok: false, status: 500, error: "Update failed" };
   if (!data?.length) return { ok: false, status: 409, error: "This question changed since the page loaded. Reload and try again." };
+  // After the write went through: keep what students saw before, for the
+  // live-fix group's before / after and Undo.
+  if (extra.live && typeof update.parsing_notes === "string" && CONTENT_FIELDS.some((f) => f in patch)) {
+    await saveLiveFixSnapshot(db, before as unknown as Record<string, unknown> & { id: string }, "review queue", update.parsing_notes);
+  }
   const approved = allowApprove && (update.parsing_status === "Approved" || next.parsing_status === "Approved");
   const after = { ...next, ...update } as Row;
   return { ok: true, approved, blockers, nextGroup: approved ? null : groupRow(after).primary, ...extra };
@@ -212,7 +232,7 @@ export async function decide(
   db: SupabaseClient,
   id: string,
   act: DecideAction,
-  opts: { userId?: string; expectedUpdatedAt?: string | null; explain?: ExplainFn },
+  opts: { userId?: string; userName?: string | null; expectedUpdatedAt?: string | null; explain?: ExplainFn },
 ): Promise<DecideResult> {
   let row = await loadRow(db, id);
   if (!row) return { ok: false, status: 404, error: "Question not found" };
@@ -271,7 +291,8 @@ export async function decide(
         expectedKey: act.expectedKey,
         rescore: act.rescore,
         userId: opts.userId,
-        source: "a reviewer (review queue)",
+        // The name goes into a note: no separators / brackets (lib/key-source.ts parses it).
+        source: opts.userName && opts.userName.replace(/[;()[\]]/g, " ").trim() ? `${opts.userName.replace(/[;()[\]]/g, " ").replace(/\s+/g, " ").trim()} (review queue)` : "a reviewer (review queue)",
         explain: opts.explain,
       });
       if (!keyRes.ok) return { ok: false, status: keyRes.status, error: keyRes.error, key: keyRes };
@@ -368,6 +389,84 @@ export async function decide(
       return finish(db, row, patch, opts.userId, { explanation: ex.outcome }, await isLive(db, row));
     }
 
+    case "confirm_live_fix": {
+      // A person compared before / after and the change stands.
+      if (!(row.parsing_notes ?? "").startsWith(LIVE_FIX_TAG)) return { ok: false, status: 400, error: "This question has no live-test change to confirm." };
+      const who = opts.userName ?? "a reviewer";
+      const rest = stripAllLiveFix(row.parsing_notes);
+      const patch: Record<string, unknown> = {
+        parsing_notes: [rest, `${LIVE_FIX_CONFIRMED_PREFIX} ${who.replace(/[;()]/g, " ").trim()} (${new Date().toISOString().slice(0, 10)})`].filter(Boolean).join("; "),
+      };
+      if (row.parsing_status === "Approved") {
+        patch.reviewed_by = opts.userId ?? null;
+        patch.reviewed_at = new Date().toISOString();
+      }
+      const res = await finish(db, row, patch, opts.userId);
+      if (res.ok) await clearLiveFixSnapshot(db, id).catch(() => undefined);
+      return res;
+    }
+
+    case "undo_live_fix": {
+      if (!(row.parsing_notes ?? "").startsWith(LIVE_FIX_TAG)) return { ok: false, status: 400, error: "This question has no live-test change to undo." };
+      const snap = (await loadLiveFixSnapshots(db, [id])).get(id) ?? null;
+      // Only the version recorded for THIS live-fix change can be put back.
+      if (!snapshotValid(snap, row.parsing_notes)) return { ok: false, status: 400, error: "No earlier version was recorded for this change. Edit it by hand." };
+      const changed = changedFields(snap, row as unknown as Record<string, unknown>);
+      const keyBefore = "correct_answer" in snap.fields ? ((snap.fields.correct_answer as string | null) ?? null) : row.correct_answer ?? null;
+      const keyChanged = changed.includes("correct_answer");
+      const who = (opts.userName ?? "a reviewer").replace(/[;()]/g, " ").trim();
+      let keyRes: KeyCorrectionResult | undefined;
+      if (keyChanged) {
+        // The key goes back only after the person saw who gets rescored.
+        if (act.restoreKey !== keyBefore || act.rescore !== true) {
+          return { ok: false, status: 409, error: `Undo changes the key back to ${keyBefore ?? "∅"}: confirm the rescoring preview first.` };
+        }
+        keyRes = await applyKeyCorrection(db, {
+          id,
+          correct_answer: keyBefore ?? "",
+          expectedKey: row.correct_answer ?? null,
+          rescore: true,
+          userId: opts.userId,
+          source: `${who} (undo of a live-test change)`,
+        });
+        if (!keyRes.ok) return { ok: false, status: keyRes.status, error: keyRes.error, key: keyRes };
+        const fresh = await loadRow(db, id);
+        if (!fresh) return { ok: true, approved: false, key: keyRes, warning: "Key restored; reload to check the rest." };
+        row = fresh;
+      }
+      // Content back as it was (the explanation only when the key is unchanged:
+      // a restored key comes with its own checked explanation).
+      const fields = changed.filter((f): f is Exclude<SnapshotField, "correct_answer"> => f !== "correct_answer" && !(keyChanged && f === "explanation"));
+      const patch: Record<string, unknown> = {};
+      for (const f of fields) patch[f] = snap.fields[f];
+      const explanationFailed = keyRes?.ok && !keyRes.explanationOk;
+      // A restored key without a checked explanation keeps its [live-fix] note.
+      const base = explanationFailed ? row.parsing_notes : stripAllLiveFix(row.parsing_notes);
+      const what = [...fields, ...(keyChanged ? ["key"] : [])].map((f) => f.replace(/_/g, " ")).join(", ") || "nothing (it already matched)";
+      patch.parsing_notes = [base, `${LIVE_FIX_UNDONE_PREFIX} ${who} (${new Date().toISOString().slice(0, 10)}): restored the earlier ${what}`].filter(Boolean).join("; ");
+      // Never demoted: the status isn't touched. No blind retry (a concurrent
+      // edit wins); after a restored (and rescored) key a failed content write
+      // is reported as a warning — the key change stands.
+      let q = db.from("questions").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id);
+      if (row.updated_at) q = q.eq("updated_at", row.updated_at);
+      const { data, error } = await q.select("id");
+      if (error || !data?.length) {
+        if (keyRes?.ok) {
+          return { ok: true, approved: row.parsing_status === "Approved", key: keyRes, live: true, warning: `The key is back to ${keyBefore ?? "∅"} (answers rescored), but the earlier ${fields.map((f) => f.replace(/_/g, " ")).join(", ") || "content"} couldn't be put back: the question changed meanwhile. Reload and Undo again, or edit it by hand.` };
+        }
+        if (error) return { ok: false, status: 500, error: "Update failed" };
+        return { ok: false, status: 409, error: "This question changed since the page loaded. Reload and try again." };
+      }
+      if (!explanationFailed) await clearLiveFixSnapshot(db, id).catch(() => undefined);
+      return {
+        ok: true,
+        approved: row.parsing_status === "Approved",
+        key: keyRes,
+        live: true,
+        warning: explanationFailed ? keyExplanationWarning(true, keyRes && keyRes.ok ? keyRes.explanation : null) ?? undefined : undefined,
+      };
+    }
+
     case "approve": {
       // A person checked it ("Looks right"): the same gate as the Approve
       // button, plus every blocker outside the Other / Live-test groups.
@@ -379,7 +478,7 @@ export async function decide(
       }
       const update: Record<string, unknown> = {
         parsing_status: "Approved",
-        parsing_notes: clearReviewTags(row.parsing_notes),
+        parsing_notes: clearReviewTags(dropSettledNotes(row).notes),
         reviewed_by: opts.userId ?? null,
         reviewed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),

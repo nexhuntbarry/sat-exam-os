@@ -11,7 +11,8 @@ export type GroupId =
   | "render"
   | "explanation"
   | "live_fix"
-  | "other";
+  | "ready"
+  | "note";
 
 export type Decision = "key" | "key_format" | "stem" | "figure" | "render" | "explanation" | "approve";
 
@@ -33,8 +34,50 @@ export interface QueueProposal {
   stale?: boolean;
 }
 
+export interface EvidenceChip {
+  label: string;
+  value: string;
+  tone: "agree" | "differ" | "neutral";
+}
+
+/** One field before / after a live-test change. */
+export interface LiveFixChange {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface QueueLiveFix {
+  /** What the tool or person changed, in its own words. */
+  what: string;
+  /** Changed fields from the recorded earlier version (empty: none recorded). */
+  changes: LiveFixChange[];
+  /** An earlier version is recorded (Undo is possible). */
+  canUndo: boolean;
+  /** The key before the change, when the change touched the key. */
+  keyBefore: string | null;
+  snapshotAt: string | null;
+}
+
 export interface QueueItem {
   id: string;
+  /** Plain one-line decision ("Key says B, solving gives C"). */
+  headline: string;
+  /** Plain evidence ("PDF ✓: none · Code: C · Second solve: C · Saved key: B"). */
+  evidence: EvidenceChip[];
+  /** The answer "Use X" sets; strong = two independent checks / the PDF key. */
+  suggestion: { answer: string; why: string; strong: boolean } | null;
+  /** The reasons in plain words (the raw notes are in `reasons`, behind Details). */
+  plainReasons: string[];
+  /** Real (non-QA) students who answered it. */
+  studentsAnswered: number;
+  /** In a published test that is assigned now. */
+  live: boolean;
+  /** Where the key came from (lib/key-source.ts). */
+  keySource: { label: string; detail: string; kind: string };
+  /** Set for the "Fixed in a live test" group. */
+  liveFix: QueueLiveFix | null;
+  status: string;
   number: number | null;
   moduleId: string | null;
   moduleName: string;

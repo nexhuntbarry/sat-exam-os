@@ -14,6 +14,7 @@
 import {
   AUTO_FIX_NOTE_PREFIX,
   classifyNote,
+  draftRejection,
   failingChecks,
   keyIsOfficial,
   splitNotes,
@@ -24,6 +25,7 @@ import { findApproveBlocker, stemFigureMissing } from "@/lib/parse-guards";
 import { KEY_DOUBT_PREFIX, parseKeyDoubt } from "@/lib/key-doubt";
 import { LIVE_FIX_TAG, stripLiveFixNote } from "@/lib/live-questions";
 import { REGEN_DISAGREE_PREFIX } from "@/lib/ai/solve-question";
+import { contentHash, noteStemHash } from "@/lib/content-hash";
 
 // ── Groups ───────────────────────────────────────────────────────────
 
@@ -37,7 +39,8 @@ export type ReviewGroupId =
   | "render"
   | "explanation"
   | "live_fix"
-  | "other";
+  | "ready"
+  | "note";
 
 /** What the queue asks the person to decide for this group. */
 export type DecisionKind = "key" | "key_format" | "stem" | "figure" | "render" | "explanation" | "approve";
@@ -50,8 +53,17 @@ export interface ReviewGroup {
   decision: DecisionKind;
 }
 
-/** In priority order: a question sits in the first group it qualifies for. */
+/**
+ * Display order (the live-fix re-checks lead: students are taking those
+ * tests). Grouping priority is PRIORITY below.
+ *
+ * There is no "Other" group any more (Premier 2026-11-07 item 3): a row with
+ * nothing left to decide is "ready" and the system approves it
+ * (lib/review-auto.ts); a note no rule recognises is shown as itself
+ * ("note"), so the card always says what is wrong.
+ */
 export const REVIEW_GROUPS: ReviewGroup[] = [
+  { id: "live_fix", label: "Fixed in a live test · re-check", ask: "Changed while students are taking the test. Compare before and after, then Confirm or Undo.", decision: "approve" },
   { id: "key_dispute", label: "Answer key disputed", ask: "The AI (or the official key) gives a different answer. Pick the right key.", decision: "key" },
   { id: "module_key", label: "Module key may belong to another module", ask: "This module's key page disagrees with the solved answers. Confirm or change the key.", decision: "key" },
   { id: "key_format", label: "Key doesn't fit the question type", ask: "A letter key on a fill-in question, or similar. Fix the key or the type.", decision: "key_format" },
@@ -60,12 +72,13 @@ export const REVIEW_GROUPS: ReviewGroup[] = [
   { id: "figure", label: "Figure, table or choices to check", ask: "Compare the stored figure / table / choices with the PDF.", decision: "figure" },
   { id: "render", label: "Math or formatting doesn't render", ask: "Fix the broken math or formatting.", decision: "render" },
   { id: "explanation", label: "Explanation cut off or contradicts the key", ask: "Regenerate the explanation from the saved key.", decision: "explanation" },
-  { id: "live_fix", label: "Live-test re-check", ask: "Changed while in a live test. Check it and approve.", decision: "approve" },
-  { id: "other", label: "Other", ask: "Nothing specific is flagged. Check it and approve, or edit.", decision: "approve" },
+  { id: "note", label: "A note to resolve", ask: "A reviewer or tool left a note the checks can't settle. The note is on the card: fix what it says, or approve if it no longer applies.", decision: "approve" },
+  { id: "ready", label: "Passed every check · approving", ask: "Nothing is left to decide: every check passes. The system approves these; approve by hand if one is still here.", decision: "approve" },
 ];
 
 export const GROUP_BY_ID = Object.fromEntries(REVIEW_GROUPS.map((g) => [g.id, g])) as Record<ReviewGroupId, ReviewGroup>;
-const PRIORITY = REVIEW_GROUPS.map((g) => g.id);
+/** Grouping priority: a question sits in the first group it qualifies for. */
+const PRIORITY: ReviewGroupId[] = ["key_dispute", "module_key", "key_format", "ai_key", "stem", "figure", "render", "explanation", "note", "live_fix", "ready"];
 
 // ── Key disagreement notes ───────────────────────────────────────────
 
@@ -212,7 +225,26 @@ export function dropStaleKeyNotes(
   newKey: string | null | undefined,
 ): { notes: string | null; removed: string[] } {
   if ((oldKey ?? "").trim() === (newKey ?? "").trim()) return { notes: notes?.trim() ? notes : null, removed: [] };
-  return removeNotes(notes, (s) => isStaleKeyNote(s, oldKey));
+  const res = removeNotes(notes, (s) => isStaleKeyNote(s, oldKey));
+  // A semantic-audit verdict about the old key AND the content keeps only its
+  // content findings ([Test #13] L Test 1 Math M2 Q18: "…truncated…, Stored
+  // correct_answer '17' does not match…, Stem has unbalanced dollar sign…").
+  const { head, rest } = splitLiveFixNote(res.notes);
+  let changed = false;
+  const segs = noteSegments(rest).map((seg) => {
+    const m = seg.match(/^Semantic audit:\s*([\s\S]*)$/i);
+    if (!m) return seg;
+    const clauses = m[1].split(/,\s(?=[A-Z])/);
+    if (clauses.length < 2) return seg;
+    const kept = clauses.filter((c) => !isStaleKeyNote(`Semantic audit: ${c}`, oldKey) || /\bstem\b|question text|passage|figure|image|graph|table|choice/i.test(c.replace(/'[^']*'|"[^"]*"/g, "")) && !/correct[_ ]answer|\bkey\b|explanation/i.test(c));
+    if (kept.length === clauses.length) return seg;
+    changed = true;
+    res.removed.push(`Semantic audit: ${clauses.filter((c) => !kept.includes(c)).join(", ")}`);
+    return kept.length ? `Semantic audit: ${kept.join(", ")}` : "";
+  });
+  if (!changed) return res;
+  const body = joinNotes(segs.filter(Boolean));
+  return { notes: head ? (body ? `${head} ${body}` : head) : body, removed: res.removed };
 }
 
 /**
@@ -278,7 +310,8 @@ export const STEM_REPLACED_PREFIX = "Question text replaced from the PDF by a re
 
 /** History left by the automatic fixes and the queue's own decisions (never blocks). */
 export function isHistoryNote(seg: string): boolean {
-  return [AUTO_FIX_NOTE_PREFIX, FIGURE_MATCH_PREFIX, FIGURE_KEPT_PREFIX, FIGURE_USED_PDF_PREFIX, STEM_REPLACED_PREFIX].some((p) => seg.startsWith(p));
+  // "AI-only key verified (…) [verify-ai-key … fp:…]" is history too (it never blocks).
+  return [AUTO_FIX_NOTE_PREFIX, FIGURE_MATCH_PREFIX, FIGURE_KEPT_PREFIX, FIGURE_USED_PDF_PREFIX, STEM_REPLACED_PREFIX, "AI-only key verified"].some((p) => seg.startsWith(p));
 }
 
 /** A "verified" fragment left over from "Choices re-extracted from PDF; verified". */
@@ -303,8 +336,11 @@ export function approvalBlockers(r: AutoFixRow): string[] {
   const failing = failingChecks(r, r.explanation ?? "");
   const ctx: NoteContext = { officialKey: keyIsOfficial(r), failingChecks: failing };
   const out: string[] = [];
-  for (const seg of noteSegments(r.parsing_notes)) {
+  const segs = noteSegments(r.parsing_notes);
+  const settled = checksPass(r);
+  for (const seg of segs) {
     if (isHistoryNote(seg)) continue;
+    if (settled && isSettledByChecks(seg, segs, r)) continue;
     if (classifyNote(seg, ctx) !== "info") out.push(`note: ${seg.length > 140 ? `${seg.slice(0, 140)}…` : seg}`);
   }
   const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer, r.official_answer);
@@ -337,7 +373,7 @@ const RULES: [ReviewGroupId, RegExp][] = [
   ["explanation", EXPLANATION_CHECK_NOTE],
   ["stem", /question text looks cut off|stem (?:still )?truncated|\bstem\b[^.]*(?:truncat|incomplete|cut off|garbled|inconsistent|concatenat)|passage (?:is )?missing|AI re-read of the source PDF \(scanned page[^)]*\)(?![\s\S]*answer choices)/i],
   ["figure", /figure\/choices|Image re-extracted|choices? re-extracted|Markdown table AND an image|gave different answer choices|Choice misalignment|choices copied from PDF text|answer choices? (?:have|has|are) empty|choices are empty|choice [A-D] (?:is|text is) (?:empty|truncated|garbled)|graph choice|figure check|\bfigure\b|\bimage\b|\bgraph\b|\btable\b|choice check|corrected from PDF/i],
-  ["render", /math-render|math-contains-prose|LaTeX|stray dollar|raw dollar|Demoted by post-parse-cleanup|renders? raw|garbled/i],
+  ["render", /math-render|math-contains-prose|LaTeX|stray dollar|raw dollar|stray backslash|Demoted by post-parse-cleanup|renders? raw|garbled/i],
   ["explanation", /explanation|regenerate/i],
 ];
 
@@ -355,12 +391,17 @@ export function groupRow(r: AutoFixRow): RowGrouping {
   const ctx: NoteContext = { officialKey: keyIsOfficial(r), failingChecks: failing };
   const reasons: { group: ReviewGroupId; text: string }[] = [];
   const add = (group: ReviewGroupId, text: string) => reasons.push({ group, text });
-  for (const seg of noteSegments(r.parsing_notes)) {
+  const settled = checksPass(r);
+  const segs = noteSegments(r.parsing_notes);
+  for (const seg of segs) {
     if (seg.startsWith(LIVE_FIX_TAG)) {
       add("live_fix", seg);
       continue;
     }
     if (isHistoryNote(seg)) continue;
+    // "Re-review before approve" after an automatic repair: the checks are the
+    // re-review (when one fails, that check is the reason shown instead).
+    if (settled ? isSettledByChecks(seg, segs, r) : RECHECK_REQUEST.some((re) => re.test(seg.trim()))) continue;
     const kind = classifyNote(seg, ctx);
     if (kind === "info") continue;
     if (kind === "explanation" && !/\bstem\b|question text/i.test(seg)) {
@@ -368,7 +409,7 @@ export function groupRow(r: AutoFixRow): RowGrouping {
       continue;
     }
     const rule = RULES.find(([, re]) => re.test(seg));
-    add(rule ? rule[0] : "other", seg);
+    add(rule ? rule[0] : "note", seg);
   }
   const blocker = findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer, r.official_answer);
   if (blocker) {
@@ -377,10 +418,83 @@ export function groupRow(r: AutoFixRow): RowGrouping {
   }
   if (stemFigureMissing(r)) add("figure", "the question's figure is missing");
   if (r.official_answer && !keyIsOfficial(r)) add("key_dispute", `key ${r.correct_answer} differs from the official answer ${r.official_answer}`);
-  for (const id of failing) add(/^math-/.test(id) ? "render" : /explanation/.test(id) ? "explanation" : /spr|answer|key/.test(id) ? "key_format" : "other", `check: ${id}`);
-  if (reasons.length === 0) add("other", "no blocking note left");
-  const groups = PRIORITY.filter((g) => reasons.some((x) => x.group === g));
-  return { primary: groups[0], groups, reasons: reasons.sort((a, b) => PRIORITY.indexOf(a.group) - PRIORITY.indexOf(b.group)) };
+  for (const id of failing) add(/^math-/.test(id) ? "render" : /explanation/.test(id) ? "explanation" : /spr|answer|key/.test(id) ? "key_format" : /stem|text/.test(id) ? "stem" : "render", `check: ${id}`);
+  if (!reasons.some((x) => x.group === "explanation")) {
+    const ex = draftRejection(r, r.explanation ?? "");
+    if (ex) add("explanation", `explanation: ${ex}`);
+  }
+  if (reasons.length === 0) add("ready", "every check passes");
+  let groups = PRIORITY.filter((g) => reasons.some((x) => x.group === g));
+  // A broken stem comes before the key: the key can't be judged on the wrong
+  // question ([Test #13] L Test 1 Math M2 Q21: two questions merged into one
+  // stem, the solves answered one, the stored key the other).
+  const broken = reasons.find((x) => STEM_BROKEN.test(x.text));
+  if (broken && KEY_GROUPS.has(groups[0])) {
+    if (!groups.includes("stem")) add("stem", broken.text);
+    groups = ["stem", ...groups.filter((g) => g !== "stem")];
+  }
+  return { primary: groups[0], groups, reasons: reasons.sort((a, b) => groups.indexOf(a.group) - groups.indexOf(b.group)) };
+}
+
+const KEY_GROUPS = new Set<ReviewGroupId>(["key_dispute", "module_key", "ai_key"]);
+/** Stem notes that mean the text itself is wrong (not just a formatting slip). */
+export const STEM_BROKEN = /two (?:completely )?unrelated (?:problems|questions)|(?:stem|question|problems?)[^.,;]*concatenat|question text looks cut off|stem (?:still )?truncated|\bstem\b[^.,;]*(?:truncat|incomplete|cut off)|passage (?:is )?missing/i;
+
+// ── Notes the automatic checks settle ────────────────────────────────
+
+/**
+ * "Re-review before approve" left by an automatic repair, or an AI-solver
+ * "please verify" whose key was verified since. Owner rule 2026-11-07 (Draft
+ * item): run the same checks; if they pass, the note is settled.
+ */
+const RECHECK_REQUEST: RegExp[] = [
+  /^Re-extracted by admin self-repair \([^)]*\)\.\s*Re-review before approve\.?$/i,
+  /^Re-promoted by post-parse-cleanup after earlier failures cleared\.\s*Re-review before approve\.?$/i,
+];
+const AI_PLEASE_VERIFY: RegExp[] = [
+  /^Answer & explanation generated by AI solver — please verify\.?$/i,
+  /^No official answer in key for Q\d+ — AI solver only, please verify$/i,
+];
+/** History a person left after fixing it by hand (nothing left to do). */
+const DONE_BY_HAND: RegExp[] = [/^Stem restored from PDF p\d+ \(\d{4}-\d{2}-\d{2}\)$/i, /^choices checked$/i];
+
+/**
+ * Is this note settled (the caller has already checked checksPass)?
+ * Without a real official key, a "Re-review before approve" or AI-solver
+ * "please verify" note is settled only by an AI-only-key verification made
+ * on THIS version of the question (its fingerprint matches contentHash):
+ * a verification of an older text, or one without a fingerprint, doesn't
+ * count (review 2026-11-09).
+ */
+export function isSettledByChecks(seg: string, allSegs: string[], r: AutoFixRow): boolean {
+  const s = seg.trim();
+  if (DONE_BY_HAND.some((re) => re.test(s))) return true;
+  const recheck = RECHECK_REQUEST.some((re) => re.test(s));
+  const pleaseVerify = AI_PLEASE_VERIFY.some((re) => re.test(s));
+  if (!recheck && !pleaseVerify) return false;
+  if (recheck && r.official_answer && keyIsOfficial(r)) return true;
+  const h = contentHash(r);
+  return allSegs.some((x) => /^AI-only key verified\b/i.test(x) && noteStemHash(x) === h);
+}
+
+/**
+ * Every automatic check passes on the row as it is: approve gate, figure,
+ * official key, post-parse checks and the explanation (cut off, formatting,
+ * argues another answer, numeric consistency).
+ */
+export function checksPass(r: AutoFixRow): boolean {
+  if (failingChecks(r, r.explanation ?? "").size > 0) return false;
+  if (findApproveBlocker(r.question_text, r.choices, r.question_type, r.correct_answer, r.official_answer)) return false;
+  if (stemFigureMissing(r)) return false;
+  if (r.official_answer && !keyIsOfficial(r)) return false;
+  return !draftRejection(r, r.explanation ?? "");
+}
+
+/** The notes with the ones the checks settled removed (unchanged when the checks fail). */
+export function dropSettledNotes(r: AutoFixRow): { notes: string | null; removed: string[] } {
+  if (!checksPass(r)) return { notes: r.parsing_notes ?? null, removed: [] };
+  const all = noteSegments(splitLiveFixNote(r.parsing_notes).rest);
+  return removeNotes(r.parsing_notes, (s) => isSettledByChecks(s, all, r));
 }
 
 /** Count per primary group (every group present, 0 when empty). */
@@ -397,10 +511,15 @@ export function countByGroup(rows: AutoFixRow[]): Record<ReviewGroupId, number> 
  * automatic fix): the explanation auto-fix and the figure check leave a
  * history note on the rows they approve.
  */
+export const SYSTEM_APPROVED_PREFIX = "System-approved";
+
 export function autoFixedGroup(r: Pick<AutoFixRow, "parsing_status" | "parsing_notes">): ReviewGroupId | null {
   if (r.parsing_status !== "Approved") return null;
   const segs = noteSegments(r.parsing_notes);
+  // Key set by the system (two agreeing solves, lib/review-auto.ts / auto-key script).
+  if (segs.some((s) => /^(?:\[live-fix\][^;]*)?Answer key check: .*\(applied by (?:the system|auto-key)\b/i.test(s))) return "key_dispute";
   if (segs.some((s) => s.startsWith(FIGURE_MATCH_PREFIX))) return "figure";
   if (segs.some((s) => s.startsWith(AUTO_FIX_NOTE_PREFIX))) return "explanation";
+  if (segs.some((s) => s.startsWith(SYSTEM_APPROVED_PREFIX))) return "ready";
   return null;
 }

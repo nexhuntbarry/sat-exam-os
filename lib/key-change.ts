@@ -35,6 +35,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { KEY_FORM_NOTE_PREFIX, keyTypeProblem } from "@/lib/answer-key";
 import { LIVE_FIX_TAG, liveQuestionIds, stripLiveFixNote } from "@/lib/live-questions";
+import { saveLiveFixSnapshot } from "@/lib/live-fix";
 import {
   regenDisagreeNote,
   regenerateExplanation,
@@ -264,6 +265,8 @@ export interface KeyCorrectionInput {
   clear_choices?: boolean;
   /** The key shown on the preview. */
   expectedKey: string | null;
+  /** Optional compare-and-set on the whole row (automatic callers: the row they planned on). */
+  expectedUpdatedAt?: string | null;
   /** The person confirmed rescoring on the preview. */
   rescore: boolean;
   userId?: string;
@@ -301,6 +304,9 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
   if ((q.correct_answer ?? null) !== (input.expectedKey ?? null)) {
     return { ok: false, status: 409, error: "The key changed since the preview. Reload the page and preview again." };
   }
+  if (input.expectedUpdatedAt && q.updated_at && q.updated_at !== input.expectedUpdatedAt) {
+    return { ok: false, status: 409, error: "The question changed since it was checked. Reload and try again." };
+  }
 
   const oldKey = q.correct_answer ?? null;
   const nextType = typeof input.question_type === "string" ? input.question_type : q.question_type;
@@ -317,6 +323,7 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
   if (live && input.refuseLive) {
     return { ok: false, status: 409, error: "This question is in a live test now — an automatic key change is not applied; it is queued for a person." };
   }
+
   const changes = [
     nextType !== q.question_type ? `type ${q.question_type ?? "∅"} → ${nextType}` : null,
     keyChanged ? `key ${oldKey ?? "∅"} → ${nextKey}` : null,
@@ -327,7 +334,8 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
     .split(/;\s*/)
     .filter((s) => s && !s.startsWith(KEY_FORM_NOTE_PREFIX))
     .join("; ");
-  const fixNote = `Answer key check: ${changes.join(", ")} (applied by ${input.source})`;
+  // Who and when, so the key's source label can say "Set by a reviewer (name, date)" (lib/key-source.ts).
+  const fixNote = `Answer key check: ${changes.join(", ")} (applied by ${input.source.replace(/;/g, ",")}, ${new Date().toISOString().slice(0, 10)})`;
   // Notes are "; "-separated; the [live-fix] sentence leads (the format
   // stripLiveFixNote expects). An identical fix note isn't added twice.
   const noteBody = [...(kept ? kept.split(/;\s*/) : []), ...(changes.length ? [fixNote] : [])]
@@ -362,6 +370,7 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
     .update({ ...update, updated_at: new Date().toISOString() })
     .eq("id", input.id);
   upd = oldKey === null ? upd.is("correct_answer", null) : upd.eq("correct_answer", oldKey);
+  if (input.expectedUpdatedAt) upd = upd.eq("updated_at", input.expectedUpdatedAt);
   const { data: written, error } = await upd.select("id");
   if (error) {
     console.error("[key-change] update error:", error);
@@ -370,6 +379,9 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
   if (!written?.length) {
     return { ok: false, status: 409, error: "The key changed since the preview. Reload the page and preview again." };
   }
+  // Only after the write went through: keep what students saw before
+  // (live-fix group: before / after, Undo).
+  if (live && keyChanged) await saveLiveFixSnapshot(db, q as unknown as Record<string, unknown> & { id: string }, `key change (${input.source})`, update.parsing_notes as string | null);
 
   const explanationUpdated = prepared?.explanation.outcome === "regenerated";
   const exOk = prepared ? prepared.ok : true;

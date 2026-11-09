@@ -1297,7 +1297,7 @@ export default function QuestionReviewPanel({ question: initial, nav, moduleKeyF
               <label htmlFor="correct-answer" className="block text-xs text-soft-mute mb-1">Correct Answer</label>
               {savedKey && (
                 <p className="mb-1 text-[11px] leading-snug text-soft-mute" title={keySrc.detail} data-testid="key-source">
-                  <span className={clsx("font-semibold", keySrc.kind === "official-pdf" ? "text-status-success" : keySrc.kind === "ai-parsed" || keySrc.kind === "ai" ? "text-status-warning" : "text-charcoal")}>
+                  <span className={clsx("font-semibold", keySrc.kind === "official-pdf" ? "text-status-success" : keySrc.kind === "ai-parsed" || keySrc.kind === "ai" || keySrc.kind === "other-version" || keySrc.kind === "unknown" ? "text-status-warning" : "text-charcoal")}>
                     {keySrc.label}
                   </span>
                   {keySrc.kind !== "official-pdf" && <> · {keySrc.detail}</>}

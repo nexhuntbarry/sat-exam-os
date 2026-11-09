@@ -102,12 +102,15 @@ ok("image re-extracted → figure", g("Image re-extracted by admin self-repair (
 ok("table AND image → figure", g("Needs review: the question has a Markdown table AND an image; we could not confirm automatically whether the image is the same table") === "figure");
 ok("cut-off explanation only → explanation", g(TRUNCATION_NOTE, { explanation: "Choice A is correct because the" }) === "explanation");
 ok("live-fix → live_fix", g(`${LIVE_FIX_TAG} Explanation auto-fixed and nothing else blocks approval while this question is in a live test; kept Needs Review — please re-check. Answer = official key`) === "live_fix");
-ok("only info notes → other", g("Answer = official key; explanation matches (verified)") === "other");
-ok("auto-fix history alone → other", g(`${AUTO_FIX_NOTE_PREFIX}: regenerated from the saved key (2026-11-07)`) === "other");
+ok("only info notes → ready (nothing left to decide)", g("Answer = official key; explanation matches (verified)") === "ready");
+ok("auto-fix history alone → ready", g(`${AUTO_FIX_NOTE_PREFIX}: regenerated from the saved key (2026-11-07)`) === "ready");
 const multi = groupRow(row({ parsing_notes: `${keyDoubtNote("A", "B", "x")}; ${STEM_CUT_OFF_NOTE}; still needs review (figure/choices)` }));
-ok("priority: key first, then stem, then figure", multi.primary === "key_dispute" && multi.groups.join(",") === "key_dispute,stem,figure");
+// A cut-off stem comes before the key (Q21: the key can't be judged on the wrong question).
+ok("priority: broken stem first, then key, then figure", multi.primary === "stem" && multi.groups.join(",") === "stem,key_dispute,figure");
+const multi2 = groupRow(row({ parsing_notes: `${keyDoubtNote("A", "B", "x")}; still needs review (figure/choices)` }));
+ok("priority: key before figure", multi2.primary === "key_dispute" && multi2.groups.join(",") === "key_dispute,figure");
 const counts = countByGroup([row({ parsing_notes: STEM_CUT_OFF_NOTE }), row({ parsing_notes: STEM_CUT_OFF_NOTE }), row({ parsing_notes: "Answer = official key" })]);
-ok("countByGroup", counts.stem === 2 && counts.other === 1 && counts.key_dispute === 0);
+ok("countByGroup", counts.stem === 2 && counts.ready === 1 && counts.key_dispute === 0);
 
 ok("'re-extracted from the PDF — check the explanation' → explanation", g("Needs review: stem and choices re-extracted from the PDF (quote cut-off fix, 2026-11-07) — check the explanation against the full question, then approve.") === "explanation");
 ok("queue history notes never block", approvalBlockers(row({ parsing_notes: "Question text replaced from the PDF by a reviewer (2026-11-07); Figure check: stored version kept by a reviewer (2026-11-07)" })).length === 0);
@@ -238,9 +241,9 @@ function fakeDb(rows: Record<string, unknown>[]) {
   return { db: { from } as unknown as SupabaseClient, writes };
 }
 
-// HIGH 1: "approve" refuses anything outside the Other / Live-test groups.
+// HIGH 1: "approve" refuses anything outside the ready / note / live-test groups.
 ok("approveRefusal: clean row may be approved", approveRefusal(row()).length === 0);
-ok("approveRefusal: an unclassified note (Other) may be approved", approveRefusal(row({ parsing_notes: "Needs review: something odd about Q19" })).length === 0);
+ok("approveRefusal: an unclassified note (note group) may be approved", approveRefusal(row({ parsing_notes: "Needs review: something odd about Q19" })).length === 0);
 ok("approveRefusal: live-fix re-check may be approved", approveRefusal(row({ parsing_notes: `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check.` })).length === 0);
 ok("approveRefusal: key dispute refused", approveRefusal(row({ parsing_notes: "Needs review: key says A, AI says C (12)" })).length > 0);
 ok("approveRefusal: key ≠ official refused", approveRefusal(row({ official_answer: "C" })).some((b) => /differs from the official/.test(b)));
@@ -254,7 +257,7 @@ ok("approveRefusal: cut-off explanation refused", approveRefusal(row({ explanati
   const clean = { ...row({ parsing_notes: "Needs review: something odd about Q19" }), image_alts: [], mismatch_with_official: false } as Record<string, unknown>;
   const f2 = fakeDb([clean]);
   const r2 = await decide(f2.db, "q1", { action: "approve" }, {});
-  ok("decide approve: Other row → Approved", r2.ok && r2.approved === true && clean.parsing_status === "Approved");
+  ok("decide approve: note-group row → Approved", r2.ok && r2.approved === true && clean.parsing_status === "Approved");
 }
 
 // HIGH 2: content changes on a live row lead with [live-fix].

@@ -298,6 +298,17 @@ export function keyTypeProblem(q: {
       for (const c of cands) {
         const p = sprEntryProblem(c);
         if (p && p.startsWith("is too long") && official.has(normalizeKeyText(c))) continue;
+        // An exact fraction too long for the box ("220/17") listed next to the
+        // box form that credits it ("12.94 or 220/17") is fine: students enter
+        // the short form, and the exact value is kept for whoever types it.
+        if (
+          p &&
+          p.startsWith("is too long") &&
+          FRAC.test(normalizeKeyText(c).replace(/\s+/g, "")) &&
+          cands.some((o) => o !== c && !sprEntryProblem(o) && sprEntryCreditedForCandidate(o, c, q.question_text) === true)
+        ) {
+          continue;
+        }
         if (p) return { code: "spr-invalid-form", reason: `the Fill-in (SPR) key "${c}" ${p}` };
       }
       const r = roundingProblem(key, roundingInstruction(q.question_text));
@@ -673,7 +684,17 @@ export function acceptedFormsForCandidate(cand: string, questionText?: string | 
 
 /** Accepted forms for each answer listed in a key ("5 or -13" → [["5"], ["-13"]]). */
 export function acceptedSprEntries(key: string | null | undefined, questionText?: string | null): string[][] {
-  return keyCandidates(key).map((c) => acceptedFormsForCandidate(c, questionText));
+  // "12.94 or 220/17" lists one value twice (the box form and the exact
+  // fraction): both credit the same entries, so it is shown once.
+  const seen = new Set<string>();
+  return keyCandidates(key)
+    .map((c) => acceptedFormsForCandidate(c, questionText))
+    .filter((g) => {
+      const k = JSON.stringify(g);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
 }
 
 function formsInWords(forms: string[]): string {

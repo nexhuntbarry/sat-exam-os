@@ -11,6 +11,14 @@
     {
       "path": "/api/cron/auto-fix-explanations",
       "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/review-auto-settle",
+      "schedule": "15 * * * *"
+    },
+    {
+      "path": "/api/cron/spot-check",
+      "schedule": "30 10 * * *"
     }
   ]
 }

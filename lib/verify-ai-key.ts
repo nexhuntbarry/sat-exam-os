@@ -37,12 +37,16 @@ import {
   answersAgreeForQuestion,
   applyRounding,
   checkComputedAnswer,
+  fillDecimalForms,
   keyCandidates,
+  keyTypeProblem,
+  parseSprEntry,
   normalizeKeyText,
   roundingInstruction,
   sprValue,
 } from "@/lib/answer-key";
 import { nearlyEqual, tryEvaluate } from "@/lib/math/safe-eval";
+import { answersMatch } from "@/lib/grade-submission";
 import { choiceValue, mapValueToChoice, type ChoiceLike } from "@/lib/math/choice-values";
 import { findApproveBlocker, stemFigureMissing } from "@/lib/parse-guards";
 import { LIVE_FIX_TAG } from "@/lib/live-questions";
@@ -109,9 +113,13 @@ export function parseAiKeyDisagreeNote(segment: string): AiKeyDisagreement | nul
 }
 
 export const AI_KEY_VERIFIED_PREFIX = "AI-only key verified";
-export function aiKeyVerifiedNote(detail: string, date: string): string {
-  return `${AI_KEY_VERIFIED_PREFIX} (${noteSafe(detail)}) [verify-ai-key ${date}]`;
+export function aiKeyVerifiedNote(detail: string, date: string, stemHash?: string | null): string {
+  return `${AI_KEY_VERIFIED_PREFIX} (${noteSafe(detail)}) [verify-ai-key ${date}${stemHash ? ` fp:${stemHash}` : ""}]`;
 }
+
+// Fingerprint helpers live in lib/content-hash.ts (pure, used by the review queue too).
+export { contentHash, noteStemHash } from "@/lib/content-hash";
+import { contentHash } from "@/lib/content-hash";
 
 /** Notes that exist only because the key came from AI solving. Cleared once verified. */
 const AI_ONLY_KEY_NOTES: RegExp[] = [
@@ -260,7 +268,7 @@ export function decideVerification(
       key,
       ai: w?.answer ?? "?",
       value: value && value !== w?.answer ? value : null,
-      detail: `${summary} [verify-ai-key ${date}]`,
+      detail: `${summary} [verify-ai-key ${date} fp:${contentHash(r)}]`,
     };
     const notes = [...base, aiKeyDisagreeNote(d)];
     const update: Record<string, unknown> = { updated_at: now.toISOString() };
@@ -289,7 +297,7 @@ export function decideVerification(
   // Verified.
   const kept = base.filter((s) => !isAiOnlyKeyNote(s));
   const blockers = r.parsing_status === "Needs Review" ? approvalBlockers(r, kept) : [];
-  const notes = [...kept, aiKeyVerifiedNote(summary, date)].join("; ");
+  const notes = [...kept, aiKeyVerifiedNote(summary, date, contentHash(r))].join("; ");
   const update: Record<string, unknown> = { parsing_notes: notes, updated_at: now.toISOString() };
   let approved = false;
   if (r.parsing_status === "Needs Review" && blockers.length === 0 && !live) {
@@ -332,6 +340,84 @@ export function moduleHasRealKey(rows: { official_answer: string | null }[]): bo
   return rows.some((r) => !!(r.official_answer ?? "").trim());
 }
 
+/** Does a fill-in answer text stand for the value code computed (exactly, or as its rounded / fill-the-box form)? */
+function textFitsValue(text: string, value: number | null | undefined, questionText: string | null): boolean {
+  if (value == null || !Number.isFinite(value)) return true;
+  const sv = parseSprEntry(text);
+  if (sv === null) return false;
+  // Values read back from a note keep 8 significant digits (checksSummary).
+  if (Math.abs(sv - value) <= 1e-6 * Math.max(1, Math.abs(value))) return true;
+  const rule = roundingInstruction(questionText);
+  if (rule) return nearlyEqual(sv, applyRounding(value, rule.places), 1e-9);
+  return fillDecimalForms(value).includes(normalizeKeyText(text));
+}
+
+/**
+ * Do two solves reach the same answer? Letters as letters. Fill-in: the
+ * answer TEXTS must grade as each other (lib/grade-submission answersMatch,
+ * either way round), each text must stand for its own code-computed value,
+ * and the values must agree. [Test #13] L Test 1 Math M2 Q18: "12.94" and
+ * "220/17" agree (12.94 is the box form of 220/17); "12.9" and "220/17" don't.
+ */
+export function solvesAgree(a: SolveCheck, b: SolveCheck, isMc: boolean, questionText: string | null): boolean {
+  if (!a.answer || !b.answer) return false;
+  if (isMc) return sameKey(a.answer, b.answer, true, questionText);
+  const A = a.answer.trim();
+  const B = b.answer.trim();
+  if (!(answersMatch(A, B, questionText) || answersMatch(B, A, questionText))) return false;
+  if (!textFitsValue(A, a.value, questionText) || !textFitsValue(B, b.value, questionText)) return false;
+  if (a.value != null && b.value != null && Number.isFinite(a.value) && Number.isFinite(b.value)) {
+    return Math.abs(a.value - b.value) <= 1e-6 * Math.max(1, Math.abs(a.value), Math.abs(b.value));
+  }
+  return true;
+}
+
+/**
+ * The fill-in key to save when two solves agree: both answer texts when they
+ * differ ("12.94 or 220/17": the exact value and its box form), so every
+ * entry either solve would accept is credited. null when that key doesn't
+ * credit both texts or isn't a valid key.
+ */
+export function sprKeyFromSolves(a: string, b: string, questionText: string | null): string | null {
+  const A = a.trim();
+  const B = b.trim();
+  // The enterable form first.
+  const parts = [...new Set([A, B])].sort((x, y) => Number(/\//.test(x)) - Number(/\//.test(y)) || x.length - y.length);
+  const key = parts.join(" or ");
+  if (!answersMatch(A, key, questionText) || !answersMatch(B, key, questionText)) return null;
+  if (keyTypeProblem({ question_type: SPR_TYPE, correct_answer: key, question_text: questionText, choices: [] })) return null;
+  return key;
+}
+
+/**
+ * The checks recorded in a disagreement / verified note's detail
+ * (checksSummary format), so the review queue and the system can act on them
+ * without re-running the AI: "code C (51.12), plug-back of B fails (…),
+ * second solve C (51.12)[, read points …]" or "solve 1 B, solve 2 C".
+ * null when the detail isn't in that format.
+ */
+export function checksFromSummary(detail: string | null | undefined): VerifyChecks | null {
+  const d = (detail ?? "").replace(/\s*\[(?:verify-ai-key|spot-check) [^\]]*\]\s*$/, "").trim();
+  const solve = (s: string | undefined, method: string): SolveCheck | null => {
+    if (!s) return null;
+    const t = s.trim();
+    if (!t || t === "n/a") return null;
+    const m = t.match(/^(.+?)(?: \((-?[\d.e+-]+)\))?( \[model letter\])?$/);
+    if (!m) return null;
+    const answer = m[1].trim() === "no answer" ? null : m[1].trim();
+    const value = m[2] !== undefined && Number.isFinite(Number(m[2])) ? Number(m[2]) : null;
+    return { answer, value, mapped: m[3] ? false : value != null ? true : undefined, method, problems: [] };
+  };
+  const rw = d.match(/^solve 1 (.+?), solve 2 (.+?)(?: — .*)?$/);
+  if (rw) return { section: "Reading & Writing", first: solve(rw[1], "rw-standard"), plugBack: null, second: solve(rw[2], "rw-eliminate") };
+  const m = d.match(/^code (.+?), (plug-back (?:of .+? (holds|fails(?: \((?:[^()]|\([^()]*\))*\))?|n\/a)|n\/a)), second solve (.+?)(?:, read points (.+?))?(?: — .*)?$/);
+  if (!m) return null;
+  const first = solve(m[1], "code");
+  if (first && m[5]) first.figurePoints = m[5].trim();
+  const status = !m[3] || m[3] === "n/a" ? "n/a" : m[3] === "holds" ? "pass" : "fail";
+  return { section: "Math", first, plugBack: { status, detail: m[2] }, second: solve(m[4], "math-alt") };
+}
+
 export function autoKeyDecision(
   r: Pick<VerifyRow, "question_type" | "question_text" | "correct_answer" | "official_answer"> & { image_urls?: unknown },
   ch: VerifyChecks,
@@ -347,14 +433,15 @@ export function autoKeyDecision(
   // The first solve must be the code-checked one.
   const codeChecked = isMc ? a.mapped === true && a.value != null : a.value != null;
   if (!codeChecked || a.problems.length > 0) return { action: "none", reason: "the first solve is not code-checked" };
-  if (!sameKey(a.answer, b.answer, isMc, r.question_text) || !sameKey(b.answer, a.answer, isMc, r.question_text)) {
+  if (!solvesAgree(a, b, isMc, r.question_text)) {
     return { action: "none", reason: `the two solves disagree (${a.answer} vs ${b.answer})` };
   }
   if (sameKey(a.answer, key, isMc, r.question_text)) return { action: "none", reason: "both solves give the stored key" };
   const figure = Array.isArray(r.image_urls) && r.image_urls.length > 0;
   if (figure && !(a.figurePoints ?? "").trim()) return { action: "none", reason: "figure question: the code solve listed no exact points read from the figure" };
   if (ch.plugBack?.status === "pass") return { action: "none", reason: `the stored key ${key} still passes its plug-back` };
-  const next = isMc ? (letterOf(a.answer) as string) : a.answer.trim();
+  const next = isMc ? (letterOf(a.answer) as string) : sprKeyFromSolves(a.answer, b.answer, r.question_text ?? null);
+  if (!next) return { action: "none", reason: `no valid key credits both ${a.answer} and ${b.answer}` };
   if (ctx.live) return { action: "queue_live", key: next, reason: `both solves give ${next}, but the question is in a live test` };
   return { action: "set_key", key: next, reason: `code solve ${a.answer}${a.value != null ? ` (${+a.value.toPrecision(8)})` : ""} and second solve ${b.answer} agree` };
 }
@@ -420,6 +507,8 @@ async function ask(
     system,
     maxOutputTokens: 3000,
     maxRetries: 3,
+    // Keep one slow call from running a cron past its 300 s limit.
+    abortSignal: AbortSignal.timeout(60_000),
     messages: [{ role: "user", content: [...blocks, { type: "text", text: prompt }] }],
   });
   const inTok = res.usage?.inputTokens ?? 0;

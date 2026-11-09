@@ -19,6 +19,11 @@ async function getQuestion(id: string) {
     .eq("id", id)
     .single();
   if (error || !data) return null;
+  // The approver's name, for the key's source label ("Confirmed by a reviewer (name, date)").
+  if (data.reviewed_by) {
+    const { data: u } = await db.from("users").select("display_name, email").eq("id", data.reviewed_by).maybeSingle();
+    return { ...data, reviewer_name: (u?.display_name as string | null) || (u?.email as string | null) || null };
+  }
   return data;
 }
 
