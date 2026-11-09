@@ -1,5 +1,5 @@
 import MathMarkdown from "@/components/MathMarkdown";
-import { Mark, QuestionBlock, imgSrc } from "@/components/tests/PrintableTest";
+import { ChoiceBubble, Mark, QuestionBlock, imgSrc } from "@/components/tests/PrintableTest";
 import { formatDate } from "@/lib/datetime";
 import type { PrintOptions, StudentResultPrintout } from "@/lib/result-printout";
 
@@ -31,7 +31,12 @@ export default function ResultPrintout({
   };
 
   return (
-    <section className={`result-student${first ? "" : " break-before-page"}`} data-student={p.studentName}>
+    // Figures are capped for paper (a large crop used to fill half a page);
+    // never upscaled. Printout only: the blank test print and the exam UI keep theirs.
+    <section
+      className={`result-student${first ? "" : " break-before-page"} [&_.print-figure_img]:max-h-[6.5cm] [&_.print-figure_img]:w-auto [&_.print-figure_img]:h-auto [&_.print-figure_img]:object-contain`}
+      data-student={p.studentName}
+    >
       {/* ── Summary page ── */}
       <div className="result-summary">
         <div className="border-b-2 border-charcoal pb-3 mb-5">
@@ -65,7 +70,7 @@ export default function ResultPrintout({
         {p.shows.answers ? (
           <>
             <p className="text-sm mb-3">
-              <span className="font-semibold">Key:</span> <Mark kind="picked" /> = your answer · <Mark kind="correct" /> = correct ·{" "}
+              <span className="font-semibold">Key:</span> <ChoiceBubble label="A" filled /> = your answer · <Mark kind="correct" /> = correct answer ·{" "}
               <Mark kind="wrong" /> = wrong · <Mark kind="blank" /> = left blank
               <span className="text-mid-gray"> ({counts.correct} correct · {counts.wrong} wrong · {counts.blank} blank)</span>
             </p>

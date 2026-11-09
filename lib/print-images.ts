@@ -19,7 +19,9 @@ export async function waitForImages(
           img.addEventListener("load", () => res(), { once: true });
           img.addEventListener("error", () => rej(new Error("error")), { once: true });
         }))
-          .then(() => img.decode().catch(() => undefined))
+          // Bounded: decode() can be deferred in a background tab; a loaded
+          // image is printable either way (naturalWidth is the real check).
+          .then(() => Promise.race([img.decode().catch(() => undefined), new Promise((r) => setTimeout(r, 3000))]))
           .then(() => img.naturalWidth > 0),
         new Promise<boolean>((res) => setTimeout(() => res(false), timeoutMs)),
       ]).catch(() => false);

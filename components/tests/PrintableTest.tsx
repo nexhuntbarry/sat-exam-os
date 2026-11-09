@@ -120,6 +120,49 @@ export function Mark({ kind, size = 12 }: { kind: MarkKind; size?: number }) {
 }
 const sameLetter = (a: string | null | undefined, b: string) => (a ?? "").trim().toUpperCase() === b.trim().toUpperCase();
 
+/** A choice letter as a bubble; `filled` = the student's answer (result printout). */
+export function ChoiceBubble({ label, filled, strong }: { label: string; filled?: boolean; strong?: boolean }) {
+  return (
+    <span
+      className={`shrink-0 inline-flex w-5 h-5 rounded-full border-2 text-[10px] font-bold items-center justify-center ${
+        filled ? "bg-charcoal border-charcoal text-white" : strong ? "border-charcoal" : "border-charcoal/50"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+// Choice layout by length of the choice text as printed (LaTeX/markup
+// stripped). At Letter size a column of the 4-up grid fits ~12 characters
+// next to its bubble, the 2-up ~30; longer choices get a line each.
+export const CHOICE_COLS_4_MAX_CHARS = 10;
+export const CHOICE_COLS_2_MAX_CHARS = 28;
+
+/** Approximate printed length of a choice: LaTeX commands, braces and markup removed. */
+export function choicePlainLength(text: string): number {
+  if (text.includes("\n")) return Infinity;
+  const plain = text
+    .replace(/\\(?:d|t)?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "$1/$2")
+    .replace(/\\sqrt/g, "√")
+    .replace(/\\(?:left|right|displaystyle|text|mathrm|mathbf|mathit|operatorname)\b/g, "")
+    .replace(/\\[a-zA-Z]+/g, "x") // \pi, \le, \cdot… print as one symbol
+    .replace(/\\[,;:! ]/g, "")
+    .replace(/[{}$^_*`\\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain.length;
+}
+
+/** 4, 2 or 1 choices per row. Image choices: 2 (graphs stay readable). */
+export function choiceColumns(choices: { text: string; image_url?: string | null }[], { marked = false } = {}): 1 | 2 | 4 {
+  if (choices.some((c) => c.image_url)) return 2;
+  const longest = Math.max(0, ...choices.map((c) => choicePlainLength(c.text ?? "")));
+  if (longest <= CHOICE_COLS_4_MAX_CHARS) return marked ? 2 : 4;
+  if (longest <= CHOICE_COLS_2_MAX_CHARS && !marked) return 2;
+  return 1;
+}
+
 export function QuestionBlock({
   q,
   n,
@@ -140,10 +183,9 @@ export function QuestionBlock({
   const isMC = q.question_type === "Multiple Choice";
   const hasGraphChoices = choices.some((c) => c.image_url);
   const hasFigure = (q.image_urls?.length ?? 0) > 0;
-  // Short choices (numbers, single words) sit side by side to save paper.
-  const longest = Math.max(0, ...choices.map((c) => (c.text.includes("\n") ? 999 : c.text.replace(/\$[^$]*\$/g, (m) => "x".repeat(Math.ceil(m.length / 2))).length)));
-  const marked = withKey; // the answer key's "✓ Correct" label needs room
-  const choiceCols = hasGraphChoices ? 1 : longest <= 12 ? (marked ? 2 : 4) : longest <= 32 && !marked ? 2 : 1;
+  // Short choices (numbers, single words) sit side by side to save paper;
+  // the answer key's "✓ Correct" label after the text needs room.
+  const choiceCols = choiceColumns(choices, { marked: withKey && !result });
   return (
     // Block layout (not flex) so a long stem/passage can flow across a page
     // break; only the figure (kept with its stem) and the choice list are
@@ -184,7 +226,7 @@ export function QuestionBlock({
           // readable size (≥1.6in wide) instead of whatever its crop was.
           <ul
             className={`print-choices break-inside-avoid ${
-              hasGraphChoices ? "grid grid-cols-2 gap-x-6 gap-y-3" : choiceCols === 4 ? "grid grid-cols-4 gap-x-4 gap-y-1" : choiceCols === 2 ? "grid grid-cols-2 gap-x-6 gap-y-1" : "space-y-1"
+              hasGraphChoices ? "grid grid-cols-2 gap-x-6 gap-y-3" : choiceCols === 4 ? "grid grid-cols-4 gap-x-8 gap-y-1" : choiceCols === 2 ? "grid grid-cols-2 gap-x-8 gap-y-1" : "space-y-1"
             }`}
           >
             {choices.map((c) => {
@@ -192,13 +234,21 @@ export function QuestionBlock({
               const picked = !!result && sameLetter(result.studentAnswer, c.label);
               return (
                 <li key={c.label} className={`flex items-start gap-2 break-inside-avoid ${correct ? "font-semibold" : ""}`}>
-                  <span
-                    className={`shrink-0 w-5 h-5 rounded-full border-2 text-[10px] font-bold flex items-center justify-center ${
-                      correct && !result ? "bg-charcoal border-charcoal text-white" : picked ? "border-charcoal" : "border-charcoal/50"
-                    }`}
-                  >
-                    {c.label}
-                  </span>
+                  {result ? (
+                    // Marks sit ON the letter, never after the text (where they
+                    // read as belonging to the next choice): the student's
+                    // answer is a filled bubble, the correct one has ✓ just
+                    // left of its bubble (fixed slot, so letters stay aligned).
+                    <span
+                      className="shrink-0 inline-flex items-center gap-0.5"
+                      aria-label={[`Choice ${c.label}`, picked && "your answer", correct && "correct"].filter(Boolean).join(", ")}
+                    >
+                      <span className="w-3.5 inline-flex justify-end">{correct && <Mark kind="correct" size={14} />}</span>
+                      <ChoiceBubble label={c.label} filled={picked} strong={correct} />
+                    </span>
+                  ) : (
+                    <ChoiceBubble label={c.label} filled={correct} strong={correct} />
+                  )}
                   <div className="flex-1 min-w-0">
                     {c.text && (
                       <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">{c.text}</MathMarkdown>
@@ -212,17 +262,7 @@ export function QuestionBlock({
                       />
                     )}
                   </div>
-                  {result ? (
-                    // Compact marks (legend on the summary page): ● your answer, ✓ correct.
-                    (picked || correct) && (
-                      <span className="shrink-0 flex items-center gap-1 pt-0.5" aria-label={[picked && "your answer", correct && "correct"].filter(Boolean).join(", ")}>
-                        {picked && <Mark kind="picked" />}
-                        {correct && <Mark kind="correct" size={14} />}
-                      </span>
-                    )
-                  ) : (
-                    correct && <span className="shrink-0 text-xs font-bold pt-1">✓ Correct</span>
-                  )}
+                  {!result && correct && <span className="shrink-0 text-xs font-bold pt-1">✓ Correct</span>}
                 </li>
               );
             })}

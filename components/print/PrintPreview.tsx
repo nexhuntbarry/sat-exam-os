@@ -39,6 +39,39 @@ export interface PreviewStudent {
 
 const sameSet = (a: Set<string>, b: Set<string>) => a.size === b.size && [...a].every((x) => b.has(x));
 
+// Paged.js lays out one page per tick of its task queue, and that tick is
+// requestAnimationFrame — which a background tab never runs, so the preview
+// sat on "Laying out pages…" until the tab was shown. This tick uses an
+// animation frame while the tab is visible (progress paints) and a
+// MessageChannel task while it's hidden (not throttled like timers); a
+// frame still pending when the tab hides is handed over the same way.
+// Kept for the page's lifetime: Paged.js re-queues work after layout too.
+function backgroundSafeTick() {
+  const pending = new Set<() => void>();
+  const channel = new MessageChannel();
+  channel.port1.onmessage = () => {
+    const due = Array.from(pending);
+    pending.clear();
+    due.forEach((run) => run());
+  };
+  const onVisibility = () => {
+    if (document.hidden && pending.size) channel.port2.postMessage(0);
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  return (cb: () => void) => {
+    let done = false;
+    const run = () => {
+      if (done) return;
+      done = true;
+      pending.delete(run);
+      cb();
+    };
+    pending.add(run);
+    if (document.hidden) channel.port2.postMessage(0);
+    else requestAnimationFrame(run);
+  };
+}
+
 // What prints, page by page at Letter size. The printable content (server
 // rendered into a hidden source) is paginated with Paged.js into real
 // Letter pages — page breaks, page numbers and the running student name are
@@ -116,7 +149,12 @@ export default function PrintPreview({
         for (const n of Array.from(src.childNodes)) content.appendChild(n.cloneNode(true));
         // Only our @page sheet goes through Paged.js: its CSS parser can't read
         // the app's Tailwind output, which keeps styling the pages as-is.
-        const flow = await new Previewer().preview(content, [{ [window.location.href]: pageCss }], targetRef.current!);
+        const previewer = new Previewer();
+        // Internal (pagedjs 0.4.x Chunker → Queue); without it, layout only
+        // progresses in a visible tab.
+        const q = (previewer as unknown as { chunker?: { q?: { tick?: unknown } } }).chunker?.q;
+        if (q && typeof q.tick === "function") q.tick = backgroundSafeTick();
+        const flow = await previewer.preview(content, [{ [window.location.href]: pageCss }], targetRef.current!);
         await waitForImages(targetRef.current!);
         setPages(flow.total);
         setPhase("ready");
