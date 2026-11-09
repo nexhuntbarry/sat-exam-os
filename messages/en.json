@@ -820,6 +820,8 @@
     "moreActions": "More actions",
     "suspend": "Suspend",
     "reactivate": "Reactivate",
-    "deleteStudent": "Delete student"
+    "deleteStudent": "Delete student",
+    "addToClass": "Add to class…",
+    "assignTest": "Assign test…"
   }
 }

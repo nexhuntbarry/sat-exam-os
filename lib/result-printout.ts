@@ -11,6 +11,7 @@ import { decideAnswerVisibility, loadAnswerVisibilityInputs, visibilityKey, type
 import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { answerCandidates } from "@/lib/grade-submission";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 export type PrintMode = "full" | "short";
 
@@ -110,6 +111,35 @@ async function visibleClassIds(db: SupabaseClient, viewer: Viewer): Promise<Set<
   if (viewer.role !== "teacher") return null;
   const { data } = await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", viewer.userId);
   return new Set(((data ?? []) as { class_group_id: string }[]).map((r) => r.class_group_id));
+}
+
+/**
+ * studentId → ", "-joined class names from class_group_members (the class
+ * page's membership source). A teacher only sees their own classes' names.
+ * Students with no visible class are absent from the map.
+ */
+export async function studentClassNames(
+  db: SupabaseClient,
+  viewer: Viewer,
+  studentIds: string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (studentIds.length === 0) return out;
+  const [onlyClassIds, { data, error }] = await Promise.all([
+    visibleClassIds(db, viewer),
+    fetchAllRows((from, to) =>
+      db.from("class_group_members").select("student_id, class_group_id, class_groups(name)")
+        .in("student_id", studentIds).order("student_id").order("class_group_id").range(from, to)),
+  ]);
+  if (error) throw new Error(`class membership lookup failed: ${(error as { message?: string }).message ?? String(error)}`);
+  const names = new Map<string, string[]>();
+  for (const m of (data ?? []) as unknown as { student_id: string; class_group_id: string; class_groups: { name: string } | { name: string }[] | null }[]) {
+    if (onlyClassIds && !onlyClassIds.has(m.class_group_id)) continue;
+    const cg = Array.isArray(m.class_groups) ? m.class_groups[0] : m.class_groups;
+    if (cg?.name) names.set(m.student_id, [...(names.get(m.student_id) ?? []), cg.name]);
+  }
+  for (const [id, list] of names) out.set(id, list.sort((a, b) => a.localeCompare(b)).join(", "));
+  return out;
 }
 
 async function namesAndClasses(db: SupabaseClient, ids: string[], onlyClassIds: Set<string> | null = null) {

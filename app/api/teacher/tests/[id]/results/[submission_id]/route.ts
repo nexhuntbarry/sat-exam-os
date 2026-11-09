@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { forbidCrossSide } from "@/lib/qa";
 import { parseActivity, summarizeActivity } from "@/lib/question-activity";
+import { studentClassNames } from "@/lib/result-printout";
 
 // Two-track access model:
 // 1) admin → unrestricted
@@ -129,11 +130,12 @@ export async function GET(
     },
   ];
 
-  const { data: profile } = await db
-    .from("student_profiles")
-    .select("grade, class_group")
-    .eq("user_id", submission.student_id)
-    .maybeSingle();
+  const [{ data: profile }, classOf] = await Promise.all([
+    db.from("student_profiles").select("grade").eq("user_id", submission.student_id).maybeSingle(),
+    // Class = class_group_members (same as the class page); a teacher sees
+    // only their own classes' names.
+    studentClassNames(db, user, [submission.student_id as string]),
+  ]);
 
   // Fetch answer records for every submission in this session. Sorted
   // by question number; we'll partition by submission_id below.
@@ -176,7 +178,7 @@ export async function GET(
   }
 
   const u = submission.users as unknown as { display_name: string; email: string };
-  const sp = (profile ?? null) as { grade?: string; class_group?: string } | null;
+  const sp = (profile ?? null) as { grade?: string } | null;
 
   // Highlights/notes the student attached during the take. Stored under
   // metadata.annotations[questionId][anchor] = Annotation[]. Anchor is
@@ -306,7 +308,7 @@ export async function GET(
       name: u.display_name,
       email: u.email,
       grade: sp?.grade ?? null,
-      classGroup: sp?.class_group ?? null,
+      classGroup: classOf.get(submission.student_id as string) ?? null,
     },
     submission: {
       id: submission.id,

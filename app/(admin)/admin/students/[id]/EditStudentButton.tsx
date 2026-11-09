@@ -12,7 +12,6 @@ interface StudentEditable {
   grade: string | null;
   school: string | null;
   campus: string | null;
-  class_group: string | null;
   target_score: number | null;
   current_level: string | null;
   parent_name: string | null;
@@ -23,9 +22,11 @@ interface StudentEditable {
 
 interface Props {
   student: StudentEditable;
+  /** Current class_group_members names (read-only here; membership is changed via the ⋯ menu). */
+  classNames: string[];
 }
 
-export default function EditStudentButton({ student }: Props) {
+export default function EditStudentButton({ student, classNames }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -48,7 +49,6 @@ export default function EditStudentButton({ student }: Props) {
   diff("Grade", student.grade, form.grade);
   diff("School", student.school, form.school);
   diff("Campus", student.campus, form.campus);
-  diff("Class group", student.class_group, form.class_group);
   diff("Target score", student.target_score, form.target_score);
   diff("Level", student.current_level, form.current_level);
   diff("Parent name", student.parent_name, form.parent_name);
@@ -69,7 +69,6 @@ export default function EditStudentButton({ student }: Props) {
           grade: form.grade,
           school: form.school,
           campus: form.campus,
-          class_group: form.class_group,
           target_score: form.target_score,
           current_level: form.current_level,
           parent_name: form.parent_name,
@@ -165,13 +164,9 @@ export default function EditStudentButton({ student }: Props) {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-soft-mute mb-1">Class group</label>
-                  <input
-                    className={inputCls}
-                    value={form.class_group ?? ""}
-                    onChange={(e) => setForm({ ...form, class_group: e.target.value })}
-                    placeholder="Class name (legacy free-text field)"
-                  />
+                  <label className="block text-xs text-soft-mute mb-1">{classNames.length > 1 ? "Classes" : "Class group"}</label>
+                  <p className="px-3 py-2 text-sm text-charcoal">{classNames.length > 0 ? classNames.join(", ") : "—"}</p>
+                  <p className="text-xs text-soft-mute">Use Add to class on the ⋯ menu</p>
                 </div>
                 <div>
                   <label className="block text-xs text-soft-mute mb-1">Target score</label>

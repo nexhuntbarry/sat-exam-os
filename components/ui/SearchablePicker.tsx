@@ -31,6 +31,10 @@ export interface SearchablePickerProps {
   items: PickerItem[];
   /** Label for the item type, e.g. "student", "teacher" */
   noun?: string;
+  /** Plural of `noun` (defaults to noun + "s") */
+  nounPlural?: string;
+  /** Tag shown on `alreadyIn` items (defaults to "already in class") */
+  alreadyInLabel?: string;
   placeholder?: string;
   onAdd: (ids: string[]) => Promise<{ ok: boolean; error?: string }>;
   loading?: boolean;
@@ -39,6 +43,8 @@ export interface SearchablePickerProps {
 export default function SearchablePicker({
   items,
   noun = "student",
+  nounPlural = `${noun}s`,
+  alreadyInLabel = "already in class",
   placeholder,
   onAdd,
   loading = false,
@@ -347,7 +353,7 @@ export default function SearchablePicker({
               onPaste={handlePaste}
               placeholder={
                 chips.length === 0
-                  ? (placeholder ?? `Search ${noun}s…`)
+                  ? (placeholder ?? `Search ${nounPlural}…`)
                   : ""
               }
               className="w-full pl-6 py-0.5 bg-transparent text-sm text-charcoal placeholder:text-soft-mute focus:outline-none"
@@ -403,7 +409,7 @@ export default function SearchablePicker({
                       )}
                       {item.alreadyIn && (
                         <span className="text-xs text-soft-mute italic">
-                          already in class
+                          {alreadyInLabel}
                         </span>
                       )}
                       {item.accountStatus === "pending" && (
@@ -494,7 +500,7 @@ export default function SearchablePicker({
           <UserPlus size={14} />
           {adding
             ? "Adding…"
-            : `Add ${chips.length} ${noun}${chips.length !== 1 ? "s" : ""}`}
+            : `Add ${chips.length} ${chips.length !== 1 ? nounPlural : noun}`}
         </button>
       )}
     </div>

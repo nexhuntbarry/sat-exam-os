@@ -4,7 +4,7 @@ import { ArrowLeft, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { getQaTestIds, isQaEmail, onSide } from "@/lib/qa";
+import { getQaClassGroupIds, getQaTestIds, isQaEmail, onSide, scopeIds } from "@/lib/qa";
 import { getStudentAssignments } from "@/lib/student-exam";
 import { studentTestProgress } from "@/lib/test-progress";
 import { getTestSections } from "@/lib/teacher-access";
@@ -297,9 +297,10 @@ export default async function AdminStudentDetailPage({
   // Every test assigned to the student (directly or via a class group,
   // same resolution as the student's own My Tests), on the viewer's QA side.
   const db = getServiceClient();
-  const [assignments, qaTests] = await Promise.all([
+  const [assignments, qaTests, qaClassGroups] = await Promise.all([
     getStudentAssignments(db, id),
     getQaTestIds(),
+    getQaClassGroupIds(),
   ]);
   for (const testId of Array.from(assignments.keys())) {
     if (!onSide(testId, qaTests, me?.isQa ?? false)) assignments.delete(testId);
@@ -325,6 +326,46 @@ export default async function AdminStudentDetailPage({
       : Promise.resolve({ data: [] as { id: string; name: string }[] }),
   ]);
   const testById = new Map(((testMeta ?? []) as TestMeta[]).map((t) => [t.id, t]));
+
+  // Class membership = class_group_members, the same source the class page's
+  // Members list and the Students list use (student_profiles.class_group is a
+  // legacy free-text label and is not kept in sync). Plus the pickers for the
+  // ⋯ "Add to class" / "Assign test" actions, scoped to the viewer's QA side
+  // like the Students page and /api/admin/tests?list=1.
+  const viewerIsQa = me?.isQa ?? false;
+  const [{ data: memberRows }, { data: allClassGroups }, { data: pickerTests }] = await Promise.all([
+    db
+      .from("class_group_members")
+      .select("class_group_id, class_groups(id, name)")
+      .eq("student_id", id),
+    scopeIds(db.from("class_groups").select("id, name, campus, grade"), "id", qaClassGroups, viewerIsQa).order("name"),
+    scopeIds(db.from("tests").select("id, test_name, status, modules!module_id(section)"), "id", qaTests, viewerIsQa)
+      .order("created_at", { ascending: false }),
+  ]);
+  const memberships = (memberRows ?? [])
+    .map((m) => {
+      const cg = m.class_groups as unknown as { id: string; name: string } | { id: string; name: string }[] | null;
+      return Array.isArray(cg) ? cg[0] ?? null : cg;
+    })
+    .filter((cg): cg is { id: string; name: string } => !!cg && onSide(cg.id, qaClassGroups, viewerIsQa))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const memberOf = new Set(memberships.map((m) => m.id));
+  const classPickerItems = (allClassGroups ?? []).map((cg) => ({
+    id: cg.id as string,
+    label: cg.name as string,
+    meta: [cg.campus, cg.grade && `Grade ${cg.grade}`].filter(Boolean).join(" · ") || undefined,
+    alreadyIn: memberOf.has(cg.id as string),
+  }));
+  const testPickerItems = (pickerTests ?? []).map((t) => {
+    const mod = t.modules as unknown as { section?: string } | { section?: string }[] | null;
+    const section = (Array.isArray(mod) ? mod[0]?.section : mod?.section) ?? null;
+    return {
+      id: t.id as string,
+      label: t.test_name as string,
+      meta: [section, t.status].filter(Boolean).join(" · ") || undefined,
+      alreadyIn: assignments.has(t.id as string),
+    };
+  });
   // Full module names for the Test column ("M1: [Test #25] … Module 1").
   const moduleSlots = (t: TestMeta | undefined): { label: string; id: string | null }[] =>
     !t
@@ -561,7 +602,6 @@ export default async function AdminStudentDetailPage({
             grade: profile?.grade ?? null,
             school: profile?.school ?? null,
             campus: profile?.campus ?? null,
-            class_group: profile?.class_group ?? null,
             target_score: profile?.target_score ?? null,
             current_level: profile?.current_level ?? null,
             parent_name: profile?.parent_name ?? null,
@@ -569,6 +609,7 @@ export default async function AdminStudentDetailPage({
             parent_phone: profile?.parent_phone ?? null,
             notes: profile?.notes ?? null,
           }}
+          classNames={memberships.map((m) => m.name)}
         />
         {occasions.length > 0 && (
           <Link href={`/report?student=${student.id}`} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-sm font-medium text-charcoal hover:bg-light-bg transition-colors">
@@ -580,6 +621,8 @@ export default async function AdminStudentDetailPage({
           studentName={student.display_name ?? student.email}
           email={student.email}
           status={student.account_status}
+          classItems={classPickerItems}
+          testItems={testPickerItems}
         />
       </div>
 
@@ -589,13 +632,25 @@ export default async function AdminStudentDetailPage({
           ["Grade", profile?.grade ?? "—"],
           ["School", profile?.school ?? "—"],
           ["Campus", profile?.campus ?? "—"],
-          ["Class group", profile?.class_group ?? "—"],
+          [
+            memberships.length > 1 ? "Classes" : "Class group",
+            memberships.length === 0
+              ? "—"
+              : memberships.map((m, i) => (
+                  <span key={m.id}>
+                    {i > 0 && ", "}
+                    <Link href={`/admin/classes/${m.id}`} className="hover:text-warm-coral transition-colors">
+                      {m.name}
+                    </Link>
+                  </span>
+                )),
+          ],
           ["Target score", profile?.target_score?.toString() ?? "—"],
           ["Level", profile?.current_level ?? "—"],
           ["Parent", profile?.parent_name ?? "—"],
           ["Parent contact", profile?.parent_email ?? profile?.parent_phone ?? "—"],
         ].map(([label, value]) => (
-          <div key={label}>
+          <div key={label as string}>
             <p className="text-soft-mute text-xs mb-0.5">{label}</p>
             <p className="text-charcoal font-medium">{value}</p>
           </div>

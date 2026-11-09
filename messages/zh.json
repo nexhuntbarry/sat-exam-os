@@ -820,6 +820,8 @@
     "moreActions": "更多操作",
     "suspend": "停權",
     "reactivate": "恢復帳號",
-    "deleteStudent": "刪除學生"
+    "deleteStudent": "刪除學生",
+    "addToClass": "加入班級…",
+    "assignTest": "指派測驗…"
   }
 }

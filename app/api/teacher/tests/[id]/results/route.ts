@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
+import { studentClassNames } from "@/lib/result-printout";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -62,7 +63,7 @@ export async function GET(
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, scaled_score, session_id, adaptive_track,
-      users!inner(display_name, email, student_profiles(grade, class_group))
+      users!inner(display_name, email, student_profiles(grade))
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: false });
@@ -92,12 +93,15 @@ export async function GET(
       display_name: string;
       email: string;
       student_profiles?:
-        | { grade?: string; class_group?: string }
-        | { grade?: string; class_group?: string }[]
+        | { grade?: string }
+        | { grade?: string }[]
         | null;
     };
   };
   const subs = (submissions ?? []) as unknown as RawSub[];
+  // Class = class_group_members (same as the class page); a teacher sees
+  // only their own classes' names.
+  const classOf = await studentClassNames(db, user, Array.from(new Set(subs.map((s) => s.student_id))));
 
   // Two-module attempts produce two submission rows sharing a
   // session_id; group siblings so the dashboard shows one row per
@@ -147,7 +151,7 @@ export async function GET(
     const u = head.users;
     const spRaw = u.student_profiles ?? null;
     const sp = (Array.isArray(spRaw) ? spRaw[0] : spRaw) as
-      | { grade?: string; class_group?: string }
+      | { grade?: string }
       | null;
 
     if (sorted.length === 1) {
@@ -158,7 +162,7 @@ export async function GET(
         studentName: u.display_name,
         email: u.email,
         grade: sp?.grade ?? null,
-        classGroup: sp?.class_group ?? null,
+        classGroup: classOf.get(head.student_id) ?? null,
         status: head.status,
         score: head.score != null ? Number(head.score) : null,
         percentage: p,
@@ -194,7 +198,7 @@ export async function GET(
       studentName: u.display_name,
       email: u.email,
       grade: sp?.grade ?? null,
-      classGroup: sp?.class_group ?? null,
+      classGroup: classOf.get(head.student_id) ?? null,
       status,
       score: null,
       percentage: pct,

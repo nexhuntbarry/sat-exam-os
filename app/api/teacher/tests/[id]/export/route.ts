@@ -5,6 +5,7 @@ import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { attemptScore } from "@/lib/score-display";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { studentClassNames } from "@/lib/result-printout";
 
 // GET /api/teacher/tests/[id]/export
 // CSV of student results, one row per attempt (module rows of a
@@ -99,7 +100,7 @@ export async function GET(
       id, student_id, status, correct_count, total_questions, percentage,
       scaled_score, submitted_at, time_spent_seconds, attempt_number,
       session_id, adaptive_track,
-      users!inner(display_name, email, student_profiles(grade, class_group))
+      users!inner(display_name, email, student_profiles(grade))
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: true });
@@ -132,10 +133,13 @@ export async function GET(
     users: {
       display_name: string;
       email: string;
-      student_profiles?: { grade?: string; class_group?: string } | { grade?: string; class_group?: string }[] | null;
+      student_profiles?: { grade?: string } | { grade?: string }[] | null;
     };
   };
   const subs = (submissions ?? []) as unknown as RawSub[];
+  // Class = class_group_members (same as the class page); a teacher sees
+  // only their own classes' names.
+  const classOf = await studentClassNames(db, user, Array.from(new Set(subs.map((s) => s.student_id))));
 
   // One row per attempt: two-module attempts share a session_id (same
   // grouping as the results page).
@@ -200,7 +204,7 @@ export async function GET(
     });
     const head = sorted[0];
     const spRaw = head.users.student_profiles ?? null;
-    const sp = (Array.isArray(spRaw) ? spRaw[0] : spRaw) as { grade?: string; class_group?: string } | null;
+    const sp = (Array.isArray(spRaw) ? spRaw[0] : spRaw) as { grade?: string } | null;
 
     const time = sorted.reduce((n, r) => n + (r.time_spent_seconds ?? 0), 0);
     const { status, score, modules } = attemptScore(sorted, section);
@@ -218,7 +222,7 @@ export async function GET(
       head.users.display_name ?? "",
       head.users.email ?? "",
       sp?.grade ?? "",
-      sp?.class_group ?? "",
+      classOf.get(head.student_id) ?? "",
       head.attempt_number ?? 1,
       status,
       score?.sat ?? "",
