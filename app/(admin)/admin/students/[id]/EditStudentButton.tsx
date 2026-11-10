@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Pencil, X, AlertTriangle } from "lucide-react";
 import { Portal } from "@/components/ui/Portal";
+import { SCHOOL_SUGGESTIONS } from "@/lib/schools";
 
 interface StudentEditable {
   id: string;
@@ -151,9 +152,15 @@ export default function EditStudentButton({ student, classNames }: Props) {
                   <label className="block text-xs text-soft-mute mb-1">School</label>
                   <input
                     className={inputCls}
+                    list="edit-student-school-suggestions"
                     value={form.school ?? ""}
                     onChange={(e) => setForm({ ...form, school: e.target.value })}
                   />
+                  <datalist id="edit-student-school-suggestions">
+                    {SCHOOL_SUGGESTIONS.map((s) => (
+                      <option key={s} value={s} />
+                    ))}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-xs text-soft-mute mb-1">Campus</label>

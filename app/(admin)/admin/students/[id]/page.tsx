@@ -13,6 +13,7 @@ import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
 import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 import EditStudentButton from "./EditStudentButton";
 import StudentActionsMenu from "./StudentActionsMenu";
+import CheckProfileBadge from "./CheckProfileBadge";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
@@ -36,6 +37,7 @@ interface StudentRow {
   account_status: string;
   created_at: string;
   clerk_user_id: string | null;
+  metadata?: Record<string, unknown> | null;
   student_profiles?:
     | { grade?: string | null; school?: string | null; campus?: string | null; class_group?: string | null; target_score?: number | null; current_level?: string | null; parent_name?: string | null; parent_email?: string | null; parent_phone?: string | null; notes?: string | null }
     | { grade?: string | null; school?: string | null; campus?: string | null; class_group?: string | null; target_score?: number | null; current_level?: string | null; parent_name?: string | null; parent_email?: string | null; parent_phone?: string | null; notes?: string | null }[]
@@ -47,7 +49,7 @@ async function getStudent(id: string) {
   const { data } = await db
     .from("users")
     .select(
-      `id, email, display_name, account_status, created_at, clerk_user_id,
+      `id, email, display_name, account_status, created_at, clerk_user_id, metadata,
        student_profiles(grade, school, campus, class_group, target_score, current_level, parent_name, parent_email, parent_phone, notes)`,
     )
     .eq("id", id)
@@ -578,6 +580,10 @@ export default async function AdminStudentDetailPage({
       ? latestMathScore + latestRWScore
       : null;
 
+  const checkProfileMeta = student.metadata?.check_profile as
+    | { reason: string; at: string }
+    | undefined;
+
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div className="flex items-center gap-3">
@@ -625,6 +631,12 @@ export default async function AdminStudentDetailPage({
           testItems={testPickerItems}
         />
       </div>
+
+      {checkProfileMeta && (
+        <div className="bg-warm-amber/10 border border-warm-amber/20 rounded-xl px-4 py-3 text-sm">
+          <CheckProfileBadge studentId={student.id} reason={checkProfileMeta.reason} />
+        </div>
+      )}
 
       {/* Profile card */}
       <div className="bg-surface border border-divider rounded-2xl p-6 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">

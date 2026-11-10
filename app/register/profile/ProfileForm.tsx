@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { SCHOOL_SUGGESTIONS } from "@/lib/schools";
 
 function splitName(displayName: string): { first: string; last: string } {
   const parts = displayName.trim().split(/\s+/);
@@ -137,11 +138,17 @@ export default function ProfileForm({ displayName }: { displayName: string }) {
         <label className={labelCls}>School *</label>
         <input
           className={inputCls}
+          list="school-suggestions"
           value={form.school}
           onChange={(e) => set("school", e.target.value)}
           placeholder="School name"
           required
         />
+        <datalist id="school-suggestions">
+          {SCHOOL_SUGGESTIONS.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
       </div>
 
       <div>

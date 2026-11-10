@@ -12,6 +12,7 @@ export default function SignUpPage() {
         <div className="flex flex-col items-center gap-3">
           <Logo size={48} />
           <h1 className="text-xl font-semibold text-charcoal">SAT Exam OS</h1>
+          <p className="text-mid-gray text-sm text-center">Teachers: please don't sign up here. Use the invite link from your admin.</p>
         </div>
 
         <SignUp

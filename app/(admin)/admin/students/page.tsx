@@ -11,7 +11,7 @@ async function getStudents(viewerIsQa: boolean) {
   const { data } = await scopeUsers(db
     .from("users")
     .select(
-      `id, email, display_name, account_status, created_at, clerk_user_id,
+      `id, email, display_name, account_status, created_at, clerk_user_id, metadata,
        student_profiles(grade, school, campus, class_group, parent_name, parent_email, parent_phone, target_score, current_level, status_reason)`
     )
     .eq("role", "student"), viewerIsQa)

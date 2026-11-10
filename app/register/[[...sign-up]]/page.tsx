@@ -13,6 +13,7 @@ export default function StudentRegisterPage() {
           <Logo size={48} />
           <h1 className="text-xl font-semibold text-charcoal">Student Registration</h1>
           <p className="text-mid-gray text-sm">SAT Exam OS</p>
+          <p className="text-mid-gray text-sm text-center">Teachers: please don't sign up here. Use the invite link from your admin.</p>
         </div>
 
         <SignUp

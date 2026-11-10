@@ -156,7 +156,13 @@
         "cancel": "Cancel"
       },
       "noStudents": "No students found.",
-      "suspendReason": "Reason for suspension (optional):"
+      "suspendReason": "Reason for suspension (optional):",
+      "checkProfile": {
+        "filterLabel": "Check profile",
+        "badge": "Check profile",
+        "markChecked": "Mark as checked",
+        "noStudents": "No students flagged for profile check."
+      }
     },
     "teachers": {
       "title": "Teachers",

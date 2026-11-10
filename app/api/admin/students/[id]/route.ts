@@ -131,6 +131,28 @@ export async function PATCH(
     }
   }
 
+  // Auto-clear check_profile when the school field is being edited and the
+  // flag reason starts with "School" (simple case only).
+  if ("school" in profileUpdate) {
+    const { data: userRow } = await db
+      .from("users")
+      .select("metadata")
+      .eq("id", id)
+      .eq("role", "student")
+      .maybeSingle();
+    const meta = (userRow?.metadata ?? {}) as Record<string, unknown>;
+    const cp = meta.check_profile as { reason?: string } | undefined;
+    if (cp && typeof cp.reason === "string" && cp.reason.startsWith("School")) {
+      const { check_profile: _removed, ...rest } = meta;
+      const { error: clearErr } = await db
+        .from("users")
+        .update({ metadata: rest, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("role", "student");
+      if (clearErr) console.error("[admin/students/PATCH] auto-clear check_profile failed:", clearErr);
+    }
+  }
+
   return NextResponse.json({ ok: true });
 }
 

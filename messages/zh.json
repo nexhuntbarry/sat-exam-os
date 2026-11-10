@@ -156,7 +156,13 @@
         "cancel": "取消"
       },
       "noStudents": "找不到學生。",
-      "suspendReason": "停用原因（選填）："
+      "suspendReason": "停用原因（選填）：",
+      "checkProfile": {
+        "filterLabel": "檢查個人資料",
+        "badge": "檢查個人資料",
+        "markChecked": "標記為已確認",
+        "noStudents": "沒有需要檢查個人資料的學生。"
+      }
     },
     "teachers": {
       "title": "教師管理",

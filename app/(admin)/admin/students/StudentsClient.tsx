@@ -54,6 +54,11 @@ interface StudentProfile {
   status_reason: string | null;
 }
 
+interface CheckProfileFlag {
+  reason: string;
+  at: string;
+}
+
 interface Student {
   id: string;
   email: string;
@@ -62,6 +67,7 @@ interface Student {
   created_at: string;
   clerk_user_id: string | null;
   last_sign_in_at: number | null;
+  metadata: Record<string, unknown> | null;
   student_profiles: StudentProfile | StudentProfile[] | null;
   classes: string[];
   classMemberships: { id: string; name: string }[];
@@ -79,7 +85,15 @@ interface Props {
   classGroups: ClassGroup[];
 }
 
-type Filter = "all" | "pending" | "approved" | "suspended" | "noClass";
+type Filter = "all" | "pending" | "approved" | "suspended" | "noClass" | "checkProfile";
+
+function getCheckProfile(s: Student): CheckProfileFlag | null {
+  const cp = s.metadata?.check_profile;
+  if (!cp || typeof cp !== "object") return null;
+  const { reason, at } = cp as Record<string, unknown>;
+  if (typeof reason !== "string" || typeof at !== "string") return null;
+  return { reason, at };
+}
 
 function getProfile(s: Student): StudentProfile | null {
   if (!s.student_profiles) return null;
@@ -821,7 +835,12 @@ export default function StudentsClient({ students, classGroups }: Props) {
   }
 
   async function handleSuspend(studentId: string) {
-    const reason = prompt("Reject this student? They will not get access.\n\nReason (optional):");
+    const reason = prompt(
+      "Reject this student? They won't get access.\n\n" +
+        "Their email stays tied to this rejected account, so it can't register again. " +
+        "To free the email (e.g. a teacher who signed up as a student), use Delete student instead.\n\n" +
+        "Reason (optional):",
+    );
     if (reason === null) return;
     const res = await fetch(`/api/admin/students/${studentId}/suspend`, {
       method: "POST",
@@ -832,6 +851,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
   }
 
   const noClassCount = students.filter((s) => s.classes.length === 0).length;
+  const checkProfileCount = students.filter((s) => !!getCheckProfile(s)).length;
 
   const counts = {
     all: students.length,
@@ -839,12 +859,15 @@ export default function StudentsClient({ students, classGroups }: Props) {
     approved: students.filter((s) => s.account_status === "approved").length,
     suspended: students.filter((s) => s.account_status === "suspended").length,
     noClass: noClassCount,
+    checkProfile: checkProfileCount,
   };
 
   const q = search.trim().toLowerCase();
   const matches = students.filter((s) => {
     if (filter === "noClass") {
       if (s.classes.length !== 0) return false;
+    } else if (filter === "checkProfile") {
+      if (!getCheckProfile(s)) return false;
     } else if (filter !== "all" && s.account_status !== filter) {
       return false;
     }
@@ -878,6 +901,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
     { key: "approved", label: "Active", count: counts.approved },
     { key: "suspended", label: "Suspended", count: counts.suspended },
     { key: "noClass", label: "No class", count: counts.noClass },
+    { key: "checkProfile", label: "Check profile", count: counts.checkProfile },
   ];
 
   // Determine which students to pass to single-action modals
@@ -1109,11 +1133,16 @@ export default function StudentsClient({ students, classGroups }: Props) {
         <tbody>
           {filtered.length === 0 && (
             <EmptyRow colSpan={cols.visibleCount}>
-              No {filter === "all" ? "" : filter === "noClass" ? "students without a class" : `${filter} `}students found.
+              {filter === "noClass"
+                ? "No students without a class found."
+                : filter === "checkProfile"
+                ? "No students flagged for profile check."
+                : `No ${filter === "all" ? "" : `${filter} `}students found.`}
             </EmptyRow>
           )}
           {filtered.map((student) => {
             const profile = getProfile(student);
+            const checkProfile = getCheckProfile(student);
             const name = student.display_name ?? student.email;
             const classes = student.classes.length > 0 ? student.classes.join(", ") : "—";
             const gradeSchool =
@@ -1207,6 +1236,14 @@ export default function StudentsClient({ students, classGroups }: Props) {
                         wrapMain
                         mainClassName="font-medium text-inherit"
                       />
+                      {checkProfile && (
+                        <span
+                          className="mt-0.5 inline-block px-1.5 py-0.5 rounded-md bg-warm-amber/20 text-warm-amber text-[10px] font-semibold leading-tight"
+                          title={checkProfile.reason}
+                        >
+                          Check profile
+                        </span>
+                      )}
                     </Link>
                   </span>
                 </Td>
