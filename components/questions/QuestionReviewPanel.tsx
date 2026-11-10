@@ -16,7 +16,7 @@ import QuestionRenderer from "@/components/tests/QuestionRenderer";
 import ReviewQuestionCard from "@/components/tests/ReviewQuestionCard";
 import { friendlyParsingNote } from "@/lib/friendly-parsing-notes";
 import { hasMarkdownTable } from "@/lib/markdown-table";
-import { SPR_FORM_HELP, SPR_TYPE, MC_TYPE, gradedAsCorrect, keyTypeProblem } from "@/lib/answer-key";
+import { SPR_FORM_HELP, SPR_TYPE, MC_TYPE, gradedAsCorrect, keyTypeProblem, answersAgreeForQuestion } from "@/lib/answer-key";
 import { keySource, type ModuleKeyFacts } from "@/lib/key-source";
 
 
@@ -423,6 +423,16 @@ export default function QuestionReviewPanel({ question: initial, nav, moduleKeyF
     answerFromExplanation ??
     q.correct_answer ??
     null;
+  // When the "Mismatch: AI answered X" note is gone (overwritten by a later
+  // repair), aiAnswer falls back to the explanation / key, so the resolver
+  // showed "AI answered B / key B — pick one", which reads as a bug. Show the
+  // full resolver only while the two answers differ; otherwise a compact line
+  // that still lets the reviewer settle (and clear) the flag.
+  const mismatchAgrees =
+    answersAgreeForQuestion(aiAnswer, q.official_answer ?? savedKey, q.question_text) &&
+    answersAgreeForQuestion(aiAnswer, savedKey, q.question_text);
+  const showMismatch = Boolean(q.mismatch_with_official) && !mismatchAgrees;
+  const showSettledMismatch = Boolean(q.mismatch_with_official) && mismatchAgrees;
 
   function updateChoice(label: string, text: string) {
     setQ((prev) => ({
@@ -841,9 +851,25 @@ export default function QuestionReviewPanel({ question: initial, nav, moduleKeyF
         />
       )}
 
+      {viewMode === "edit" && showSettledMismatch && (
+        <div className="bg-light-bg border border-divider rounded-2xl px-4 py-3 flex flex-wrap items-center gap-3">
+          <p className="text-mid-gray text-xs flex-1 min-w-[240px]">
+            This question was flagged at import because the AI&rsquo;s first answer differed from the
+            answer key. Its current answer ({aiAnswer}) matches the key, so there is nothing to choose.
+          </p>
+          <button
+            onClick={() => handleResolveMismatch("official")}
+            disabled={!!actionLoading || !q.official_answer}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-surface border border-divider hover:bg-light-bg disabled:opacity-50"
+          >
+            {actionLoading === "resolve-official" ? "Saving…" : "Keep answer key & approve"}
+          </button>
+        </div>
+      )}
+
       {/* Mismatch resolver — visible only when AI disagreed with the answer
           key at parse time. One-click to pick which answer wins. */}
-      {viewMode === "edit" && q.mismatch_with_official && (
+      {viewMode === "edit" && showMismatch && (
         <div className="bg-status-warning/10 border border-status-warning/30 rounded-2xl p-4 space-y-3">
           <div className="flex items-start gap-2">
             <AlertCircle size={16} className="text-status-warning shrink-0 mt-0.5" />
