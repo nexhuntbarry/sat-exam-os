@@ -13,6 +13,7 @@
 // stopped requiring admins to populate teacher_ids on every test.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQaTestIds, getQaUserIds, onSide } from "./qa";
+import { parentOf, resolveParentTestId } from "./full-length";
 
 // A test's subject is the section ("Math" | "Reading & Writing") of its
 // module (module_1_id for adaptive tests). Used to scope class teachers to
@@ -132,11 +133,12 @@ export async function getTeacherTestAccess(
     return { mode: "class", studentAllowlist: allowlist };
   }
 
-  // Not a class teacher → full access only if directly assigned.
+  // Not a class teacher → full access only if directly assigned. A
+  // full-length section child is assigned through its parent.
   const { data: assignment } = await db
     .from("test_assignments")
     .select("teacher_ids")
-    .eq("test_id", testId)
+    .eq("test_id", await resolveParentTestId(db, testId))
     .maybeSingle();
   const teacherIds = (assignment?.teacher_ids as string[] | null) ?? [];
   if (teacherIds.includes(user.userId)) {
@@ -291,14 +293,21 @@ export async function getTeacherTestScope(
     }
   }
 
-  const sections = await getTestSections(db, Array.from(candidates.keys()));
+  // A full-length section child (reached through a student's submission)
+  // is subject-checked on its own section, but the parent is what's added.
+  const [sections, parents] = await Promise.all([
+    getTestSections(db, Array.from(candidates.keys())),
+    parentOf(db, candidates.keys()),
+  ]);
   for (const [testId, c] of candidates) {
     const sec = sections.get(testId) ?? null;
     if (sec && !c.subjects.some((s) => !s || s === sec)) continue;
-    out.testIds.add(testId);
-    if (c.direct) out.directTestIds.add(testId);
-    else out.classTestIds.add(testId);
+    const id = parents.get(testId) ?? testId;
+    out.testIds.add(id);
+    if (c.direct) out.directTestIds.add(id);
+    else if (!out.directTestIds.has(id)) out.classTestIds.add(id);
   }
+  for (const id of out.directTestIds) out.classTestIds.delete(id);
   return out;
 }
 

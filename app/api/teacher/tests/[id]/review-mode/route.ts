@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { parentOf } from "@/lib/full-length";
 import { canManageTestSettings, getTeacherTestAccess } from "@/lib/teacher-access";
 
 // POST /api/teacher/tests/[id]/review-mode
@@ -30,6 +31,11 @@ export async function POST(
   }
 
   const db = getServiceClient();
+
+  // A full-length SAT's class review is set on the parent (synced to its sections).
+  if ((await parentOf(db, [testId])).size > 0) {
+    return NextResponse.json({ error: "Set class review on the full-length test instead" }, { status: 409 });
+  }
 
   const access = await getTeacherTestAccess(db, user, testId);
   if (access.mode === null) {

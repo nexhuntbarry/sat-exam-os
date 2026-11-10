@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { labelFullLengthChildren } from "@/lib/full-length";
 import {
   STUDENT_REPORTS_SETTING_KEY,
   STUDENT_REPORT_CONTEXT_LABEL,
@@ -70,6 +71,7 @@ export async function describeStudentReports(
   const testMap = new Map(
     ((tests?.data ?? []) as { id: string; test_name: string }[]).map((t) => [t.id, t.test_name]),
   );
+  await labelFullLengthChildren(db, testMap);
   const moduleMap = new Map(
     ((modules?.data ?? []) as { id: string; module_name: string }[]).map((m) => [m.id, m.module_name]),
   );

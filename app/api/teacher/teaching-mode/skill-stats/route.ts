@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { expandWithChildren, fullLengthLinks } from "@/lib/full-length";
 import { getQaUserIds, onSide } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
@@ -31,15 +32,17 @@ export async function GET(req: Request) {
   // get a denominator restricted to their own students (so their
   // weakest-skill ranking reflects their actual class, not a global
   // population they don't teach).
+  // A full-length SAT's rows are on its section children (scope lists the parent).
+  const flLinks = await fullLengthLinks(db);
   let subsQuery = db
     .from("submissions")
     .select("id, student_id, test_id")
-    .in("test_id", testIds)
+    .in("test_id", expandWithChildren(testIds, flLinks))
     .in("status", ["Submitted", "Late"]);
   const { data: subsRaw } = await subsQuery;
   const subs = (subsRaw ?? []).filter((s) => {
     if (!onSide(s.student_id as string, qaUsers, user.isQa)) return false;
-    if (seesAllStudents(scope, s.test_id as string)) return true;
+    if (seesAllStudents(scope, flLinks.parentOf.get(s.test_id as string) ?? (s.test_id as string))) return true;
     return scope.myStudentIds.has(s.student_id as string);
   });
   void subsQuery;

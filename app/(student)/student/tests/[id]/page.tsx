@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { resolveParentTestId } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -202,6 +203,9 @@ export default async function StudentTestLandingPage({
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
+  // A full-length SAT section is only ever opened through its parent.
+  const parentId = await resolveParentTestId(getServiceClient(), id);
+  if (parentId !== id) redirect(`/student/tests/${parentId}`);
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 

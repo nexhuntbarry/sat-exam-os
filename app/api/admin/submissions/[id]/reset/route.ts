@@ -2,13 +2,15 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
+import { resetSubmissionMetadata } from "@/lib/student-exam";
 
 // POST /api/admin/submissions/[id]/reset
 //
 // Rolls a submission back to a fresh In-Progress state:
 //   - status = "In Progress"
 //   - answers = {}
-//   - metadata = {}
+//   - metadata = {} (a full-length row keeps its extended time, attempt
+//     link, attempt start and device: resetSubmissionMetadata)
 //   - submitted_at = null
 //   - score / correct_count / percentage / scaled_* / time_spent = null/0
 //   - started_at = now
@@ -37,7 +39,7 @@ export async function POST(
 
   const { data: sub } = await db
     .from("submissions")
-    .select("id, test_id, student_id, session_id, adaptive_track")
+    .select("id, test_id, student_id, session_id, adaptive_track, metadata")
     .eq("id", id)
     .maybeSingle();
   if (!sub) {
@@ -72,7 +74,7 @@ export async function POST(
     .update({
       status: "In Progress",
       answers: {},
-      metadata: {},
+      metadata: resetSubmissionMetadata(sub.metadata),
       submitted_at: null,
       score: 0,
       correct_count: 0,

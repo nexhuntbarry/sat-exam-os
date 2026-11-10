@@ -26,17 +26,27 @@ export async function POST(req: Request) {
 
   const db = getServiceClient();
 
-  // Verify test is published
+  // Verify test is published. Needs migration 0031 (test_kind,
+  // parent_test_id) applied BEFORE this code is deployed.
   const { data: test, error: testError } = await db
     .from("tests")
     .select(
-      "id, status, allow_retake, open_date, due_date, time_limit_minutes, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, adaptive_threshold",
+      "id, status, allow_retake, open_date, due_date, time_limit_minutes, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, adaptive_threshold, test_kind, parent_test_id",
     )
     .eq("id", body.testId)
     .single();
 
   if (testError || !test) {
     return NextResponse.json({ error: "Test not found" }, { status: 404 });
+  }
+
+  // Full-length SAT: a section child is never started on its own, and the
+  // parent has its own start flow — neither goes through this route.
+  if (test.parent_test_id || test.test_kind === "full_length") {
+    return NextResponse.json(
+      { error: "This is part of a full-length SAT — start it from the full-length test page." },
+      { status: 409 },
+    );
   }
 
   // Same QA side, Published, assigned (shared with the take page). A

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, getQaTestIds, scopeIds } from "@/lib/qa";
+import { asParentRows, expandWithChildren, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
 import {
   dateOrderError,
   moduleApprovalError,
@@ -25,13 +26,16 @@ export async function GET(req: Request) {
 
   if (searchParams.get("list") === "1") {
     const db = getServiceClient();
-    const { data: tests, error } = await scopeIds(
-      db
-        .from("tests")
-        .select("id, test_name, status, modules!module_id(section)"),
-      "id",
-      await getQaTestIds(),
-      admin.isQa,
+    const { data: tests, error } = await hideChildTests(
+      scopeIds(
+        db
+          .from("tests")
+          .select("id, test_name, status, modules!module_id(section)"),
+        "id",
+        await getQaTestIds(),
+        admin.isQa,
+      ),
+      new Set((await fullLengthLinksOrNone(db)).parentOf.keys()),
     )
       .order("created_at", { ascending: false });
     if (error) {
@@ -45,7 +49,8 @@ export async function GET(req: Request) {
   const moduleId = searchParams.get("moduleId") ?? "";
 
   const db = getServiceClient();
-  let query = scopeIds(db
+  const flLinks = await fullLengthLinksOrNone(db);
+  let query = hideChildTests(scopeIds(db
     .from("tests")
     .select(`
       id, test_name, module_id, time_limit_minutes, open_date, due_date,
@@ -53,7 +58,7 @@ export async function GET(req: Request) {
       created_by, created_at, updated_at,
       is_adaptive,
       modules!module_id(module_name, section, module_number)
-    `), "id", await getQaTestIds(), admin.isQa)
+    `), "id", await getQaTestIds(), admin.isQa), new Set(flLinks.parentOf.keys()))
     .order("created_at", { ascending: false });
 
   if (status) query = query.eq("status", status);
@@ -84,12 +89,13 @@ export async function GET(req: Request) {
       };
     }
 
+    // A full-length SAT's rows are on its children: counted under the parent.
     const { data: subData } = await db
       .from("submissions")
-      .select("test_id, status")
-      .in("test_id", testIds);
+      .select("test_id, student_id, status, attempt_number, adaptive_track")
+      .in("test_id", expandWithChildren(testIds, flLinks));
 
-    for (const s of subData ?? []) {
+    for (const s of asParentRows(subData ?? [], flLinks)) {
       if (!submissionCounts[s.test_id]) submissionCounts[s.test_id] = { done: 0, total: 0 };
       submissionCounts[s.test_id].total++;
       if (s.status === "Submitted" || s.status === "Late") submissionCounts[s.test_id].done++;

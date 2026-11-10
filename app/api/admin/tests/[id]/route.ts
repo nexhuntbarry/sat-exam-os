@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, getQaClassGroupIds, onSide } from "@/lib/qa";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
 import {
   TEST_STATUSES,
   dateOrderError,
@@ -135,6 +136,11 @@ export async function PATCH(
 
   const db = getServiceClient();
   const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
+
+  // A full-length SAT section is edited through its parent test.
+  if ((await fullLengthLinksOrNone(db)).parentOf.has(id)) {
+    return bad("This is a section of a full-length SAT — edit the full-length test instead.", 409);
+  }
 
   // classGroupIds (full replacement) is mutually exclusive with add/remove delta fields.
   if (
@@ -377,6 +383,14 @@ export async function DELETE(
   const crossSide = await forbidCrossSide(authResult, { testIds: [id] });
   if (crossSide) return crossSide;
   const db = getServiceClient();
+
+  // A full-length SAT section is deleted with its parent (cascade).
+  if ((await fullLengthLinksOrNone(db)).parentOf.has(id)) {
+    return NextResponse.json(
+      { error: "This is a section of a full-length SAT — delete the full-length test instead." },
+      { status: 409 },
+    );
+  }
 
   const { data: target } = await db
     .from("tests")

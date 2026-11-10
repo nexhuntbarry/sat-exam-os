@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check": "node .omc/qa/unit/run.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.71",

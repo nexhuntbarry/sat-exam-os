@@ -1,5 +1,6 @@
 import { scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { getServiceClient } from "@/lib/supabase";
+import { reviewSectionTests } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { redirect, notFound } from "next/navigation";
@@ -26,18 +27,18 @@ async function getTeacherReview(
   const access = await getTeacherTestAccess(db, user, testId);
   if (access.mode === null) return null;
 
-  const { data: test } = await db
-    .from("tests")
-    .select(
-      "id, test_name, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids",
-    )
-    .eq("id", testId)
-    .single();
+  const columns =
+    "id, test_name, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids";
+  const { data: test } = await db.from("tests").select(columns).eq("id", testId).single();
   if (!test) return null;
 
-  const moduleIds = test.is_adaptive
-    ? [test.module_1_id, test.module_2_easy_id, test.module_2_hard_id].filter((x): x is string => Boolean(x))
-    : [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x));
+  // A full-length SAT is walked through its section children (R&W, then Math).
+  const parts = await reviewSectionTests(db, test, columns);
+  const modulesOf = (t: typeof test) =>
+    t.is_adaptive
+      ? [t.module_1_id, t.module_2_easy_id, t.module_2_hard_id].filter((x): x is string => Boolean(x))
+      : [t.module_id, t.module_2_id].filter((x): x is string => Boolean(x));
+  const moduleIds = parts.flatMap((p) => modulesOf(p.test));
   if (moduleIds.length === 0) return { test, sections: [] };
 
   // Same question set students see and are graded on.
@@ -49,7 +50,7 @@ async function getTeacherReview(
       )
       .in("module_id", moduleIds)
       .order("original_question_number", { ascending: true }),
-    test,
+    parts[0]?.test ?? test,
   );
   const { data: questions } = await qquery;
 
@@ -57,15 +58,18 @@ async function getTeacherReview(
   const groups = new Map<string, Section>();
   for (const q of questions ?? []) {
     const mod = q.modules as unknown as { module_name: string; section: string; module_number: number | null } | null;
+    const part = parts.find((p) => modulesOf(p.test).includes(q.module_id)) ?? { test, prefix: "" };
+    const t = part.test;
     let label = mod?.module_name ?? "Module";
-    if (test.is_adaptive) {
-      if (q.module_id === test.module_1_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === test.module_2_easy_id) label = `Module 2 · Easy — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === test.module_2_hard_id) label = `Module 2 · Hard — ${mod?.module_name ?? ""}`;
-    } else if (test.module_2_id) {
-      if (q.module_id === test.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === test.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
+    if (t.is_adaptive) {
+      if (q.module_id === t.module_1_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
+      else if (q.module_id === t.module_2_easy_id) label = `Module 2 · Easy — ${mod?.module_name ?? ""}`;
+      else if (q.module_id === t.module_2_hard_id) label = `Module 2 · Hard — ${mod?.module_name ?? ""}`;
+    } else if (t.module_2_id) {
+      if (q.module_id === t.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
+      else if (q.module_id === t.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
     }
+    label = part.prefix + label;
     if (!groups.has(q.module_id)) groups.set(q.module_id, { moduleId: q.module_id, title: label, questions: [] });
     groups.get(q.module_id)!.questions.push(q);
   }

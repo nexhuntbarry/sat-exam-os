@@ -32,6 +32,7 @@ import { answersMatch } from "@/lib/grade-submission";
 import { scaleSectionScore } from "@/lib/scoring";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { liveQuestionIds } from "@/lib/live-questions";
+import { labelFullLengthChildren } from "@/lib/full-length";
 import { tryEvaluate } from "@/lib/math/safe-eval";
 
 export type QType = typeof MC_TYPE | typeof SPR_TYPE;
@@ -347,6 +348,7 @@ export async function previewKeyChange(
   ]);
   const userName = new Map(((users?.data ?? []) as { id: string; display_name: string | null; email: string | null }[]).map((u) => [u.id, u.display_name || u.email || "Student"]));
   const testName = new Map(((tests?.data ?? []) as { id: string; test_name: string | null }[]).map((t) => [t.id, t.test_name || "Test"]));
+  await labelFullLengthChildren(db, testName);
 
   const changes: AttemptPreview[] = [];
   for (const { r, now } of flips) {

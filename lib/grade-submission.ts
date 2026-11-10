@@ -10,6 +10,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { scaleSectionScore } from "@/lib/scoring";
 import { parseActivity } from "@/lib/question-activity";
 import {
+  fullLengthStartedAtMs,
   isModule2Track,
   moduleDeadlineMs,
   moduleStartedAtIso,
@@ -207,15 +208,25 @@ export async function finalizeSubmission(
         .maybeSingle();
       if (first?.started_at) examStart = Math.min(examStart, new Date(first.started_at).getTime());
     }
+    // Full-length SAT: the exam is the whole attempt (R&W started it), so
+    // Math isn't Late just because it began after the due date.
+    const flStart = fullLengthStartedAtMs(submission.metadata);
+    if (flStart != null) examStart = Math.min(examStart, flStart);
     isPastDue = examStart >= due;
   }
   // A Module 2 that only exists because recovery created it after the due
   // date (lib/module2-handoff, 24 h window) is Late. Nothing else about
   // Module 2 timing makes it Late: a normal handoff of an on-time exam
   // stays on time even if the due date passed meanwhile.
+  // A full-length attempt that started before the due date is exempt: the
+  // window it was allowed in belongs to the whole attempt.
+  const flStartMs = fullLengthStartedAtMs(submission.metadata);
+  const flStartedOnTime =
+    flStartMs != null && !!test.due_date && flStartMs < new Date(test.due_date).getTime();
   if (
     isModule2Track(submission.adaptive_track) &&
-    ((submission.metadata ?? {}) as Record<string, unknown>).created_after_due === true
+    ((submission.metadata ?? {}) as Record<string, unknown>).created_after_due === true &&
+    !flStartedOnTime
   ) {
     isPastDue = true;
   }

@@ -5,6 +5,7 @@ import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaUserIds, onSide } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
+import { asParentRows, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { formatDate } from "@/lib/datetime";
 import PageIntro from "@/components/shared/PageIntro";
@@ -25,16 +26,19 @@ async function getTests(teacherId: string, role: string, isQa: boolean) {
   const scope = await getTeacherTestScope(db, { userId: teacherId, role, isQa });
   if (scope.testIds.size === 0) return [];
   const ids = Array.from(scope.testIds);
+  const flLinks = await fullLengthLinks(db);
 
-  const [{ data: tests }, { data: subs }, qaUsers] = await Promise.all([
-    db.from("tests").select("id, test_name, created_at").in("id", ids),
+  const [{ data: tests }, { data: rawSubs }, qaUsers] = await Promise.all([
+    hideChildTests(db.from("tests").select("id, test_name, created_at").in("id", ids), new Set(flLinks.parentOf.keys())),
     db
       .from("submissions")
-      .select("id, test_id, student_id, session_id, submitted_at")
-      .in("test_id", ids)
+      .select("id, test_id, student_id, session_id, submitted_at, status, attempt_number, adaptive_track")
+      .in("test_id", expandWithChildren(ids, flLinks))
       .in("status", ["Submitted", "Late"]),
     getQaUserIds(),
   ]);
+  // A full-length SAT's rows are on its children: one attempt under the parent.
+  const subs = asParentRows(rawSubs ?? [], flLinks);
 
   const attempts = new Map<string, Set<string>>();
   const lastSubmitted = new Map<string, string>();

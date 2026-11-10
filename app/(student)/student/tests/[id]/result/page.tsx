@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { resolveParentTestId } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -212,6 +213,11 @@ export default async function StudentResultPage({
 
   const { id } = await params;
   const { submission: submissionId } = await searchParams;
+  // A full-length SAT section's result lives under its parent.
+  const parentId = await resolveParentTestId(getServiceClient(), id);
+  if (parentId !== id) {
+    redirect(`/student/tests/${parentId}/result${submissionId ? `?submission=${encodeURIComponent(submissionId)}` : ""}`);
+  }
 
   const data = await getResult(id, user.userId, submissionId);
   if (!data) notFound();

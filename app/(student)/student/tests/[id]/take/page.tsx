@@ -1,5 +1,6 @@
 import { SPR_TYPE, sprInputMaxChars } from "@/lib/answer-key";
 import { getServiceClient } from "@/lib/supabase";
+import { resolveParentTestId } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import { headers } from "next/headers";
@@ -260,6 +261,9 @@ export default async function TestTakingPage({
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
+  // A full-length SAT section is only ever opened through its parent.
+  const parentId = await resolveParentTestId(getServiceClient(), id);
+  if (parentId !== id) redirect(`/student/tests/${parentId}`);
   const { start } = await searchParams;
   const data = await getActiveSubmission(id, user, start === "1");
 

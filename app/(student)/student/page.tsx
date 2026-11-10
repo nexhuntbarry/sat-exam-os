@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
+import { asParentRows, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { ClipboardList, User } from "lucide-react";
 import Link from "next/link";
@@ -42,12 +43,16 @@ async function getUpcomingTests(userId: string) {
     .order("due_date", { ascending: true })
     .limit(5);
 
-  const { data: submissions } = await db
+  // A full-length SAT's rows are on its section children: counted under
+  // the parent, unfinished until its Math is done.
+  const flLinks = await fullLengthLinksOrNone(db);
+  const { data: rawSubmissions } = await db
     .from("submissions")
-    .select("test_id, status, attempt_number, adaptive_track")
+    .select("test_id, student_id, status, attempt_number, adaptive_track")
     .eq("student_id", userId)
-    .in("test_id", testIds)
+    .in("test_id", expandWithChildren(testIds, flLinks))
     .order("attempt_number", { ascending: false });
+  const submissions = asParentRows(rawSubmissions ?? [], flLinks);
 
   // Status of each test's latest attempt. Any In Progress module wins (a
   // submitted Module 1 must not hide an open Module 2), and a graded

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { expandFullLength } from "@/lib/full-length";
 import { forbidCrossSide } from "@/lib/qa";
 import { canManageTestSettings, getAssignedStudentIds } from "@/lib/teacher-access";
 import {
@@ -71,7 +72,8 @@ export async function POST(
   // who already have a submission on it (e.g. later removed from the class).
   const [{ data: assignment }, { data: anySub }] = await Promise.all([
     db.from("test_assignments").select("student_ids, class_group_ids").eq("test_id", testId).maybeSingle(),
-    db.from("submissions").select("id").eq("test_id", testId).eq("student_id", studentId).limit(1),
+    // (a full-length SAT's submissions are on its section children)
+    db.from("submissions").select("id").in("test_id", await expandFullLength(db, [testId])).eq("student_id", studentId).limit(1),
   ]);
   const assigned = await getAssignedStudentIds(db, assignment, user.isQa);
   if (!assigned.has(studentId) && (anySub ?? []).length === 0) {

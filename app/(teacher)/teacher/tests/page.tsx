@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { asParentRows, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
@@ -28,23 +29,26 @@ async function getTeacherTests(user: { userId: string; role: string | null; isQa
   const scope = await getTeacherTestScope(db, user);
   if (scope.testIds.size === 0) return [];
   const testIds = Array.from(scope.testIds);
+  const flLinks = await fullLengthLinks(db);
 
   const [{ data: tests, error: testsError }, { data: assignments, error: assignError }, { data: subData, error: subError }] = await Promise.all([
-    db.from("tests")
-      .select(`
+    hideChildTests(
+      db.from("tests")
+        .select(`
         id, test_name, status, due_date, time_limit_minutes,
         modules!module_id(module_name, section, module_number)
       `)
-      .in("id", testIds)
-      .order("due_date", { ascending: true }),
+        .in("id", testIds),
+      new Set(flLinks.parentOf.keys()),
+    ).order("due_date", { ascending: true }),
     db.from("test_assignments")
       .select("test_id, student_ids, class_group_ids")
       .in("test_id", testIds),
     scopeIds(db.from("submissions")
       .select(
-        "test_id, student_id, status, correct_count, total_questions, percentage, session_id",
+        "test_id, student_id, status, correct_count, total_questions, percentage, session_id, attempt_number, adaptive_track",
       )
-      .in("test_id", testIds), "student_id", await getQaUserIds(), user.isQa),
+      .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", await getQaUserIds(), user.isQa),
   ]);
   if (testsError) throw new Error(`tests lookup failed: ${testsError.message}`);
   if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
@@ -66,13 +70,16 @@ async function getTeacherTests(user: { userId: string; role: string | null; isQa
     total_questions: number | null;
     percentage: number | string | null;
     session_id: string | null;
+    attempt_number: number | null;
+    adaptive_track: string | null;
   };
   // Two-module attempts produce two submission rows sharing one
   // session_id; avg over raw submission rows would double-count each
   // attempt. Group session siblings, compute combined % per attempt,
   // then average those.
   const subsByTest = new Map<string, SubRow[]>();
-  for (const s of (subData ?? []) as SubRow[]) {
+  // A full-length SAT's rows are on its children: one attempt under the parent.
+  for (const s of asParentRows((subData ?? []) as SubRow[], flLinks)) {
     if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
     const list = subsByTest.get(s.test_id) ?? [];
     list.push(s);

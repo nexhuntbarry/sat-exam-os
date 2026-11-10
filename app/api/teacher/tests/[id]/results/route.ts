@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
+import { expandFullLength, resolveParentTestId } from "@/lib/full-length";
 import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import { studentClassNames } from "@/lib/result-printout";
@@ -29,10 +30,12 @@ export async function GET(
   if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  // Full-length SAT: the roster is the parent's assignment, and the
+  // parent's submissions are on its two section children.
   const { data: assignment } = await db
     .from("test_assignments")
     .select("student_ids, class_group_ids")
-    .eq("test_id", testId)
+    .eq("test_id", await resolveParentTestId(db, testId))
     .maybeSingle();
   if (!assignment) {
     return NextResponse.json({ error: "Test not found" }, { status: 404 });
@@ -65,7 +68,7 @@ export async function GET(
       percentage, submitted_at, time_spent_seconds, scaled_score, session_id, adaptive_track,
       users!inner(display_name, email, student_profiles(grade))
     `)
-    .eq("test_id", testId)
+    .in("test_id", await expandFullLength(db, [testId]))
     .order("submitted_at", { ascending: false });
   if (studentAllowlist) {
     submissionsQuery = submissionsQuery.in(

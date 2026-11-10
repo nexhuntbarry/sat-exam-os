@@ -16,6 +16,7 @@
 //      flags (submitted students only); class review uses review_unlocked.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { studentTestProgress } from "@/lib/test-progress";
+import { fullLengthLinks, expandWithChildren, fullLengthVisibilityState } from "@/lib/full-length";
 
 export type StudentAnswerMode = "follow" | "show" | "hide";
 export const STUDENT_ANSWER_MODES: readonly StudentAnswerMode[] = ["follow", "show", "hide"];
@@ -134,6 +135,12 @@ function isMissingTable(err: { code?: string; message?: string } | null): boolea
  * Load decision inputs for every (testId × studentId) pair. Pass the test
  * flags when the caller already has them to save a query. Throws on any
  * DB error (fail closed).
+ *
+ * Full-length SAT: a section child resolves to its parent first — flags,
+ * retake grants and overrides are the parent's, submissions are read on
+ * both children, and "submitted" means the whole attempt is done (Math
+ * Module 2 graded), so R&W answers never show while Math is still to come.
+ * Results are keyed by the id the caller passed.
  */
 export async function loadAnswerVisibilityInputs(
   db: SupabaseClient,
@@ -142,12 +149,18 @@ export async function loadAnswerVisibilityInputs(
   knownTests?: Map<string, TestVisibilityFlags>,
 ): Promise<Map<string, VisibilityInput>> {
   const out = new Map<string, VisibilityInput>();
-  const tIds = Array.from(new Set(testIds.filter(Boolean)));
+  const requestedIds = Array.from(new Set(testIds.filter(Boolean)));
   const sIds = Array.from(new Set(studentIds.filter(Boolean)));
-  if (tIds.length === 0 || sIds.length === 0) return out;
+  if (requestedIds.length === 0 || sIds.length === 0) return out;
+
+  const links = await fullLengthLinks(db);
+  const effectiveId = (id: string) => links.parentOf.get(id) ?? id;
+  const tIds = Array.from(new Set(requestedIds.map(effectiveId)));
+  const flParents = tIds.filter((id) => links.childrenOf.has(id));
+  const submissionTestIds = expandWithChildren(tIds, links);
 
   const missingTests = tIds.filter((id) => !knownTests?.has(id));
-  const [testsRes, subsRes, grantsRes, overridesRes, shapeRes] = await Promise.all([
+  const [testsRes, subsRes, grantsRes, overridesRes, shapeRes, closedRes] = await Promise.all([
     missingTests.length > 0
       ? db
           .from("tests")
@@ -157,7 +170,7 @@ export async function loadAnswerVisibilityInputs(
     db
       .from("submissions")
       .select("test_id, student_id, status, attempt_number, session_id, adaptive_track, started_at")
-      .in("test_id", tIds)
+      .in("test_id", submissionTestIds)
       .in("student_id", sIds),
     db
       .from("test_retake_grants")
@@ -172,11 +185,26 @@ export async function loadAnswerVisibilityInputs(
       .in("student_id", sIds),
     // Module structure, to tell "Module 1 in, Module 2 not started" apart from finished.
     db.from("tests").select("id, module_2_id, is_adaptive").in("id", tIds),
+    // Full-length attempts that can no longer continue count as finished.
+    flParents.length > 0
+      ? db
+          .from("full_length_attempts")
+          .select("test_id, student_id, attempt_number")
+          .in("test_id", flParents)
+          .in("student_id", sIds)
+          .not("closed_at", "is", null)
+      : Promise.resolve({ data: [], error: null }),
   ]);
   if (testsRes.error) throw new Error(`answer visibility: tests lookup failed: ${testsRes.error.message}`);
   if (subsRes.error) throw new Error(`answer visibility: submissions lookup failed: ${subsRes.error.message}`);
   if (grantsRes.error) throw new Error(`answer visibility: retake grants lookup failed: ${grantsRes.error.message}`);
   if (shapeRes.error) throw new Error(`answer visibility: test modules lookup failed: ${shapeRes.error.message}`);
+  if (closedRes.error) throw new Error(`answer visibility: full-length attempts lookup failed: ${closedRes.error.message}`);
+  const closedAttempts = new Map<string, Set<number>>();
+  for (const a of (closedRes.data ?? []) as { test_id: string; student_id: string; attempt_number: number }[]) {
+    const k = visibilityKey(a.test_id, a.student_id);
+    closedAttempts.set(k, new Set([...(closedAttempts.get(k) ?? []), a.attempt_number]));
+  }
   const twoModules = new Map(
     ((shapeRes.data ?? []) as { id: string; module_2_id: string | null; is_adaptive: boolean | null }[]).map((t) => [
       t.id,
@@ -203,7 +231,7 @@ export async function loadAnswerVisibilityInputs(
   };
   const subsByPair = new Map<string, Sub[]>();
   for (const s of (subsRes.data ?? []) as Sub[]) {
-    const k = visibilityKey(s.test_id, s.student_id);
+    const k = visibilityKey(effectiveId(s.test_id), s.student_id);
     const list = subsByPair.get(k) ?? [];
     list.push(s);
     subsByPair.set(k, list);
@@ -225,12 +253,25 @@ export async function loadAnswerVisibilityInputs(
     }
   }
 
+  const byEffective = new Map<string, VisibilityInput>();
   for (const testId of tIds) {
     const test = tests.get(testId);
     if (!test) continue; // unknown test → no entry → callers treat as hidden
+    const flChildren = links.childrenOf.get(testId);
     for (const studentId of sIds) {
       const k = visibilityKey(testId, studentId);
       const subs = subsByPair.get(k) ?? [];
+      if (flChildren) {
+        const fl = fullLengthVisibilityState(subs, flChildren, closedAttempts.get(k));
+        byEffective.set(k, {
+          test,
+          override: overrides.get(k) ?? null,
+          hasSubmitted: fl.hasSubmitted,
+          retakePending: grants.has(k) || fl.retakeInProgress,
+          examInProgress: fl.examInProgress,
+        });
+        continue;
+      }
       const submitted = subs.filter((s) => DONE.has(s.status));
       const minSubmittedAttempt = submitted.reduce(
         (m, s) => Math.min(m, s.attempt_number ?? 1),
@@ -242,7 +283,7 @@ export async function loadAnswerVisibilityInputs(
       const retakeInProgress = subs.some(
         (s) => !DONE.has(s.status) && (s.attempt_number ?? 1) > minSubmittedAttempt,
       );
-      out.set(k, {
+      byEffective.set(k, {
         test,
         override: overrides.get(k) ?? null,
         hasSubmitted: submitted.length > 0,
@@ -251,6 +292,12 @@ export async function loadAnswerVisibilityInputs(
           subs.some((s) => !DONE.has(s.status)) ||
           (subs.length > 0 && studentTestProgress(subs, twoModules.get(testId) ?? false).status === "In progress"),
       });
+    }
+  }
+  for (const testId of requestedIds) {
+    for (const studentId of sIds) {
+      const input = byEffective.get(visibilityKey(effectiveId(testId), studentId));
+      if (input) out.set(visibilityKey(testId, studentId), input);
     }
   }
   return out;

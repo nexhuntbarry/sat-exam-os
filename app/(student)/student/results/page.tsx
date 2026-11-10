@@ -6,6 +6,7 @@ import { BarChart2, Eye } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatShortDate } from "@/lib/datetime";
 import { getTestSections } from "@/lib/teacher-access";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptScore, type AttemptScore } from "@/lib/score-display";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -65,8 +66,12 @@ async function getStudentResults(studentId: string) {
     .in("status", ["Submitted", "Late"])
     .order("submitted_at", { ascending: false });
   const rows = (data ?? []) as unknown as ResultRow[];
-  const sectionOf = await getTestSections(db, Array.from(new Set(rows.map((r) => r.test_id))));
-  return { rows, sectionOf };
+  const testIds = Array.from(new Set(rows.map((r) => r.test_id)));
+  // Full-length SAT section rows link to the parent test (fail-open: on a
+  // lookup error they keep their own test id, which redirects anyway).
+  const [sectionOf, flLinks] = await Promise.all([getTestSections(db, testIds), fullLengthLinksOrNone(db)]);
+  const parents = flLinks.parentOf;
+  return { rows, sectionOf, parents };
 }
 
 // Two-module attempts (adaptive or non-adaptive two-module tests) span
@@ -124,8 +129,10 @@ export default async function StudentResultsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const { rows, sectionOf } = await getStudentResults(user.userId);
-  const results = buildResultGroups(rows, sectionOf);
+  const { rows, sectionOf, parents } = await getStudentResults(user.userId);
+  const results = buildResultGroups(rows, sectionOf).map((g) =>
+    parents.has(g.testId) ? { ...g, testId: parents.get(g.testId)! } : g,
+  );
   const breakdownRows = await getStudentBreakdownRows(user.userId);
   const occasions = await getStudentProgressOccasions(user.userId);
 

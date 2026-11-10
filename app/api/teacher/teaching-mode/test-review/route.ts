@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { asParentRows, childTestIds, expandFullLength, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
@@ -35,12 +36,14 @@ export async function GET(req: Request) {
   }
 
   // List of tests teacher's classes have access to — for the dropdown
-  const { data: tests } = await db
-    .from("tests")
-    .select("id, test_name, status, created_at")
-    .in("id", testIds)
-    .in("status", ["Published", "Closed"])
-    .order("created_at", { ascending: false });
+  const { data: tests } = await hideChildTests(
+    db
+      .from("tests")
+      .select("id, test_name, status, created_at")
+      .in("id", testIds)
+      .in("status", ["Published", "Closed"]),
+    await childTestIds(db),
+  ).order("created_at", { ascending: false });
 
   if (!tests || tests.length === 0) {
     return NextResponse.json({
@@ -58,10 +61,11 @@ export async function GET(req: Request) {
   // Find submissions for selected test. For class teachers, restrict
   // the denominator to their own class students unless the test was
   // also directly assigned to them (full-scope mode).
+  // A full-length SAT's submissions are on its two section children.
   let submissionsQuery = db
     .from("submissions")
-    .select("id, session_id")
-    .eq("test_id", selected.id)
+    .select("id, session_id, test_id, student_id, status, attempt_number, adaptive_track")
+    .in("test_id", await expandFullLength(db, [selected.id]))
     .in("status", ["Submitted", "Late"]);
   if (!seesAllStudents(scope, selected.id)) {
     submissionsQuery = submissionsQuery.in(
@@ -75,8 +79,9 @@ export async function GET(req: Request) {
   const subIds = (submissions ?? []).map((s) => s.id);
   // Count attempts, not module rows: a two-module attempt is two
   // submissions sharing one session_id.
+  // (A full-length attempt spans two sessions: counted once.)
   const totalSubmissions = new Set(
-    (submissions ?? []).map((s) => (s.session_id as string | null) ?? s.id),
+    asParentRows(submissions ?? [], await fullLengthLinks(db)).map((s) => (s.session_id as string | null) ?? s.id),
   ).size;
 
   if (subIds.length === 0) {

@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { childTestIds } from "@/lib/full-length";
 import { notFound } from "next/navigation";
 import ClassDetailClient from "./ClassDetailClient";
 import { getCurrentUser } from "@/lib/auth";
@@ -261,6 +262,8 @@ async function getAssignedTests(
 async function getAllTests(viewerIsQa: boolean): Promise<AvailableTest[]> {
   const db = getServiceClient();
   const qaTestIds = await getQaTestIds();
+  // Full-length SAT sections are assigned through their parent only.
+  const flChildren = await childTestIds(db);
 
   const [{ data: tests }, { data: assignments }] = await Promise.all([
     fetchAllRows((from, to) =>
@@ -284,7 +287,7 @@ async function getAllTests(viewerIsQa: boolean): Promise<AvailableTest[]> {
   );
 
   return (tests ?? [])
-    .filter((t) => onSide(t.id as string, qaTestIds, viewerIsQa))
+    .filter((t) => onSide(t.id as string, qaTestIds, viewerIsQa) && !flChildren.has(t.id as string))
     .map((t) => {
       const mod = Array.isArray(t.modules) ? t.modules[0] : t.modules;
       const a = assignMap.get(t.id as string);

@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { resolveParentTestId, reviewSectionTests } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -20,13 +21,9 @@ async function getReviewData(testId: string, studentId: string) {
   // Verify the student is assigned to this test (direct or via class).
   if (!(await isTestAssignedToStudent(db, testId, studentId))) return null;
 
-  const { data: test } = await db
-    .from("tests")
-    .select(
-      "id, test_name, status, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids",
-    )
-    .eq("id", testId)
-    .single();
+  const columns =
+    "id, test_name, status, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids";
+  const { data: test } = await db.from("tests").select(columns).eq("id", testId).single();
   if (!test) return null;
   // Assigned but not released (or hidden for this student) → friendly
   // locked screen, not a 404 (L-01).
@@ -38,11 +35,13 @@ async function getReviewData(testId: string, studentId: string) {
   //    between either one in class)
   //  - non-adaptive 2-module: Module 1 then Module 2
   //  - legacy single-module: just module_id
-  const moduleIds = test.is_adaptive
-    ? [test.module_1_id, test.module_2_easy_id, test.module_2_hard_id].filter(
-        (x): x is string => Boolean(x),
-      )
-    : [test.module_id, test.module_2_id].filter((x): x is string => Boolean(x));
+  // A full-length SAT is walked through its section children (R&W, then Math).
+  const parts = await reviewSectionTests(db, test, columns);
+  const modulesOf = (t: typeof test) =>
+    t.is_adaptive
+      ? [t.module_1_id, t.module_2_easy_id, t.module_2_hard_id].filter((x): x is string => Boolean(x))
+      : [t.module_id, t.module_2_id].filter((x): x is string => Boolean(x));
+  const moduleIds = parts.flatMap((p) => modulesOf(p.test));
 
   if (moduleIds.length === 0) {
     return {
@@ -62,7 +61,7 @@ async function getReviewData(testId: string, studentId: string) {
         "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
       )
       .in("module_id", moduleIds),
-    test,
+    parts[0]?.test ?? test,
   ).order("original_question_number", { ascending: true });
 
   const { data: rawQuestions } = await qquery;
@@ -81,7 +80,7 @@ async function getReviewData(testId: string, studentId: string) {
   const { data: subs } = await db
     .from("submissions")
     .select("id, attempt_number")
-    .eq("test_id", testId)
+    .in("test_id", parts.map((p) => p.test.id))
     .eq("student_id", studentId)
     .in("status", ["Submitted", "Late"])
     .order("attempt_number", { ascending: false });
@@ -113,15 +112,18 @@ async function getReviewData(testId: string, studentId: string) {
       | { module_name: string; section: string; module_number: number | null }
       | null;
     const key = q.module_id;
+    const part = parts.find((p) => modulesOf(p.test).includes(q.module_id)) ?? { test, prefix: "" };
+    const t = part.test;
     let label = mod?.module_name ?? "Module";
-    if (test.is_adaptive) {
-      if (q.module_id === test.module_1_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === test.module_2_easy_id) label = `Module 2 · Easy — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === test.module_2_hard_id) label = `Module 2 · Hard — ${mod?.module_name ?? ""}`;
-    } else if (test.module_2_id) {
-      if (q.module_id === test.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === test.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
+    if (t.is_adaptive) {
+      if (q.module_id === t.module_1_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
+      else if (q.module_id === t.module_2_easy_id) label = `Module 2 · Easy — ${mod?.module_name ?? ""}`;
+      else if (q.module_id === t.module_2_hard_id) label = `Module 2 · Hard — ${mod?.module_name ?? ""}`;
+    } else if (t.module_2_id) {
+      if (q.module_id === t.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
+      else if (q.module_id === t.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
     }
+    label = part.prefix + label;
     if (!groups.has(key)) {
       groups.set(key, { moduleId: key, title: label, questions: [] });
     }
@@ -142,6 +144,9 @@ export default async function StudentTestReviewPage({
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
+  // A full-length SAT section is reviewed through its parent.
+  const parentId = await resolveParentTestId(getServiceClient(), id);
+  if (parentId !== id) redirect(`/student/tests/${parentId}/review`);
   const data = await getReviewData(id, user.userId);
   if (!data) notFound();
 

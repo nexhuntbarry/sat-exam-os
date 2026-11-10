@@ -19,7 +19,7 @@
 // student presses "Start Module 2" (lib/student-exam moduleStartedAtIso).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { DeviceInfo } from "@/lib/student-exam";
+import { FULL_LENGTH_METADATA_KEYS, type DeviceInfo } from "@/lib/student-exam";
 
 export const MODULE_2_TRACKS = ["module_2", "module_2_easy", "module_2_hard"] as const;
 export type Module2Track = (typeof MODULE_2_TRACKS)[number];
@@ -42,6 +42,20 @@ export interface HandoffModule1 {
   session_id: string | null;
   attempt_number: number;
   adaptive_track: string | null;
+  /**
+   * Module 1's metadata. Only its full-length keys (extended time, attempt
+   * link, attempt start) are carried to Module 2; section tests have none,
+   * so leaving it out changes nothing.
+   */
+  metadata?: unknown;
+}
+
+/** The full-length keys of a Module 1's metadata that Module 2 inherits. */
+export function carriedModule1Metadata(metadata: unknown): Record<string, unknown> {
+  const meta = (metadata && typeof metadata === "object" ? metadata : {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of FULL_LENGTH_METADATA_KEYS) if (meta[k] !== undefined) out[k] = meta[k];
+  return out;
 }
 
 /**
@@ -164,6 +178,7 @@ export async function ensureModule2(
       started_at: new Date().toISOString(),
       attempt_number: m1.attempt_number,
       metadata: {
+        ...carriedModule1Metadata(m1.metadata),
         ...(opts.device ? { device: opts.device } : {}),
         ...(opts.createdAfterDue ? { created_after_due: true } : {}),
       },
@@ -222,7 +237,7 @@ export async function recoverModule2(
   if (!test.is_adaptive && !test.module_2_id) return null;
   const { data: rows, error } = await db
     .from("submissions")
-    .select("id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, percentage")
+    .select("id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, percentage, metadata")
     .eq("test_id", testId)
     .eq("student_id", studentId)
     .not("session_id", "is", null)
@@ -247,6 +262,7 @@ export async function recoverModule2(
       session_id: latestSessionId,
       attempt_number: (m1.attempt_number as number) ?? 1,
       adaptive_track: "module_1",
+      metadata: m1.metadata,
     },
     test,
     {

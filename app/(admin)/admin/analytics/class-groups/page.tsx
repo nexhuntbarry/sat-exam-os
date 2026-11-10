@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getServiceClient } from "@/lib/supabase";
+import { childTestIds, hideChildTests } from "@/lib/full-length";
 import { attemptScore, averageSat } from "@/lib/score-display";
 import { getTestSections } from "@/lib/teacher-access";
 import { getCurrentUser } from "@/lib/auth";
@@ -111,7 +112,7 @@ function mean(values: number[]): number | null {
 
 async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]> {
   const db = getServiceClient();
-  const [qaGroups, qaUsers] = await Promise.all([getQaClassGroupIds(), getQaUserIds()]);
+  const [qaGroups, qaUsers, flChildren] = await Promise.all([getQaClassGroupIds(), getQaUserIds(), childTestIds(db)]);
 
   const [groupsRes, membersRes, testsRes, submissionsRes] = await Promise.all([
     scopeIds(db
@@ -119,7 +120,7 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
       .select("id, name, campus, grade, created_at"), "id", qaGroups, viewerIsQa)
       .order("created_at", { ascending: false }),
     db.from("class_group_members").select("class_group_id, student_id"),
-    db.from("tests").select("id, test_name, created_at"),
+    hideChildTests(db.from("tests").select("id, test_name, created_at"), flChildren),
     scopeIds(db
       .from("submissions")
       .select(

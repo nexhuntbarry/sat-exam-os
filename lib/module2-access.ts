@@ -10,10 +10,16 @@
 // mid-exam must not strand them, so for them the assignment check is
 // skipped — but only for resuming/recovering that attempt, never for
 // starting a new one (`assigned` tells the caller which).
+//
+// Full-length SAT parent: mid-attempt = an unclosed full_length_attempts
+// row whose Math isn't finished (on the break included), and such an
+// attempt may also finish after the test is Closed. New attempts still
+// need Published + assigned.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { forbidCrossSide } from "@/lib/qa";
 import { isTestAssignedToStudent } from "@/lib/student-exam";
+import { hasOpenFullLengthAttempt } from "@/lib/full-length";
 
 export interface StudentTestAccess {
   /** Set when the student may not use this test at all. */
@@ -87,7 +93,12 @@ export async function studentTestAccess(
 ): Promise<StudentTestAccess> {
   const crossSide = await forbidCrossSide(user, { testIds: [test.id] });
   if (crossSide) return { error: { status: 403, error: "Cannot link QA and real accounts/data" }, assigned: false };
-  if (test.status !== "Published") return { error: { status: 403, error: "Test is not available" }, assigned: false };
+  if (test.status !== "Published") {
+    if (test.status === "Closed" && (await hasOpenFullLengthAttempt(db, test.id, user.userId))) {
+      return { error: null, assigned: false };
+    }
+    return { error: { status: 403, error: "Test is not available" }, assigned: false };
+  }
   // Directly or via a class group, same rule as the My Tests list.
   if (await isTestAssignedToStudent(db, test.id, user.userId)) return { error: null, assigned: true };
   // Allow resuming/recovering an in-progress attempt even if unassigned.
@@ -95,5 +106,6 @@ export async function studentTestAccess(
   // `assigned: false` tells the caller not to allow starting a NEW attempt.
   if (await latestSessionHasAnyInProgress(db, test.id, user.userId)) return { error: null, assigned: false };
   if (await latestSessionHasGradedModule1(db, test.id, user.userId)) return { error: null, assigned: false };
+  if (await hasOpenFullLengthAttempt(db, test.id, user.userId)) return { error: null, assigned: false };
   return { error: { status: 403, error: "Test is not assigned to you" }, assigned: false };
 }

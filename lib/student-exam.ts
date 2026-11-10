@@ -10,6 +10,7 @@
 // what a student is shown and what they are graded on can never diverge.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { asParentRows, fullLengthLinksOrNone, resolveParentTestId } from "@/lib/full-length";
 
 /** The only parsing_status a student ever sees or is graded on. */
 export const STUDENT_VISIBLE_QUESTION_STATUS = "Approved";
@@ -61,18 +62,52 @@ export interface ModuleTiming {
 }
 
 /**
+ * Server-owned submission metadata keys of a full-length SAT attempt
+ * (lib/full-length.ts). Section tests never carry them.
+ *   time_multiplier — extended time (1.25 / 1.5 / 2), applied to every module
+ *   fl_attempt_id   — full_length_attempts.id
+ *   fl_started_at   — when the whole full-length attempt started (Late rule)
+ */
+export const FULL_LENGTH_METADATA_KEYS = ["time_multiplier", "fl_attempt_id", "fl_started_at"] as const;
+
+/**
+ * Extended-time multiplier stamped on a submission (metadata.time_multiplier),
+ * or 1 when absent / not a sane number. Only full-length attempts carry it.
+ */
+export function timeMultiplier(metadata?: unknown): number {
+  const m = (metadata as Record<string, unknown> | null | undefined)?.time_multiplier;
+  return typeof m === "number" && Number.isFinite(m) && m >= 1 && m <= 3 ? m : 1;
+}
+
+/**
  * Minutes allowed for this submission's module, or null when the test is
  * untimed / has no limit configured (no server-side enforcement then).
+ * Pass the submission's metadata to apply its extended-time multiplier;
+ * without one the result is the configured limit, unchanged. May be
+ * fractional with a multiplier (×1.5 of 35 = 52.5).
  */
 export function moduleTimeLimitMinutes(
   test: ModuleTiming,
   track: string | null | undefined,
+  metadata?: unknown,
 ): number | null {
   if (test.is_untimed) return null;
   const limit = isModule2Track(track)
     ? test.time_limit_minutes_module_2 ?? test.time_limit_minutes
     : test.time_limit_minutes;
-  return limit && limit > 0 ? limit : null;
+  if (!(limit && limit > 0)) return null;
+  const mult = timeMultiplier(metadata);
+  return mult === 1 ? limit : limit * mult;
+}
+
+/** moduleTimeLimitMinutes in whole seconds (fractional minutes rounded). */
+export function moduleTimeLimitSeconds(
+  test: ModuleTiming,
+  track: string | null | undefined,
+  metadata?: unknown,
+): number | null {
+  const limit = moduleTimeLimitMinutes(test, track, metadata);
+  return limit == null ? null : Math.round(limit * 60);
 }
 
 export interface ModuleClockRow {
@@ -104,11 +139,11 @@ export function moduleDeadlineMs(
   test: ModuleTiming,
   now = Date.now(),
 ): number | null {
-  const limit = moduleTimeLimitMinutes(test, sub.adaptive_track);
-  if (limit == null) return null;
+  const limitSeconds = moduleTimeLimitSeconds(test, sub.adaptive_track, sub.metadata);
+  if (limitSeconds == null) return null;
   const startIso = moduleStartedAtIso(sub);
   const start = startIso ? new Date(startIso).getTime() : now;
-  return start + limit * 60_000 + DEADLINE_GRACE_SECONDS * 1000;
+  return start + limitSeconds * 1000 + DEADLINE_GRACE_SECONDS * 1000;
 }
 
 /**
@@ -121,11 +156,11 @@ export function moduleRemainingSeconds(
   test: ModuleTiming,
   now = Date.now(),
 ): number | null {
-  const limit = moduleTimeLimitMinutes(test, sub.adaptive_track);
-  if (limit == null) return null;
+  const limitSeconds = moduleTimeLimitSeconds(test, sub.adaptive_track, sub.metadata);
+  if (limitSeconds == null) return null;
   const startIso = moduleStartedAtIso(sub);
-  if (!startIso) return limit * 60;
-  return Math.max(0, Math.floor((new Date(startIso).getTime() + limit * 60_000 - now) / 1000));
+  if (!startIso) return limitSeconds;
+  return Math.max(0, Math.floor((new Date(startIso).getTime() + limitSeconds * 1000 - now) / 1000));
 }
 
 /** Student's class group ids. */
@@ -199,6 +234,8 @@ export async function getAssignedTestIds(
  * Test IDs for which the student has an unfinished attempt even if no longer
  * assigned: either any In Progress submission, or a graded Module 1 whose
  * Module 2 row hasn't been created yet (the M1→M2 handoff case).
+ * Full-length SAT rows are reported under the parent id; an attempt whose
+ * Math isn't finished (on the break included) counts as unfinished.
  * These should appear in the student's test list marked "finish your attempt"
  * and must be accessible via the student test landing page.
  */
@@ -206,14 +243,18 @@ export async function getInProgressOrPendingM2TestIds(
   db: SupabaseClient,
   studentId: string,
 ): Promise<Set<string>> {
-  const { data: subs } = await db
+  const { data: rawSubs } = await db
     .from("submissions")
-    .select("test_id, status, adaptive_track, attempt_number")
+    .select("test_id, student_id, status, adaptive_track, attempt_number")
     .eq("student_id", studentId)
     .in("status", ["In Progress", "Submitted", "Late"])
     .order("attempt_number", { ascending: false });
 
-  if (!subs || subs.length === 0) return new Set();
+  if (!rawSubs || rawSubs.length === 0) return new Set();
+  const subs = asParentRows(
+    rawSubs as { test_id: string; student_id: string; status: string; adaptive_track: string | null; attempt_number: number | null }[],
+    await fullLengthLinksOrNone(db),
+  );
 
   // Group by (test_id, latest attempt_number)
   const latestByTest = new Map<string, { attempt: number; rows: { status: string; adaptive_track: string | null }[] }>();
@@ -249,19 +290,23 @@ export async function getInProgressOrPendingM2TestIds(
   return result;
 }
 
-/** Is this one test assigned to the student? (Same rule as above.) */
+/**
+ * Is this one test assigned to the student? (Same rule as above.) A
+ * full-length section child is assigned when its parent is.
+ */
 export async function isTestAssignedToStudent(
   db: SupabaseClient,
   testId: string,
   studentId: string,
 ): Promise<boolean> {
-  const [classGroupIds, { data: rows }] = await Promise.all([
+  const assignmentsOf = (id: string) =>
+    db.from("test_assignments").select("test_id, student_ids, class_group_ids").eq("test_id", id);
+  const [classGroupIds, assignmentTestId, { data: ownRows }] = await Promise.all([
     studentClassGroupIds(db, studentId),
-    db
-      .from("test_assignments")
-      .select("test_id, student_ids, class_group_ids")
-      .eq("test_id", testId),
+    resolveParentTestId(db, testId),
+    assignmentsOf(testId),
   ]);
+  const rows = assignmentTestId === testId ? ownRows : (await assignmentsOf(assignmentTestId)).data;
   return (rows ?? []).some((a) => assignmentMatches(a, studentId, classGroupIds));
 }
 
@@ -328,7 +373,33 @@ const SERVER_OWNED_METADATA_KEYS = [
   // Set by lib/module2-handoff recovery after the due date; makes it Late.
   "created_after_due",
   "auto_closed_unopened",
+  // Full-length SAT attempt (extended time, attempt link, attempt start).
+  ...FULL_LENGTH_METADATA_KEYS,
 ];
+
+/**
+ * Metadata an admin reset keeps. A section test's row gets {} as always.
+ * A full-length row (one carrying any full-length key) keeps those keys,
+ * so the reset module keeps its extended time and attempt link, plus the
+ * device, for support.
+ */
+export function resetSubmissionMetadata(old: unknown): Record<string, unknown> {
+  const meta = (old && typeof old === "object" ? old : {}) as Record<string, unknown>;
+  if (!FULL_LENGTH_METADATA_KEYS.some((k) => meta[k] !== undefined)) return {};
+  const out: Record<string, unknown> = {};
+  for (const k of [...FULL_LENGTH_METADATA_KEYS, "device"]) {
+    if (meta[k] !== undefined) out[k] = meta[k];
+  }
+  return out;
+}
+
+/** metadata.fl_started_at as epoch ms, or null (section tests). */
+export function fullLengthStartedAtMs(metadata: unknown): number | null {
+  const v = (metadata as Record<string, unknown> | null | undefined)?.fl_started_at;
+  if (typeof v !== "string" || !v) return null;
+  const ms = new Date(v).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
 
 /** Device a module was started on (submissions.metadata.device). */
 export interface DeviceInfo {

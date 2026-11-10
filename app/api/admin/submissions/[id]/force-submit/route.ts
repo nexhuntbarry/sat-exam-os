@@ -120,6 +120,7 @@ export async function POST(
               session_id: submission.session_id,
               attempt_number: submission.attempt_number,
               adaptive_track: submission.adaptive_track,
+              metadata: submission.metadata,
             },
             test,
             { module1Percentage: graded.percentage },

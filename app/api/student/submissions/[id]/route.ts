@@ -134,12 +134,13 @@ export async function GET(
   // Time remaining, measured from the module's real start (Module 2:
   // when it was first opened) — the same clock the take page, cron and
   // autosave deadline use.
-  const limitMinutes = moduleTimeLimitMinutes(test, submission.adaptive_track) ?? 35;
+  // Extended time (metadata.time_multiplier) included; none on section tests.
+  const limitMinutes = moduleTimeLimitMinutes(test, submission.adaptive_track, submission.metadata) ?? 35;
   const startIso = moduleStartedAtIso(submission);
   const elapsedSeconds = startIso
     ? Math.floor((Date.now() - new Date(startIso).getTime()) / 1000)
     : 0;
-  const timeRemainingSeconds = Math.max(0, limitMinutes * 60 - elapsedSeconds);
+  const timeRemainingSeconds = Math.max(0, Math.round(limitMinutes * 60) - elapsedSeconds);
 
   return NextResponse.json({
     data: {

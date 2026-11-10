@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowLeft, Mail } from "lucide-react";
 import { clsx } from "clsx";
 import { getServiceClient } from "@/lib/supabase";
+import { childTestIds, hideChildTests } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, isQaEmail, onSide, scopeIds } from "@/lib/qa";
 import { getStudentAssignments } from "@/lib/student-exam";
@@ -341,8 +342,10 @@ export default async function AdminStudentDetailPage({
       .select("class_group_id, class_groups(id, name)")
       .eq("student_id", id),
     scopeIds(db.from("class_groups").select("id, name, campus, grade"), "id", qaClassGroups, viewerIsQa).order("name"),
-    scopeIds(db.from("tests").select("id, test_name, status, modules!module_id(section)"), "id", qaTests, viewerIsQa)
-      .order("created_at", { ascending: false }),
+    hideChildTests(
+      scopeIds(db.from("tests").select("id, test_name, status, modules!module_id(section)"), "id", qaTests, viewerIsQa),
+      await childTestIds(db),
+    ).order("created_at", { ascending: false }),
   ]);
   const memberships = (memberRows ?? [])
     .map((m) => {

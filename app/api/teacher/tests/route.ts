@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
+import { asParentRows, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { getQaUserIds, onSide, scopeIds } from "@/lib/qa";
 
@@ -27,16 +28,19 @@ export async function GET() {
   }
 
   const testIds = Array.from(scope.testIds);
+  const flLinks = await fullLengthLinks(db);
 
-  const { data: tests, error: testsError } = await db
-    .from("tests")
-    .select(`
+  const { data: tests, error: testsError } = await hideChildTests(
+    db
+      .from("tests")
+      .select(`
       id, test_name, module_id, time_limit_minutes, open_date, due_date,
       show_answers_after_submission, allow_retake, status, created_at,
       modules!module_id(module_name, section, module_number)
     `)
-    .in("id", testIds)
-    .order("created_at", { ascending: false });
+      .in("id", testIds),
+    new Set(flLinks.parentOf.keys()),
+  ).order("created_at", { ascending: false });
 
   if (testsError) {
     console.error("[teacher/tests/get tests]", testsError);
@@ -84,10 +88,11 @@ export async function GET() {
 
   // Submission counts: one per attempt (two-module attempts share a
   // session_id), only my class students unless I see the whole test.
+  // A full-length SAT's rows are on its children: one attempt under the parent.
   const { data: subData, error: subError } = await scopeIds(db
     .from("submissions")
-    .select("id, test_id, student_id, status, correct_count, total_questions, percentage, session_id")
-    .in("test_id", testIds), "student_id", qaUsers, user.isQa);
+    .select("id, test_id, student_id, status, correct_count, total_questions, percentage, session_id, attempt_number, adaptive_track")
+    .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa);
   if (subError) {
     console.error("[teacher/tests/get submissions]", subError);
     return NextResponse.json({ error: "Failed to fetch submissions" }, { status: 500 });
@@ -102,9 +107,11 @@ export async function GET() {
     total_questions: number | null;
     percentage: number | string | null;
     session_id: string | null;
+    attempt_number: number | null;
+    adaptive_track: string | null;
   };
   const attemptsByTest = new Map<string, Map<string, SubRow[]>>();
-  for (const s of (subData ?? []) as SubRow[]) {
+  for (const s of asParentRows((subData ?? []) as SubRow[], flLinks)) {
     if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
     const attempts = attemptsByTest.get(s.test_id) ?? new Map<string, SubRow[]>();
     const key = s.session_id ?? s.id;

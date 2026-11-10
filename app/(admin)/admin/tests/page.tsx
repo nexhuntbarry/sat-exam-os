@@ -6,18 +6,20 @@ import { Plus, ClipboardList } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, scopeIds, scopeUsers } from "@/lib/qa";
+import { asParentRows, expandWithChildren, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
 import TestsTableClient, { type TestRow } from "./TestsTableClient";
 
 async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
   const db = getServiceClient();
-  const { data: tests } = await scopeIds(db
+  const flLinks = await fullLengthLinksOrNone(db);
+  const { data: tests } = await hideChildTests(scopeIds(db
     .from("tests")
     .select(`
       id, test_name, status, open_date, due_date, created_at,
       is_adaptive, module_2_id,
       modules!module_id(module_name, section, module_number),
       module_2:modules!module_2_id(module_name, module_number)
-    `), "id", await getQaTestIds(), viewerIsQa)
+    `), "id", await getQaTestIds(), viewerIsQa), new Set(flLinks.parentOf.keys()))
     .order("created_at", { ascending: false });
 
   if (!tests || tests.length === 0) return [];
@@ -26,8 +28,10 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
 
   const [{ data: assignments }, { data: submissions }] = await Promise.all([
     db.from("test_assignments").select("test_id, teacher_ids, student_ids, class_group_ids").in("test_id", testIds),
-    db.from("submissions").select("test_id, student_id, status, session_id, adaptive_track, started_at").in("test_id", testIds),
+    db.from("submissions").select("test_id, student_id, status, session_id, adaptive_track, started_at, attempt_number").in("test_id", expandWithChildren(testIds, flLinks)),
   ]);
+  // A full-length SAT's rows are on its children: one attempt under the parent.
+  const progressRows = asParentRows(submissions ?? [], flLinks);
 
   // Student names for the Assignments hover.
   const assignedStudentIds = [...new Set((assignments ?? []).flatMap((a) => (a.student_ids ?? []) as string[]))];
@@ -61,9 +65,9 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
       ...(members ?? []).filter((m) => groups.has(m.class_group_id)).map((m) => m.student_id),
     ];
     const p = summarizeTestProgress(
-      (submissions ?? []).filter((s) => s.test_id === t.id),
+      progressRows.filter((s) => s.test_id === t.id),
       assigned,
-      Boolean((t as { module_2_id?: string | null }).module_2_id || t.is_adaptive),
+      Boolean((t as { module_2_id?: string | null }).module_2_id || t.is_adaptive) || flLinks.childrenOf.has(t.id),
     );
     subMap[t.id] = { done: p.finished, total: p.students };
   }

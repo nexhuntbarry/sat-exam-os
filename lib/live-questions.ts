@@ -12,6 +12,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
+import { parentOf } from "@/lib/full-length";
 
 export const LIVE_FIX_TAG = "[live-fix]";
 
@@ -31,7 +32,9 @@ interface LiveTest {
 /**
  * Which of `ids` are in a live test: a Published test that is assigned to
  * at least one student or class, and whose student question set (same
- * rules as scopeToStudentQuestionSet) includes the question.
+ * rules as scopeToStudentQuestionSet) includes the question. A full-length
+ * SAT's section child has no assignments of its own: it counts as
+ * assigned when its parent is (the parent's status is synced onto it).
  */
 export async function liveQuestionIds(
   db: SupabaseClient,
@@ -48,10 +51,12 @@ export async function liveQuestionIds(
   if (tErr) throw new Error(`liveQuestionIds tests: ${tErr.message}`);
   if (!tests || tests.length === 0) return live;
 
+  const parents = await parentOf(db, tests.map((t) => t.id as string));
+  const assignmentTestId = (id: string) => parents.get(id) ?? id;
   const { data: assignments, error: aErr } = await db
     .from("test_assignments")
     .select("test_id, student_ids, class_group_ids")
-    .in("test_id", tests.map((t) => t.id));
+    .in("test_id", [...new Set(tests.map((t) => assignmentTestId(t.id as string)))]);
   if (aErr) throw new Error(`liveQuestionIds assignments: ${aErr.message}`);
   const assigned = new Set(
     (assignments ?? [])
@@ -62,7 +67,7 @@ export async function liveQuestionIds(
       )
       .map((a) => a.test_id as string),
   );
-  const liveTests = (tests as LiveTest[]).filter((t) => assigned.has(t.id));
+  const liveTests = (tests as LiveTest[]).filter((t) => assigned.has(assignmentTestId(t.id)));
   if (liveTests.length === 0) return live;
 
   const moduleOf = new Map<string, string | null>();

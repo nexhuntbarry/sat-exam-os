@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
+import { expandWithChildren, fullLengthLinks } from "@/lib/full-length";
 
 // POST /api/admin/tests/[id]/remove-students
 // Body: { studentIds: string[]; deleteSubmissions?: boolean; onlyIfNotStarted?: boolean }
@@ -46,11 +47,15 @@ export async function POST(
   if (crossSide) return crossSide;
 
   const db = getServiceClient();
+  // Full-length SAT: the parent's submissions are on its section children.
+  const flLinks = await fullLengthLinks(db);
+  const isFullLength = flLinks.childrenOf.has(testId);
+  const submissionTestIds = expandWithChildren([testId], flLinks);
   if (body.onlyIfNotStarted) {
     const { count, error: countError } = await db
       .from("submissions")
       .select("id", { count: "exact", head: true })
-      .eq("test_id", testId)
+      .in("test_id", submissionTestIds)
       .in("student_id", incoming);
     if (countError) {
       console.error("[remove-students] submission check error:", countError);
@@ -127,7 +132,7 @@ export async function POST(
     const { data: deleted, error: delError } = await db
       .from("submissions")
       .delete()
-      .eq("test_id", testId)
+      .in("test_id", submissionTestIds)
       .in("student_id", deletable)
       .select("id");
     if (delError) {
@@ -138,6 +143,20 @@ export async function POST(
       );
     }
     deletedSubmissions = deleted?.length ?? 0;
+    if (isFullLength) {
+      const { error: flError } = await db
+        .from("full_length_attempts")
+        .delete()
+        .eq("test_id", testId)
+        .in("student_id", deletable);
+      if (flError) {
+        console.error("[remove-students] full-length attempt delete error:", flError);
+        return NextResponse.json(
+          { error: "Students removed, but deleting their full-length attempts failed" },
+          { status: 500 },
+        );
+      }
+    }
   }
 
   return NextResponse.json({ ok: true, removed, deletedSubmissions, stillVisibleViaGroup });

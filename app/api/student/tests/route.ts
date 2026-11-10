@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
 import { getAssignedTestIds, getInProgressOrPendingM2TestIds } from "@/lib/student-exam";
+import { asParentRows, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -67,15 +68,18 @@ export async function GET() {
     return NextResponse.json({ error: "Failed to fetch tests" }, { status: 500 });
   }
 
-  // Get submissions for this student
-  const { data: submissions } = await db
+  // Get submissions for this student. A full-length SAT's rows are on its
+  // section children: listed under the parent, one attempt each.
+  const flLinks = await fullLengthLinksOrNone(db);
+  const { data: rawSubmissions } = await db
     .from("submissions")
     .select(
-      "test_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track",
+      "test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track",
     )
     .eq("student_id", user.userId)
-    .in("test_id", testIds)
+    .in("test_id", expandWithChildren(testIds, flLinks))
     .order("attempt_number", { ascending: false });
+  const submissions = asParentRows(rawSubmissions ?? [], flLinks);
 
   type SubRow = {
     test_id: string;

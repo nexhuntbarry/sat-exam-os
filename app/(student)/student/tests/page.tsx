@@ -1,4 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
+import { asParentRows, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -199,8 +200,11 @@ async function getStudentTests(studentId: string) {
   if (allTestIds.size === 0) return [];
 
   const testIds = Array.from(allTestIds);
+  // A full-length SAT's rows are on its section children: listed under
+  // the parent, one attempt each.
+  const flLinks = await fullLengthLinksOrNone(db);
 
-  const [{ data: tests }, { data: submissions }, sectionOf] = await Promise.all([
+  const [{ data: tests }, { data: rawSubmissions }, sectionOf] = await Promise.all([
     db.from("tests")
       .select(`
         id, test_name, status, due_date, time_limit_minutes, time_limit_minutes_module_2, is_untimed, is_adaptive, module_2_id,
@@ -211,13 +215,14 @@ async function getStudentTests(studentId: string) {
       .order("due_date", { ascending: true }),
     db.from("submissions")
       .select(
-        "test_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track",
+        "test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track",
       )
       .eq("student_id", studentId)
-      .in("test_id", testIds)
+      .in("test_id", expandWithChildren(testIds, flLinks))
       .order("attempt_number", { ascending: false }),
     getTestSections(db, testIds),
   ]);
+  const submissions = asParentRows(rawSubmissions ?? [], flLinks);
 
   // Group submissions per test, then collapse two-module session
   // siblings into one attempt with module breakdown.
