@@ -72,6 +72,8 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     subMap[t.id] = { done: p.finished, total: p.students };
   }
 
+  const flSections = await fullLengthSourceNames(db, testIds.filter((id) => flLinks.childrenOf.has(id)));
+
   return tests.map((t) => ({
     id: t.id,
     test_name: t.test_name,
@@ -83,7 +85,37 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     module_2: (t as { module_2?: unknown }).module_2 ?? null,
     assignment: assignMap[t.id] ?? { teacherIds: [], studentIds: [], classGroupIds: [], studentNames: [] },
     submissions: subMap[t.id] ?? { done: 0, total: 0 },
+    fullLength: flLinks.childrenOf.has(t.id) ? flSections.get(t.id) ?? { rw: null, math: null } : null,
   }));
+}
+
+// Full-length SAT parents: the source test each section was built from
+// (display only; null when the source was deleted or on a lookup error).
+async function fullLengthSourceNames(
+  db: ReturnType<typeof getServiceClient>,
+  parentIds: string[],
+): Promise<Map<string, { rw: string | null; math: string | null }>> {
+  const out = new Map<string, { rw: string | null; math: string | null }>();
+  if (parentIds.length === 0) return out;
+  const { data: kids, error } = await db
+    .from("tests")
+    .select("parent_test_id, section_order, source_test_id")
+    .in("parent_test_id", parentIds);
+  if (error) return out;
+  const rows = (kids ?? []) as { parent_test_id: string; section_order: number; source_test_id: string | null }[];
+  const sourceIds = [...new Set(rows.map((r) => r.source_test_id).filter((x): x is string => Boolean(x)))];
+  const { data: sources } = sourceIds.length > 0
+    ? await db.from("tests").select("id, test_name").in("id", sourceIds)
+    : { data: [] as { id: string; test_name: string }[] };
+  const nameOf = new Map((sources ?? []).map((t) => [t.id as string, t.test_name as string]));
+  for (const r of rows) {
+    const entry = out.get(r.parent_test_id) ?? { rw: null, math: null };
+    const name = r.source_test_id ? nameOf.get(r.source_test_id) ?? null : null;
+    if (r.section_order === 1) entry.rw = name;
+    else entry.math = name;
+    out.set(r.parent_test_id, entry);
+  }
+  return out;
 }
 
 // Teachers and class groups the Assign dialogs can pick from — same

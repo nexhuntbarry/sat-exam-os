@@ -2,7 +2,15 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, getQaClassGroupIds, onSide } from "@/lib/qa";
-import { fullLengthLinksOrNone } from "@/lib/full-length";
+import {
+  FL_SECTIONS,
+  breakMinutesError,
+  childTestName,
+  fullLengthPublishModules,
+  kindChangeError,
+  loadChildTests,
+  type FlSectionKey,
+} from "@/lib/full-length-admin";
 import {
   TEST_STATUSES,
   dateOrderError,
@@ -137,9 +145,32 @@ export async function PATCH(
   const db = getServiceClient();
   const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
 
-  // A full-length SAT section is edited through its parent test.
-  if ((await fullLengthLinksOrNone(db)).parentOf.has(id)) {
+  const { data: current } = await db
+    .from("tests")
+    .select("is_adaptive, status, open_date, due_date, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id, test_kind, parent_test_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (!current) return bad("Test not found", 404);
+
+  // A full-length SAT section is edited through its parent test. Decided
+  // from the row itself (migration 0031 columns).
+  if (current.parent_test_id || current.test_kind === "fl_section") {
     return bad("This is a section of a full-length SAT — edit the full-length test instead.", 409);
+  }
+  const isFullLength = current.test_kind === "full_length";
+  const kindErr = kindChangeError(isFullLength ? "full_length" : "section", body.testKind, isFullLength);
+  if (kindErr) return bad(kindErr, 409);
+  if (isFullLength) {
+    // Modules come from the sections (change them with Re-sync), and time
+    // limits are per section.
+    const sectionOnly = [
+      "moduleId", "module2Id", "module1Id", "module2EasyId", "module2HardId",
+      "adaptiveThreshold", "questionIds", "desmosEnabled", "formulaSheetUrl",
+      "timeLimitMinutes", "timeLimitMinutesModule2",
+    ].filter((k) => body[k] !== undefined);
+    if (sectionOnly.length > 0) {
+      return bad(`Not editable on a full-length test: ${sectionOnly.join(", ")}. Use Re-sync to change the source tests.`);
+    }
   }
 
   // classGroupIds (full replacement) is mutually exclusive with add/remove delta fields.
@@ -150,12 +181,6 @@ export async function PATCH(
     return bad("classGroupIds and addClassGroupIds/removeClassGroupIds are mutually exclusive");
   }
 
-  const { data: current } = await db
-    .from("tests")
-    .select("is_adaptive, status, open_date, due_date, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
-    .eq("id", id)
-    .maybeSingle();
-  if (!current) return bad("Test not found", 404);
 
   const updates: Record<string, unknown> = {};
 
@@ -199,6 +224,34 @@ export async function PATCH(
       return bad(`Status must be one of ${TEST_STATUSES.join(", ")}`);
     }
     updates.status = body.status;
+  }
+  // Full-length only: break and pause. Attempts already running keep the
+  // values they started with (snapshotted on full_length_attempts).
+  if (isFullLength && body.breakMinutes !== undefined) {
+    const err = breakMinutesError(body.breakMinutes);
+    if (err) return bad(err);
+    if (body.breakMinutes === null) return bad("Break minutes are required");
+    updates.break_minutes = body.breakMinutes;
+  }
+  if (isFullLength && body.allowSectionPause !== undefined) updates.allow_section_pause = body.allowSectionPause === true;
+  // Full-length only: per-section module time limits, written to the sections.
+  const childUpdates: Record<FlSectionKey, Record<string, unknown>> = { rw: {}, math: {} };
+  if (isFullLength) {
+    for (const s of FL_SECTIONS) {
+      for (const [field, col, label] of [
+        [`${s.key}TimeLimitMinutes`, "time_limit_minutes", "Module 1 time limit"],
+        [`${s.key}TimeLimitMinutesModule2`, "time_limit_minutes_module_2", "Module 2 time limit"],
+      ] as const) {
+        if (body[field] === undefined) continue;
+        const err = timeLimitError(body[field], `${s.label} ${label}`);
+        if (err) return bad(err);
+        if (body[field] === null) return bad(`${s.label} ${label} is required`);
+        childUpdates[s.key][col] = body[field];
+      }
+      if (typeof updates.test_name === "string") {
+        childUpdates[s.key].test_name = childTestName(updates.test_name, s.key);
+      }
+    }
   }
   if (body.questionIds !== undefined) updates.question_ids = body.questionIds;
   if (body.desmosEnabled !== undefined) updates.desmos_enabled = Boolean(body.desmosEnabled);
@@ -285,10 +338,18 @@ export async function PATCH(
     if (err) return bad(err);
   }
 
-  if (updates.status === "Published" && current.status !== "Published") {
+  if (updates.status === "Published" && current.status !== "Published" && isFullLength) {
+    // Every module of both sections must be fully approved.
+    const { children, error: loadErr } = await loadChildTests(db, id);
+    if (loadErr) return bad(loadErr, 500);
+    const { moduleIds, error: shapeErr } = fullLengthPublishModules(children);
+    const err = shapeErr ?? (await moduleApprovalError(db, moduleIds));
+    if (err) return bad(err, 409);
+  } else if (updates.status === "Published" && current.status !== "Published") {
     const ids = [
       next.module_id, next.module_2_id, next.module_1_id, next.module_2_easy_id, next.module_2_hard_id,
     ].filter((x): x is string => Boolean(x));
+    if (ids.length === 0) return bad("This test has no modules, so it can't be published.", 409);
     const err = await moduleApprovalError(db, ids);
     if (err) return bad(err, 409);
   }
@@ -297,6 +358,23 @@ export async function PATCH(
     (await roleError(db, Array.isArray(body.teacherIds) ? (body.teacherIds as string[]) : undefined, "teacher")) ??
     (await roleError(db, Array.isArray(body.studentIds) ? (body.studentIds as string[]) : undefined, "student"));
   if (roleErr) return bad(roleErr);
+
+  // Sections first (time limits, names); the parent update below then
+  // syncs their status, dates and answer settings (trigger).
+  if (isFullLength) {
+    for (const s of FL_SECTIONS) {
+      if (Object.keys(childUpdates[s.key]).length === 0) continue;
+      const { error } = await db
+        .from("tests")
+        .update({ ...childUpdates[s.key], updated_at: new Date().toISOString() })
+        .eq("parent_test_id", id)
+        .eq("section_order", s.order);
+      if (error) {
+        console.error("[admin/tests/patch] full-length section", error);
+        return NextResponse.json({ error: "Failed to update the test sections" }, { status: 500 });
+      }
+    }
+  }
 
   const testFieldsChanged = Object.keys(updates).length > 0;
   if (testFieldsChanged) {
@@ -384,21 +462,20 @@ export async function DELETE(
   if (crossSide) return crossSide;
   const db = getServiceClient();
 
-  // A full-length SAT section is deleted with its parent (cascade).
-  if ((await fullLengthLinksOrNone(db)).parentOf.has(id)) {
-    return NextResponse.json(
-      { error: "This is a section of a full-length SAT — delete the full-length test instead." },
-      { status: 409 },
-    );
-  }
-
   const { data: target } = await db
     .from("tests")
-    .select("id, test_name")
+    .select("id, test_name, test_kind, parent_test_id")
     .eq("id", id)
     .maybeSingle();
   if (!target) {
     return NextResponse.json({ error: "Test not found" }, { status: 404 });
+  }
+  // A full-length SAT section is deleted with its parent (cascade).
+  if (target.parent_test_id || target.test_kind === "fl_section") {
+    return NextResponse.json(
+      { error: "This is a section of a full-length SAT — delete the full-length test instead." },
+      { status: 409 },
+    );
   }
 
   const { error } = await db.from("tests").delete().eq("id", id);

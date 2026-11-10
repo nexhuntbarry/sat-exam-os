@@ -2,7 +2,20 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, getQaTestIds, scopeIds } from "@/lib/qa";
-import { asParentRows, expandWithChildren, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
+import { asParentRows, expandWithChildren, fullLengthLinks, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
+import {
+  FL_SECTIONS,
+  FL_DEFAULT_BREAK_MINUTES,
+  FULL_LENGTH_DISABLED_MESSAGE,
+  breakMinutesError,
+  createFullLengthTest,
+  defaultSectionLimits,
+  fullLengthEnabledFor,
+  loadFullLengthSources,
+  testModuleIds,
+  type FlSectionKey,
+  type SectionLimits,
+} from "@/lib/full-length-admin";
 import {
   dateOrderError,
   moduleApprovalError,
@@ -151,6 +164,12 @@ export async function POST(req: Request) {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  // Full-length SAT (R&W + Math in one sitting): its own path, so the
+  // section-test path below stays exactly as it was.
+  if ((body as { kind?: unknown }).kind === "full_length") {
+    return createFullLength(admin, body as unknown as FullLengthBody);
   }
 
   const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
@@ -309,4 +328,136 @@ export async function POST(req: Request) {
   }
 
   return NextResponse.json({ data: { id: test.id } }, { status: 201 });
+}
+
+interface FullLengthBody {
+  kind: "full_length";
+  testName: string;
+  rwSourceTestId?: string;
+  mathSourceTestId?: string;
+  rwTimeLimitMinutes?: number;
+  rwTimeLimitMinutesModule2?: number;
+  mathTimeLimitMinutes?: number;
+  mathTimeLimitMinutesModule2?: number;
+  breakMinutes?: number;
+  allowSectionPause?: boolean;
+  openDate?: string;
+  dueDate?: string;
+  showAnswersAfterSubmission?: boolean;
+  showExplanationsAfterSubmission?: boolean;
+  allowRetake?: boolean;
+  teacherIds?: string[];
+  studentIds?: string[];
+  classGroupIds?: string[];
+  allowDuplicateName?: boolean;
+}
+
+// POST /api/admin/tests with kind "full_length": a parent test plus two
+// hidden section children snapshotted from an R&W and a Math source test
+// (lib/full-length-admin.ts). Server-side feature flag first.
+async function createFullLength(
+  admin: { userId: string; isQa: boolean },
+  body: FullLengthBody,
+): Promise<NextResponse> {
+  const db = getServiceClient();
+  if (!(await fullLengthEnabledFor(db, admin))) {
+    return NextResponse.json({ error: FULL_LENGTH_DISABLED_MESSAGE }, { status: 403 });
+  }
+  const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
+
+  const nameErr = testNameError(body.testName);
+  if (nameErr) return bad(nameErr);
+  const limitFields: Record<FlSectionKey, [unknown, unknown]> = {
+    rw: [body.rwTimeLimitMinutes, body.rwTimeLimitMinutesModule2],
+    math: [body.mathTimeLimitMinutes, body.mathTimeLimitMinutesModule2],
+  };
+  for (const s of FL_SECTIONS) {
+    const err =
+      timeLimitError(limitFields[s.key][0], `${s.label} Module 1 time limit`) ??
+      timeLimitError(limitFields[s.key][1], `${s.label} Module 2 time limit`);
+    if (err) return bad(err);
+  }
+  const breakErr = breakMinutesError(body.breakMinutes);
+  if (breakErr) return bad(breakErr);
+  const open = parseTimestamp(body.openDate, "Open date");
+  if (open.error) return bad(open.error);
+  const due = parseTimestamp(body.dueDate, "Due date");
+  if (due.error) return bad(due.error);
+  const orderErr = dateOrderError(open.value, due.value);
+  if (orderErr) return bad(orderErr);
+  if (typeof body.rwSourceTestId !== "string" || typeof body.mathSourceTestId !== "string") {
+    return bad("Choose a Reading and Writing test and a Math test");
+  }
+
+  const crossSide = await forbidCrossSide(admin, {
+    userIds: [...(body.teacherIds ?? []), ...(body.studentIds ?? [])],
+    classGroupIds: body.classGroupIds,
+    testIds: [body.rwSourceTestId, body.mathSourceTestId],
+  });
+  if (crossSide) return crossSide;
+
+  // Sources must be ordinary section tests (not a full-length test or one
+  // of its sections), two modules each, all R&W / all Math respectively.
+  let flIds: Set<string>;
+  try {
+    const links = await fullLengthLinks(db);
+    flIds = new Set([...links.parentOf.keys(), ...links.childrenOf.keys()]);
+  } catch (e) {
+    console.error("[admin/tests/post full-length] links", e);
+    return NextResponse.json({ error: "Could not verify the source tests" }, { status: 500 });
+  }
+  const { sources, error: sourceErr } = await loadFullLengthSources(
+    db,
+    { rw: body.rwSourceTestId, math: body.mathSourceTestId },
+    flIds,
+  );
+  if (sourceErr || !sources) return bad(sourceErr ?? "Invalid source tests");
+  const roleErr =
+    (await moduleSetError(db, testModuleIds(sources.rw))) ??
+    (await moduleSetError(db, testModuleIds(sources.math))) ??
+    (await roleError(db, body.teacherIds, "teacher")) ??
+    (await roleError(db, body.studentIds, "student"));
+  if (roleErr) return bad(roleErr);
+
+  if (!body.allowDuplicateName) {
+    const { data: dup } = await scopeIds(
+      db.from("tests").select("id").ilike("test_name", body.testName.trim().replace(/[\\%_]/g, "\\$&")),
+      "id",
+      await getQaTestIds(),
+      admin.isQa,
+    ).limit(1);
+    if (dup && dup.length > 0) {
+      return NextResponse.json(
+        { error: "A test with this name already exists", code: "duplicate_name" },
+        { status: 409 },
+      );
+    }
+  }
+
+  // Time limits: what the admin entered, else the source's, else SAT standard.
+  const limits = {} as Record<FlSectionKey, SectionLimits>;
+  for (const s of FL_SECTIONS) {
+    const d = defaultSectionLimits(sources[s.key], s.key);
+    const [m1, m2] = limitFields[s.key] as [number | undefined, number | undefined];
+    limits[s.key] = { m1: m1 ?? d.m1, m2: m2 ?? m1 ?? d.m2 };
+  }
+
+  const { id, error } = await createFullLengthTest(db, {
+    testName: body.testName,
+    sources,
+    limits,
+    breakMinutes: body.breakMinutes ?? FL_DEFAULT_BREAK_MINUTES,
+    allowSectionPause: body.allowSectionPause === true,
+    openDate: open.value,
+    dueDate: due.value,
+    showAnswersAfterSubmission: body.showAnswersAfterSubmission ?? false,
+    showExplanationsAfterSubmission: body.showExplanationsAfterSubmission ?? true,
+    allowRetake: body.allowRetake ?? false,
+    teacherIds: body.teacherIds ?? [],
+    studentIds: body.studentIds ?? [],
+    classGroupIds: body.classGroupIds ?? [],
+    createdBy: admin.userId,
+  });
+  if (error || !id) return NextResponse.json({ error: error ?? "Failed to create test" }, { status: 500 });
+  return NextResponse.json({ data: { id } }, { status: 201 });
 }

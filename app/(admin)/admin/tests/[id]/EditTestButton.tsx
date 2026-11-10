@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Pencil, X, AlertTriangle } from "lucide-react";
 import { datetimeLocalToIso, isoToDatetimeLocal } from "../datetime-local";
 import { Portal } from "@/components/ui/Portal";
+import { useTranslations } from "next-intl";
 
 interface ModuleOption {
   id: string;
@@ -35,11 +36,22 @@ interface TestData {
   desmos_enabled: boolean;
 }
 
+type FlLimits = { rwM1: number | ""; rwM2: number | ""; mathM1: number | ""; mathM2: number | "" };
+
+/** Full-length SAT parent: settings edited here instead of modules. */
+export interface FullLengthEditData {
+  breakMinutes: number;
+  allowSectionPause: boolean;
+  limits: { rwM1: number; rwM2: number; mathM1: number; mathM2: number };
+}
+
 interface Props {
   test: TestData;
   modules: ModuleOption[];
   /** Modules are locked once any student has started the test. */
   hasSubmissions: boolean;
+  /** Set for a full-length SAT: section time limits, break and pause; no modules. */
+  fullLength?: FullLengthEditData | null;
 }
 
 function moduleLabel(m: ModuleOption): string {
@@ -48,8 +60,9 @@ function moduleLabel(m: ModuleOption): string {
   return `${m.module_name} · ${m.section}${m.module_number ? ` M${m.module_number}` : ""}${counts}`;
 }
 
-export default function EditTestButton({ test, modules, hasSubmissions }: Props) {
+export default function EditTestButton({ test, modules, hasSubmissions, fullLength = null }: Props) {
   const router = useRouter();
+  const tf = useTranslations("fullLength");
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +91,11 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
   );
   const [allowRetake, setAllowRetake] = useState<boolean>(test.allow_retake);
   const [desmosEnabled, setDesmosEnabled] = useState<boolean>(test.desmos_enabled);
+  const [flLimits, setFlLimits] = useState<FlLimits>(
+    fullLength?.limits ?? { rwM1: 32, rwM2: 32, mathM1: 35, mathM2: 35 },
+  );
+  const [breakMinutes, setBreakMinutes] = useState<number | "">(fullLength?.breakMinutes ?? 10);
+  const [allowSectionPause, setAllowSectionPause] = useState<boolean>(fullLength?.allowSectionPause ?? false);
 
   function reset() {
     setTestName(test.test_name);
@@ -94,6 +112,11 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
     setShowAnswers(test.show_answers_after_submission);
     setAllowRetake(test.allow_retake);
     setDesmosEnabled(test.desmos_enabled);
+    if (fullLength) {
+      setFlLimits(fullLength.limits);
+      setBreakMinutes(fullLength.breakMinutes);
+      setAllowSectionPause(fullLength.allowSectionPause);
+    }
     setError(null);
   }
 
@@ -105,9 +128,13 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
     ? "Test name is required"
     : testName.trim().length > 150
       ? "Test name must be at most 150 characters"
-      : limitInvalid(timeLimitMinutes, false)
+      : fullLength && Object.values(flLimits).some((v) => limitInvalid(v, false))
+        ? tf("limitInvalid")
+      : fullLength && (breakMinutes === "" || !Number.isInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 60)
+        ? tf("breakInvalid")
+      : !fullLength && limitInvalid(timeLimitMinutes, false)
         ? "Module 1 time limit must be 1–180 minutes"
-        : limitInvalid(timeLimitMinutesModule2, true)
+        : !fullLength && limitInvalid(timeLimitMinutesModule2, true)
           ? "Module 2 time limit must be 1–180 minutes"
           : openIso && dueIso && dueIso <= openIso
             ? "Due date must be after the open date"
@@ -122,6 +149,33 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
     setBusy(true);
     setError(null);
     try {
+      if (fullLength) {
+        // Full-length SAT: no modules here (Re-sync on the test page).
+        const res = await fetch(`/api/admin/tests/${test.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            testName: testName.trim(),
+            rwTimeLimitMinutes: flLimits.rwM1,
+            rwTimeLimitMinutesModule2: flLimits.rwM2,
+            mathTimeLimitMinutes: flLimits.mathM1,
+            mathTimeLimitMinutesModule2: flLimits.mathM2,
+            breakMinutes,
+            allowSectionPause,
+            openDate: openIso,
+            dueDate: dueIso,
+            showAnswersAfterSubmission: showAnswers,
+            allowRetake,
+          }),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j.error ?? `HTTP ${res.status}`);
+        }
+        setOpen(false);
+        router.refresh();
+        return;
+      }
       const body: Record<string, unknown> = {
         testName: testName.trim(),
         timeLimitMinutes,
@@ -210,6 +264,7 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
 
             <div className="p-5 space-y-5">
               {/* Adaptive lock warning */}
+              {!fullLength && (
               <div className="flex items-start gap-2 rounded-xl border border-warm-amber/30 bg-warm-amber/10 px-3 py-2.5 text-xs text-charcoal">
                 <AlertTriangle size={14} className="text-warm-amber shrink-0 mt-0.5" />
                 <p>
@@ -219,6 +274,7 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
                   <strong>create a new test</strong> instead.
                 </p>
               </div>
+              )}
 
               <Field label="Test name">
                 <input
@@ -229,6 +285,49 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
                 />
               </Field>
 
+              {fullLength ? (
+                <div className="space-y-3">
+                  <p className="text-soft-mute text-xs">{tf("editHint")}</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    {([
+                      ["rwM1", tf("rwM1")],
+                      ["rwM2", tf("rwM2")],
+                      ["mathM1", tf("mathM1")],
+                      ["mathM2", tf("mathM2")],
+                    ] as const).map(([k, label]) => (
+                      <Field key={k} label={`${label} (min)`}>
+                        <input
+                          type="number"
+                          min={1}
+                          max={180}
+                          value={flLimits[k]}
+                          onChange={(e) =>
+                            setFlLimits((l) => ({ ...l, [k]: e.target.value === "" ? "" : Number(e.target.value) }))
+                          }
+                          className="input"
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                  <Field label={tf("breakMinutes")}>
+                    <input
+                      type="number"
+                      min={0}
+                      max={60}
+                      value={breakMinutes}
+                      onChange={(e) => setBreakMinutes(e.target.value === "" ? "" : Number(e.target.value))}
+                      className="input"
+                    />
+                  </Field>
+                  <Toggle
+                    label={tf("allowPause")}
+                    hint={tf("allowPauseHint")}
+                    on={allowSectionPause}
+                    onChange={setAllowSectionPause}
+                  />
+                </div>
+              ) : (
+              <>
               <div className="rounded-xl border border-divider p-3 space-y-3">
                 <p className="text-charcoal text-sm font-semibold">
                   Modules{" "}
@@ -375,6 +474,8 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
                   />
                 </Field>
               </div>
+              </>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Open date / time">
@@ -408,12 +509,14 @@ export default function EditTestButton({ test, modules, hasSubmissions }: Props)
                   on={allowRetake}
                   onChange={setAllowRetake}
                 />
-                <Toggle
-                  label="Desmos calculator"
-                  hint="Show the in-app Desmos panel during the test (Math sections)."
-                  on={desmosEnabled}
-                  onChange={setDesmosEnabled}
-                />
+                {!fullLength && (
+                  <Toggle
+                    label="Desmos calculator"
+                    hint="Show the in-app Desmos panel during the test (Math sections)."
+                    on={desmosEnabled}
+                    onChange={setDesmosEnabled}
+                  />
+                )}
               </div>
 
               {duePast && (

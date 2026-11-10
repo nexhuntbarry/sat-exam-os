@@ -2,6 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { asParentRows, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
@@ -120,6 +121,7 @@ async function getTeacherTests(user: { userId: string; role: string | null; isQa
       : null;
     return {
       ...t,
+      isFullLength: flLinks.childrenOf.has(t.id),
       totalStudents: rosterSize[t.id] ?? 0,
       submittedCount: agg.done,
       avgScore,
@@ -131,7 +133,7 @@ export default async function TeacherTestsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const tests = await getTeacherTests(user);
+  const [tests, tf] = await Promise.all([getTeacherTests(user), getTranslations("fullLength")]);
 
   // Closed tests sink into a collapsed section at the bottom so the
   // list shows what's live by default.
@@ -158,7 +160,9 @@ export default async function TeacherTestsPage() {
           const mod = test.modules as unknown as
             | { module_name: string; section: string; module_number: number | null }
             | null;
-          const section = mod ? (
+          const section = test.isFullLength ? (
+            <SubjectTag section={tf("tag")} />
+          ) : mod ? (
             <span className="inline-flex items-center gap-1.5">
               <SubjectTag section={mod.section} />
               {mod.module_number ? <span>M{mod.module_number}</span> : null}

@@ -18,3 +18,11 @@ export function approvalCounts(questions: { parsing_status: string }[] | null): 
 export function isFullyApproved(c: ApprovalCounts): boolean {
   return c.approved > 0 && c.approved === c.total;
 }
+
+/**
+ * Every module fully approved (client mirror of the full-length publish
+ * check: moduleApprovalError over all modules of both sections).
+ */
+export function allModulesApproved(modules: { approved: number; approvalTotal: number }[]): boolean {
+  return modules.length > 0 && modules.every((m) => isFullyApproved({ approved: m.approved, total: m.approvalTotal }));
+}

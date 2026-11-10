@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronRight, ChevronLeft, Check, Calculator, Image as ImageIcon } from "lucide-react";
 import { clsx } from "clsx";
+import { useTranslations } from "next-intl";
 import { isFullyApproved } from "../module-approval";
 import { datetimeLocalToIso } from "../datetime-local";
+import type { FullLengthSource } from "../full-length-sources";
 
 interface Module {
   id: string;
@@ -36,7 +38,12 @@ interface Props {
   teachers: User[];
   students: User[];
   classGroups: ClassGroup[];
+  /** Feature flag (QA admins always): show the Full-length SAT option. Cosmetic; the API checks it too. */
+  fullLengthEnabled?: boolean;
+  fullLengthSources?: FullLengthSource[];
 }
+
+type FlLimits = { rwM1: number | ""; rwM2: number | ""; mathM1: number | ""; mathM2: number | "" };
 
 // Per-module SAT timing: each section delivers two modules with its own
 // timer. Math gets 35 min/module, Reading & Writing 32 min/module.
@@ -45,8 +52,16 @@ const DEFAULT_TIME_LIMITS: Record<string, number> = {
   "Reading & Writing": 32,
 };
 
-export default function CreateTestClient({ modules, teachers, students, classGroups }: Props) {
+export default function CreateTestClient({
+  modules,
+  teachers,
+  students,
+  classGroups,
+  fullLengthEnabled = false,
+  fullLengthSources = [],
+}: Props) {
   const router = useRouter();
+  const tf = useTranslations("fullLength");
   const [step, setStep] = useState(1);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -63,6 +78,14 @@ export default function CreateTestClient({ modules, teachers, students, classGro
   const [module2EasyId, setModule2EasyId] = useState("");
   const [module2HardId, setModule2HardId] = useState("");
   const [adaptiveThreshold, setAdaptiveThreshold] = useState<number>(60);
+
+  // Full-length SAT: an R&W test + a Math test combined into one sitting.
+  const [isFullLength, setIsFullLength] = useState(false);
+  const [rwSourceId, setRwSourceId] = useState("");
+  const [mathSourceId, setMathSourceId] = useState("");
+  const [flLimits, setFlLimits] = useState<FlLimits>({ rwM1: 32, rwM2: 32, mathM1: 35, mathM2: 35 });
+  const [breakMinutes, setBreakMinutes] = useState<number | "">(10);
+  const [allowSectionPause, setAllowSectionPause] = useState(false);
 
   // Step 2: Config
   const [testName, setTestName] = useState("");
@@ -101,7 +124,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
   const isMathTest = activeModuleForSection?.section === "Math";
 
   // Anything typed yet? Then warn before a refresh / tab close wipes it.
-  const dirty = step > 1 || Boolean(selectedModuleId || module1Id || testName);
+  const dirty = step > 1 || Boolean(selectedModuleId || module1Id || testName || rwSourceId || mathSourceId);
   useEffect(() => {
     if (!dirty || submitting) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -120,6 +143,14 @@ export default function CreateTestClient({ modules, teachers, students, classGro
     ? "Test name is required"
     : testName.trim().length > 150
       ? "Test name must be at most 150 characters"
+      : isFullLength
+        ? Object.values(flLimits).some((v) => limitInvalid(v, false))
+          ? tf("limitInvalid")
+          : breakMinutes === "" || !Number.isInteger(breakMinutes) || breakMinutes < 0 || breakMinutes > 60
+            ? tf("breakInvalid")
+            : openIso && dueIso && dueIso <= openIso
+              ? "Due date must be after the open date"
+              : null
       : !isUntimed && limitInvalid(timeLimitMinutes, false)
         ? "Time limit must be 1–180 minutes"
         : !isUntimed && limitInvalid(timeLimitMinutesModule2, true)
@@ -139,6 +170,50 @@ export default function CreateTestClient({ modules, teachers, students, classGro
     setter(arr.includes(item) ? arr.filter((i) => i !== item) : [...arr, item]);
   }
 
+  const rwSource = fullLengthSources.find((t) => t.id === rwSourceId);
+  const mathSource = fullLengthSources.find((t) => t.id === mathSourceId);
+  function pickSource(key: "rw" | "math", id: string) {
+    const src = fullLengthSources.find((t) => t.id === id);
+    if (key === "rw") setRwSourceId(id);
+    else setMathSourceId(id);
+    if (src) {
+      setFlLimits((l) =>
+        key === "rw"
+          ? { ...l, rwM1: src.limits.m1, rwM2: src.limits.m2 }
+          : { ...l, mathM1: src.limits.m1, mathM2: src.limits.m2 },
+      );
+    }
+    // Default name from both sources, unless the admin typed their own.
+    const rw = key === "rw" ? src : rwSource;
+    const math = key === "math" ? src : mathSource;
+    const auto = (a?: FullLengthSource, b?: FullLengthSource) =>
+      a && b ? tf("defaultName", { rw: a.test_name, math: b.test_name }) : "";
+    if (!testName || testName === auto(rwSource, mathSource)) setTestName(auto(rw, math));
+  }
+
+  // Full-length: its own request body (POST kind "full_length").
+  const fullLengthBody = (allowDuplicateName: boolean) => ({
+    kind: "full_length",
+    testName,
+    rwSourceTestId: rwSourceId,
+    mathSourceTestId: mathSourceId,
+    rwTimeLimitMinutes: flLimits.rwM1,
+    rwTimeLimitMinutesModule2: flLimits.rwM2,
+    mathTimeLimitMinutes: flLimits.mathM1,
+    mathTimeLimitMinutesModule2: flLimits.mathM2,
+    breakMinutes,
+    allowSectionPause,
+    openDate: openIso ?? undefined,
+    dueDate: dueIso ?? undefined,
+    allowDuplicateName,
+    showAnswersAfterSubmission: showAnswers,
+    showExplanationsAfterSubmission: showExplanations,
+    allowRetake,
+    teacherIds: selectedTeacherIds,
+    studentIds: selectedStudentIds,
+    classGroupIds: selectedClassGroupIds,
+  });
+
   async function handleSubmit(allowDuplicateName = false) {
     setSubmitting(true);
     setError("");
@@ -146,7 +221,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
       const res = await fetch("/api/admin/tests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: JSON.stringify(isFullLength ? fullLengthBody(allowDuplicateName) : {
           testName,
           moduleId: isAdaptive ? undefined : selectedModuleId,
           module2Id: isAdaptive ? undefined : module2Id || undefined,
@@ -232,7 +307,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               {s < step ? <Check size={12} /> : s}
             </div>
             <span className={clsx("text-sm", s === step ? "text-charcoal font-medium" : "text-soft-mute")}>
-              {s === 1 ? "Select Module" : s === 2 ? "Configure" : "Assign"}
+              {s === 1 ? (isFullLength ? tf("sections") : "Select Module") : s === 2 ? "Configure" : "Assign"}
             </span>
             {s < 3 && <ChevronRight size={14} className="text-charcoal/20" />}
           </div>
@@ -241,7 +316,83 @@ export default function CreateTestClient({ modules, teachers, students, classGro
 
       <div className="bg-surface border border-divider rounded-2xl p-6">
         {/* Step 1: Module selection */}
-        {step === 1 && (
+        {step === 1 && fullLengthEnabled && (
+          <div className="mb-5 space-y-2">
+            <p className="text-sm font-medium text-charcoal">{tf("testType")}</p>
+            <div role="radiogroup" aria-label={tf("testType")} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {([
+                [false, tf("typeSection"), tf("typeSectionHint")],
+                [true, tf("typeFull"), tf("typeFullHint")],
+              ] as const).map(([full, label, hint]) => (
+                <button
+                  key={label}
+                  type="button"
+                  role="radio"
+                  aria-checked={isFullLength === full}
+                  onClick={() => setIsFullLength(full)}
+                  className={clsx(
+                    "rounded-xl border px-3.5 py-2.5 text-left transition-colors",
+                    isFullLength === full
+                      ? "border-warm-coral bg-warm-coral/5"
+                      : "border-divider hover:bg-light-bg",
+                  )}
+                >
+                  <span className="block text-sm font-medium text-charcoal">{label}</span>
+                  <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">{hint}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {step === 1 && isFullLength && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold text-charcoal">{tf("chooseSources")}</h2>
+            <p className="text-mid-gray text-sm">{tf("sourcesHint")}</p>
+            {(["rw", "math"] as const).map((key) => {
+              const options = fullLengthSources.filter((t) => t.section === key);
+              const sectionName = key === "rw" ? tf("sectionRw") : tf("sectionMath");
+              return (
+                <div key={key}>
+                  <label className="block text-sm font-medium text-charcoal mb-1">
+                    {key === "rw" ? tf("rwSource") : tf("mathSource")} <span className="text-status-error">*</span>
+                  </label>
+                  {options.length === 0 ? (
+                    <p className="text-soft-mute text-sm">{tf("noSources", { section: sectionName })}</p>
+                  ) : (
+                    <select
+                      value={key === "rw" ? rwSourceId : mathSourceId}
+                      onChange={(e) => pickSource(key, e.target.value)}
+                      className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
+                    >
+                      <option value="">{tf("selectTest")}</option>
+                      {options.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.test_name} · {t.isAdaptive ? "Adaptive" : "M1 + M2"} ·{" "}
+                          {t.unapprovedModules === 0 ? tf("allApproved") : tf("notApproved", { count: t.unapprovedModules })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              );
+            })}
+            {((rwSource?.unapprovedModules ?? 0) > 0 || (mathSource?.unapprovedModules ?? 0) > 0) && (
+              <p className="text-mid-gray text-xs">{tf("notApprovedWarning")}</p>
+            )}
+            <div className="flex justify-end pt-2">
+              <button
+                disabled={!rwSourceId || !mathSourceId}
+                onClick={() => setStep(2)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next <ChevronRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 1 && !isFullLength && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-charcoal">Select Module</h2>
             <p className="text-mid-gray text-sm">
@@ -468,6 +619,68 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               />
             </div>
 
+            {isFullLength && (
+              <>
+                <div className="space-y-2">
+                  <label className="text-mid-gray text-sm font-medium">{tf("timeLimits")}</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {([
+                      ["rwM1", tf("rwM1")],
+                      ["rwM2", tf("rwM2")],
+                      ["mathM1", tf("mathM1")],
+                      ["mathM2", tf("mathM2")],
+                    ] as const).map(([k, label]) => (
+                      <div key={k} className="space-y-1">
+                        <span className="block text-xs text-soft-mute">{label}</span>
+                        <input
+                          type="number"
+                          aria-label={label}
+                          value={flLimits[k]}
+                          onChange={(e) =>
+                            setFlLimits((l) => ({ ...l, [k]: e.target.value === "" ? "" : Number(e.target.value) }))
+                          }
+                          min={1}
+                          max={180}
+                          className="w-full px-3 py-2.5 rounded-xl bg-light-bg border border-divider text-charcoal focus:outline-none focus:border-warm-coral/60 transition-colors"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-soft-mute text-xs">{tf("timeLimitsHint")}</p>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-mid-gray text-sm font-medium">{tf("breakMinutes")}</label>
+                  <input
+                    type="number"
+                    value={breakMinutes}
+                    onChange={(e) => setBreakMinutes(e.target.value === "" ? "" : Number(e.target.value))}
+                    min={0}
+                    max={60}
+                    className="w-32 px-4 py-2.5 rounded-xl bg-light-bg border border-divider text-charcoal focus:outline-none focus:border-warm-coral/60 transition-colors"
+                  />
+                </div>
+                <label className="flex items-center justify-between p-3 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
+                  <div>
+                    <div className="text-charcoal text-sm font-medium">{tf("allowPause")}</div>
+                    <div className="text-soft-mute text-xs">{tf("allowPauseHint")}</div>
+                  </div>
+                  <div
+                    onClick={() => setAllowSectionPause(!allowSectionPause)}
+                    className={clsx(
+                      "w-10 h-6 rounded-full transition-colors relative shrink-0",
+                      allowSectionPause ? "bg-warm-coral" : "bg-light-bg"
+                    )}
+                  >
+                    <span className={clsx(
+                      "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                      allowSectionPause ? "translate-x-5" : "translate-x-1"
+                    )} />
+                  </div>
+                </label>
+              </>
+            )}
+
+            {!isFullLength && (
             <label className="flex items-center justify-between p-3 rounded-xl bg-surface border border-divider cursor-pointer hover:bg-light-bg transition-colors">
               <div>
                 <div className="text-charcoal text-sm font-medium">No time limit (untimed)</div>
@@ -486,8 +699,9 @@ export default function CreateTestClient({ modules, teachers, students, classGro
                 )} />
               </div>
             </label>
+            )}
 
-            {!isUntimed && (
+            {!isFullLength && !isUntimed && (
             <div className="space-y-1">
               <label className="text-mid-gray text-sm font-medium">
                 {isAdaptive || module2Id ? "Module 1 time limit (minutes)" : "Time Limit (minutes)"}
@@ -506,7 +720,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
             </div>
             )}
 
-            {!isUntimed && (isAdaptive || module2Id) && (
+            {!isFullLength && !isUntimed && (isAdaptive || module2Id) && (
               <div className="space-y-1">
                 <label className="text-mid-gray text-sm font-medium">
                   Module 2 time limit (minutes)
@@ -621,7 +835,7 @@ export default function CreateTestClient({ modules, teachers, students, classGro
               </label>
             </div>
 
-            {isMathTest && (
+            {!isFullLength && isMathTest && (
               <div className="space-y-3 pt-2 border-t border-divider">
                 <div className="text-charcoal text-sm font-semibold flex items-center gap-2">
                   <Calculator size={14} className="text-warm-coral-text" />

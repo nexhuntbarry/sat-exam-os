@@ -16,6 +16,16 @@ export async function POST(
   if (crossSide) return crossSide;
   const db = getServiceClient();
 
+  // A full-length SAT section follows its parent (sync trigger).
+  const { data: row } = await db.from("tests").select("test_kind, parent_test_id").eq("id", id).maybeSingle();
+  if (!row) return NextResponse.json({ error: "Test not found" }, { status: 404 });
+  if (row.parent_test_id || row.test_kind === "fl_section") {
+    return NextResponse.json(
+      { error: "This is a section of a full-length SAT — close the full-length test instead." },
+      { status: 409 },
+    );
+  }
+
   const { data, error } = await db
     .from("tests")
     .update({ status: "Closed", updated_at: new Date().toISOString() })

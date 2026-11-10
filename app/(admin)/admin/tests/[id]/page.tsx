@@ -16,6 +16,17 @@ import EditTestButton from "./EditTestButton";
 import RemoveStudentButton from "./RemoveStudentButton";
 import AssignDialog from "./AssignDialog";
 import { approvalCounts, isFullyApproved } from "../module-approval";
+import FullLengthSourcesCard from "./FullLengthSourcesCard";
+import AccommodationsCard from "./AccommodationsCard";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
+import {
+  FL_SECTIONS,
+  fullLengthEnabledFor,
+  listAccommodations,
+  loadChildTests,
+  type ChildTest,
+} from "@/lib/full-length-admin";
+import { getFullLengthSources } from "../full-length-sources";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
@@ -168,6 +179,45 @@ async function getTest(id: string, viewerIsQa: boolean) {
   };
 }
 
+// Full-length SAT parent: its two sections, their sources, break / pause,
+// whether anyone has started (locks re-sync), extended time per student.
+async function getFullLengthDetail(testId: string) {
+  const db = getServiceClient();
+  const user = await getCurrentUser();
+  const [{ data: parent }, { children }, accommodations, canManage] = await Promise.all([
+    db.from("tests").select("break_minutes, allow_section_pause").eq("id", testId).maybeSingle(),
+    loadChildTests(db, testId),
+    listAccommodations(db, testId),
+    fullLengthEnabledFor(db, { isQa: user?.isQa ?? false }),
+  ]);
+  const childIds = [children.rw?.id, children.math?.id].filter((x): x is string => Boolean(x));
+  const sourceIds = [children.rw?.source_test_id, children.math?.source_test_id].filter((x): x is string => Boolean(x));
+  const [{ data: subs }, { data: attempts }, { data: sources }] = await Promise.all([
+    childIds.length > 0
+      ? db.from("submissions").select("status").in("test_id", childIds)
+      : Promise.resolve({ data: [] as { status: string }[] }),
+    db.from("full_length_attempts").select("id").eq("test_id", testId).limit(1),
+    sourceIds.length > 0
+      ? db.from("tests").select("id, test_name").in("id", sourceIds)
+      : Promise.resolve({ data: [] as { id: string; test_name: string }[] }),
+  ]);
+  const nameOf = new Map(((sources ?? []) as { id: string; test_name: string }[]).map((t) => [t.id, t.test_name]));
+  const sourceName = (c: ChildTest | null) => (c?.source_test_id ? nameOf.get(c.source_test_id) ?? null : null);
+  const rows = (subs ?? []) as { status: string }[];
+  const p = parent as { break_minutes: number | null; allow_section_pause: boolean | null } | null;
+  return {
+    children,
+    sourceNames: { rw: sourceName(children.rw), math: sourceName(children.math) },
+    breakMinutes: p?.break_minutes ?? 10,
+    allowSectionPause: Boolean(p?.allow_section_pause),
+    submissionCount: rows.length,
+    gradedCount: rows.filter((r) => r.status === "Submitted" || r.status === "Late").length,
+    started: rows.length > 0 || (attempts ?? []).length > 0,
+    accommodations: Object.fromEntries(accommodations.data.map((a) => [a.student_id, a.time_multiplier])),
+    canManage,
+  };
+}
+
 export default async function TestDetailPage({
   params,
   searchParams,
@@ -186,6 +236,8 @@ export default async function TestDetailPage({
 
   const db = getServiceClient();
   const section = (await getTestSections(db, [test.id])).get(test.id) ?? null;
+  const fl = (await fullLengthLinksOrNone(db)).childrenOf.has(test.id) ? await getFullLengthDetail(test.id) : null;
+  const tf = await getTranslations("fullLength");
 
   // Effective answer visibility for every student in the Students table
   // (individual + class-assigned + unassigned-with-work) — the same decision
@@ -295,7 +347,25 @@ export default async function TestDetailPage({
   const scoreSortHref = `/admin/tests/${id}?sort=${sort === "score" ? "score-asc" : "score"}`;
   const submissionsHref = `/admin/tests/${test.id}/submissions`;
 
-  const settings: { label: string; value: string }[] = [
+  const sectionTime = (c: ChildTest | null) =>
+    c ? `${c.time_limit_minutes ?? "—"} + ${c.time_limit_minutes_module_2 ?? c.time_limit_minutes ?? "—"} min` : "—";
+  const sectionModules = (c: ChildTest | null) =>
+    !c ? "—" : c.is_adaptive ? "Adaptive · M1 + M2 (easy/hard)" : "M1 + M2";
+  const flSettings: { label: string; value: string }[] = fl
+    ? [
+        ...FL_SECTIONS.map((s) => ({
+          label: s.key === "rw" ? tf("sectionRw") : tf("sectionMath"),
+          value: `${tf("sourceLabel", { name: fl.sourceNames[s.key] ?? tf("sourceDeleted") })} · ${sectionModules(fl.children[s.key])} · ${sectionTime(fl.children[s.key])}`,
+        })),
+        { label: tf("settingBreak"), value: `${fl.breakMinutes} min` },
+        { label: tf("settingPause"), value: fl.allowSectionPause ? tf("yes") : tf("no") },
+        { label: "Open date", value: test.open_date ? formatDateTime(test.open_date) : "—" },
+        { label: "Due date", value: test.due_date ? formatDateTime(test.due_date) : "—" },
+        { label: "Allow retake", value: test.allow_retake ? "Yes" : "No" },
+      ]
+    : [];
+
+  const settings: { label: string; value: string }[] = fl ? flSettings : [
     {
       label: "Modules",
       value: mod
@@ -326,10 +396,22 @@ export default async function TestDetailPage({
         badge={<StatusBadge kind="test" status={test.status as TestStatus} />}
         summary={
           <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
-            <SubjectTag section={section} />
-            <span>{modulesShort}</span>
-            <span aria-hidden>·</span>
-            <span>{timeLimit}</span>
+            {fl ? (
+              <>
+                <SubjectTag section={tf("tag")} />
+                <span>
+                  {tf("sectionRw")} {sectionTime(fl.children.rw)} → {tf("breakValue", { minutes: fl.breakMinutes })} →{" "}
+                  {tf("sectionMath")} {sectionTime(fl.children.math)}
+                </span>
+              </>
+            ) : (
+              <>
+                <SubjectTag section={section} />
+                <span>{modulesShort}</span>
+                <span aria-hidden>·</span>
+                <span>{timeLimit}</span>
+              </>
+            )}
             {test.due_date && (
               <>
                 <span aria-hidden>·</span>
@@ -369,14 +451,28 @@ export default async function TestDetailPage({
             }}
             modules={eligibleModules}
             hasSubmissions={test.stats.total > 0}
+            fullLength={
+              fl
+                ? {
+                    breakMinutes: fl.breakMinutes,
+                    allowSectionPause: fl.allowSectionPause,
+                    limits: {
+                      rwM1: fl.children.rw?.time_limit_minutes ?? 32,
+                      rwM2: fl.children.rw?.time_limit_minutes_module_2 ?? fl.children.rw?.time_limit_minutes ?? 32,
+                      mathM1: fl.children.math?.time_limit_minutes ?? 35,
+                      mathM2: fl.children.math?.time_limit_minutes_module_2 ?? fl.children.math?.time_limit_minutes ?? 35,
+                    },
+                  }
+                : null
+            }
           />
           <PrintTestMenu testId={test.id} />
           <TestDetailActions
             testId={test.id}
             testName={test.test_name}
             status={test.status}
-            submissionCount={test.stats.total}
-            gradedCount={test.stats.submitted}
+            submissionCount={fl ? fl.submissionCount : test.stats.total}
+            gradedCount={fl ? fl.gradedCount : test.stats.submitted}
           />
           </>
         }
@@ -536,6 +632,39 @@ export default async function TestDetailPage({
           </DataTable>
         )}
       </section>
+
+      {/* Full-length SAT: sections + re-sync, and per-student extended time */}
+      {fl && (
+        <>
+          <FullLengthSourcesCard
+            testId={test.id}
+            lockReason={
+              !fl.canManage ? "flag" : fl.started ? "started" : test.status === "Published" ? "published" : null
+            }
+            options={fl.canManage && !fl.started && test.status !== "Published" ? await getFullLengthSources(
+                    user.isQa,
+                    ((modulesRaw ?? []) as ModRow[]).map((m) => {
+                      const c = approvalCounts(m.questions);
+                      return { id: m.id, section: m.section, approved: c.approved, approvalTotal: c.total };
+                    }),
+                  ) : []}
+            sections={FL_SECTIONS.map((s) => ({
+              key: s.key,
+              sourceId: fl.children[s.key]?.source_test_id ?? null,
+              sourceName: fl.sourceNames[s.key],
+              modulesLabel: sectionModules(fl.children[s.key]),
+              timeLabel: sectionTime(fl.children[s.key]),
+            }))}
+          />
+          {fl.canManage && (
+            <AccommodationsCard
+              testId={test.id}
+              students={assignment.students.map((st) => ({ id: st.id, name: st.name, email: st.email }))}
+              initial={fl.accommodations}
+            />
+          )}
+        </>
+      )}
 
       {/* 4. Answers & review */}
       <div className="bg-surface border border-divider rounded-2xl p-5 space-y-4">

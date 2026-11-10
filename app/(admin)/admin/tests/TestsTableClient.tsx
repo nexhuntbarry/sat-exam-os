@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
+import { useTranslations } from "next-intl";
 import type { ThHTMLAttributes } from "react";
 import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
 import { formatShortDate } from "@/lib/datetime";
@@ -72,6 +73,8 @@ export interface TestRow {
   module_2?: unknown;
   assignment: { teacherIds: string[]; studentIds: string[]; classGroupIds: string[]; studentNames: string[] };
   submissions: { done: number; total: number };
+  /** Full-length SAT parent: source test name per section (null = deleted). */
+  fullLength?: { rw: string | null; math: string | null } | null;
 }
 
 type SortKey = "name" | "module" | "status" | "finished" | "due_date" | "created_at";
@@ -188,6 +191,7 @@ function TestsTable({
   onSort: (key: SortKey) => void;
   assignOptions: AssignOptions;
 }) {
+  const tf = useTranslations("fullLength");
   const sorted = useMemo(() => {
     if (!sortKey) return rows;
     return [...rows].sort((a, b) => compareTests(a, b, sortKey, sortDir));
@@ -225,7 +229,13 @@ function TestsTable({
             : mod
             ? [{ label: `M${mod.module_number ?? 1}`, name: mod.module_name }]
             : [];
-          const moduleList = moduleLines.length > 0 ? (
+          const moduleList = test.fullLength ? (
+            ([["R&W", test.fullLength.rw], ["Math", test.fullLength.math]] as const).map(([label, name]) => (
+              <div key={label} className="text-[11px] text-soft-mute leading-snug break-words">
+                {label}: {name ?? <span className="italic">{tf("sourceDeleted")}</span>}
+              </div>
+            ))
+          ) : moduleLines.length > 0 ? (
             moduleLines.map((m) => (
               <div key={m.label} className="text-[11px] text-soft-mute leading-snug break-words">
                 {m.label}: {m.name}
@@ -261,7 +271,9 @@ function TestsTable({
                     wrapMain
                     mainClassName="font-medium text-inherit"
                     detail={
-                      mod?.section || test.is_adaptive ? (
+                      test.fullLength ? (
+                        <SubjectTag section={tf("tag")} />
+                      ) : mod?.section || test.is_adaptive ? (
                         <span className="inline-flex items-center gap-1.5">
                           <SubjectTag section={mod?.section} />
                           {test.is_adaptive && <span>Adaptive</span>}

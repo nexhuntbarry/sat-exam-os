@@ -34,6 +34,13 @@ export async function POST(
   }
 
   const db = getServiceClient();
+
+  // A full-length SAT's answer settings are set on the parent (synced to its sections).
+  const { data: row } = await db.from("tests").select("parent_test_id").eq("id", testId).maybeSingle();
+  if (row?.parent_test_id) {
+    return NextResponse.json({ error: "Set answer visibility on the full-length test instead" }, { status: 409 });
+  }
+
   const access = await getTeacherTestAccess(db, user, testId);
   if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
