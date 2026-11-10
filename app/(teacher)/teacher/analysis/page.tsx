@@ -5,7 +5,7 @@ import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaUserIds, onSide } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
-import { asParentRows, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { formatDate } from "@/lib/datetime";
 import PageIntro from "@/components/shared/PageIntro";
@@ -38,7 +38,7 @@ async function getTests(teacherId: string, role: string, isQa: boolean) {
     getQaUserIds(),
   ]);
   // A full-length SAT's rows are on its children: one attempt under the parent.
-  const subs = asParentRows(rawSubs ?? [], flLinks);
+  const subs = asParentRows(rawSubs ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks));
 
   const attempts = new Map<string, Set<string>>();
   const lastSubmitted = new Map<string, string>();

@@ -8,6 +8,7 @@ import {
   type StaleSubmission,
   type StaleTest,
 } from "@/lib/finalize-stale";
+import { closeExpiredFullLengthAttempts } from "@/lib/full-length-attempt";
 
 // One-shot grading + DB writes per stale row. Six minutes is the
 // largest hammer we need — enough headroom for 50+ rows at a slow
@@ -24,6 +25,11 @@ export const maxDuration = 60;
  * handoff as a student submit), unopened — the Module 2 clock starts only
  * when the student presses "Start Module 2". Per-row logic lives in
  * lib/finalize-stale.
+ *
+ * Then a separate pass closes full-length SAT attempts whose Math can no
+ * longer be started (lib/full-length-attempt closeExpiredFullLengthAttempts;
+ * it never creates Math rows). Its own try/catch: it can't affect the loop
+ * above. The response adds flClosed.
  *
  * Auth: Vercel injects `Authorization: Bearer <CRON_SECRET>` on
  * scheduled invocations. Manual calls from the admin should pass
@@ -47,7 +53,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
   if (!stale || stale.length === 0) {
-    return NextResponse.json({ ok: true, scanned: 0, finalized: 0 });
+    return NextResponse.json({ ok: true, scanned: 0, finalized: 0, flClosed: await flClosePass(db) });
   }
   const rows = stale as unknown as StaleSubmission[];
 
@@ -63,11 +69,25 @@ export async function GET(req: Request) {
   }
 
   const finalized = results.filter((r) => r.action === "finalized").length;
+  const flClosed = await flClosePass(db);
   return NextResponse.json({
     ok: true,
     scanned: rows.length,
     finalized,
     skipped: rows.length - finalized,
+    flClosed,
     results,
   });
+}
+
+// Full-length close pass; never throws (0 on any failure, logged).
+async function flClosePass(db: ReturnType<typeof getServiceClient>): Promise<number> {
+  try {
+    const out = await closeExpiredFullLengthAttempts(db);
+    if (out.errors.length > 0) console.error("[cron/fl-close]", out.errors.slice(0, 10));
+    return out.closed;
+  } catch (e) {
+    console.error("[cron/fl-close] pass failed", e);
+    return 0;
+  }
 }

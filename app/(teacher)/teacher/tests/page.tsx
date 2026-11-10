@@ -1,5 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
-import { asParentRows, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { getTranslations } from "next-intl/server";
@@ -80,7 +80,7 @@ async function getTeacherTests(user: { userId: string; role: string | null; isQa
   // then average those.
   const subsByTest = new Map<string, SubRow[]>();
   // A full-length SAT's rows are on its children: one attempt under the parent.
-  for (const s of asParentRows((subData ?? []) as SubRow[], flLinks)) {
+  for (const s of asParentRows((subData ?? []) as SubRow[], flLinks, await closedFullLengthAttemptKeys(db, flLinks))) {
     if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
     const list = subsByTest.get(s.test_id) ?? [];
     list.push(s);

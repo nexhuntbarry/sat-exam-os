@@ -5,6 +5,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaTestIds, onSide } from "@/lib/qa";
 import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
 import SubmissionRowActions from "./SubmissionRowActions";
 import {
   DataTable,
@@ -19,6 +20,7 @@ export const dynamic = "force-dynamic";
 
 interface SubRow {
   id: string;
+  test_id: string;
   student_id: string;
   status: string;
   score: number | null;
@@ -53,14 +55,18 @@ export default async function ManageSubmissionsPage({
     .maybeSingle();
   if (!test) notFound();
 
-  const { data, error } = await db
+  // A full-length SAT's rows are on its two section children; one
+  // full-length attempt (R&W + Math, up to 4 rows) is grouped as one.
+  const flKids = (await fullLengthLinksOrNone(db)).childrenOf.get(testId) ?? null;
+  const flChildIds = flKids ? [flKids.rw, flKids.math].filter((x): x is string => Boolean(x)) : [];
+  const subQuery = db
     .from("submissions")
     .select(
-      `id, student_id, status, score, percentage, started_at, submitted_at,
+      `id, test_id, student_id, status, score, percentage, started_at, submitted_at,
        attempt_number, adaptive_track, module_id, session_id,
        users!inner(display_name, email)`,
-    )
-    .eq("test_id", testId)
+    );
+  const { data, error } = await (flKids ? subQuery.in("test_id", flChildIds) : subQuery.eq("test_id", testId))
     .order("started_at", { ascending: false });
   if (error) {
     console.error("[admin/tests/manage-submissions]", error);
@@ -74,7 +80,7 @@ export default async function ManageSubmissionsPage({
     { studentName: string; email: string; submissions: SubRow[] }
   >();
   for (const r of rows) {
-    const key = r.session_id ?? r.id;
+    const key = flKids ? `fl:${r.student_id}:${r.attempt_number}` : r.session_id ?? r.id;
     const u = (Array.isArray(r.users) ? r.users[0] : r.users) as
       | { display_name: string | null; email: string }
       | null;
@@ -87,6 +93,9 @@ export default async function ManageSubmissionsPage({
     }
     groups.get(key)!.submissions.push(r);
   }
+
+  // R&W rows before Math rows inside a full-length attempt (0 for section tests).
+  const sectionRank = (tid: string) => (flKids && tid === flKids.math ? 1 : 0);
 
   return (
     <div className="space-y-6">
@@ -109,6 +118,12 @@ export default async function ManageSubmissionsPage({
           <li><strong>Reset</strong>: wipes this submission&apos;s answers + resets timer to now. Student can keep trying.</li>
           <li><strong>Force submit</strong>: grades whatever answers are saved and closes the submission (for stuck students).</li>
           <li><strong>Delete attempt</strong>: removes the entire attempt (both Module 1 + Module 2 if applicable). Student starts fresh on next open.</li>
+          {flKids && (
+            <li>
+              <strong>Full-length SAT</strong>: resetting a Reading and Writing module also deletes the Math section;
+              deleting any module deletes the whole attempt (both sections).
+            </li>
+          )}
         </ul>
       </div>
 
@@ -126,13 +141,18 @@ export default async function ManageSubmissionsPage({
               <div className="px-5 py-3 border-b border-divider flex items-center justify-between">
                 <div>
                   <p className="text-charcoal font-semibold">{group.studentName}</p>
-                  <p className="text-soft-mute text-xs">{group.email}</p>
+                  <p className="text-soft-mute text-xs">
+                    {group.email}
+                    {flKids ? ` · Full-length attempt ${group.submissions[0]?.attempt_number ?? 1}` : ""}
+                  </p>
                 </div>
                 <SubmissionRowActions
                   attemptKey={key}
-                  submissionIds={group.submissions.map((s) => s.id)}
+                  // Full-length: one delete removes the whole attempt server-side.
+                  submissionIds={flKids ? group.submissions.slice(0, 1).map((s) => s.id) : group.submissions.map((s) => s.id)}
                   mode="attempt"
                   studentName={group.studentName}
+                  fullLength={Boolean(flKids)}
                 />
               </div>
               <DataTable className="border-t-0">
@@ -150,10 +170,11 @@ export default async function ManageSubmissionsPage({
                   {group.submissions
                     .slice()
                     .sort((a, b) =>
+                      sectionRank(a.test_id) - sectionRank(b.test_id) ||
                       (a.adaptive_track ?? "").localeCompare(b.adaptive_track ?? ""),
                     )
                     .map((s) => {
-                      const moduleLabel =
+                      const trackLabel =
                         s.adaptive_track === "module_1"
                           ? "Module 1"
                           : s.adaptive_track === "module_2"
@@ -163,6 +184,9 @@ export default async function ManageSubmissionsPage({
                               : s.adaptive_track === "module_2_hard"
                                 ? "Module 2 · Hard"
                                 : "Single";
+                      const moduleLabel = flKids
+                        ? `${s.test_id === flKids.rw ? "R&W" : "Math"} · ${trackLabel}`
+                        : trackLabel;
                       return (
                         <DataRow key={s.id} colSpan={6}>
                           <Td kind="main" className="font-medium text-charcoal">
@@ -187,6 +211,8 @@ export default async function ManageSubmissionsPage({
                               mode="single"
                               isInProgress={s.status === "In Progress"}
                               studentName={group.studentName}
+                              fullLength={Boolean(flKids)}
+                              fullLengthSection={flKids ? (s.test_id === flKids.rw ? "rw" : "math") : undefined}
                             />
                           </Td>
                         </DataRow>

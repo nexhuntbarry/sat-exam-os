@@ -10,7 +10,7 @@
 // what a student is shown and what they are graded on can never diverge.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { asParentRows, fullLengthLinksOrNone, resolveParentTestId } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, fullLengthLinksOrNone, resolveParentTestId } from "@/lib/full-length";
 
 /** The only parsing_status a student ever sees or is graded on. */
 export const STUDENT_VISIBLE_QUESTION_STATUS = "Approved";
@@ -251,9 +251,11 @@ export async function getInProgressOrPendingM2TestIds(
     .order("attempt_number", { ascending: false });
 
   if (!rawSubs || rawSubs.length === 0) return new Set();
+  const flLinks = await fullLengthLinksOrNone(db);
   const subs = asParentRows(
     rawSubs as { test_id: string; student_id: string; status: string; adaptive_track: string | null; attempt_number: number | null }[],
-    await fullLengthLinksOrNone(db),
+    flLinks,
+    await closedFullLengthAttemptKeys(db, flLinks, studentId),
   );
 
   // Group by (test_id, latest attempt_number)

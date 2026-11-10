@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, getQaTestIds, scopeIds } from "@/lib/qa";
-import { asParentRows, expandWithChildren, fullLengthLinks, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinks, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
 import {
   FL_SECTIONS,
   FL_DEFAULT_BREAK_MINUTES,
@@ -108,7 +108,7 @@ export async function GET(req: Request) {
       .select("test_id, student_id, status, attempt_number, adaptive_track")
       .in("test_id", expandWithChildren(testIds, flLinks));
 
-    for (const s of asParentRows(subData ?? [], flLinks)) {
+    for (const s of asParentRows(subData ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks))) {
       if (!submissionCounts[s.test_id]) submissionCounts[s.test_id] = { done: 0, total: 0 };
       submissionCounts[s.test_id].total++;
       if (s.status === "Submitted" || s.status === "Late") submissionCounts[s.test_id].done++;

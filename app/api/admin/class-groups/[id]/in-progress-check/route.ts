@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
-import { asParentRows, expandWithChildren, fullLengthLinks } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinks } from "@/lib/full-length";
 
 // POST /api/admin/class-groups/[id]/in-progress-check
 // Body: { studentIds: string[] }
@@ -69,7 +69,7 @@ export async function POST(
   // Count per test (one per full-length attempt)
   const countByTest = new Map<string, number>();
   const seenAttempt = new Set<string>();
-  for (const s of asParentRows(subs ?? [], flLinks)) {
+  for (const s of asParentRows(subs ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks))) {
     if (s.status !== "In Progress") continue;
     const tid = s.test_id as string;
     if (flLinks.childrenOf.has(tid)) {

@@ -6,7 +6,7 @@ import { Plus, ClipboardList } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, scopeIds, scopeUsers } from "@/lib/qa";
-import { asParentRows, expandWithChildren, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
 import TestsTableClient, { type TestRow } from "./TestsTableClient";
 
 async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
@@ -31,7 +31,7 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     db.from("submissions").select("test_id, student_id, status, session_id, adaptive_track, started_at, attempt_number").in("test_id", expandWithChildren(testIds, flLinks)),
   ]);
   // A full-length SAT's rows are on its children: one attempt under the parent.
-  const progressRows = asParentRows(submissions ?? [], flLinks);
+  const progressRows = asParentRows(submissions ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks));
 
   // Student names for the Assignments hover.
   const assignedStudentIds = [...new Set((assignments ?? []).flatMap((a) => (a.student_ids ?? []) as string[]))];

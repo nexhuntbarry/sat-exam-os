@@ -1,10 +1,11 @@
 import { getServiceClient } from "@/lib/supabase";
-import { resolveParentTestId } from "@/lib/full-length";
+import { fullLengthLinksOrNone, resolveParentTestId } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { Clock, BookOpen, Calendar } from "lucide-react";
 import StartTestButton from "./StartTestButton";
+import FullLengthLanding from "./FullLengthLanding";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import {
   isModule2Track,
@@ -204,8 +205,14 @@ export default async function StudentTestLandingPage({
 
   const { id } = await params;
   // A full-length SAT section is only ever opened through its parent.
-  const parentId = await resolveParentTestId(getServiceClient(), id);
+  const linksDb = getServiceClient();
+  const parentId = await resolveParentTestId(linksDb, id);
   if (parentId !== id) redirect(`/student/tests/${parentId}`);
+  // A full-length SAT parent has its own landing (sections, break, attempt
+  // state). Same memoized links read as resolveParentTestId.
+  if ((await fullLengthLinksOrNone(linksDb)).childrenOf.has(id)) {
+    return <FullLengthLanding db={linksDb} testId={id} studentId={user.userId} />;
+  }
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 

@@ -13,6 +13,10 @@ interface Props {
   /** Whose submission this is — named in the confirm so an admin can't
    *  reset/delete the wrong student by misclicking a row. */
   studentName?: string;
+  /** Full-length SAT: deleting any row deletes the whole attempt (both sections). */
+  fullLength?: boolean;
+  /** Full-length SAT: which section this row is in (reset of R&W also clears Math). */
+  fullLengthSection?: "rw" | "math";
 }
 
 export default function SubmissionRowActions({
@@ -20,6 +24,8 @@ export default function SubmissionRowActions({
   mode,
   isInProgress = false,
   studentName,
+  fullLength = false,
+  fullLengthSection,
 }: Props) {
   const who = studentName ? `${studentName}'s` : "this";
   const router = useRouter();
@@ -58,7 +64,9 @@ export default function SubmissionRowActions({
             call(
               "delete",
               "DELETE",
-              `Delete ${who} entire attempt (${submissionIds.length} submission${submissionIds.length === 1 ? "" : "s"})? This wipes Module 1 + Module 2 if both exist. Cannot be undone.`,
+              fullLength
+                ? `Delete ${who} entire full-length SAT attempt? This wipes both sections (Reading and Writing and Math, every module) and the attempt itself. Cannot be undone.`
+                : `Delete ${who} entire attempt (${submissionIds.length} submission${submissionIds.length === 1 ? "" : "s"})? This wipes Module 1 + Module 2 if both exist. Cannot be undone.`,
             )
           }
           disabled={busy !== null}
@@ -73,8 +81,14 @@ export default function SubmissionRowActions({
   }
 
   // Rule 4: Force submit (in progress) is visible; Reset / Delete are in ⋯.
-  const resetMsg = `Reset ${who} submission — wipe its answers and restart the timer? The submission row stays but its answers are cleared. This only affects ${studentName ?? "this student"}.`;
-  const deleteMsg = `Delete just ${who} submission row? If part of a 2-module attempt, the OTHER module's submission stays. Use 'Delete attempt' above to wipe both.`;
+  const resetMsg =
+    `Reset ${who} submission — wipe its answers and restart the timer? The submission row stays but its answers are cleared. This only affects ${studentName ?? "this student"}.` +
+    (fullLengthSection === "rw"
+      ? " This is a full-length SAT: the Math section of this attempt is deleted too, and the break restarts after Reading and Writing."
+      : "");
+  const deleteMsg = fullLength
+    ? `This is a full-length SAT: deleting this row deletes ${who} WHOLE attempt — both sections (Reading and Writing and Math, every module). Cannot be undone. Continue?`
+    : `Delete just ${who} submission row? If part of a 2-module attempt, the OTHER module's submission stays. Use 'Delete attempt' above to wipe both.`;
   return (
     <RowActions>
       {error && <span className="text-status-error text-xs">{error}</span>}

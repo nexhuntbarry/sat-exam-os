@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 import { resetSubmissionMetadata } from "@/lib/student-exam";
+import { resetFullLengthEffects } from "@/lib/full-length-attempt";
 
 // POST /api/admin/submissions/[id]/reset
 //
@@ -27,6 +28,13 @@ import { resetSubmissionMetadata } from "@/lib/student-exam";
 // would sit next to a fresh Module 1, and re-submitting Module 1 would
 // hand off to a second Module 2 row. The handoff recreates Module 2 —
 // possibly on a different adaptive track — when Module 1 is submitted.
+//
+// Full-length SAT rows (lib/full-length-attempt resetFullLengthEffects):
+// resetting a Reading and Writing module also deletes the attempt's Math
+// section and clears its link and any close (the break restarts when R&W
+// Module 2 is submitted again); resetting a Math module lifts any close.
+// The module itself restarts with its full time (Module 2: from when it
+// is opened again). Section-test rows: unchanged.
 export async function POST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -39,7 +47,7 @@ export async function POST(
 
   const { data: sub } = await db
     .from("submissions")
-    .select("id, test_id, student_id, session_id, adaptive_track, metadata")
+    .select("id, test_id, student_id, session_id, adaptive_track, metadata, attempt_number")
     .eq("id", id)
     .maybeSingle();
   if (!sub) {
@@ -47,6 +55,13 @@ export async function POST(
   }
   const crossSide = await forbidCrossSide(auth, { userIds: [sub.student_id], testIds: [sub.test_id] });
   if (crossSide) return crossSide;
+
+  try {
+    await resetFullLengthEffects(db, sub);
+  } catch (e) {
+    console.error("[admin/submissions/reset] full-length", e);
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Reset failed" }, { status: 500 });
+  }
 
   if (sub.adaptive_track === "module_1" && sub.session_id) {
     const { error: m2Err } = await db

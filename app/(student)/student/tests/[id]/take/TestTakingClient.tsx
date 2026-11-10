@@ -75,6 +75,15 @@ interface Props {
   timeRemainingSeconds: number;
   /** Admin setting: show the per-question "Report a problem" button. */
   reportsEnabled?: boolean;
+  /**
+   * Where to go after Module 1 is submitted (default: this test's take
+   * page, which opens Module 2). The full-length SAT page passes its own URL.
+   */
+  continueUrl?: string;
+  /** Where to go after the last module is submitted (default: the result page). */
+  doneUrl?: string;
+  /** Section name shown before the module pill (full-length SAT only). */
+  sectionLabel?: string;
 }
 
 // Multiple-choice picks save immediately; SPR typing and flag / cross-out /
@@ -218,6 +227,9 @@ export default function TestTakingClient({
   questions,
   timeRemainingSeconds,
   reportsEnabled = false,
+  continueUrl,
+  doneUrl,
+  sectionLabel,
 }: Props) {
   const { getToken } = useAuth();
   const getTokenRef = useRef(getToken);
@@ -1053,8 +1065,8 @@ export default function TestTakingClient({
   function leaveAfterSubmit() {
     navigateAway(
       test.moduleLabel === "Module 1"
-        ? `/student/tests/${testId}/take`
-        : `/student/tests/${testId}/result?submission=${submissionId}`,
+        ? continueUrl ?? `/student/tests/${testId}/take`
+        : doneUrl ?? `/student/tests/${testId}/result?submission=${submissionId}`,
     );
   }
 
@@ -1461,6 +1473,11 @@ export default function TestTakingClient({
         {/* Left: title + module pill */}
         <div className="col-span-2 md:col-span-1 flex items-center gap-2 min-w-0">
           <div className="font-semibold text-charcoal truncate text-sm md:text-base">{test.name}</div>
+          {sectionLabel && (
+            <span className="shrink-0 px-2 py-0.5 rounded-full bg-charcoal/5 text-charcoal text-xs font-medium">
+              {sectionLabel}
+            </span>
+          )}
           {test.moduleLabel && (
             <span className="shrink-0 px-2 py-0.5 rounded-full bg-warm-coral/10 text-warm-coral-text text-xs font-medium">
               {test.moduleLabel}

@@ -91,7 +91,11 @@ create table if not exists public.full_length_attempts (
   allow_section_pause boolean not null,     -- snapshot at start
   started_at timestamptz not null default now(),
   closed_at timestamptz,                    -- attempt can no longer continue
-  closed_reason text check (closed_reason in ('math_not_started', 'admin_closed')),
+  -- math_not_started: on the break past the Math start window (cron);
+  -- abandoned: stuck past the due date where nothing can move it (a failed
+  -- Module 2 handoff past its 24 h window, or no R&W Module 1) (cron);
+  -- admin_closed: closed by an admin.
+  closed_reason text check (closed_reason in ('math_not_started', 'abandoned', 'admin_closed')),
   unique (test_id, student_id, attempt_number)
 );
 create index if not exists idx_fla_student on public.full_length_attempts (student_id);

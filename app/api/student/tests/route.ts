@@ -4,7 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
 import { getAssignedTestIds, getInProgressOrPendingM2TestIds } from "@/lib/student-exam";
-import { asParentRows, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -79,7 +79,7 @@ export async function GET() {
     .eq("student_id", user.userId)
     .in("test_id", expandWithChildren(testIds, flLinks))
     .order("attempt_number", { ascending: false });
-  const submissions = asParentRows(rawSubmissions ?? [], flLinks);
+  const submissions = asParentRows(rawSubmissions ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks, user.userId));
 
   type SubRow = {
     test_id: string;

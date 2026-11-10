@@ -1,5 +1,5 @@
 import { getServiceClient } from "@/lib/supabase";
-import { asParentRows, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -222,7 +222,7 @@ async function getStudentTests(studentId: string) {
       .order("attempt_number", { ascending: false }),
     getTestSections(db, testIds),
   ]);
-  const submissions = asParentRows(rawSubmissions ?? [], flLinks);
+  const submissions = asParentRows(rawSubmissions ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks, studentId));
 
   // Group submissions per test, then collapse two-module session
   // siblings into one attempt with module breakdown.

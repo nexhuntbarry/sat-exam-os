@@ -270,12 +270,16 @@ export function fullLengthVisibilityState(
  * under the parent, one session per full-length attempt
  * (`fl:<parent>:<student>:<attempt>`), and every row of an attempt that
  * isn't finished counted as In Progress (an attempt on its break is in
- * progress, not done). Rows of other tests are returned as they are, so
- * section tests count exactly as before. Never written back.
+ * progress, not done). An attempt in `closedAttempts` (keys from
+ * closedFullLengthAttemptKeys: Math can no longer be started) counts as
+ * finished, its rows keep their own statuses. Rows of other tests are
+ * returned as they are, so section tests count exactly as before. Never
+ * written back.
  */
 export function asParentRows<T extends FullLengthRow & { session_id?: string | null }>(
   rows: T[],
   links: FullLengthLinks,
+  closedAttempts: Set<string> = new Set(),
 ): T[] {
   if (links.parentOf.size === 0) return rows;
   const groups = new Map<string, T[]>();
@@ -288,7 +292,11 @@ export function asParentRows<T extends FullLengthRow & { session_id?: string | n
   const done = new Map<string, boolean>();
   for (const [k, list] of groups) {
     const parent = links.parentOf.get(list[0].test_id)!;
-    done.set(k, fullLengthAttemptDone(list, links.childrenOf.get(parent) ?? { rw: null, math: null }));
+    done.set(
+      k,
+      closedAttempts.has(k.slice(3)) ||
+        fullLengthAttemptDone(list, links.childrenOf.get(parent) ?? { rw: null, math: null }),
+    );
   }
   return rows.map((r) => {
     const parent = links.parentOf.get(r.test_id);
@@ -301,6 +309,39 @@ export function asParentRows<T extends FullLengthRow & { session_id?: string | n
       status: done.get(k) ? r.status : DONE.has(r.status) ? "In Progress" : r.status,
     };
   });
+}
+
+/**
+ * Closed full-length attempts (full_length_attempts.closed_at set), as
+ * `<parent>:<student>:<attempt>` keys for asParentRows, optionally for one
+ * student. No query when there are no full-length tests; empty on any
+ * error (never throws: a list then shows such an attempt as in progress).
+ */
+export async function closedFullLengthAttemptKeys(
+  db: SupabaseClient,
+  links: FullLengthLinks,
+  studentId?: string,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (links.childrenOf.size === 0) return out;
+  try {
+    let q = db
+      .from("full_length_attempts")
+      .select("test_id, student_id, attempt_number")
+      .not("closed_at", "is", null);
+    if (studentId) q = q.eq("student_id", studentId);
+    const { data, error } = await q;
+    if (error) {
+      console.error("[full-length] closed attempts lookup failed", error.message);
+      return out;
+    }
+    for (const a of (data ?? []) as { test_id: string; student_id: string; attempt_number: number }[]) {
+      out.add(`${a.test_id}:${a.student_id}:${a.attempt_number}`);
+    }
+  } catch (e) {
+    console.error("[full-length] closed attempts lookup failed", e);
+  }
+  return out;
 }
 
 /**

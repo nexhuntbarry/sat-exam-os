@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
-import { asParentRows, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { ClipboardList, User } from "lucide-react";
 import Link from "next/link";
@@ -52,7 +52,7 @@ async function getUpcomingTests(userId: string) {
     .eq("student_id", userId)
     .in("test_id", expandWithChildren(testIds, flLinks))
     .order("attempt_number", { ascending: false });
-  const submissions = asParentRows(rawSubmissions ?? [], flLinks);
+  const submissions = asParentRows(rawSubmissions ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks, userId));
 
   // Status of each test's latest attempt. Any In Progress module wins (a
   // submitted Module 1 must not hide an open Module 2), and a graded

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { asParentRows, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
+import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { getQaUserIds, onSide, scopeIds } from "@/lib/qa";
 
@@ -111,7 +111,7 @@ export async function GET() {
     adaptive_track: string | null;
   };
   const attemptsByTest = new Map<string, Map<string, SubRow[]>>();
-  for (const s of asParentRows((subData ?? []) as SubRow[], flLinks)) {
+  for (const s of asParentRows((subData ?? []) as SubRow[], flLinks, await closedFullLengthAttemptKeys(db, flLinks))) {
     if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
     const attempts = attemptsByTest.get(s.test_id) ?? new Map<string, SubRow[]>();
     const key = s.session_id ?? s.id;
