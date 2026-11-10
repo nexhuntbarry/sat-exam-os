@@ -50,9 +50,10 @@
       "subtitle": "AI-powered SAT test management for tutoring centers. Upload PDFs, auto-parse questions, assign tests, and track student performance.",
       "adminCta": "Admin Sign In",
       "teacherCta": "Teacher Sign In",
+      "teacherSignupCta": "Teacher Sign-up",
       "studentCta": "Student Register"
     },
-    "loginHint": "Existing teachers use Teacher Sign In; new students click Student Register",
+    "loginHint": "Existing teachers: Teacher Sign In. New teachers: Teacher Sign-up. New students: Student Register.",
     "disclaimer": "SAT is a registered trademark of College Board. This platform is not affiliated with or endorsed by College Board.",
     "goToDashboard": "Go to Dashboard"
   },
@@ -827,6 +828,7 @@
     "suspend": "Suspend",
     "reactivate": "Reactivate",
     "deleteStudent": "Delete student",
+    "changeRole": "Change role…",
     "addToClass": "Add to class…",
     "assignTest": "Assign test…"
   }

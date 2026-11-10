@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
-import { UserPlus, X, ShieldCheck, UserX } from "lucide-react";
+import { UserPlus, X, ShieldCheck, UserX, Check, UserCog, RotateCcw } from "lucide-react";
 import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import {
   DataRow,
@@ -15,6 +15,7 @@ import {
   HeadRow,
   RowActions,
   RowActionsMenu,
+  RowButton,
   Td,
   Th,
   TruncatedText,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/data-table";
 import { Portal } from "@/components/ui/Portal";
 import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
+import ChangeRoleDialog from "@/components/account/ChangeRoleDialog";
 
 interface TeacherProfile {
   assigned_classes: unknown[];
@@ -39,12 +41,20 @@ interface Teacher {
   clerk_user_id: string | null;
   last_sign_in_at: number | null;
   can_review_questions: boolean;
+  metadata: Record<string, unknown> | null;
   teacher_profiles: TeacherProfile | TeacherProfile[] | null;
 }
 
 function getProfile(t: Teacher): TeacherProfile | null {
   if (!t.teacher_profiles) return null;
   return Array.isArray(t.teacher_profiles) ? t.teacher_profiles[0] ?? null : t.teacher_profiles;
+}
+
+/** Self-signed-up teacher awaiting approval. Invited rows are also
+ *  "pending" until their first sign-in (no clerk_user_id yet) — those are
+ *  auto-approved on sign-up and need no admin action. */
+function awaitingApproval(t: Teacher) {
+  return t.account_status === "pending" && !!t.clerk_user_id;
 }
 
 function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: () => void }) {
@@ -56,6 +66,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
   const [success, setSuccess] = useState(false);
   const [emailWarning, setEmailWarning] = useState<string | null>(null);
   const [resentExisting, setResentExisting] = useState(false);
+  const [approvedMessage, setApprovedMessage] = useState<string | null>(null);
   const [duplicate, setDuplicate] = useState<{ display_name: string | null; account_status: string } | null>(null);
 
   async function doInvite(resend = false) {
@@ -86,6 +97,7 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
       }
       if (data.emailWarning) setEmailWarning(String(data.emailWarning));
       setResentExisting(!!data.resent);
+      setApprovedMessage(data.approved ? String(data.message ?? "Teacher approved.") : null);
       setSuccess(true);
       setTimeout(() => { onInvited(); }, data.emailWarning ? 4000 : 1500);
     } catch {
@@ -115,13 +127,21 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
             {emailWarning ? (
               <>
                 <div className="text-4xl">⚠️</div>
-                <p className="text-charcoal font-medium">User invited but email failed</p>
+                <p className="text-charcoal font-medium">
+                  {approvedMessage ? "Teacher approved but email failed" : "User invited but email failed"}
+                </p>
                 <p className="text-status-warning text-sm bg-status-warning/10 border border-status-warning/20 rounded-xl px-3 py-2 text-left">
                   {emailWarning}
                 </p>
                 <p className="text-soft-mute text-xs">
-                  The teacher record was created. Share the sign-in link manually.
+                  {approvedMessage ?? "The teacher record was created. Share the sign-in link manually."}
                 </p>
+              </>
+            ) : approvedMessage ? (
+              <>
+                <div className="text-4xl">✅</div>
+                <p className="text-charcoal font-medium">Teacher approved</p>
+                <p className="text-soft-mute text-sm">{approvedMessage}</p>
               </>
             ) : (
               <>
@@ -231,10 +251,49 @@ function InviteModal({ onClose, onInvited }: { onClose: () => void; onInvited: (
   );
 }
 
-export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
+export default function TeachersClient({ teachers: allTeachers, isSuperAdmin }: { teachers: Teacher[]; isSuperAdmin: boolean }) {
   const router = useRouter();
   const [showInvite, setShowInvite] = useState(false);
+  const [filter, setFilter] = useState<"all" | "awaiting">("all");
+  const [roleTarget, setRoleTarget] = useState<Teacher | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  const awaitingCount = allTeachers.filter(awaitingApproval).length;
+  // Sign-ups awaiting approval first; otherwise keep the server order.
+  const teachers = (filter === "awaiting" ? allTeachers.filter(awaitingApproval) : allTeachers)
+    .slice()
+    .sort((a, b) => Number(awaitingApproval(b)) - Number(awaitingApproval(a)));
+
+  async function handleDecision(teacher: Teacher, decision: "approve" | "reject") {
+    const name = teacher.display_name ?? teacher.email;
+    const reactivating = decision === "approve" && teacher.account_status === "suspended";
+    const ok = reactivating
+      ? confirm(`Reactivate ${name}? They will get teacher access again.`)
+      : decision === "approve"
+        ? confirm(`Approve ${name} as a teacher? They will get access and an approval email.`)
+        : confirm(
+            `Reject ${name}'s teacher sign-up? They won't get access.\n\n` +
+              "If they're actually a student, use Change role instead (this also approves them).",
+          );
+    if (!ok) return;
+    setBusyId(teacher.id);
+    setActionError(null);
+    try {
+      const res = await fetch(`/api/admin/teachers/${teacher.id}/${decision}`, { method: "POST" });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setActionError(`${name}: ${j.error ?? "Failed"}`);
+        return;
+      }
+      startTransition(() => router.refresh());
+    } catch {
+      setActionError(`${name}: Network error`);
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   async function handleRemove(teacherId: string, name: string) {
     if (!confirm(`Remove ${name}? They will lose access.`)) return;
@@ -266,6 +325,15 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
           }}
         />
       )}
+      {roleTarget && (
+        <ChangeRoleDialog
+          userId={roleTarget.id}
+          name={roleTarget.display_name ?? roleTarget.email}
+          from="teacher"
+          isSuperAdmin={isSuperAdmin}
+          onClose={() => setRoleTarget(null)}
+        />
+      )}
 
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-charcoal">Teachers</h1>
@@ -277,6 +345,34 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
           Invite Teacher
         </button>
       </div>
+
+      {awaitingCount > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {([
+            ["all", "All", allTeachers.length],
+            ["awaiting", "Awaiting approval", awaitingCount],
+          ] as const).map(([key, label, count]) => (
+            <button
+              key={key}
+              onClick={() => setFilter(key)}
+              className={clsx(
+                "px-3.5 py-1.5 rounded-full text-sm font-medium border transition-colors",
+                filter === key
+                  ? "bg-warm-coral text-white border-warm-coral"
+                  : "bg-surface border-divider text-mid-gray hover:text-charcoal",
+              )}
+            >
+              {label} ({count})
+            </button>
+          ))}
+        </div>
+      )}
+
+      {actionError && (
+        <p className="text-status-error text-sm bg-status-error/10 border border-status-error/20 rounded-xl px-3 py-2">
+          {actionError}
+        </p>
+      )}
 
       <DataTable>
         <thead>
@@ -307,8 +403,12 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                 ? "Never signed in"
                 : <span className="text-soft-mute">Not signed up yet</span>
             );
-            const activityDetail = `Invited ${formatShortDate(teacher.created_at)}`;
-            const activityTitle = `${lastSignInFull ? `Last sign-in ${lastSignInFull}` : "Never signed in"} · Invited ${formatDateTime(teacher.created_at)}`;
+            const selfSignup = Boolean(teacher.metadata?.self_signup);
+            const createdVerb = selfSignup ? "Signed up" : "Invited";
+            const activityDetail = `${createdVerb} ${formatShortDate(teacher.created_at)}`;
+            const activityTitle = `${lastSignInFull ? `Last sign-in ${lastSignInFull}` : "Never signed in"} · ${createdVerb} ${formatDateTime(teacher.created_at)}`;
+            const awaiting = awaitingApproval(teacher);
+            const busy = busyId === teacher.id;
 
             const actions: (RowAction | false)[] = [
               teacher.can_review_questions
@@ -322,7 +422,12 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                     icon: ShieldCheck,
                     onSelect: () => handleToggleReviewer(teacher.id, false),
                   },
-              teacher.account_status !== "suspended" && {
+              {
+                label: "Change role…",
+                icon: UserCog,
+                onSelect: () => setRoleTarget(teacher),
+              },
+              {
                 label: "Remove…",
                 icon: UserX,
                 tone: "danger",
@@ -394,7 +499,34 @@ export default function TeachersClient({ teachers }: { teachers: Teacher[] }) {
                 </Td>
                 <Td kind="actions" sticky="right">
                   <RowActions>
+                    {busy && <span className="text-xs text-soft-mute">Saving…</span>}
                     <ExpandToggle label={`More about ${name}`} />
+                    {teacher.account_status === "suspended" && (
+                      <RowButton
+                        label="Reactivate"
+                        icon={<RotateCcw size={13} />}
+                        disabled={busy}
+                        onClick={() => handleDecision(teacher, "approve")}
+                      />
+                    )}
+                    {awaiting && (
+                      <>
+                        <RowButton
+                          label="Approve"
+                          tone="primary"
+                          icon={<Check size={13} />}
+                          disabled={busy}
+                          onClick={() => handleDecision(teacher, "approve")}
+                        />
+                        <RowButton
+                          label="Reject"
+                          tone="danger"
+                          icon={<X size={13} />}
+                          disabled={busy}
+                          onClick={() => handleDecision(teacher, "reject")}
+                        />
+                      </>
+                    )}
                     <RowActionsMenu label={`Actions for ${name}`} items={actions} />
                   </RowActions>
                 </Td>

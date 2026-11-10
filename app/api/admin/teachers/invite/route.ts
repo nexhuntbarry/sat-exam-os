@@ -5,6 +5,7 @@ import { isQaEmail } from "@/lib/qa";
 import { isValidEmail, normalizeEmail } from "../../_shared";
 import { sendEmail } from "@/lib/email/send";
 import { teacherInviteEmail } from "@/lib/email/templates/teacher-invite";
+import { approvalEmail } from "@/lib/email/templates/approval";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://sat.nexhunt.xyz";
 
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
   // admin UI can prompt "user exists, resend invite?" instead of a hard fail.
   const { data: matches, error: lookupErr } = await db
     .from("users")
-    .select("id, email, display_name, role, account_status")
+    .select("id, email, display_name, role, account_status, clerk_user_id")
     .ilike("email", email.replace(/[\\%_]/g, "\\$&"))
     .limit(2);
   if (lookupErr) {
@@ -71,10 +72,51 @@ export async function POST(req: Request) {
       {
         error: "exists",
         existingUser: existing,
-        message: "A user with that email already exists. Confirm to resend the invite email.",
+        message:
+          existing.account_status === "pending" && existing.clerk_user_id
+            ? "This teacher already signed up and is awaiting approval. Confirm to approve them."
+            : "A user with that email already exists. Confirm to resend the invite email.",
       },
       { status: 409 },
     );
+  }
+
+  // A teacher who already signed up themselves (pending, has a Clerk
+  // account) doesn't need an invite: inviting them = approving them.
+  if (existing && existing.account_status === "pending" && existing.clerk_user_id) {
+    const { error: approveErr } = await db
+      .from("users")
+      .update({
+        account_status: "approved",
+        can_review_questions: canReview,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .eq("role", "teacher");
+    if (approveErr) {
+      console.error("[invite-teacher] approve error:", approveErr);
+      return NextResponse.json({ error: "Failed to approve teacher" }, { status: 500 });
+    }
+    await db
+      .from("teacher_profiles")
+      .upsert({ user_id: existing.id }, { onConflict: "user_id", ignoreDuplicates: true });
+    let emailWarning: string | null = null;
+    if (!isQaEmail(existing.email)) {
+      const { subject, html } = approvalEmail(existing.display_name ?? existing.email, "teacher");
+      try {
+        await sendEmail({ to: existing.email, subject, html });
+      } catch (err) {
+        emailWarning = err instanceof Error ? err.message : String(err);
+        console.error("[invite-teacher] approval email failed:", err);
+      }
+    }
+    return NextResponse.json({
+      ok: true,
+      userId: existing.id,
+      approved: true,
+      message: "This teacher had already signed up and was waiting for approval — they're now approved.",
+      ...(emailWarning ? { emailWarning } : {}),
+    });
   }
 
   let userId: string;

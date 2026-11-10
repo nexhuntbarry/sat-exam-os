@@ -2,11 +2,15 @@ import { escapeHtml } from "../escape";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://sat.nexhunt.xyz";
 
-export function approvalEmail(displayName: string): {
+export function approvalEmail(
+  displayName: string,
+  audience: "student" | "teacher" = "student",
+): {
   subject: string;
   html: string;
 } {
   const safeName = escapeHtml(displayName);
+  const isTeacher = audience === "teacher";
   return {
     subject: "Your SAT Exam OS account is approved!",
     html: `<!DOCTYPE html>
@@ -38,12 +42,12 @@ export function approvalEmail(displayName: string): {
               </h1>
               <p style="color:#CBD5E1;font-size:15px;line-height:1.7;margin:0 0 24px;text-align:center;">
                 Your SAT Exam OS account has been approved by an administrator.
-                You can now access your student dashboard and view assigned tests.
+                ${isTeacher ? "You can now sign in to your teacher dashboard." : "You can now access your student dashboard and view assigned tests."}
               </p>
               <table width="100%">
                 <tr>
                   <td align="center" style="padding:8px 0;">
-                    <a href="${BASE_URL}/student"
+                    <a href="${BASE_URL}${isTeacher ? "/teacher" : "/student"}"
                        style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#2563EB,#3B82F6);color:#FFFFFF;font-weight:700;font-size:15px;text-decoration:none;border-radius:10px;">
                       Go to My Dashboard
                     </a>

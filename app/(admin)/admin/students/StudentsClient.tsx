@@ -838,7 +838,8 @@ export default function StudentsClient({ students, classGroups }: Props) {
     const reason = prompt(
       "Reject this student? They won't get access.\n\n" +
         "Their email stays tied to this rejected account, so it can't register again. " +
-        "To free the email (e.g. a teacher who signed up as a student), use Delete student instead.\n\n" +
+        "If this is a teacher who signed up as a student, open the student and use Change role instead (this also approves them). " +
+        "To free the email, use Delete student.\n\n" +
         "Reason (optional):",
     );
     if (reason === null) return;

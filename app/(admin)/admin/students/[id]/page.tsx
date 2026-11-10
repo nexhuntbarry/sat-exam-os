@@ -629,6 +629,8 @@ export default async function AdminStudentDetailPage({
           status={student.account_status}
           classItems={classPickerItems}
           testItems={testPickerItems}
+          isSuperAdmin={me?.isSuperAdmin ?? false}
+          attemptCount={submissions.length}
         />
       </div>
 

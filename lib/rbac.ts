@@ -33,11 +33,13 @@ export async function requireRole(
   // Pending (not yet approved) and suspended students keep a valid Clerk
   // session, so the role check alone let them list, start and submit
   // tests. Only the registration/profile endpoints the pending flow needs
-  // opt out via allowInactiveStudent.
+  // opt out via allowInactiveStudent. Teachers get the same rule now that
+  // they can sign up themselves (pending until an admin approves); the
+  // opt-out stays student-only. Admins are never gated here.
   if (
-    user.role === "student" &&
+    (user.role === "student" || user.role === "teacher") &&
     user.accountStatus !== "approved" &&
-    !opts.allowInactiveStudent
+    !(opts.allowInactiveStudent && user.role === "student")
   ) {
     return NextResponse.json(
       { error: "Account not active", accountStatus: user.accountStatus },

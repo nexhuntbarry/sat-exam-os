@@ -19,6 +19,8 @@ export default async function ReportPage({
 }) {
   const me = await getCurrentUser();
   if (!me) redirect("/sign-in");
+  // Pending/suspended teachers: the teacher layout shows their status screen.
+  if (me.role === "teacher" && me.accountStatus !== "approved") redirect("/teacher");
   const sp = await searchParams;
   const db = getServiceClient();
 

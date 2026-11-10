@@ -45,7 +45,7 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
           {tBrand("name")}
         </h1>
 
-        <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-4">
           {dashboardHref ? (
             <Link
               href={dashboardHref}
@@ -61,11 +61,20 @@ function HeroSection({ dashboardHref }: { dashboardHref: string | null }) {
               >
                 {t("adminCta")}
               </Link>
+              {/* /sign-in/teacher: after sign-in go through /register/role, and a
+                  Google sign-in that silently creates a new account becomes
+                  a pending teacher instead of a pending student. */}
               <Link
-                href="/sign-in"
+                href="/sign-in/teacher"
                 className="px-8 py-4 rounded-xl font-semibold text-warm-coral-text bg-surface border border-warm-coral/40 hover:border-warm-coral hover:bg-warm-coral/5 transition-all duration-200"
               >
                 {t("teacherCta")}
+              </Link>
+              <Link
+                href="/register/teacher"
+                className="px-8 py-4 rounded-xl font-semibold text-warm-coral-text bg-surface border border-warm-coral/40 hover:border-warm-coral hover:bg-warm-coral/5 transition-all duration-200"
+              >
+                {t("teacherSignupCta")}
               </Link>
               <Link
                 href="/register"

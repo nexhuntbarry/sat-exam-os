@@ -3,10 +3,11 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { Ban, ClipboardList, Plus, RotateCcw, Trash2, X } from "lucide-react";
+import { Ban, ClipboardList, Plus, RotateCcw, Trash2, UserCog, X } from "lucide-react";
 import { RowActionsMenu } from "@/components/ui/data-table";
 import { Portal } from "@/components/ui/Portal";
 import SearchablePicker, { type PickerItem } from "@/components/ui/SearchablePicker";
+import ChangeRoleDialog from "@/components/account/ChangeRoleDialog";
 import DeleteStudentButton from "./DeleteStudentButton";
 import { changeStudentStatus } from "./StudentStatusButton";
 
@@ -19,6 +20,10 @@ interface Props {
   classItems: PickerItem[];
   /** Tests on the viewer's side; alreadyIn = already assigned to the student. */
   testItems: PickerItem[];
+  /** Viewer is a super admin → "Change role" also offers Admin. */
+  isSuperAdmin: boolean;
+  /** Past test attempts, shown in the Change role warning. */
+  attemptCount: number;
 }
 
 // POSTs `ids` one by one; collects the names of the ones that failed.
@@ -47,10 +52,11 @@ async function postEach(
 // page's row menu), then Suspend / Reactivate, Delete (type-the-email
 // confirmation) last in red. Edit profile and the PDF report stay as visible
 // buttons next to it.
-export default function StudentActionsMenu({ studentId, studentName, email, status, classItems, testItems }: Props) {
+export default function StudentActionsMenu({ studentId, studentName, email, status, classItems, testItems, isSuperAdmin, attemptCount }: Props) {
   const t = useTranslations("studentDetail");
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
+  const [changingRole, setChangingRole] = useState(false);
   const [picker, setPicker] = useState<"class" | "test" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -108,6 +114,7 @@ export default function StudentActionsMenu({ studentId, studentName, email, stat
           { label: t("assignTest"), icon: ClipboardList, onSelect: () => setPicker("test") },
           status === "approved" && { label: t("suspend"), icon: Ban, onSelect: toggleStatus },
           status === "suspended" && { label: t("reactivate"), icon: RotateCcw, onSelect: toggleStatus },
+          { label: t("changeRole"), icon: UserCog, onSelect: () => setChangingRole(true) },
           { label: t("deleteStudent"), icon: Trash2, tone: "danger", onSelect: () => setDeleting(true) },
         ]}
       />
@@ -118,6 +125,16 @@ export default function StudentActionsMenu({ studentId, studentName, email, stat
         open={deleting}
         onClose={() => setDeleting(false)}
       />
+      {changingRole && (
+        <ChangeRoleDialog
+          userId={studentId}
+          name={studentName}
+          from="student"
+          isSuperAdmin={isSuperAdmin}
+          attemptCount={attemptCount}
+          onClose={() => setChangingRole(false)}
+        />
+      )}
       {picker && (
         <Portal>
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">

@@ -56,8 +56,13 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
     displayName: row.display_name,
     accountStatus: row.account_status,
     isSuperAdmin: Boolean(row.is_super_admin),
-    // Admins implicitly review; teachers only when the explicit flag is on.
-    canReviewQuestions: role === "admin" || Boolean(row.can_review_questions),
+    // Admins implicitly review; teachers only when the explicit flag is on
+    // and the account is approved (a pending/suspended teacher never does).
+    canReviewQuestions:
+      role === "admin" ||
+      (role === "teacher" &&
+        row.account_status === "approved" &&
+        Boolean(row.can_review_questions)),
     isQa: isQaEmail(row.email),
   };
 });

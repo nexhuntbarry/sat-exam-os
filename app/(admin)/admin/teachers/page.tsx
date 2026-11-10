@@ -9,7 +9,7 @@ async function getTeachers(viewerIsQa: boolean) {
   const db = getServiceClient();
   const { data } = await scopeUsers(db
     .from("users")
-    .select(`id, email, display_name, account_status, created_at, clerk_user_id, can_review_questions, teacher_profiles!teacher_profiles_user_id_fkey(assigned_classes, bio, specialty)`)
+    .select(`id, email, display_name, account_status, created_at, clerk_user_id, can_review_questions, metadata, teacher_profiles!teacher_profiles_user_id_fkey(assigned_classes, bio, specialty)`)
     .eq("role", "teacher"), viewerIsQa)
     .order("created_at", { ascending: false });
   const teachers = data ?? [];
@@ -38,11 +38,12 @@ async function getTeachers(viewerIsQa: boolean) {
 }
 
 export default async function TeachersPage() {
-  const teachers = await getTeachers((await getCurrentUser())?.isQa ?? false);
+  const me = await getCurrentUser();
+  const teachers = await getTeachers(me?.isQa ?? false);
   return (
     <>
       <PageIntro tKey="admin.teachers" />
-      <TeachersClient teachers={teachers} />
+      <TeachersClient teachers={teachers} isSuperAdmin={me?.isSuperAdmin ?? false} />
     </>
   );
 }

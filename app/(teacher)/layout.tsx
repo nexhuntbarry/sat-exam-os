@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import TeacherSidebar from "@/components/nav/TeacherSidebar";
 import AdminSidebar from "@/components/nav/AdminSidebar";
 import Topbar from "@/components/nav/Topbar";
+import AccountStatusScreen from "@/components/account/AccountStatusScreen";
 
 // Admins frequently land on /teacher/* pages (cross-test results,
 // per-submission detail, etc.) since those views are reused. We keep
@@ -23,6 +24,20 @@ export default async function TeacherLayout({
 
   if (user.role !== "teacher" && user.role !== "admin") {
     redirect("/dashboard");
+  }
+
+  // Self-signed-up teachers start PENDING (admin approves under Admin →
+  // Teachers); suspended teachers are locked out too. Same screen as
+  // students; requireRole enforces it for the API routes. Admins pass.
+  if (user.role === "teacher" && user.accountStatus !== "approved") {
+    return (
+      <AccountStatusScreen
+        role="teacher"
+        displayName={user.displayName}
+        email={user.email}
+        accountStatus={user.accountStatus}
+      />
+    );
   }
 
   const isAdmin = user.role === "admin";

@@ -25,6 +25,8 @@ interface ClerkUserCreatedEvent {
     last_name: string | null;
     username: string | null;
     created_at: number;
+    /** Set by the teacher sign-up / sign-in pages: { signupRole: "teacher" }. */
+    unsafe_metadata?: { signupRole?: unknown } | null;
   };
 }
 
@@ -85,7 +87,7 @@ export async function POST(req: Request) {
     // Check if an invited user row exists for this email (teacher invite flow)
     const { data: existing } = await supabase
       .from("users")
-      .select("id, role, account_status")
+      .select("id, role, account_status, clerk_user_id")
       .eq("email", email)
       .maybeSingle();
 
@@ -99,9 +101,9 @@ export async function POST(req: Request) {
           role: isAdmin ? "admin" : existing.role,
           account_status: isAdmin
             ? "approved"
-            : existing.role === "teacher"
-              ? "approved" // invited teachers auto-approved on signup
-              : existing.account_status,
+            : existing.role === "teacher" && existing.clerk_user_id == null
+              ? "approved" // invited (never-linked) teachers auto-approved on signup
+              : existing.account_status, // a row already linked (self sign-up via /register/role, or a re-created Clerk account) keeps its status — pending/rejected teachers can't self-approve
           updated_at: new Date().toISOString(),
         })
         .eq("id", existing.id);
@@ -111,25 +113,38 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "DB error" }, { status: 500 });
       }
     } else {
-      // Fresh signup — create new row
-      const role = isAdmin ? "admin" : "student";
+      // Fresh signup — create new row. The teacher sign-up page tags the
+      // Clerk user with signupRole=teacher → pending teacher awaiting
+      // admin approval (Admin → Teachers), not a pending student.
+      const isTeacherSignup =
+        !isAdmin && event.data.unsafe_metadata?.signupRole === "teacher";
+      const role = isAdmin ? "admin" : isTeacherSignup ? "teacher" : "student";
       const accountStatus = isAdmin ? "approved" : "pending";
 
-      const { error } = await supabase.from("users").insert({
-        clerk_user_id: clerkUserId,
-        email,
-        display_name: displayName,
-        role,
-        account_status: accountStatus,
-        metadata: {},
-      });
+      const { data: created, error } = await supabase
+        .from("users")
+        .insert({
+          clerk_user_id: clerkUserId,
+          email,
+          display_name: displayName,
+          role,
+          account_status: accountStatus,
+          metadata: isTeacherSignup ? { self_signup: true } : {},
+        })
+        .select("id")
+        .single();
 
-      if (error) {
+      if (error || !created) {
         console.error("[webhook/clerk] Failed to insert user:", error);
         return NextResponse.json({ error: "DB error" }, { status: 500 });
       }
 
-      if (!isAdmin) {
+      if (isTeacherSignup) {
+        const { error: profErr } = await supabase
+          .from("teacher_profiles")
+          .upsert({ user_id: created.id }, { onConflict: "user_id", ignoreDuplicates: true });
+        if (profErr) console.error("[webhook/clerk] Failed to create teacher profile:", profErr);
+      } else if (!isAdmin) {
         const { subject, html } = welcomeStudentEmail(displayName);
         sendEmail({ to: email, subject, html }).catch(() => {});
       }

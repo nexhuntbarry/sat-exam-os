@@ -7,11 +7,14 @@ import { scopeUsers } from "@/lib/qa";
 async function getAdminStats(viewerIsQa: boolean) {
   const db = getServiceClient();
 
-  const [pending, approved, teachers, modules] = await Promise.all([
+  const [pending, approved, teachers, modules, pendingTeachers] = await Promise.all([
     scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "pending"), viewerIsQa),
     scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "approved"), viewerIsQa),
     scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "teacher").eq("account_status", "approved"), viewerIsQa),
     db.from("modules").select("id", { count: "exact", head: true }),
+    // Self-signed-up teachers awaiting approval (invited rows are pending
+    // too until first sign-in, but have no clerk_user_id and need no action).
+    scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "teacher").eq("account_status", "pending").not("clerk_user_id", "is", null), viewerIsQa),
   ]);
 
   return {
@@ -19,6 +22,7 @@ async function getAdminStats(viewerIsQa: boolean) {
     approvedStudents: approved.count ?? 0,
     teachers: teachers.count ?? 0,
     modules: modules.count ?? 0,
+    pendingTeachers: pendingTeachers.count ?? 0,
   };
 }
 
@@ -106,13 +110,23 @@ export default async function AdminDashboardPage() {
               View all →
             </a>
           </div>
-          {stats.pendingStudents === 0 ? (
+          {stats.pendingStudents === 0 && stats.pendingTeachers === 0 ? (
             <p className="text-soft-mute text-sm text-center py-8">No pending approvals</p>
           ) : (
-            <p className="text-status-warning text-sm">
-              {stats.pendingStudents} student{stats.pendingStudents !== 1 ? "s" : ""} awaiting
-              approval
-            </p>
+            <div className="space-y-1">
+              {stats.pendingStudents > 0 && (
+                <a href="/admin/students" className="block text-status-warning text-sm hover:underline">
+                  {stats.pendingStudents} student{stats.pendingStudents !== 1 ? "s" : ""} awaiting
+                  approval
+                </a>
+              )}
+              {stats.pendingTeachers > 0 && (
+                <a href="/admin/teachers" className="block text-status-warning text-sm hover:underline">
+                  {stats.pendingTeachers} teacher{stats.pendingTeachers !== 1 ? "s" : ""} awaiting
+                  approval
+                </a>
+              )}
+            </div>
           )}
         </div>
 

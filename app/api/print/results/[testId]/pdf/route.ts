@@ -16,6 +16,7 @@ export const maxDuration = 60;
 export async function GET(req: Request, { params }: { params: Promise<{ testId: string }> }) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (user.role === "teacher" && user.accountStatus !== "approved") return NextResponse.json({ error: "Account not active" }, { status: 403 });
   const { testId } = await params;
   const sp = new URL(req.url).searchParams;
   const sub = sp.get("sub");

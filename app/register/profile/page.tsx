@@ -23,9 +23,15 @@ export default async function RegisterProfilePage() {
   const db = getServiceClient();
   const { data: existingUser } = await db
     .from("users")
-    .select("id")
+    .select("id, role")
     .eq("clerk_user_id", clerkId)
     .single();
+
+  // Teachers (incl. pending self-sign-ups) and admins never fill in the
+  // student profile; complete-registration would 403 them anyway.
+  if (existingUser?.role && existingUser.role !== "student") {
+    redirect("/dashboard");
+  }
 
   if (existingUser?.id) {
     const { data: profile } = await db

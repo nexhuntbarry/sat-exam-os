@@ -8,6 +8,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ testId:
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (user.role !== "teacher" && user.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (user.role === "teacher" && user.accountStatus !== "approved") return NextResponse.json({ error: "Account not active" }, { status: 403 });
   const { testId } = await params;
   const db = getServiceClient();
   try {

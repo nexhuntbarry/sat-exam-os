@@ -1,6 +1,7 @@
 'use client';
 
 import { SignUp } from "@clerk/nextjs";
+import Link from "next/link";
 import Logo from "@/components/Logo";
 
 export default function StudentRegisterPage() {
@@ -13,7 +14,13 @@ export default function StudentRegisterPage() {
           <Logo size={48} />
           <h1 className="text-xl font-semibold text-charcoal">Student Registration</h1>
           <p className="text-mid-gray text-sm">SAT Exam OS</p>
-          <p className="text-mid-gray text-sm text-center">Teachers: please don't sign up here. Use the invite link from your admin.</p>
+          <p className="text-mid-gray text-sm text-center">
+            Teachers: click{" "}
+            <Link href="/register/teacher" className="text-warm-coral-text hover:text-warm-coral-dark font-semibold underline">
+              Teacher sign-up
+            </Link>{" "}
+            instead.
+          </p>
         </div>
 
         <SignUp

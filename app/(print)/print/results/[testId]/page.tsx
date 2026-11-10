@@ -52,6 +52,7 @@ export default async function PrintResultsPage({
   } else {
     const user = await getCurrentUser();
     if (!user) redirect("/sign-in");
+    if (user.role === "teacher" && user.accountStatus !== "approved") redirect("/teacher");
     viewer = { userId: user.userId, role: user.role, isQa: user.isQa };
     opts = parsePrintOptions(sp);
   }
