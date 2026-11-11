@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 // Students wait on the test page before it opens. When the open time
@@ -9,6 +9,10 @@ import { useRouter } from "next/navigation";
 // yet" this stays mounted and asks again every few seconds.
 export default function RefreshAtOpenTime({ openAt, serverNow }: { openAt: string; serverNow: number }) {
   const router = useRouter();
+  // Refreshes since the open time; survives the effect re-running on each
+  // new serverNow. After ~5 min at 5 s, back off to 30 s (e.g. the server
+  // page keeps failing) instead of polling fast forever.
+  const refreshes = useRef(0);
   useEffect(() => {
     // Server clock minus this device's clock, so a device whose clock is
     // off still refreshes when the server will let the test start.
@@ -24,7 +28,8 @@ export default function RefreshAtOpenTime({ openAt, serverNow }: { openAt: strin
         return;
       }
       router.refresh();
-      timer = setTimeout(tick, 5000);
+      refreshes.current += 1;
+      timer = setTimeout(tick, refreshes.current > 60 ? 30_000 : 5000);
     };
     tick();
     // Background tabs get their timers throttled; catch up on return.
