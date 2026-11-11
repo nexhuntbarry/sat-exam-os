@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Play, RotateCcw } from "lucide-react";
 
 interface Props {
@@ -19,8 +19,20 @@ export default function StartFullLengthButton({ testId, isResume, label }: Props
   const [error, setError] = useState("");
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
+  // Synchronous double-click guard (state-driven `disabled` lags one render).
+  const starting = useRef(false);
+  // Back button restores this page from bfcache with loading still set; unlock it.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) { starting.current = false; setLoading(false); }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   async function handleStart() {
+    if (starting.current) return;
+    starting.current = true;
     setLoading(true);
     setError("");
     try {
@@ -33,6 +45,7 @@ export default function StartFullLengthButton({ testId, isResume, label }: Props
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
       setLoading(false);
+      starting.current = false;
     }
   }
 

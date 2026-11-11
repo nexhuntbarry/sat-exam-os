@@ -24,6 +24,14 @@ export default function StartTestButton({ testId, submissionId, isResume, label 
   // A double-click must open exactly one exam: the second click can arrive
   // before React re-renders the button as disabled.
   const starting = useRef(false);
+  // Back button restores this page from bfcache with loading still set; unlock it.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) { starting.current = false; setLoading(false); }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   async function handleStart() {
     if (starting.current) return;
