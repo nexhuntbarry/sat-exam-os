@@ -28,7 +28,7 @@ const nextConfig: NextConfig = {
     // - blob: / data: on img-src for inline KaTeX glyphs + image previews.
     const csp = [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.clerk.accounts.dev https://*.clerk.com https://challenges.cloudflare.com",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.clerk.accounts.dev https://*.clerk.com https://clerk.sat.nexhunt.xyz https://challenges.cloudflare.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' data: https://fonts.gstatic.com",
       "img-src 'self' data: blob: https://*.blob.vercel-storage.com https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com https://*.clerk.com https://img.clerk.com",
@@ -45,10 +45,10 @@ const nextConfig: NextConfig = {
       // browser hits it during client uploads to coordinate PUTs; if
       // CSP blocks it the SDK silently retries until our 240s frontend
       // timeout fires with "Upload hung at 0%".
-      "connect-src 'self' https://*.supabase.co https://*.clerk.accounts.dev https://*.clerk.com https://api.anthropic.com https://*.blob.vercel-storage.com https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com https://api.vercel.com https://vercel.com",
+      "connect-src 'self' https://*.supabase.co https://*.clerk.accounts.dev https://*.clerk.com https://clerk.sat.nexhunt.xyz https://api.anthropic.com https://*.blob.vercel-storage.com https://blob.vercel-storage.com https://*.public.blob.vercel-storage.com https://api.vercel.com https://vercel.com",
       // Desmos calculator is embedded as an iframe during Math tests.
       // CSP blocked it → broken-image icon in the calculator panel.
-      "frame-src 'self' https://*.clerk.accounts.dev https://challenges.cloudflare.com https://www.desmos.com https://*.desmos.com",
+      "frame-src 'self' https://*.clerk.accounts.dev https://clerk.sat.nexhunt.xyz https://challenges.cloudflare.com https://www.desmos.com https://*.desmos.com",
       // PDF viewer (/admin/modules/[id]/review) embeds /api/admin/modules/[id]/pdf
       // in an iframe. `frame-ancestors 'none'` blocks all framing —
       // including same-origin — so the PDF panel shows a broken icon.
