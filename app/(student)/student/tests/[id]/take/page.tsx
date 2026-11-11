@@ -76,7 +76,7 @@ async function getActiveSubmission(
   const { data: test } = await db
     .from("tests")
     .select(
-      "id, test_name, time_limit_minutes, time_limit_minutes_module_2, due_date, question_ids, module_id, is_adaptive, desmos_enabled, formula_sheet_url, is_untimed",
+      "id, test_name, time_limit_minutes, time_limit_minutes_module_2, due_date, question_ids, module_id, module_2_id, is_adaptive, desmos_enabled, formula_sheet_url, is_untimed",
     )
     .eq("id", testId)
     .single();
@@ -120,9 +120,9 @@ async function getActiveSubmission(
   const questionQuery = scopeToStudentQuestionSet(
     db
       .from("questions")
-      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, correct_answer")
-      .eq("module_id", activeModuleId),
+      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, correct_answer"),
     test,
+    activeModuleId,
   ).order("original_question_number", { ascending: true });
 
   const { data: questionRows } = await questionQuery;

@@ -29,8 +29,9 @@ async function sectionInfo(db: SupabaseClient, child: FlChildTest, multiplier: n
   const count = async (moduleId: string | null) => {
     if (!moduleId) return 0;
     const { count: n } = await scopeToStudentQuestionSet(
-      db.from("questions").select("id", { count: "exact", head: true }).eq("module_id", moduleId),
+      db.from("questions").select("id", { count: "exact", head: true }),
       child,
+      moduleId,
     );
     return n ?? 0;
   };

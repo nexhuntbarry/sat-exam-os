@@ -49,7 +49,7 @@ async function getTestInfo(testId: string, studentId: string) {
       id, test_name, status, time_limit_minutes, time_limit_minutes_module_2,
       due_date, open_date,
       allow_retake, show_answers_after_submission, module_id, module_2_id, is_untimed,
-      is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id,
+      is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids,
       modules!module_id(module_name, section, module_number)
     `)
     .eq("id", testId)
@@ -86,9 +86,9 @@ async function getTestInfo(testId: string, studentId: string) {
     scopeToStudentQuestionSet(
       db
         .from("questions")
-        .select("id", { count: "exact", head: true })
-        .eq("module_id", moduleId),
+        .select("id", { count: "exact", head: true }),
       test,
+      moduleId,
     );
   const [{ count: m1Count }, { count: m2Count }] = await Promise.all([
     m1ModuleId ? countQuestions(m1ModuleId) : Promise.resolve({ count: 0 }),

@@ -59,9 +59,9 @@ async function getReviewData(testId: string, studentId: string) {
       .from("questions")
       .select(
         "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
-      )
-      .in("module_id", moduleIds),
+      ),
     parts[0]?.test ?? test,
+    moduleIds,
   ).order("original_question_number", { ascending: true });
 
   const { data: rawQuestions } = await qquery;

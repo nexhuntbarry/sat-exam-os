@@ -105,9 +105,9 @@ export default async function PrintTestPage({
         scopeToStudentQuestionSet(
           db
             .from("questions")
-            .select("id, original_question_number, question_text, choices, question_type, image_urls, correct_answer")
-            .eq("module_id", slot.moduleId),
+            .select("id, original_question_number, question_text, choices, question_type, image_urls, correct_answer"),
           part.test,
+          slot.moduleId,
         ).order("original_question_number", { ascending: true }),
       ]);
       modules.push({

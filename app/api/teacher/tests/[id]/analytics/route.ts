@@ -104,9 +104,9 @@ export async function GET(
       const { data } = await scopeToStudentQuestionSet(
         db
           .from("questions")
-          .select("id, original_question_number, question_text, correct_answer, difficulty, domain")
-          .eq("module_id", slot.moduleId),
+          .select("id, original_question_number, question_text, correct_answer, difficulty, domain"),
         test,
+        slot.moduleId,
       ).order("original_question_number", { ascending: true });
       return data ?? [];
     }),
