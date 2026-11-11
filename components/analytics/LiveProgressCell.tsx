@@ -71,9 +71,15 @@ export function LiveProgressProvider({
   }, [initial]);
 
   const anyoneLive = Object.keys(snapshot.live).length > 0 || snapshot.counts.inProgress > 0;
-  // Every 20 s while someone is taking the test; once a minute while
-  // nobody is yet but someone hasn't started (so a class start shows up).
-  const pollMs = anyoneLive ? LIVE_POLL_MS : snapshot.counts.notStarted > 0 ? WAITING_POLL_MS : null;
+  // Every 20 s while someone is taking the test (or the page's own load
+  // failed); once a minute while nobody is yet but someone hasn't started
+  // and the test still takes starts (so a class start shows up).
+  const pollMs =
+    anyoneLive || snapshot.degraded
+      ? LIVE_POLL_MS
+      : snapshot.counts.notStarted > 0 && snapshot.acceptingStarts
+      ? WAITING_POLL_MS
+      : null;
   const polling = anyoneLive && visible;
   const receivedAtRef = useRef(receivedAt);
   receivedAtRef.current = receivedAt;
@@ -136,6 +142,9 @@ export function LiveStatusBar({ className }: { className?: string }) {
   const live = useLive();
   if (!live) return null;
   const { snapshot, receivedAt, now, polling, failed } = live;
+  if (snapshot.degraded) {
+    return <div className={cn("text-sm text-soft-mute", className)}>Live progress unavailable right now — retrying…</div>;
+  }
   const anyoneLive = Object.keys(snapshot.live).length > 0;
   return (
     <div className={cn("flex flex-wrap items-center gap-x-4 gap-y-1 text-sm", className)}>

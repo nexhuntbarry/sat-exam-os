@@ -29,14 +29,21 @@ import {
   type QuestionSetScope,
 } from "@/lib/student-exam";
 import { tabSwitchTotal } from "@/lib/tab-switches";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import {
   answeredCount,
+  emptyLiveSnapshot,
   questionNumberOf,
   summarizeCounts,
   type LiveProgress,
   type LiveSnapshot,
   type NotStartedStudent,
 } from "@/lib/live-progress-shared";
+
+/** Ids per `.in(...)` filter, so the request URL stays short. */
+const ID_CHUNK = 150;
+/** Not-started students stop being polled for this long after the due date. */
+const STARTS_GRACE_MS = 24 * 3600_000;
 
 export interface LiveScope {
   /** The test the page shows (a full-length parent or any other test). */
@@ -102,34 +109,52 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
   const now = Date.now();
   const generatedAt = new Date(now).toISOString();
   const allow = scope.studentIds ?? null;
-  const empty: LiveSnapshot = { generatedAt, live: {}, counts: { submitted: 0, inProgress: 0, notStarted: 0 }, notStarted: [] };
-  if (allow && allow.size === 0) return empty;
+  if (allow && allow.size === 0) return emptyLiveSnapshot(generatedAt);
 
   const links = await fullLengthLinksOrNone(db);
   const kids = links.childrenOf.get(scope.testId) ?? null;
   const testIds = kids ? [kids.rw, kids.math].filter((x): x is string => Boolean(x)) : [scope.testId];
   const flScope = scope.flScope ?? FL_ALL_SECTIONS;
 
-  let q = scopeUsers(
-    db
-      .from("submissions")
-      .select(
-        "id, test_id, student_id, status, started_at, submitted_at, attempt_number, session_id, adaptive_track, " +
-          "score, correct_count, total_questions, percentage, tab_switches:metadata->tab_switches, users!inner(email)",
-      )
-      .in("test_id", testIds),
-    scope.viewerIsQa,
-    "users.email",
-  );
-  if (allow) q = q.in("student_id", Array.from(allow));
-  const { data: rawRows, error } = await q;
-  if (error) throw new Error(`live progress: submissions lookup failed: ${error.message}`);
-  const rows = (rawRows ?? []) as unknown as LightRow[];
+  // Paged (PostgREST caps a response at 1000 rows) and, with a student
+  // scope, chunked so the id list can't overflow the request URL.
+  const lightRows = async (studentIds: string[] | null): Promise<LightRow[]> => {
+    const { data, error } = await fetchAllRows<LightRow>((from, to) => {
+      let q = scopeUsers(
+        db
+          .from("submissions")
+          .select(
+            "id, test_id, student_id, status, started_at, submitted_at, attempt_number, session_id, adaptive_track, " +
+              "score, correct_count, total_questions, percentage, tab_switches:metadata->tab_switches, users!inner(email)",
+          )
+          .in("test_id", testIds),
+        scope.viewerIsQa,
+        "users.email",
+      );
+      if (studentIds) q = q.in("student_id", studentIds);
+      return q.order("id").range(from, to) as unknown as PromiseLike<{ data: LightRow[] | null; error: unknown }>;
+    });
+    if (error) throw new Error(`live progress: submissions lookup failed: ${(error as { message?: string }).message ?? error}`);
+    return data;
+  };
+  const rows: LightRow[] = [];
+  if (allow) {
+    const ids = Array.from(allow);
+    for (let i = 0; i < ids.length; i += ID_CHUNK) rows.push(...(await lightRows(ids.slice(i, i + ID_CHUNK))));
+  } else {
+    rows.push(...(await lightRows(null)));
+  }
+
+  // Whether students may still start (drives the slow not-started poll).
+  const { data: testRow } = await db.from("tests").select("status, due_date").eq("id", scope.testId).maybeSingle();
+  const dueMs = testRow?.due_date ? Date.parse(testRow.due_date as string) : NaN;
+  const acceptingStarts =
+    !!testRow && testRow.status !== "Closed" && !(Number.isFinite(dueMs) && now - dueMs > STARTS_GRACE_MS);
 
   // Heavy columns only for the modules being taken right now.
   const openIds = rows.filter((r) => r.status === "In Progress").map((r) => r.id);
   const openById = new Map<string, OpenRow>();
-  if (openIds.length > 0) {
+  for (let i = 0; i < openIds.length; i += ID_CHUNK) {
     const { data: open, error: openError } = await db
       .from("submissions")
       .select(
@@ -138,7 +163,7 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
           "module_2_started_at:metadata->>module_2_started_at, time_multiplier:metadata->time_multiplier, " +
           "tests!inner(time_limit_minutes, time_limit_minutes_module_2, is_untimed, is_adaptive, question_ids, module_id, module_2_id)",
       )
-      .in("id", openIds);
+      .in("id", openIds.slice(i, i + ID_CHUNK));
     if (openError) throw new Error(`live progress: open modules lookup failed: ${openError.message}`);
     for (const r of (open ?? []) as unknown as OpenRow[]) openById.set(r.id, r);
   }
@@ -285,9 +310,14 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
   if (missing.length > 0) {
     // Chunked: a big roster's id list would overflow the request URL.
     const users: { id: string; display_name: string | null; email: string }[] = [];
-    for (let i = 0; i < missing.length; i += 150) {
+    for (let i = 0; i < missing.length; i += ID_CHUNK) {
+      // Only active accounts: pending / suspended students can't start anyway.
       const { data, error: usersError } = await scopeUsers(
-        db.from("users").select("id, display_name, email").in("id", missing.slice(i, i + 150)),
+        db
+          .from("users")
+          .select("id, display_name, email")
+          .eq("account_status", "approved")
+          .in("id", missing.slice(i, i + ID_CHUNK)),
         scope.viewerIsQa,
       );
       if (usersError) throw new Error(`live progress: users lookup failed: ${usersError.message}`);
@@ -301,9 +331,10 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
   return {
     generatedAt,
     live,
-    // Not started = assigned and on the viewer's side with a users row.
+    // Not started = assigned, on the viewer's side, active account.
     counts: summarizeCounts(attempts, notStarted.map((s) => s.studentId)),
     notStarted,
+    acceptingStarts,
   };
 }
 

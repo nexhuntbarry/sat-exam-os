@@ -78,8 +78,17 @@ export interface LiveSnapshot {
   /** Unfinished attempts by attempt key. */
   live: Record<string, LiveProgress>;
   counts: LiveCounts;
-  /** Assigned students without any submission. */
+  /** Assigned students (active accounts) without any submission. */
   notStarted: NotStartedStudent[];
+  /** Test still open for starts (not Closed, due date not >24 h past): keep the slow not-started poll. */
+  acceptingStarts: boolean;
+  /** The page couldn't load the snapshot and shows an empty one; the client keeps polling until it can. */
+  degraded?: boolean;
+}
+
+/** Nothing to show (also the fallback when the loader fails; the page's polling then retries). */
+export function emptyLiveSnapshot(generatedAt = new Date().toISOString()): LiveSnapshot {
+  return { generatedAt, live: {}, counts: { submitted: 0, inProgress: 0, notStarted: 0 }, notStarted: [], acceptingStarts: false };
 }
 
 export type ConnectionKind = "active" | "idle" | "offline" | "unknown";

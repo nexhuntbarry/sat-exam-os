@@ -17,7 +17,7 @@ import { X, Eye } from "lucide-react";
 import { tabSwitchTotal } from "@/lib/tab-switches";
 import { TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
 import { loadLiveSnapshot } from "@/lib/live-progress";
-import { submittedColumnText } from "@/lib/live-progress-shared";
+import { emptyLiveSnapshot, submittedColumnText, type LiveSnapshot } from "@/lib/live-progress-shared";
 import {
   LiveProgressCell,
   LiveProgressProvider,
@@ -143,10 +143,15 @@ export default async function TestSubmissionsPage({
   const { test, submissions, pendingByStudent, classFilterName, classFilterId, classFilterStudentIds, flLinks, flKids, flMeta } = data;
   // Live progress of unfinished attempts + the not-started roster, kept
   // current on the client by polling the same loader's endpoint.
-  const liveSnapshot = await loadLiveSnapshot(getServiceClient(), {
+  // A failure here must not take the page down: render without live data
+  // and let the client poll until the endpoint answers.
+  const liveSnapshot: LiveSnapshot = await loadLiveSnapshot(getServiceClient(), {
     testId: test.id,
     viewerIsQa: user.isQa,
     studentIds: classFilterStudentIds,
+  }).catch((e) => {
+    console.error("[admin/tests/submissions] live snapshot", e);
+    return { ...emptyLiveSnapshot(), degraded: true };
   });
   const liveEndpoint = `/api/admin/tests/${test.id}/live-progress${classFilterStudentIds && classFilterId ? `?class=${encodeURIComponent(classFilterId)}` : ""}`;
 

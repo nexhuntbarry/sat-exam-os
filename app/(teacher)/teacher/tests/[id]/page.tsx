@@ -22,7 +22,7 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { tabSwitchTotal } from "@/lib/tab-switches";
 import { TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
 import { loadLiveSnapshot } from "@/lib/live-progress";
-import { submittedColumnText } from "@/lib/live-progress-shared";
+import { emptyLiveSnapshot, submittedColumnText, type LiveSnapshot } from "@/lib/live-progress-shared";
 import {
   LiveProgressCell,
   LiveProgressProvider,
@@ -101,12 +101,16 @@ async function getTeacherTest(
     flMeta: isFullLength ? await loadFlAttemptMeta(db, [testId]) : new Map<string, FlAttemptMeta>(),
     flScope,
     // Live progress of unfinished attempts + not-started roster (same scope).
-    liveSnapshot: await loadLiveSnapshot(db, {
+    // A failure renders the page without it; the client polls until it loads.
+    liveSnapshot: (await loadLiveSnapshot(db, {
       testId,
       viewerIsQa: user.isQa,
       studentIds: access.mode === "class" ? access.studentAllowlist : null,
       flScope,
-    }),
+    }).catch((e) => {
+      console.error("[teacher/tests] live snapshot", e);
+      return { ...emptyLiveSnapshot(), degraded: true };
+    })) as LiveSnapshot,
     section: (await getTestSections(db, [testId])).get(testId) ?? null,
     studentIds,
     submissions: submissions ?? [],

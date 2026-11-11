@@ -266,8 +266,9 @@ export async function PATCH(
     const version = typeof savedMeta.answers_version === "number" ? savedMeta.answers_version : 0;
 
     if (keepaliveOnly) {
-      // One best-effort write, never retried and never an error to the
-      // client. It does NOT bump answers_version, so a concurrent save's
+      // One best-effort write, never retried; its own failure is only
+      // logged (the checks above still answer 400/404/409/500 like any
+      // save, which tells the take page to stop). It does NOT bump answers_version, so a concurrent save's
       // optimistic guard is unaffected; and it only lands while the row is
       // exactly as read (same version, same attempt start, still In
       // Progress) — any save / reset / submit in between turns it into a
@@ -305,6 +306,13 @@ export async function PATCH(
     }
 
     const nowIso = new Date().toISOString();
+    // "Active" = the student did something: answered, flagged / crossed
+    // out / highlighted, or moved to another question. A tab-switch-only
+    // save still counts as contact (last_seen_at) but not as activity.
+    const activeChange =
+      (body.answers != null && Object.keys(body.answers).length > 0) ||
+      (body.questionMeta != null && typeof body.questionMeta === "object" && Object.keys(body.questionMeta).length > 0) ||
+      (clientMetadata != null && "current_index" in clientMetadata && clientMetadata.current_index !== savedMeta.current_index);
     const updates: Record<string, unknown> = {};
     if (body.answers !== undefined) {
       const patch = body.answers as Record<string, string | null>;
@@ -325,7 +333,7 @@ export async function PATCH(
       // Live progress (lib/live-progress-shared): server-stamped liveness,
       // part of this same guarded write — no extra query, cannot fail alone.
       last_seen_at: nowIso,
-      last_active_at: nowIso,
+      ...(activeChange ? { last_active_at: nowIso } : {}),
       ...(clientId && clientSeq != null
         ? { client_save_seq: { ...seqByClient, [clientId]: clientSeq } }
         : {}),
