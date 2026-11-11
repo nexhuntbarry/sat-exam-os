@@ -8,6 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { tabSwitchTotal } from "@/lib/tab-switches";
 import type { FullLengthChildren } from "@/lib/full-length";
 import type { FullLengthResultRow } from "@/components/analytics/FullLengthResultsTable";
 import {
@@ -40,6 +41,8 @@ export type FlResultRow = FlScoreRow & {
   adaptive_track: string | null;
   started_at: string | null;
   module_id: string | null;
+  /** metadata.tab_switches of the module row (lib/tab-switches). */
+  tab_switches?: unknown;
   users: {
     display_name: string | null;
     email: string;
@@ -64,6 +67,8 @@ export interface FlResultAttempt {
   timeSeconds: number | null;
   /** Extended-time multiplier of the attempt (1 = none). */
   multiplier: number;
+  /** Times the student left the exam tab, both sections (whole attempt). */
+  tabSwitches: number | null;
 }
 
 const byModule = (a: { adaptive_track: string | null }, b: { adaptive_track: string | null }) =>
@@ -90,6 +95,7 @@ export async function loadFullLengthResults(
       .select(`
         id, test_id, student_id, status, correct_count, total_questions, percentage,
         submitted_at, time_spent_seconds, attempt_number, session_id, adaptive_track, started_at, module_id,
+        tab_switches:metadata->tab_switches,
         users!inner(display_name, email, student_profiles(grade))
       `)
       .in("test_id", childIds);
@@ -135,6 +141,7 @@ export async function loadFullLengthResults(
       submittedAt: lastSubmittedAt(both),
       timeSeconds: timeSpentSeconds(both),
       multiplier: Number.isFinite(mult) && mult > 0 ? mult : 1,
+      tabSwitches: tabSwitchTotal(both),
     });
   }
   out.sort((a, b) => {
@@ -201,6 +208,9 @@ export function fullLengthTableRows(
       timeSpentSeconds: a.timeSeconds,
       submittedAt: a.submittedAt,
       retakePending: opts.retakePending.has(a.studentId),
+      // Whole attempt, also for a single-subject teacher: it says nothing
+      // about the hidden section's answers.
+      tabSwitches: a.tabSwitches,
     };
   });
 }

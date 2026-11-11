@@ -6,6 +6,7 @@ import { forbidCrossSide } from "@/lib/qa";
 import { parseActivity, summarizeActivity } from "@/lib/question-activity";
 import { studentClassNames } from "@/lib/result-printout";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { tabSwitchTotal } from "@/lib/tab-switches";
 import { flSectionScope, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey } from "@/lib/full-length-score";
 import { sectionDetailRowId } from "@/lib/full-length-results";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
@@ -325,6 +326,8 @@ export async function GET(
     rwSat: number | null;
     mathSat: number | null;
     other: { label: string; href: string | null };
+    /** Times the student left the exam tab across both sections. */
+    tabSwitches: number | null;
   } | null = null;
   const flLinks = await fullLengthLinksOrNone(db);
   const parentId = flLinks.parentOf.get(testId);
@@ -336,14 +339,14 @@ export async function GET(
       db.from("tests").select("test_name").eq("id", parentId).maybeSingle(),
       db
         .from("submissions")
-        .select("id, test_id, student_id, status, adaptive_track, session_id, started_at, correct_count, total_questions, attempt_number")
+        .select("id, test_id, student_id, status, adaptive_track, session_id, started_at, correct_count, total_questions, attempt_number, tab_switches:metadata->tab_switches")
         .in("test_id", [kids.rw, kids.math].filter((x): x is string => Boolean(x)))
         .eq("student_id", studentId)
         .eq("attempt_number", n),
       loadFlAttemptMeta(db, [parentId], studentId),
       flSectionScope(db, user, kids),
     ]);
-    type R = { id: string; test_id: string; student_id: string; status: string; adaptive_track: string | null; started_at: string | null };
+    type R = { id: string; test_id: string; student_id: string; status: string; adaptive_track: string | null; started_at: string | null; tab_switches: unknown };
     const rows = (attemptRows ?? []) as R[];
     const rwRows = rows.filter((r) => r.test_id === kids.rw);
     const mathRows = rows.filter((r) => r.test_id === kids.math);
@@ -364,6 +367,8 @@ export async function GET(
         label: section === "rw" ? "Math" : "Reading and Writing",
         href: otherVisible && otherId && otherRow ? `/teacher/tests/${otherId}/results/${otherRow}` : null,
       },
+      // Whole attempt is fine for a single-subject teacher (no answers).
+      tabSwitches: tabSwitchTotal(rows),
     };
   }
 
@@ -390,6 +395,8 @@ export async function GET(
       scaledScore: isMultiModule ? combinedScaled : submission.scaled_score ?? null,
       scaledSection: submission.scaled_section ?? null,
       isMultiModule,
+      // This section / test, every module of the session.
+      tabSwitches: tabSwitchTotal(siblings.map((s) => ({ tab_switches: s.metadata?.tab_switches }))),
     },
     answers: flatAnswers,
     modules,

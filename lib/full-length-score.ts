@@ -443,7 +443,7 @@ export function flCsvHeader(scope: FlSectionScope, questions: FlCsvQuestion[]): 
     ...(scope.math ? ["Math (200–800)"] : []),
     ...(scope.rw ? ["R&W M1 Correct", "R&W M2 Correct", "R&W M2 Track"] : []),
     ...(scope.math ? ["Math M1 Correct", "Math M2 Correct", "Math M2 Track"] : []),
-    "Extended Time", "Time Spent", "Submitted At",
+    "Extended Time", "Time Spent", "Left Tab", "Submitted At",
     ...questions.filter((q) => scope[q.section]).map((q) => q.header),
   ];
 }
@@ -457,6 +457,8 @@ export interface FlCsvInput {
   score: FullLengthScore;
   multiplier: number | null;
   timeSeconds: number | null;
+  /** Times the student left the exam tab, whole attempt (null = not recorded). */
+  tabSwitches?: number | null;
   submittedAt: string | null;
   /** The attempt's submission row ids. */
   rowIds: string[];
@@ -485,6 +487,7 @@ export function flCsvRow(input: FlCsvInput, scope: FlSectionScope, questions: Fl
     ...(scope.math ? sectionCells(s.math, s.mathTrack) : []),
     input.multiplier && input.multiplier > 1 ? `×${input.multiplier}` : "",
     t != null ? `${Math.floor(t / 60)}m ${t % 60}s` : "",
+    input.tabSwitches ?? "",
     input.submittedAt ? new Date(input.submittedAt).toISOString() : "",
     ...questions
       .filter((q) => scope[q.section])

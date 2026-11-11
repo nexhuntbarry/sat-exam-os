@@ -7,6 +7,7 @@ import type { ScoreDisplay } from "@/lib/score-display";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate } from "@/lib/datetime";
+import { TabSwitchCount, TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
 import {
   DataTable,
   HeadRow,
@@ -53,6 +54,8 @@ export interface FullLengthResultRow {
   timeSpentSeconds: number | null;
   submittedAt: string | null;
   retakePending: boolean;
+  /** Times the student left the exam tab, whole attempt. */
+  tabSwitches: number | null;
 }
 
 function fmtTime(s: number | null) {
@@ -95,7 +98,7 @@ export function FullLengthResultsTable({
     [rows],
   );
   const shown = rows.filter((r) => statusFilter === "all" || (r.statusLabel ?? r.status) === statusFilter);
-  const colCount = 4 + (scope.rw ? 3 : 0) + (scope.math ? 3 : 0) + 1;
+  const colCount = 5 + (scope.rw ? 3 : 0) + (scope.math ? 3 : 0) + 1;
   const selectCls = "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
   return (
@@ -123,6 +126,7 @@ export function FullLengthResultsTable({
             {scope.rw && <Th priority="md">R&amp;W M2</Th>}
             {scope.math && <Th priority="md">Math M1</Th>}
             {scope.math && <Th priority="md">Math M2</Th>}
+            <Th priority="md"><TabSwitchHeader /></Th>
             <Th priority="lg">Submitted</Th>
             <Th kind="actions" sticky="right"><span className="sr-only">Action</span></Th>
           </HeadRow>
@@ -160,6 +164,7 @@ export function FullLengthResultsTable({
                 {scope.rw && <Td priority="md" className="text-mid-gray whitespace-nowrap">{withTrack(row.rwM2 || "—", row.rwTrack)}</Td>}
                 {scope.math && <Td priority="md" className="text-mid-gray whitespace-nowrap">{row.mathM1 || "—"}</Td>}
                 {scope.math && <Td priority="md" className="text-mid-gray whitespace-nowrap">{withTrack(row.mathM2 || "—", row.mathTrack)}</Td>}
+                <Td priority="md" className="whitespace-nowrap"><TabSwitchCount count={row.tabSwitches} /></Td>
                 <Td priority="lg" className="text-soft-mute whitespace-nowrap">
                   {row.submittedAt
                     ? <span title={`${formatDateTime(row.submittedAt)} · ${fmtTime(row.timeSpentSeconds)}`}>{formatShortDate(row.submittedAt)}</span>

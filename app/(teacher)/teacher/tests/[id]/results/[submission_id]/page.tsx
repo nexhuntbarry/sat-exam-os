@@ -9,6 +9,8 @@ import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel"
 import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
 import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { TabSwitchCount } from "@/components/analytics/TabSwitchCount";
+import { TAB_SWITCH_HELP } from "@/lib/tab-switches";
 
 interface StudentInfo {
   name: string;
@@ -32,6 +34,8 @@ interface SubmissionInfo {
   scaledScore: number | null;
   scaledSection: string | null;
   isMultiModule: boolean;
+  /** Times the student left the exam tab (this test / section). */
+  tabSwitches: number | null;
 }
 
 interface ModuleBreakdown {
@@ -56,6 +60,8 @@ interface FullLengthInfo {
   rwSat: number | null;
   mathSat: number | null;
   other: { label: string; href: string | null };
+  /** Times the student left the exam tab across both sections. */
+  tabSwitches: number | null;
 }
 
 interface DetailData {
@@ -300,6 +306,12 @@ export default function SubmissionDetailPage() {
               {formatDateTime(submission.submittedAt)}
             </div>
           )}
+          <div className="text-xs mt-1 text-soft-mute" title={TAB_SWITCH_HELP}>
+            Left tab: <TabSwitchCount count={submission.tabSwitches} />
+            {data.fullLength && data.fullLength.tabSwitches != null && data.fullLength.tabSwitches !== submission.tabSwitches && (
+              <> (<TabSwitchCount count={data.fullLength.tabSwitches} /> in the full test)</>
+            )}
+          </div>
         </div>
       </div>
 

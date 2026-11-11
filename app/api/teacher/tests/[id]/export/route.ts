@@ -10,6 +10,7 @@ import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
 import { flCsvHeader, flCsvOrder, flCsvQuestionColumns, flCsvRow, flSectionScope } from "@/lib/full-length-score";
 import { orderToQuestionIds, questionIdsSpanModules, STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import { loadFullLengthResults } from "@/lib/full-length-results";
+import { tabSwitchTotal } from "@/lib/tab-switches";
 
 // GET /api/teacher/tests/[id]/export
 // CSV of student results, one row per attempt (module rows of a
@@ -116,7 +117,7 @@ export async function GET(
     .select(`
       id, student_id, status, correct_count, total_questions, percentage,
       scaled_score, submitted_at, time_spent_seconds, attempt_number,
-      session_id, adaptive_track,
+      session_id, adaptive_track, tab_switches:metadata->tab_switches,
       users!inner(display_name, email, student_profiles(grade))
     `)
     .eq("test_id", testId)
@@ -147,6 +148,7 @@ export async function GET(
     attempt_number: number | null;
     session_id: string | null;
     adaptive_track: string | null;
+    tab_switches: unknown;
     users: {
       display_name: string;
       email: string;
@@ -210,7 +212,7 @@ export async function GET(
     csvRow([
       "Student", "Email", "Grade", "Class", "Attempt", "Status", "SAT Score",
       ...(twoModules ? ["M1 Correct", "M2 Correct"] : ["Correct"]),
-      "% Correct", "Time Spent", "Submitted At", ...qHeaders,
+      "% Correct", "Time Spent", "Left Tab", "Submitted At", ...qHeaders,
     ]),
   ];
 
@@ -246,6 +248,7 @@ export async function GET(
       ...moduleCells,
       score?.pct ?? "",
       sorted.some((r) => r.time_spent_seconds != null) ? `${Math.floor(time / 60)}m ${time % 60}s` : "",
+      tabSwitchTotal(sorted) ?? "",
       submittedAt ? new Date(submittedAt).toISOString() : "",
       ...questionList.map((q) => {
         for (const r of sorted) {
@@ -403,6 +406,7 @@ async function fullLengthCsv(
             score: a.score,
             multiplier: a.multiplier,
             timeSeconds: a.timeSeconds,
+            tabSwitches: a.tabSwitches,
             submittedAt: a.submittedAt,
             rowIds: [...a.rw, ...a.math].map((r) => r.id),
             answers: answerMap,

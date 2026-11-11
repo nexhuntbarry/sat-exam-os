@@ -17,6 +17,7 @@ import { averageFullLength, flFinished, flSectionScope } from "@/lib/full-length
 import { fullLengthTableRows, loadFullLengthResults } from "@/lib/full-length-results";
 import { studentClassNames } from "@/lib/result-printout";
 import { FullLengthResultsTable } from "@/components/analytics/FullLengthResultsTable";
+import { tabSwitchTotal } from "@/lib/tab-switches";
 
 async function getResultsData(testId: string, userId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
@@ -55,6 +56,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, attempt_number,
       scaled_score, scaled_section, session_id, adaptive_track,
+      tab_switches:metadata->tab_switches,
       users!inner(display_name, email, student_profiles(grade, class_group))
     `)
     .eq("test_id", testId), isQa, "users.email")
@@ -80,6 +82,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     scaled_section: string | null;
     session_id: string | null;
     adaptive_track: string | null;
+    tab_switches: unknown;
     users: {
       display_name: string;
       email: string;
@@ -152,6 +155,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
           .sort()
           .pop() ?? null,
       retakePending: pendingSet.has(head.student_id),
+      tabSwitches: tabSwitchTotal(sorted),
     });
   }
 
