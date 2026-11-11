@@ -1,24 +1,14 @@
 import { getServiceClient } from "@/lib/supabase";
-import { childTestIds, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
-import {
-  flFinished,
-  fullLengthAttemptScore,
-  groupFullLengthAttempts,
-  latestFlAttemptGroups,
-  listedTestId,
-  loadFlAttemptMeta,
-  type FlScoreRow,
-} from "@/lib/full-length-score";
+import { childTestIds, fullLengthLinksOrNone } from "@/lib/full-length";
 import { notFound } from "next/navigation";
 import ClassDetailClient from "./ClassDetailClient";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide, scopeUsers } from "@/lib/qa";
 import type { AssignedTest } from "./ClassDetailClient";
 import type { AvailableTest } from "./AssignTestButton";
-import { studentTestProgress, summarizeTestProgress, type ProgressSubmission } from "@/lib/test-progress";
-import { averageSat, scoreDisplay } from "@/lib/score-display";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { loadClassGradebook } from "@/lib/class-gradebook";
+import type { Gradebook } from "@/lib/class-gradebook-view";
 
 async function getClassGroup(id: string) {
   const db = getServiceClient();
@@ -165,21 +155,21 @@ async function getLinkedTests(classGroupId: string) {
   });
 }
 
-// Full test cards with per-class progress for the "Assigned Tests" section.
-// Uses summarizeTestProgress (same logic as the test detail page) so two-module
-// tests and retakes are handled correctly: each student counts once, only when
-// their latest attempt has every module graded.
+// Test cards for the "Assigned Tests" section. Progress ("x/y submitted ·
+// Avg SAT") is read from the Scores gradebook's columns, so the two always
+// agree: each student counts once, with their latest finished attempt
+// (a retake in progress keeps the earlier score), full-length SATs by
+// their 400–1600 total. `gradebook` null (it failed to load) = progress
+// unknown.
 async function getAssignedTests(
   classGroupId: string,
-  memberStudentIds: string[],
   viewerIsQa: boolean,
+  gradebook: Gradebook | null,
 ): Promise<AssignedTest[]> {
   const db = getServiceClient();
   const { data, error } = await db
     .from("test_assignments")
-    .select(
-      "test_id, tests(id, test_name, open_date, due_date, status, module_2_id, is_adaptive, modules!module_id(section))",
-    )
+    .select("test_id, tests(id, test_name, open_date, due_date, status, modules!module_id(section))")
     .contains("class_group_ids", JSON.stringify([classGroupId]));
   if (error) console.error("[classes/assigned-tests] lookup error:", error);
 
@@ -190,33 +180,8 @@ async function getAssignedTests(
   const visibleRows = data.filter((row) => onSide(row.test_id as string, qaTestIds, viewerIsQa));
   if (visibleRows.length === 0) return [];
 
-  const testIds = visibleRows.map((r) => r.test_id as string);
-  // A full-length SAT's rows are on its two section children: read them
-  // too and count them under the parent (latest attempt per student).
   const flLinks = await fullLengthLinksOrNone(db);
-  const flMeta = await loadFlAttemptMeta(db, testIds.filter((tid) => flLinks.childrenOf.has(tid)));
-
-  // Fetch all submission rows for these tests scoped to this class's members.
-  // Include test_id so we can group, plus every field summarizeTestProgress needs.
-  const { data: allSubs } =
-    memberStudentIds.length > 0
-      ? await db
-          .from("submissions")
-          .select(
-            "id, test_id, student_id, status, session_id, adaptive_track, started_at, correct_count, total_questions, attempt_number",
-          )
-          .in("test_id", expandWithChildren(testIds, flLinks))
-          .in("student_id", memberStudentIds)
-      : { data: [] as (ProgressSubmission & { test_id: string })[] };
-
-  // Group by test_id.
-  const subsByTest = new Map<string, (ProgressSubmission & { test_id: string })[]>();
-  for (const s of allSubs ?? []) {
-    const tid = listedTestId((s as { test_id: string }).test_id, flLinks);
-    const list = subsByTest.get(tid) ?? [];
-    list.push(s as ProgressSubmission & { test_id: string });
-    subsByTest.set(tid, list);
-  }
+  const columnOf = new Map((gradebook?.columns ?? []).map((c) => [c.id, c]));
 
   return visibleRows.map((row) => {
     const t = Array.isArray(row.tests) ? row.tests[0] : row.tests;
@@ -225,68 +190,29 @@ async function getAssignedTests(
       open_date?: string | null;
       due_date?: string | null;
       status?: string;
-      module_2_id?: string | null;
-      is_adaptive?: boolean | null;
       modules?: { section?: string } | { section?: string }[] | null;
     };
     const tMeta = (t as TestMeta | null) ?? null;
     const mod = tMeta?.modules;
     const modObj = Array.isArray(mod) ? mod[0] : mod;
-    const section = (modObj as { section?: string } | null | undefined)?.section ?? null;
-    const twoModules = Boolean(tMeta?.module_2_id || tMeta?.is_adaptive);
-
-    const testSubs = subsByTest.get(row.test_id as string) ?? [];
-    if (flLinks.childrenOf.has(row.test_id as string)) {
-      // Full-length SAT: latest attempt per student, total 400–1600.
-      const scores = latestFlAttemptGroups(groupFullLengthAttempts(testSubs as FlScoreRow[], flLinks).attempts).map((g) =>
-        fullLengthAttemptScore(g.rw, g.math, flMeta.get(g.key)),
-      );
-      const done = scores.filter(flFinished);
-      const pcts = done.map((sc) => sc.score?.pct).filter((x): x is number => x != null);
-      return {
-        id: row.test_id as string,
-        name: tMeta?.test_name ?? "Untitled test",
-        section: "Full-length SAT",
-        openDate: tMeta?.open_date ?? null,
-        dueDate: tMeta?.due_date ?? null,
-        status: tMeta?.status ?? null,
-        submitted: done.length,
-        inProgress: scores.filter((sc) => sc.status === "In progress" || sc.status === "On break").length,
-        total: memberStudentIds.length,
-        avgScore: pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null,
-        avgSat: averageSat(done.map((sc) => sc.total)),
-      };
-    }
-    const progress = summarizeTestProgress(testSubs, memberStudentIds, twoModules);
-    // Avg SAT over finished students, same score display as the test page.
-    const byStudent = new Map<string, ProgressSubmission[]>();
-    for (const s of testSubs) byStudent.set(s.student_id, [...(byStudent.get(s.student_id) ?? []), s]);
-    const avgSat = averageSat(
-      Array.from(byStudent.values()).map((subs) => {
-        const p = studentTestProgress(subs, twoModules);
-        return p.status === "Submitted" ? scoreDisplay(p.modules, section)?.sat : null;
-      }),
-    );
-
-    // Count students with at least one In Progress submission for this test.
-    const inProgressStudents = new Set(
-      testSubs
-        .filter((s) => (s as { status: string }).status === "In Progress")
-        .map((s) => s.student_id),
-    ).size;
-
+    const fl = flLinks.childrenOf.has(row.test_id as string);
+    const col = columnOf.get(row.test_id as string);
     return {
       id: row.test_id as string,
       name: tMeta?.test_name ?? "Untitled test",
-      section,
+      section: fl ? "Full-length SAT" : ((modObj as { section?: string } | null | undefined)?.section ?? null),
       openDate: tMeta?.open_date ?? null,
       dueDate: tMeta?.due_date ?? null,
       status: tMeta?.status ?? null,
-      submitted: progress.finished,
-      inProgress: inProgressStudents,
-      total: memberStudentIds.length,
-      avgScore: progress.avgScore,
-      avgSat,
+      progress: gradebook
+        ? {
+            submitted: col?.submitted ?? 0,
+            inProgress: col?.inProgress ?? 0,
+            total: gradebook.rows.length,
+            avgScore: col?.avgPct ?? null,
+            avgSat: col?.avg ?? null,
+          }
+        : null,
     };
   });
 }
@@ -358,16 +284,18 @@ export default async function ClassDetailPage({
 
   if (!classGroup) notFound();
 
-  const memberStudentIds = members.map((m) => m.student_id);
-  const [assignedTests, gradebook] = await Promise.all([
-    getAssignedTests(id, memberStudentIds, isQa),
-    loadClassGradebook(getServiceClient(), {
-      classGroupId: id,
-      isQa,
-      subjects: null,
-      testHref: (testId) => `/admin/tests/${testId}/submissions?class=${id}`,
-    }),
-  ]);
+  // A failed gradebook read must not take the class page down: Scores
+  // shows a notice and Assigned Tests shows progress as unknown.
+  const gradebook = await loadClassGradebook(getServiceClient(), {
+    classGroupId: id,
+    isQa,
+    subjects: null,
+    testHref: (testId) => `/admin/tests/${testId}/submissions?class=${id}`,
+  }).catch((e) => {
+    console.error("[classes/gradebook] load failed:", e);
+    return null;
+  });
+  const assignedTests = await getAssignedTests(id, isQa, gradebook);
 
   return (
     <ClassDetailClient

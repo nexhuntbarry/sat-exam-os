@@ -2,16 +2,18 @@
 //
 // Pure scoring of the class gradebook: submission rows → one cell per
 // student × assigned test, column averages and each student's summary.
-// Every number comes from the shared score code, so a cell shows exactly
+// Every number comes from the shared score code, so a score shows exactly
 // what that test's Results page shows for the same attempt:
-//   - section test: the student's latest attempt (the session of their
-//     most recently started row, as studentTestProgress / the class page's
-//     "x/y submitted · Avg SAT" pick it), scored with attemptScore over
-//     that attempt's rows — the same call the Results page makes per row;
-//   - full-length SAT: the latest attempt (highest attempt number,
-//     latestFlAttemptGroups), fullLengthAttemptScore, then scopedFlScore
-//     for a single-subject teacher (total + their own section only).
-// Column averages use averageSat over finished cells, like Avg SAT.
+//   - section test: attempts = sessions, as the Results page groups them,
+//     each scored with attemptScore over its rows (the same call);
+//   - full-length SAT: attempts by attempt number, fullLengthAttemptScore,
+//     then scopedFlScore for a single-subject teacher (total + their own
+//     section only).
+// Which attempt: the latest one when finished; when the latest isn't
+// finished but an earlier one is, the latest FINISHED attempt with a
+// "retake in progress" note. Column averages, submitted counts, latest
+// Math / R&W and change all use that attempt; the class page's
+// "x/y submitted · Avg SAT" is read from these columns, so they agree.
 
 import { attemptScore, averageSat } from "@/lib/score-display";
 import {
@@ -19,7 +21,6 @@ import {
   fullLengthAttemptScore,
   groupFullLengthAttempts,
   lastSubmittedAt,
-  latestFlAttemptGroups,
   scopedFlScore,
   type FlAttemptMeta,
   type FlScoreRow,
@@ -80,11 +81,25 @@ export function kindOf(section: string | null, fullLength: boolean): GradebookKi
   return "other";
 }
 
-/** The latest attempt's rows: the session of the most recently started row (studentTestProgress's rule). */
+/**
+ * A student's attempts on a section test, newest first. One attempt = the
+ * rows of one session (a legacy row without a session is its own
+ * attempt), as the Results page groups them; the newest is the one with
+ * the most recently started row (studentTestProgress's "latest attempt").
+ */
+export function sectionAttempts<T extends GradebookSubRow>(rows: T[]): T[][] {
+  const groups = new Map<string, T[]>();
+  for (const r of rows) {
+    const k = r.session_id ?? `solo:${r.id}`;
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+  const startedOf = (g: T[]) => g.map((r) => r.started_at ?? "").sort().pop() ?? "";
+  return Array.from(groups.values()).sort((a, b) => startedOf(b).localeCompare(startedOf(a)));
+}
+
+/** The latest attempt's rows (studentTestProgress's rule). */
 export function latestAttemptRows<T extends GradebookSubRow>(rows: T[]): T[] {
-  if (rows.length === 0) return [];
-  const latest = [...rows].sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""))[0];
-  return latest.session_id ? rows.filter((r) => r.session_id === latest.session_id) : [latest];
+  return sectionAttempts(rows)[0] ?? [];
 }
 
 function openState(started: boolean, pastDue: boolean): CellState {
@@ -94,6 +109,7 @@ function openState(started: boolean, pastDue: boolean): CellState {
 
 const emptyCell = (state: CellState): GradebookCell => ({
   state,
+  statusLabel: null,
   sat: null,
   detail: null,
   late: false,
@@ -104,16 +120,26 @@ const emptyCell = (state: CellState): GradebookCell => ({
   attemptNumber: null,
   rw: null,
   math: null,
+  retake: null,
 });
 
-/** One student's cell on a section test. */
+/**
+ * One student's cell on a section test. Their latest attempt when it is
+ * finished; when it isn't but an earlier one is, the latest FINISHED
+ * attempt with a "retake in progress" note (never Late / Missing once a
+ * score exists); otherwise where the latest attempt stands.
+ */
 export function sectionCell(testId: string, section: string | null, rows: GradebookSubRow[], pastDue: boolean): GradebookCell {
-  const attempt = latestAttemptRows(rows);
-  if (attempt.length === 0) return emptyCell(openState(false, pastDue));
-  // Module 1 first: the Results page links the last (Module 2) row.
-  const sorted = [...attempt].sort((a, b) => moduleRank(a.adaptive_track) - moduleRank(b.adaptive_track));
-  const a = attemptScore(sorted, section);
-  if (a.status === "Submitted" || a.status === "Late") {
+  const attempts = sectionAttempts(rows).map((g) => {
+    // Module 1 first: the Results page links the last (Module 2) row.
+    const sorted = [...g].sort((a, b) => moduleRank(a.adaptive_track) - moduleRank(b.adaptive_track));
+    return { rows: sorted, score: attemptScore(sorted, section) };
+  });
+  if (attempts.length === 0) return emptyCell(openState(false, pastDue));
+  const latest = attempts[0];
+  const shown = attempts.find((a) => a.score.status === "Submitted" || a.score.status === "Late");
+  if (shown) {
+    const a = shown.score;
     return {
       ...emptyCell("scored"),
       sat: a.score?.sat ?? null,
@@ -121,14 +147,16 @@ export function sectionCell(testId: string, section: string | null, rows: Gradeb
       late: a.status === "Late",
       notes: a.score?.notes ?? [],
       pct: a.score?.pct ?? null,
-      href: `/teacher/tests/${testId}/results/${sorted[sorted.length - 1].id}`,
-      takenAt: lastSubmittedAt(sorted),
-      attemptNumber: sorted[0].attempt_number ?? 1,
+      href: `/teacher/tests/${testId}/results/${shown.rows[shown.rows.length - 1].id}`,
+      takenAt: lastSubmittedAt(shown.rows),
+      attemptNumber: shown.rows[0].attempt_number ?? 1,
+      retake: shown === latest ? null : { state: "in-progress", attemptNumber: latest.rows[0].attempt_number ?? null },
     };
   }
+  const a = latest.score;
   const cell = emptyCell(openState(a.status === "In progress", pastDue));
   // An unfinished attempt keeps its module counts ("M1 20/27 · M2 —").
-  return a.status === "In progress" ? { ...cell, detail: a.score?.modules ?? null, attemptNumber: sorted[0].attempt_number ?? 1 } : cell;
+  return a.status === "In progress" ? { ...cell, detail: a.score?.modules ?? null, attemptNumber: latest.rows[0].attempt_number ?? 1 } : cell;
 }
 
 /** Last graded row of a section (the row its "View results" link opens). */
@@ -137,19 +165,33 @@ function lastGradedRowId(rows: GradebookSubRow[]): string | null {
   return graded[graded.length - 1]?.id ?? null;
 }
 
-/** One student's cell on a full-length SAT (latest attempt). */
+export type FlGroup = { rw: GradebookSubRow[]; math: GradebookSubRow[]; attemptNumber: number; key: string };
+
+const isClosed = (status: string) => status === "Closed" || status === "Closed — Math not taken";
+
+/**
+ * One student's cell on a full-length SAT, from all their attempts on it:
+ * the latest attempt (highest attempt number) when finished, else the
+ * latest finished one with a retake note (in progress, or closed), else
+ * where the latest attempt stands.
+ */
 export function fullLengthCell(
   children: FullLengthChildren,
-  group: { rw: GradebookSubRow[]; math: GradebookSubRow[]; attemptNumber: number } | null,
-  meta: FlAttemptMeta | null,
+  groups: FlGroup[],
+  meta: Map<string, FlAttemptMeta>,
   scope: FlSectionScope,
   pastDue: boolean,
 ): GradebookCell {
-  if (!group) return emptyCell(openState(false, pastDue));
-  const s = scopedFlScore(fullLengthAttemptScore(group.rw, group.math, meta), scope);
-  if (flFinished(s)) {
+  const scored = [...groups]
+    .sort((a, b) => b.attemptNumber - a.attemptNumber)
+    .map((g) => ({ g, s: scopedFlScore(fullLengthAttemptScore(g.rw, g.math, meta.get(g.key) ?? null), scope) }));
+  if (scored.length === 0) return emptyCell(openState(false, pastDue));
+  const latest = scored[0];
+  const shown = scored.find((x) => flFinished(x.s));
+  if (shown) {
+    const { g, s } = shown;
     // Open the first section this viewer may see.
-    const [childId, rows] = scope.rw ? [children.rw, group.rw] : [children.math, group.math];
+    const [childId, rows] = scope.rw ? [children.rw, g.rw] : [children.math, g.math];
     const rowId = childId ? lastGradedRowId(rows) : null;
     return {
       ...emptyCell("scored"),
@@ -157,19 +199,23 @@ export function fullLengthCell(
       detail: s.score?.modules ?? null,
       late: s.status === "Late",
       notes: s.score?.notes ?? [],
+      pct: s.score?.pct ?? null,
       href: rowId ? `/teacher/tests/${childId}/results/${rowId}` : null,
-      takenAt: lastSubmittedAt([...group.rw, ...group.math]),
-      attemptNumber: group.attemptNumber,
+      takenAt: lastSubmittedAt([...g.rw, ...g.math]),
+      attemptNumber: g.attemptNumber,
       rw: s.rw.score?.sat ?? null,
       math: s.math.score?.sat ?? null,
+      retake:
+        shown === latest ? null : { state: isClosed(latest.s.status) ? "closed" : "in-progress", attemptNumber: latest.g.attemptNumber },
     };
   }
-  if (s.status === "Closed" || s.status === "Closed — Math not taken") {
-    return { ...emptyCell("closed"), detail: s.score?.modules ?? null, attemptNumber: group.attemptNumber };
+  const s = latest.s;
+  if (isClosed(s.status)) {
+    return { ...emptyCell("closed"), statusLabel: s.status, detail: s.score?.modules ?? null, attemptNumber: latest.g.attemptNumber };
   }
   const started = s.status === "In progress" || s.status === "On break";
   const cell = emptyCell(openState(started, pastDue));
-  return started ? { ...cell, detail: s.score?.modules ?? null, attemptNumber: group.attemptNumber } : cell;
+  return started ? { ...cell, detail: s.score?.modules ?? null, attemptNumber: latest.g.attemptNumber } : cell;
 }
 
 /** Newest point first (by when it was taken, then by the column's date). */
@@ -181,7 +227,8 @@ function byNewest(a: ScorePoint & { order: string }, b: ScorePoint & { order: st
  * A student's summary over every column: latest Math / R&W (section tests
  * and the sections of a finished full-length SAT), est. total = the two
  * added, and the change of their most recent finished test vs their
- * previous one of the same subject.
+ * previous one of the same subject. Each cell counts with its shown
+ * (latest finished) attempt.
  */
 export function summarizeStudent(columns: GradebookColumn[], cells: Record<string, GradebookCell>): StudentSummary {
   type P = ScorePoint & { order: string; kind: GradebookKind };
@@ -222,14 +269,18 @@ export function shapeGradebook(input: ShapeGradebookInput): Gradebook {
   const studentIds = new Set(input.students.map((s) => s.id));
   const rows = input.rows.filter((r) => studentIds.has(r.student_id));
 
-  // Section rows: test → student → rows. Full-length rows: latest attempt per parent + student.
+  // Section rows: test → student → rows. Full-length rows: attempts per parent + student.
   const { attempts, rest } = groupFullLengthAttempts(rows, links);
   const sectionRows = new Map<string, GradebookSubRow[]>();
   for (const r of rest) {
     const k = `${r.test_id}:${r.student_id}`;
     sectionRows.set(k, [...(sectionRows.get(k) ?? []), r]);
   }
-  const flLatest = new Map(latestFlAttemptGroups(attempts).map((g) => [`${g.parentId}:${g.studentId}`, g]));
+  const flGroups = new Map<string, FlGroup[]>();
+  for (const g of attempts) {
+    const k = `${g.parentId}:${g.studentId}`;
+    flGroups.set(k, [...(flGroups.get(k) ?? []), g]);
+  }
 
   const dated = input.tests.map((t) => ({ t, date: t.dueDate ?? t.openDate ?? t.createdAt ?? null }));
   dated.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "") || a.t.name.localeCompare(b.t.name));
@@ -242,15 +293,13 @@ export function shapeGradebook(input: ShapeGradebookInput): Gradebook {
     const cells: GradebookCell[] = [];
     for (const s of input.students) {
       const cell = children
-        ? (() => {
-            const g = flLatest.get(`${t.id}:${s.id}`) ?? null;
-            return fullLengthCell(children, g, g ? input.flMeta.get(g.key) ?? null : null, scope, pastDue);
-          })()
+        ? fullLengthCell(children, flGroups.get(`${t.id}:${s.id}`) ?? [], input.flMeta, scope, pastDue)
         : sectionCell(t.id, t.section, sectionRows.get(`${t.id}:${s.id}`) ?? [], pastDue);
       cellsByStudent.get(s.id)![t.id] = cell;
       cells.push(cell);
     }
     const done = cells.filter((c) => c.state === "scored");
+    const pcts = done.map((c) => c.pct).filter((p): p is number => p != null);
     return {
       id: t.id,
       name: t.name,
@@ -261,7 +310,10 @@ export function shapeGradebook(input: ShapeGradebookInput): Gradebook {
       avg: averageSat(done.map((c) => c.sat)),
       avgRw: kind === "fl" && scope.rw ? averageSat(done.map((c) => c.rw)) : null,
       avgMath: kind === "fl" && scope.math ? averageSat(done.map((c) => c.math)) : null,
+      avgPct: pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null,
       scored: done.filter((c) => c.sat != null).length,
+      submitted: done.length,
+      inProgress: cells.filter((c) => c.state === "in-progress" || c.state === "late" || c.retake?.state === "in-progress").length,
     };
   });
 

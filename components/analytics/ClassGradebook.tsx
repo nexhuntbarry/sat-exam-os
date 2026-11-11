@@ -5,6 +5,7 @@ import { Download, Printer, Table2 } from "lucide-react";
 import GradebookTable, { GradebookLegend } from "@/components/analytics/GradebookTable";
 import {
   NO_FILTER,
+  effectiveSort,
   filterColumns,
   gradebookCsv,
   sortRows,
@@ -26,8 +27,26 @@ const SUBJECTS: { value: SubjectFilter; label: string }[] = [
 // "Scores" on a class page (admin and teacher): one row per student, one
 // column per assigned test, sortable and filterable on the client. Data
 // comes from lib/class-gradebook (server); CSV and Print use the view
-// on screen.
-export default function ClassGradebook({
+// on screen. `gradebook` null = the load failed (the rest of the page
+// still works).
+export default function ClassGradebook(props: { classId: string; className: string; gradebook: Gradebook | null }) {
+  if (!props.gradebook) {
+    return (
+      <section aria-labelledby="class-scores-heading">
+        <div className="flex items-center gap-2 mb-3">
+          <Table2 size={14} className="text-warm-coral-text" aria-hidden />
+          <h2 id="class-scores-heading" className="font-semibold text-charcoal">Scores</h2>
+        </div>
+        <p role="alert" className="rounded-2xl border border-dashed border-divider px-5 py-6 text-center text-mid-gray text-sm">
+          Scores couldn&rsquo;t load. Refresh to try again.
+        </p>
+      </section>
+    );
+  }
+  return <GradebookView {...props} gradebook={props.gradebook} />;
+}
+
+function GradebookView({
   classId,
   className,
   gradebook,
@@ -42,8 +61,8 @@ export default function ClassGradebook({
   const columns = useMemo(() => filterColumns(gradebook.columns, filter), [gradebook.columns, filter]);
   const rows = useMemo(() => {
     // Sorting by a column the filter hid falls back to name.
-    const key = sort.key.startsWith("test:") && !columns.some((c) => `test:${c.id}` === sort.key) ? "name" : sort.key;
-    return sortRows(gradebook.rows, key, key === sort.key ? sort.dir : "asc");
+    const s = effectiveSort(columns, sort.key, sort.dir);
+    return sortRows(gradebook.rows, s.key, s.dir);
   }, [gradebook.rows, columns, sort]);
 
   // Only the subjects this class has (a single-subject teacher sees theirs).
@@ -156,7 +175,7 @@ export default function ClassGradebook({
             <GradebookLegend />
           </div>
           <p className="mt-1 text-[11px] text-soft-mute">
-            Each cell is the student&rsquo;s latest attempt, scored as on the test&rsquo;s Results page. Click a score to open the result, or a test name for the test&rsquo;s results. Summary columns use every assigned test, whatever the filters.
+            Each cell is the student&rsquo;s latest finished attempt (scored as on the test&rsquo;s Results page), or where their latest attempt stands. Click a score to open the result, or a test name for the test&rsquo;s results. Summary columns use every assigned test, whatever the filters.
           </p>
         </>
       )}

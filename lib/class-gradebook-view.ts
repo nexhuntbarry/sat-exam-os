@@ -31,12 +31,24 @@ export interface GradebookColumn {
   /** Full-length only: section averages (null when hidden from this viewer). */
   avgRw: number | null;
   avgMath: number | null;
+  /** Mean % correct of finished cells (secondary to avg). */
+  avgPct: number | null;
   /** Students with a finished score. */
   scored: number;
+  /** Students with a finished attempt (the class page's "x/y submitted"). */
+  submitted: number;
+  /** Students with an unfinished latest attempt (a retake in progress counts). */
+  inProgress: number;
 }
 
 export interface GradebookCell {
+  /**
+   * Where the shown attempt stands. "scored" = the latest attempt, or the
+   * latest finished one when a retake isn't finished (see `retake`).
+   */
   state: CellState;
+  /** Exact status when it says more than the state ("Closed — Math not taken"). */
+  statusLabel: string | null;
   /** Section score (200–800) or full-length total (400–1600); null until finished. */
   sat: number | null;
   /** "M1 20/27 · M2 18/27" (section) or "R&W 650 · Math 700" (full-length). */
@@ -55,6 +67,8 @@ export interface GradebookCell {
   /** Full-length sections (null when not finished or hidden from this viewer). */
   rw: number | null;
   math: number | null;
+  /** The score is from an earlier attempt: a later one is in progress (or was closed unfinished). */
+  retake: { state: "in-progress" | "closed"; attemptNumber: number | null } | null;
 }
 
 export interface ScorePoint {
@@ -155,6 +169,12 @@ function sortValue(row: GradebookRow, key: SortKey): number | null {
   }
 }
 
+/** The sort to apply: sorting by a test column the filter hid falls back to name (A → Z). */
+export function effectiveSort(columns: GradebookColumn[], key: SortKey, dir: SortDir): { key: SortKey; dir: SortDir } {
+  if (key.startsWith("test:") && !columns.some((c) => `test:${c.id}` === key)) return { key: "name", dir: "asc" };
+  return { key, dir };
+}
+
 /** Sorted copy. Students without a value always go last; ties by name. */
 export function sortRows(rows: GradebookRow[], key: SortKey, dir: SortDir): GradebookRow[] {
   const byName = (a: GradebookRow, b: GradebookRow) => a.name.localeCompare(b.name) || a.studentId.localeCompare(b.studentId);
@@ -214,8 +234,27 @@ export const STATE_HINT: Record<CellState, string> = {
   late: "Started, not submitted, and past the due date",
   "not-started": "Not started yet",
   missing: "Not started, and past the due date",
-  closed: "Full-length attempt closed before the Math section",
+  closed: "Full-length attempt closed before it was finished",
 };
+
+/** Status word shown in a cell without a score. */
+export function cellLabel(cell: Pick<GradebookCell, "state" | "statusLabel">): string {
+  return cell.statusLabel ?? STATE_LABEL[cell.state];
+}
+
+/** What the cell's status means, for its tooltip (the real closed reason for a full-length attempt). */
+export function cellHint(cell: Pick<GradebookCell, "state" | "statusLabel">): string {
+  if (cell.state === "closed" && cell.statusLabel === "Closed — Math not taken") {
+    return "Full-length attempt closed: the Math section was never started";
+  }
+  return STATE_HINT[cell.state];
+}
+
+/** "Retake in progress" / "Retake closed" for a score from an earlier attempt. */
+export function retakeLabel(cell: Pick<GradebookCell, "retake">): string | null {
+  if (!cell.retake) return null;
+  return cell.retake.state === "closed" ? "Retake closed" : "Retake in progress";
+}
 
 /** "+40", "−20", "±0". */
 export function formatChange(delta: number): string {
@@ -231,8 +270,11 @@ export const KIND_LABEL: Record<GradebookKind, string> = { math: "Math", rw: "R&
 /** CSV cell text for a grid cell: the score, else the status. */
 export function cellText(cell: GradebookCell | undefined): string {
   if (!cell) return "";
-  if (cell.state === "scored") return cell.sat != null ? `${cell.sat}${cell.late ? " (late)" : ""}` : "Submitted";
-  return STATE_LABEL[cell.state];
+  if (cell.state === "scored") {
+    const notes = [cell.late ? "late" : null, retakeLabel(cell)?.toLowerCase() ?? null].filter(Boolean);
+    return cell.sat != null ? `${cell.sat}${notes.length ? ` (${notes.join(", ")})` : ""}` : "Submitted";
+  }
+  return cellLabel(cell);
 }
 
 /**
@@ -291,6 +333,20 @@ export function csvLine(cells: (string | number)[]): string {
 /** Full CSV text (BOM so Excel reads UTF-8 names). */
 export function gradebookCsv(gb: Pick<Gradebook, "scope" | "averages">, columns: GradebookColumn[], rows: GradebookRow[]): string {
   return "﻿" + gradebookCsvRows(gb, columns, rows).map(csvLine).join("\r\n") + "\r\n";
+}
+
+/**
+ * Printed tables for a wide grid: at most `size` tests each (the Student
+ * column repeats on every one). The summary columns go on the last table
+ * when it has room (≤ size − 4 tests), else on a table of their own.
+ */
+export function printGroups(columns: GradebookColumn[], size = 8): { columns: GradebookColumn[]; summary: boolean }[] {
+  const groups: { columns: GradebookColumn[]; summary: boolean }[] = [];
+  for (let i = 0; i < columns.length; i += size) groups.push({ columns: columns.slice(i, i + size), summary: false });
+  const last = groups[groups.length - 1];
+  if (last && last.columns.length <= size - 4) last.summary = true;
+  else groups.push({ columns: [], summary: true });
+  return groups;
 }
 
 /** Query string carrying the view (filters + sort) to the print page. */

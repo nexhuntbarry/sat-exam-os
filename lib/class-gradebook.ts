@@ -51,7 +51,9 @@ export async function gradebookSubjects(
     .maybeSingle();
   if (!link) return null;
   const subject = (link.subject as string | null) ?? null;
-  return { subjects: subject && (SECTIONS as readonly string[]).includes(subject) ? [subject] : null };
+  if (subject === null) return { subjects: null };
+  // An unknown subject fails closed: no tests, no sections.
+  return { subjects: (SECTIONS as readonly string[]).includes(subject) ? [subject] : [] };
 }
 
 type MemberRow = {
@@ -105,17 +107,26 @@ export async function loadClassGradebook(
     .filter((u): u is NonNullable<typeof u> => Boolean(u) && onSide(u!.id, qaUsers, opts.isQa))
     .map((u) => ({ id: u.id, name: u.display_name || u.email, email: u.email }));
 
+  const seen = new Set<string>();
   const candidates = ((assignments ?? []) as unknown as AssignmentRow[])
     .map((a) => ({ id: a.test_id, t: Array.isArray(a.tests) ? a.tests[0] : a.tests }))
-    .filter((a) => a.t && onSide(a.id, qaTests, opts.isQa) && !links.parentOf.has(a.id));
+    .filter((a) => {
+      if (seen.has(a.id)) return false;
+      seen.add(a.id);
+      return a.t && onSide(a.id, qaTests, opts.isQa) && !links.parentOf.has(a.id);
+    });
+  const scope = scopeOfSubjects(opts.subjects);
   const sectionOf = await getTestSections(
     db,
     candidates.filter((a) => !links.childrenOf.has(a.id)).map((a) => a.id),
   );
-  // A full-length parent has both subjects: every class teacher sees it
-  // (scoped to their section); a section test only in the teacher's subject.
+  // A full-length parent has both subjects: every class teacher with a
+  // known subject sees it (scoped to their section); a section test only
+  // in the teacher's subject.
   const tests = candidates
-    .filter((a) => links.childrenOf.has(a.id) || inSubjects(sectionOf.get(a.id) ?? null, opts.subjects))
+    .filter((a) =>
+      links.childrenOf.has(a.id) ? scope.rw || scope.math : inSubjects(sectionOf.get(a.id) ?? null, opts.subjects),
+    )
     .map((a) => ({
       id: a.id,
       name: a.t!.test_name ?? "Untitled test",
@@ -152,7 +163,7 @@ export async function loadClassGradebook(
     rows: rows ?? [],
     links,
     flMeta,
-    scope: scopeOfSubjects(opts.subjects),
+    scope,
     now: opts.now ?? new Date(),
     testHref: opts.testHref,
   });

@@ -3,11 +3,12 @@ import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Ban, Circle, Clock, XCi
 import { formatShortDate } from "@/lib/datetime";
 import {
   KIND_LABEL,
-  STATE_HINT,
-  STATE_LABEL,
   TIER_LABEL,
   TIER_MARK,
+  cellHint,
+  cellLabel,
   formatChange,
+  retakeLabel,
   scoreTier,
   tierLabel,
   type CellState,
@@ -40,12 +41,16 @@ const pointText = (p: ScorePoint | null) =>
   p ? `${p.score} · ${p.testName}${p.takenAt ? ` (${formatShortDate(p.takenAt)})` : ""}` : "No finished test";
 
 function cellTitle(row: GradebookRow, col: GradebookColumn, cell: GradebookCell): string {
-  if (cell.state !== "scored") return `${row.name} · ${col.name}: ${STATE_HINT[cell.state]}${cell.detail ? ` (${cell.detail})` : ""}`;
+  if (cell.state !== "scored") return `${row.name} · ${col.name}: ${cellHint(cell)}${cell.detail ? ` (${cell.detail})` : ""}`;
   return [
     `${row.name} · ${col.name}`,
     `${col.kind === "fl" ? "Total" : "SAT"} ${cell.sat ?? "—"}${cell.detail ? ` · ${cell.detail}` : ""}`,
     cell.late ? "Submitted late" : null,
-    cell.attemptNumber && cell.attemptNumber > 1 ? `Attempt ${cell.attemptNumber} (latest)` : null,
+    cell.retake
+      ? `${retakeLabel(cell)}: showing attempt ${cell.attemptNumber ?? 1}, the latest finished one${cell.retake.attemptNumber ? ` (attempt ${cell.retake.attemptNumber} ${cell.retake.state === "closed" ? "was closed unfinished" : "isn't finished yet"})` : ""}`
+      : cell.attemptNumber && cell.attemptNumber > 1
+        ? `Attempt ${cell.attemptNumber} (latest)`
+        : null,
     cell.takenAt ? `Submitted ${formatShortDate(cell.takenAt)}` : null,
     cell.pct != null ? `${cell.pct.toFixed(1)}% correct` : null,
     ...cell.notes,
@@ -62,7 +67,7 @@ function CellBody({ col, cell, compact }: { col: GradebookColumn; cell: Gradeboo
     return (
       <div className={`inline-flex items-center gap-1 ${compact ? "text-[8pt]" : "text-xs"} ${tone} ${cell.state === "missing" ? "font-semibold" : ""}`}>
         <Icon size={compact ? 9 : 12} aria-hidden />
-        {STATE_LABEL[cell.state]}
+        {cellLabel(cell)}
       </div>
     );
   }
@@ -80,6 +85,12 @@ function CellBody({ col, cell, compact }: { col: GradebookColumn; cell: Gradeboo
         )}
       </div>
       {cell.detail && <div className={`${compact ? "text-[7pt]" : "text-[11px]"} text-mid-gray`}>{cell.detail}</div>}
+      {cell.retake && (
+        <div className={`inline-flex items-center gap-1 ${compact ? "text-[7pt]" : "text-[10px]"} font-medium text-mid-gray`}>
+          <Clock size={compact ? 8 : 10} aria-hidden />
+          {retakeLabel(cell)}
+        </div>
+      )}
     </div>
   );
 }
@@ -111,8 +122,11 @@ export default function GradebookTable({
   sort,
   onSort,
   compact = false,
+  summary = true,
 }: {
   gradebook: Pick<Gradebook, "scope" | "averages">;
+  /** Show the summary columns (a printed grid split into several tables shows them once). */
+  summary?: boolean;
   /** Columns to show (already filtered), newest first. */
   columns: GradebookColumn[];
   /** Rows in display order. */
@@ -123,7 +137,9 @@ export default function GradebookTable({
   compact?: boolean;
 }) {
   const { scope, averages } = gradebook;
-  const both = scope.rw && scope.math;
+  const showMath = summary && scope.math;
+  const showRw = summary && scope.rw;
+  const showEst = summary && scope.rw && scope.math;
   const pad = compact ? "px-1.5 py-1" : "px-3 py-2";
   const th = `${pad} text-left align-bottom font-medium text-mid-gray ${compact ? "text-[7.5pt]" : "text-xs"}`;
   const sticky = compact ? "" : "sticky left-0 z-10 bg-surface";
@@ -164,19 +180,20 @@ export default function GradebookTable({
               </div>
             </th>
           ))}
-          {scope.math && sum("latestMath", "Latest Math", "Latest finished Math score: a Math test or the Math section of a full-length SAT.")}
-          {scope.rw && sum("latestRw", "Latest R&W", "Latest finished Reading and Writing score: an R&W test or the R&W section of a full-length SAT.")}
-          {both &&
+          {showMath && sum("latestMath", "Latest Math", "Latest finished Math score: a Math test or the Math section of a full-length SAT.")}
+          {showRw && sum("latestRw", "Latest R&W", "Latest finished Reading and Writing score: an R&W test or the R&W section of a full-length SAT.")}
+          {showEst &&
             sum(
               "estTotal",
               "Est. total",
               "Estimated SAT total = latest Math + latest R&W (400–1600). The two can come from different tests, so it's an estimate, not a real one-sitting score.",
             )}
-          {sum(
-            "change",
-            "Change",
-            "The student's most recent finished test compared with their previous finished test of the same subject (Math vs Math, R&W vs R&W, full-length total vs full-length total).",
-          )}
+          {summary &&
+            sum(
+              "change",
+              "Change",
+              "The student's most recent finished test compared with their previous finished test of the same subject (Math vs Math, R&W vs R&W, full-length total vs full-length total). A retake that isn't finished doesn't count yet.",
+            )}
         </tr>
       </thead>
       <tbody>
@@ -204,17 +221,17 @@ export default function GradebookTable({
                 </td>
               );
             })}
-            {scope.math && (
+            {showMath && (
               <td className={`${pad} border-l border-divider align-top font-semibold text-charcoal`} title={pointText(r.summary.latestMath)}>
                 {r.summary.latestMath?.score ?? <span className="text-soft-mute font-normal">—</span>}
               </td>
             )}
-            {scope.rw && (
+            {showRw && (
               <td className={`${pad} border-l border-divider align-top font-semibold text-charcoal`} title={pointText(r.summary.latestRw)}>
                 {r.summary.latestRw?.score ?? <span className="text-soft-mute font-normal">—</span>}
               </td>
             )}
-            {both && (
+            {showEst && (
               <td
                 className={`${pad} border-l border-divider align-top font-bold text-charcoal`}
                 title={
@@ -226,23 +243,25 @@ export default function GradebookTable({
                 {r.summary.estTotal ?? <span className="text-soft-mute font-normal">—</span>}
               </td>
             )}
-            <td
-              className={`${pad} border-l border-divider align-top whitespace-nowrap`}
-              title={
-                r.summary.change
-                  ? `${KIND_LABEL[r.summary.change.kind]}: ${pointText(r.summary.change.latest)} vs ${pointText(r.summary.change.previous)}`
-                  : "Needs two finished tests of the same subject"
-              }
-            >
-              {r.summary.change ? (
-                <span className="font-semibold text-charcoal">
-                  {formatChange(r.summary.change.delta)}
-                  <span className="ml-1 text-[0.8em] font-normal text-soft-mute">{KIND_LABEL[r.summary.change.kind]}</span>
-                </span>
-              ) : (
-                <span className="text-soft-mute">—</span>
-              )}
-            </td>
+            {summary && (
+              <td
+                className={`${pad} border-l border-divider align-top whitespace-nowrap`}
+                title={
+                  r.summary.change
+                    ? `${KIND_LABEL[r.summary.change.kind]}: ${pointText(r.summary.change.latest)} vs ${pointText(r.summary.change.previous)}`
+                    : "Needs two finished tests of the same subject"
+                }
+              >
+                {r.summary.change ? (
+                  <span className="font-semibold text-charcoal">
+                    {formatChange(r.summary.change.delta)}
+                    <span className="ml-1 text-[0.8em] font-normal text-soft-mute">{KIND_LABEL[r.summary.change.kind]}</span>
+                  </span>
+                ) : (
+                  <span className="text-soft-mute">—</span>
+                )}
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
@@ -261,10 +280,10 @@ export default function GradebookTable({
               </div>
             </td>
           ))}
-          {scope.math && <td className={`${pad} border-l border-divider align-top font-semibold`}>{averages.latestMath ?? "—"}</td>}
-          {scope.rw && <td className={`${pad} border-l border-divider align-top font-semibold`}>{averages.latestRw ?? "—"}</td>}
-          {both && <td className={`${pad} border-l border-divider align-top font-semibold`}>{averages.estTotal ?? "—"}</td>}
-          <td className={`${pad} border-l border-divider`} />
+          {showMath && <td className={`${pad} border-l border-divider align-top font-semibold`}>{averages.latestMath ?? "—"}</td>}
+          {showRw && <td className={`${pad} border-l border-divider align-top font-semibold`}>{averages.latestRw ?? "—"}</td>}
+          {showEst && <td className={`${pad} border-l border-divider align-top font-semibold`}>{averages.estTotal ?? "—"}</td>}
+          {summary && <td className={`${pad} border-l border-divider`} />}
         </tr>
       </tfoot>
     </table>
@@ -283,7 +302,10 @@ export function GradebookLegend({ compact = false }: { compact?: boolean }) {
         </span>
       ))}
       <span>(full-length total: 1300+ / 1000–1299 / under 1000)</span>
-      <span>· Missing = not started after the due date · Late = started, not submitted, past due</span>
+      <span>
+        · Missing = not started after the due date · Late = started, not submitted, past due · Retake in progress = score from the
+        latest finished attempt
+      </span>
     </p>
   );
 }

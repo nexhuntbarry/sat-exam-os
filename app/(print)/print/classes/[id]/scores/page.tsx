@@ -5,7 +5,7 @@ import { getQaClassGroupIds, onSide } from "@/lib/qa";
 import { formatDate } from "@/lib/datetime";
 import { printPageCss } from "@/lib/print-page-css";
 import { gradebookSubjects, loadClassGradebook } from "@/lib/class-gradebook";
-import { KIND_LABEL, filterColumns, parseViewQuery, sortRows } from "@/lib/class-gradebook-view";
+import { KIND_LABEL, effectiveSort, filterColumns, parseViewQuery, printGroups, sortRows } from "@/lib/class-gradebook-view";
 import GradebookTable, { GradebookLegend } from "@/components/analytics/GradebookTable";
 import PrintPreview from "@/components/print/PrintPreview";
 
@@ -46,9 +46,13 @@ export default async function PrintClassScoresPage({
   });
   const view = parseViewQuery({ subject: one(raw.subject), from: one(raw.from), to: one(raw.to), sort: one(raw.sort), dir: one(raw.dir) });
   const columns = filterColumns(gradebook.columns, view.filter);
-  const rows = sortRows(gradebook.rows, view.sort, view.dir);
+  // Same fallback as the screen: a sort column the filter hid sorts by name.
+  const sort = effectiveSort(columns, view.sort, view.dir);
+  const rows = sortRows(gradebook.rows, sort.key, sort.dir);
+  // At most 8 tests per printed table (Student repeats), summary once at the end.
+  const groups = printGroups(columns);
   const summaryCols = 1 + (gradebook.scope.math ? 1 : 0) + (gradebook.scope.rw ? 1 : 0) + (gradebook.scope.rw && gradebook.scope.math ? 1 : 0);
-  const wide = columns.length + summaryCols > 7;
+  const wide = groups.some((g) => g.columns.length + (g.summary ? summaryCols : 0) > 6);
   const filters = [
     view.filter.subject !== "all" ? `${KIND_LABEL[view.filter.subject]} only` : null,
     view.filter.from || view.filter.to ? `${view.filter.from || "…"} to ${view.filter.to || "…"}` : null,
@@ -74,12 +78,23 @@ export default async function PrintClassScoresPage({
           <p className="text-sm text-mid-gray">{rows.length === 0 ? "No students in this class yet." : "No tests to show."}</p>
         ) : (
           <>
-            <GradebookTable gradebook={gradebook} columns={columns} rows={rows} compact />
+            {groups.map((g, i) => (
+              <div key={i} className={i > 0 ? "mt-4" : undefined}>
+                {groups.length > 1 && (
+                  <p className="text-[8pt] font-semibold text-mid-gray mb-1">
+                    {g.columns.length > 0
+                      ? `Tests ${i * 8 + 1}–${i * 8 + g.columns.length} of ${columns.length}${g.summary ? " · Summary" : ""}`
+                      : "Summary"}
+                  </p>
+                )}
+                <GradebookTable gradebook={gradebook} columns={g.columns} rows={rows} compact summary={g.summary} />
+              </div>
+            ))}
             <div className="mt-2">
               <GradebookLegend compact />
             </div>
             <p className="mt-1 text-[7.5pt] text-mid-gray">
-              Latest attempt per student, scored as on each test&rsquo;s Results page. Est. total = latest Math + latest R&amp;W. Change = most
+              Latest finished attempt per student, scored as on each test&rsquo;s Results page. Est. total = latest Math + latest R&amp;W. Change = most
               recent finished test vs the previous one of the same subject.
             </p>
           </>
