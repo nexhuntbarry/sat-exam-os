@@ -13,6 +13,7 @@ import { bankIntegrity, bankImages, bankMathRender, realScoreAnomalies } from ".
 import { runEdgeChecks } from "./edge-checks.mjs";
 import { runDailyChecks } from "./daily-checks.mjs";
 import { runPrintChecks } from "./print-checks.mjs";
+import { runFullLengthChecks } from "./fullsat-checks.mjs";
 
 // ─────────────────────── paths ─────────────────────────
 const HARNESS_DIR = new URL("../", import.meta.url).pathname;
@@ -58,6 +59,7 @@ function saveResults() {
       PASS:  results.filter((r) => r.result === "PASS").length,
       FAIL:  results.filter((r) => r.result === "FAIL").length,
       ERROR: results.filter((r) => r.result === "ERROR").length,
+      SKIP:  results.filter((r) => r.result === "SKIP").length,
     },
     checks: results,
   };
@@ -68,6 +70,15 @@ function fail(details) {
   const e = new Error(details);
   e.__fail = true;
   e.__details = details;
+  throw e;
+}
+
+// A check that can't run yet (e.g. its fixtures or migration are missing):
+// recorded as SKIP with the reason, not counted as a failure.
+function skip(reason) {
+  const e = new Error(reason);
+  e.__skip = true;
+  e.__details = reason;
   throw e;
 }
 
@@ -87,10 +98,10 @@ async function check(id, finding_ids, title_zh, area, fn, timeoutMs = 8 * 60 * 1
     results.push({ id, finding_ids, title_zh, area, result: "PASS", details: detail ?? "", ms: Date.now() - t0 });
     LOG_LINE(`✓ PASS  [${id}] ${title_zh}`);
   } catch (e) {
-    const result  = e.__fail ? "FAIL" : "ERROR";
-    const details = e.__fail ? e.__details : (String(e.message ?? e).slice(0, 800));
+    const result  = e.__skip ? "SKIP" : e.__fail ? "FAIL" : "ERROR";
+    const details = e.__skip || e.__fail ? e.__details : (String(e.message ?? e).slice(0, 800));
     results.push({ id, finding_ids, title_zh, area, result, details, ms: Date.now() - t0 });
-    LOG_LINE(`✗ ${result.padEnd(5)} [${id}] ${title_zh} :: ${details.slice(0, 100)}`);
+    LOG_LINE(`${result === "SKIP" ? "–" : "✗"} ${result.padEnd(5)} [${id}] ${title_zh} :: ${details.slice(0, 100)}`);
   }
   saveResults();
 }
@@ -1629,6 +1640,13 @@ await runDailyChecks({
 // ── Z. PRINT — every figure is in the printed PDF ──────────
 await runPrintChecks({ check, fail, TESTS, ADMIN_CLERK });
 
+// ── Z3. FULL-LENGTH SAT — R&W → break → Math, one result (students 082–099).
+// FL-SMOKE also runs alone after every deploy: ONLY=FL-SMOKE node nightly/run.mjs
+await runFullLengthChecks({
+  check, fail, skip, TESTS, C, STUDENT1_CLERK, ADMIN_CLERK, TEACHER1_CLERK, studentByN,
+  moduleQs, correctPick, wrongPick, deleteSubs, START_MS, GLOBAL_TIMEOUT_MS,
+});
+
 // ── AA. PRODUCTION HEALTH — Vercel error summary ────────────
 await check("PROD-HEALTH", [], "正式站錯誤日誌摘要（最近 24 小時）", "監控", async () => {
   let logsJson = "";
@@ -1748,7 +1766,7 @@ await check("FULL-TIMED", [], "完整考一場（英文 2 個模組各 32 分鐘
 
 // ─────────────────────────────────────────────────────────
 LOG_LINE(`\n=== Done in ${Math.round((Date.now() - START_MS) / 1000)}s ===`);
-LOG_LINE(`PASS: ${results.filter((r) => r.result === "PASS").length}  FAIL: ${results.filter((r) => r.result === "FAIL").length}  ERROR: ${results.filter((r) => r.result === "ERROR").length}`);
+LOG_LINE(`PASS: ${results.filter((r) => r.result === "PASS").length}  FAIL: ${results.filter((r) => r.result === "FAIL").length}  ERROR: ${results.filter((r) => r.result === "ERROR").length}  SKIP: ${results.filter((r) => r.result === "SKIP").length}`);
 LOG_LINE(`Results: ${OUT_JSON}`);
 saveResults();
 process.exit(0);

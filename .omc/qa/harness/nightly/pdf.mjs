@@ -76,6 +76,7 @@ const bad = run.counts.FAIL + run.counts.ERROR;
 const rows = run.checks.map((c, i) => {
   const [area, what] = PLAIN[c.id] ?? [c.area ?? "", c.title_zh ?? c.id];
   const ok = c.result === "PASS";
+  if (c.result === "SKIP") return `<tr><td class="n">${i + 1}</td><td>${esc(area)}</td><td>${esc(what)}<div class="note">略過：${esc(c.details)}</div></td><td class="r">⏭️ 略過</td></tr>`;
   const note = ok && /[\u4e00-\u9fff]/.test(c.details ?? "") ? `<div class="note">${esc(c.details)}</div>` : "";
   return `<tr class="${ok ? "" : "bad"}"><td class="n">${i + 1}</td><td>${esc(area)}</td><td>${esc(what)}${note}${ok ? "" : `<div class="why">問題：${esc(c.details)}</div>`}</td><td class="r">${ok ? "✅ 正常" : "❌ 有問題"}</td></tr>`;
 }).join("");

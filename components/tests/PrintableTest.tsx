@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import MathMarkdown from "@/components/MathMarkdown";
 import { answerCandidates } from "@/lib/grade-submission";
 
@@ -16,6 +17,8 @@ export interface PrintModule {
   label: string | null;
   section: string | null;
   questions: PrintQuestion[];
+  /** A full page with this title before the module ("Section 2: Math" in a full-length SAT). */
+  dividerBefore?: string;
 }
 
 export const imgSrc = (url: string) => `/api/blob-image?u=${encodeURIComponent(url)}`;
@@ -39,54 +42,65 @@ export default function PrintableTest({
   return (
     <div className="bg-white text-charcoal">
       {modules.map((m, mi) => (
-        <section key={mi} className={mi > 0 ? "break-before-page pt-2" : ""}>
-          <div className="border-b-2 border-charcoal pb-2 mb-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h1 className="text-xl font-bold">{testName}</h1>
-                <p className="text-sm text-mid-gray">
-                  {[m.section, m.label, `${m.questions.length} questions`].filter(Boolean).join(" · ")}
-                </p>
-              </div>
-              {withKey ? (
-                <span className="shrink-0 px-2.5 py-1 rounded-md border-2 border-charcoal text-xs font-bold uppercase tracking-wide">
-                  Answer key
-                </span>
-              ) : (
-                <div className="shrink-0 text-sm space-y-2 pt-1">
-                  <div>Name ______________________</div>
-                  <div>Date ______________________</div>
+        <Fragment key={mi}>
+          {m.dividerBefore && (
+            <section
+              data-print-divider
+              className={`${mi > 0 ? "break-before-page " : ""}flex min-h-[8in] flex-col items-center justify-center gap-3 text-center`}
+            >
+              <h1 className="text-3xl font-bold">{m.dividerBefore}</h1>
+              <p className="text-sm text-mid-gray">{testName}</p>
+            </section>
+          )}
+          <section className={mi > 0 || m.dividerBefore ? "break-before-page pt-2" : ""}>
+            <div className="border-b-2 border-charcoal pb-2 mb-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h1 className="text-xl font-bold">{testName}</h1>
+                  <p className="text-sm text-mid-gray">
+                    {[m.section, m.label, `${m.questions.length} questions`].filter(Boolean).join(" · ")}
+                  </p>
                 </div>
-              )}
-            </div>
-          </div>
-
-          {m.questions.length === 0 && (
-            <p className="text-sm text-soft-mute">No approved questions in this module yet.</p>
-          )}
-
-          <ol className="space-y-4">
-            {m.questions.map((q, qi) => (
-              <QuestionBlock key={q.id} q={q} n={qi + 1} withKey={withKey} />
-            ))}
-          </ol>
-
-          {withKey && m.questions.length > 0 && (
-            <div className="break-inside-avoid mt-6">
-              <h2 className="text-sm font-bold uppercase tracking-wide mb-2">
-                Answer key{m.label ? ` · ${m.label}` : ""}
-              </h2>
-              <div className="grid grid-cols-4 gap-x-4 gap-y-1 text-sm border-t border-divider pt-2">
-                {m.questions.map((q, qi) => (
-                  <div key={q.id} className="flex gap-2">
-                    <span className="w-6 text-right text-mid-gray">{qi + 1}.</span>
-                    <span className="font-semibold">{answerCandidates(q.correct_answer).join(" or ") || "—"}</span>
+                {withKey ? (
+                  <span className="shrink-0 px-2.5 py-1 rounded-md border-2 border-charcoal text-xs font-bold uppercase tracking-wide">
+                    Answer key
+                  </span>
+                ) : (
+                  <div className="shrink-0 text-sm space-y-2 pt-1">
+                    <div>Name ______________________</div>
+                    <div>Date ______________________</div>
                   </div>
-                ))}
+                )}
               </div>
             </div>
-          )}
-        </section>
+
+            {m.questions.length === 0 && (
+              <p className="text-sm text-soft-mute">No approved questions in this module yet.</p>
+            )}
+
+            <ol className="space-y-4">
+              {m.questions.map((q, qi) => (
+                <QuestionBlock key={q.id} q={q} n={qi + 1} withKey={withKey} />
+              ))}
+            </ol>
+
+            {withKey && m.questions.length > 0 && (
+              <div className="break-inside-avoid mt-6">
+                <h2 className="text-sm font-bold uppercase tracking-wide mb-2">
+                  Answer key{m.label ? ` · ${m.label}` : ""}
+                </h2>
+                <div className="grid grid-cols-4 gap-x-4 gap-y-1 text-sm border-t border-divider pt-2">
+                  {m.questions.map((q, qi) => (
+                    <div key={q.id} className="flex gap-2">
+                      <span className="w-6 text-right text-mid-gray">{qi + 1}.</span>
+                      <span className="font-semibold">{answerCandidates(q.correct_answer).join(" or ") || "—"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+        </Fragment>
       ))}
 
       <p className="mt-6 text-xs text-soft-mute">Printed {generatedOn}</p>
