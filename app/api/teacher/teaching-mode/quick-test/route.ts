@@ -90,6 +90,7 @@ export async function POST(req: Request) {
   const validQuestionIds = [...new Set(questionIds)].filter((id) => moduleOf.has(id));
   // Tests reference a single module: the teacher's first picked question's.
   const moduleId = moduleOf.get(validQuestionIds[0]);
+  if (!moduleId) return NextResponse.json({ error: "None of the picked questions are available." }, { status: 400 });
 
   // Resolve cohort -> student_ids
   let studentIds: string[] = [];
