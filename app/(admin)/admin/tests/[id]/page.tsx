@@ -1,5 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
-import { studentTestProgress, summarizeTestProgress } from "@/lib/test-progress";
+import { studentTestProgress, summarizeTestProgress, type StudentTestProgress } from "@/lib/test-progress";
+import { flBadge, flFinished, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, type FullLengthScore } from "@/lib/full-length-score";
 import { scoreDisplay, averageSat } from "@/lib/score-display";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
@@ -86,9 +87,15 @@ async function getTest(id: string, viewerIsQa: boolean) {
     module2Meta = (m2 as { module_name: string; section: string; module_number: number | null } | null) ?? null;
   }
 
-  const [{ data: assignment }, { data: submissions }] = await Promise.all([
+  // Full-length SAT parent: its submissions are on its two section children.
+  const flKids = (await fullLengthLinksOrNone(db)).childrenOf.get(id) ?? null;
+  const [{ data: assignment }, { data: submissions }, flMeta] = await Promise.all([
     db.from("test_assignments").select("teacher_ids, student_ids, class_group_ids").eq("test_id", id).single(),
-    db.from("submissions").select("id, status, score, percentage, student_id, submitted_at, session_id, adaptive_track, started_at, correct_count, total_questions").eq("test_id", id),
+    db
+      .from("submissions")
+      .select("id, test_id, attempt_number, status, score, percentage, student_id, submitted_at, session_id, adaptive_track, started_at, correct_count, total_questions")
+      .in("test_id", flKids ? [flKids.rw, flKids.math].filter((x): x is string => Boolean(x)) : [id]),
+    flKids ? loadFlAttemptMeta(db, [id]) : Promise.resolve(null),
   ]);
 
   const teacherIds: string[] = assignment?.teacher_ids ?? [];
@@ -128,17 +135,46 @@ async function getTest(id: string, viewerIsQa: boolean) {
     ? await db.from("users").select("id, display_name, email").in("id", allStudentIds)
     : { data: [] as { id: string; display_name: string | null; email: string }[] };
 
+  // Full-length SAT: the student's latest full-length attempt, scored with
+  // the total (lib/full-length-score), in the progress shape the table uses.
+  const flProgress = (subs: NonNullable<typeof submissions>, studentId: string): { progress: StudentTestProgress; fl: FullLengthScore | null } => {
+    if (subs.length === 0) {
+      return { progress: { status: "Not started", score: null, detailSubmissionId: null, currentModule: null, moduleCount: 2, modules: [] }, fl: null };
+    }
+    const n = Math.max(...subs.map((r) => (r.attempt_number as number | null) ?? 1));
+    const rows = subs.filter((r) => ((r.attempt_number as number | null) ?? 1) === n);
+    const fl = fullLengthAttemptScore(
+      rows.filter((r) => r.test_id === flKids?.rw),
+      rows.filter((r) => r.test_id === flKids?.math),
+      flMeta?.get(flAttemptKey(id, studentId, n)),
+    );
+    return {
+      progress: {
+        status: flFinished(fl) ? "Submitted" : "In progress",
+        score: fl.score?.pct ?? null,
+        detailSubmissionId: null,
+        currentModule: null,
+        moduleCount: 2,
+        modules: [],
+      },
+      fl,
+    };
+  };
+
   const students = ((studentRows ?? []) as { id: string; display_name: string | null; email: string }[])
     .map((u) => {
       const subs = (submissions ?? []).filter((s) => s.student_id === u.id);
       const groups = groupsByStudent.get(u.id) ?? [];
+      const fl = flKids ? flProgress(subs, u.id) : null;
       return {
         id: u.id,
         name: u.display_name || u.email,
         email: u.email,
         individual: individual.has(u.id),
         groups: groups.map((g) => groupName.get(g) ?? "Class"),
-        progress: studentTestProgress(subs, twoModules),
+        progress: fl ? fl.progress : studentTestProgress(subs, twoModules),
+        /** Full-length SAT: the latest attempt's score (total, sections, status). */
+        fullLength: fl?.fl ?? null,
         submissionCount: subs.length,
         hasGradedSubmission: subs.some((s) => s.status === "Submitted" || s.status === "Late"),
         // Individually assigned students who are also in an assigned class
@@ -152,11 +188,22 @@ async function getTest(id: string, viewerIsQa: boolean) {
 
   // Students assigned through a class count too; every student is counted
   // once even though each module is its own submission row.
-  const progress = summarizeTestProgress(
-    submissions ?? [],
-    [...studentIds, ...members.map((m) => m.student_id)],
-    twoModules,
-  );
+  const progress = flKids
+    ? (() => {
+        // Full-length: every student once, finished = latest attempt has Math Module 2 graded.
+        const all = new Set([...studentIds, ...members.map((m) => m.student_id), ...students.map((st) => st.id)]);
+        const pcts = students.filter((st) => st.fullLength && flFinished(st.fullLength)).map((st) => st.fullLength!.score?.pct).filter((x): x is number => x != null);
+        return {
+          students: all.size,
+          finished: students.filter((st) => st.fullLength && flFinished(st.fullLength)).length,
+          avgScore: pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null,
+        };
+      })()
+    : summarizeTestProgress(
+        submissions ?? [],
+        [...studentIds, ...members.map((m) => m.student_id)],
+        twoModules,
+      );
 
   return {
     ...test,
@@ -333,7 +380,10 @@ export default async function TestDetailPage({
 
   // Score column: SAT estimate per student; header click sorts by it
   // (?sort=score high→low, ?sort=score-asc low→high, unfinished last).
-  const scoreOf = new Map(assignment.students.map((st) => [st.id, scoreDisplay(st.progress.modules, section)]));
+  // Full-length SAT: the combined cell (total 400–1600, "R&W · Math").
+  const scoreOf = new Map(
+    assignment.students.map((st) => [st.id, st.fullLength ? st.fullLength.score : scoreDisplay(st.progress.modules, section)]),
+  );
   const satOf = (sid: string) => scoreOf.get(sid)?.sat ?? null;
   const sortDir = sort === "score" ? -1 : sort === "score-asc" ? 1 : 0;
   const students = sortDir
@@ -483,7 +533,7 @@ export default async function TestDetailPage({
         items={[
           { label: "Submitted", value: `${progress.finished} / ${progress.students}`, detail: "students finished" },
           {
-            label: "Avg SAT",
+            label: fl ? "Avg total" : "Avg SAT",
             value: avgSat ?? "—",
             detail: progress.avgScore !== null ? `${progress.avgScore.toFixed(1)}% correct` : undefined,
           },
@@ -547,7 +597,9 @@ export default async function TestDetailPage({
 
                 // Rule 4: the student's work is the visible action (and the
                 // row link); removing them from the test is in ⋯.
-                const primary = st.progress.detailSubmissionId
+                const primary = st.fullLength && st.submissionCount > 0
+                  ? { label: "View results", icon: <Eye size={13} />, href: `/teacher/tests/${test.id}/results` }
+                  : st.progress.detailSubmissionId
                   ? { label: "View result", icon: <Eye size={13} />, href: `/teacher/tests/${test.id}/results/${st.progress.detailSubmissionId}` }
                   : st.submissionCount > 0
                   ? { label: "Submissions", icon: <FileText size={13} />, href: submissionsHref }
@@ -583,7 +635,8 @@ export default async function TestDetailPage({
                     <Td>
                       <StatusBadge
                         kind="attempt"
-                        status={st.progress.status}
+                        status={st.fullLength ? flBadge(st.fullLength).status : st.progress.status}
+                        label={st.fullLength ? flBadge(st.fullLength).label ?? (st.fullLength.current ? `In progress · ${st.fullLength.current}` : undefined) : undefined}
                         module={st.progress.currentModule ? { n: st.progress.currentModule, of: st.progress.moduleCount } : null}
                       />
                     </Td>

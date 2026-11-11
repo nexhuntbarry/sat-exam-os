@@ -39,6 +39,9 @@ export interface CrossTestResultRow {
   percentage: number | null;
   timeSpentSeconds: number | null;
   submittedAt: string | null;
+  /** Full-length SAT attempt: `sat` is the 400–1600 total; opens the test's results page. */
+  fullLength?: boolean;
+  detailHref?: string;
 }
 
 interface Props {
@@ -258,7 +261,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                 <Td kind="actions" sticky="right">
                   {(row.status === "Submitted" || row.status === "Late") && (
                     <Link
-                      href={`/teacher/tests/${row.testId}/results/${row.submissionId}`}
+                      href={row.detailHref ?? `/teacher/tests/${row.testId}/results/${row.submissionId}`}
                       className="text-warm-coral-text text-xs hover:underline whitespace-nowrap"
                     >
                       {t("view")}

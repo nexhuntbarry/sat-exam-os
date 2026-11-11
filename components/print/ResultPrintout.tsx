@@ -20,6 +20,12 @@ export default function ResultPrintout({
   src?: (url: string) => string;
 }) {
   const score = p.attempt.score;
+  const fl = p.fullLength;
+  // Full-length SAT: a divider before the Math section's grids and questions.
+  const sectionOfLabel = new Map(p.modules.map((m) => [m.label, m.section]));
+  const firstMathGrid = Array.from(new Set(p.grid.map((g) => g.module))).find((l) => sectionOfLabel.get(l) === "math");
+  const shownModules = p.modules.filter((m) => m.questions.length > 0);
+  const firstMathModule = shownModules.find((m) => m.section === "math");
   const explanationsAtEnd = p.shows.explanations && opts.explanationsAt === "end";
   const questionsShown = p.modules.reduce((n, m) => n + m.questions.length, 0);
   const byModule = new Map<string | null, StudentResultPrintout["grid"]>();
@@ -50,20 +56,47 @@ export default function ResultPrintout({
           </p>
         </div>
 
-        <div className="flex items-end gap-8 mb-5">
-          <div>
-            <div className="text-xs uppercase tracking-wide text-mid-gray">SAT score</div>
-            <div className="text-4xl font-bold leading-none">{score?.sat ?? "—"}</div>
+        {fl ? (
+          // Full-length SAT: total, then each section with its module counts.
+          <div className="flex items-end gap-8 mb-5">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-mid-gray">Total score</div>
+              <div className="text-4xl font-bold leading-none">{fl.total ?? "—"}</div>
+            </div>
+            {fl.scope.rw && (
+              <div>
+                <div className="text-xs uppercase tracking-wide text-mid-gray">Reading and Writing</div>
+                <div className="text-xl font-semibold">{fl.rw.score?.sat ?? "—"}</div>
+                <div className="text-xs text-mid-gray">{fl.rw.score?.modules ?? "—"}</div>
+              </div>
+            )}
+            {fl.scope.math && (
+              <div>
+                <div className="text-xs uppercase tracking-wide text-mid-gray">Math</div>
+                <div className="text-xl font-semibold">{fl.math.score?.sat ?? "—"}</div>
+                <div className="text-xs text-mid-gray">{fl.math.score?.modules ?? "—"}</div>
+              </div>
+            )}
+            {fl.status !== "Submitted" && fl.status !== "Late" && (
+              <div className="text-sm font-semibold">Not finished ({fl.status})</div>
+            )}
           </div>
-          <div>
-            <div className="text-xs uppercase tracking-wide text-mid-gray">Correct</div>
-            <div className="text-xl font-semibold">{score?.modules ?? "—"}</div>
+        ) : (
+          <div className="flex items-end gap-8 mb-5">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-mid-gray">SAT score</div>
+              <div className="text-4xl font-bold leading-none">{score?.sat ?? "—"}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase tracking-wide text-mid-gray">Correct</div>
+              <div className="text-xl font-semibold">{score?.modules ?? "—"}</div>
+            </div>
+            {p.attempt.status !== "Submitted" && p.attempt.status !== "Late" && (
+              <div className="text-sm font-semibold">Not finished ({p.attempt.status})</div>
+            )}
           </div>
-          {p.attempt.status !== "Submitted" && p.attempt.status !== "Late" && (
-            <div className="text-sm font-semibold">Not finished ({p.attempt.status})</div>
-          )}
-        </div>
-        {score?.notes.map((n) => (
+        )}
+        {(fl ? [...(fl.scope.rw ? fl.rw.score?.notes ?? [] : []).map((n) => `R&W ${n}`), ...(fl.scope.math ? fl.math.score?.notes ?? [] : []).map((n) => `Math ${n}`)] : score?.notes ?? []).map((n) => (
           <p key={n} className="text-xs text-mid-gray -mt-3 mb-4">{n}</p>
         ))}
 
@@ -76,6 +109,9 @@ export default function ResultPrintout({
             </p>
             {Array.from(byModule).map(([label, cells]) => (
               <div key={label ?? "all"} className="mb-4 break-inside-avoid">
+                {fl && fl.scope.rw && label === firstMathGrid && (
+                  <div className="border-t-2 border-charcoal pt-2 mt-2 mb-2 text-sm font-bold">Section 2: Math</div>
+                )}
                 {label && <div className="text-xs font-semibold uppercase tracking-wide mb-1">{label}</div>}
                 <div className="grid grid-cols-[repeat(14,minmax(0,1fr))] gap-1 text-sm">
                   {cells.map((c) => (
@@ -104,12 +140,16 @@ export default function ResultPrintout({
       </div>
 
       {/* ── Questions, as on the blank test ── */}
-      {p.modules.filter((m) => m.questions.length > 0).map((m, mi) => (
+      {shownModules.map((m, mi) => (
         // The first module starts after the summary page. A later module
         // continues on the same page unless less than a third of it is
         // left: its heading reserves 1/3 page (kept whole, so it moves to
         // the next page when that doesn't fit) and gives the space back.
-        <div key={m.label ?? mi} className={mi === 0 ? "break-before-page" : "mt-6"}>
+        // A full-length SAT's Math section starts on a new page.
+        <div key={m.label ?? mi} className={mi === 0 || (mi > 0 && m === firstMathModule) ? "break-before-page" : "mt-6"}>
+          {m === firstMathModule && mi > 0 && (
+            <div className="text-base font-bold uppercase tracking-wide border-b-2 border-charcoal pb-1 mb-4">Section 2: Math</div>
+          )}
           {m.label && (
             <div className={mi === 0 ? "" : "print-module-reserve"}>
               <h2 className="print-module-head text-sm font-bold uppercase tracking-wide border-b border-charcoal pb-1 mb-3">{m.label}</h2>

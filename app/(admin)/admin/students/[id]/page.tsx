@@ -11,6 +11,15 @@ import { studentTestProgress } from "@/lib/test-progress";
 import { getTestSections } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
+import {
+  flBadge,
+  flFinished,
+  flModuleCells,
+  groupFullLengthAttempts,
+  loadFlAttemptMeta,
+  scoreGroups,
+} from "@/lib/full-length-score";
 import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 import EditStudentButton from "./EditStudentButton";
 import StudentActionsMenu from "./StudentActionsMenu";
@@ -290,10 +299,17 @@ export default async function AdminStudentDetailPage({
   const [student, me] = await Promise.all([getStudent(id), getCurrentUser()]);
   if (!student || isQaEmail(student.email) !== (me?.isQa ?? false)) notFound();
 
-  const submissions = (await getStudentSubmissions(id)) as unknown as SubmissionRow[];
+  const allSubmissions = (await getStudentSubmissions(id)) as unknown as SubmissionRow[];
   const profile = Array.isArray(student.student_profiles)
     ? student.student_profiles[0] ?? null
     : student.student_profiles ?? null;
+
+  // Full-length SAT section rows: one history row per full-length attempt
+  // under the parent (total, both sections); everything else as before.
+  const flLinks = await fullLengthLinksOrNone(getServiceClient());
+  const { attempts: flGroups, rest: submissions } = groupFullLengthAttempts(allSubmissions, flLinks);
+  const flParentIds = Array.from(new Set(flGroups.map((g) => g.parentId)));
+  const flScored = scoreGroups(flGroups, await loadFlAttemptMeta(getServiceClient(), flParentIds, id));
 
   const groups = buildSessionGroups(submissions);
 
@@ -312,7 +328,7 @@ export default async function AdminStudentDetailPage({
   for (const s of submissions) {
     subsByTest.set(s.test_id, [...(subsByTest.get(s.test_id) ?? []), s]);
   }
-  const allTestIds = Array.from(new Set([...assignments.keys(), ...subsByTest.keys()]));
+  const allTestIds = Array.from(new Set([...assignments.keys(), ...subsByTest.keys(), ...flParentIds]));
   const classGroupIds = Array.from(
     new Set(Array.from(assignments.values()).flatMap((a) => a.classGroupIds)),
   );
@@ -422,7 +438,7 @@ export default async function AdminStudentDetailPage({
 
   // Per-test answer visibility for this student (same server-side decision
   // the student's pages enforce) + who last changed the override.
-  const testIds = Array.from(new Set(groups.map((g) => g.testId)));
+  const testIds = Array.from(new Set([...groups.map((g) => g.testId), ...flParentIds]));
   const visibilityInputs = await loadAnswerVisibilityInputs(db, testIds, [id]);
   const updaterIds = Array.from(
     new Set(
@@ -445,9 +461,15 @@ export default async function AdminStudentDetailPage({
   const breakdownRows = await getStudentBreakdownRows(id);
   const occasions = await getStudentProgressOccasions(id);
   const assignedCount = assignments.size;
-  const completedCount = Array.from(progressOf.values()).filter(
-    (p) => p.status === "Submitted",
-  ).length;
+  // A full-length SAT counts as completed when its latest attempt has a total.
+  const flLatest = new Map<string, (typeof flScored)[number]>();
+  for (const g of flScored) {
+    const cur = flLatest.get(g.parentId);
+    if (!cur || g.attemptNumber > cur.attemptNumber) flLatest.set(g.parentId, g);
+  }
+  const completedCount =
+    Array.from(progressOf.entries()).filter(([testId, p]) => !flLatest.has(testId) && p.status === "Submitted").length +
+    Array.from(flLatest.values()).filter((g) => flFinished(g.score)).length;
 
 
   const assignmentFields = (testId: string) => {
@@ -531,8 +553,84 @@ export default async function AdminStudentDetailPage({
       removable: false,
     };
   });
+  // Full-length SAT attempts (the visibility picker sits on the newest attempt).
+  const flControlKey = new Map<string, string>();
+  for (const g of [...flScored].sort((a, b) => b.attemptNumber - a.attemptNumber)) {
+    if (!flControlKey.has(g.parentId)) flControlKey.set(g.parentId, g.key);
+  }
+  const flRows: TestRow[] = flScored.map((g) => {
+    const input = visibilityInputs.get(visibilityKey(g.parentId, id));
+    let visibility: VisibilityRowData | null = null;
+    if (input) {
+      const effective = summarizeAnswerVisibility(input);
+      const ov = input.override;
+      visibility = {
+        isControlRow: flControlKey.get(g.parentId) === g.key,
+        initialMode: ov?.mode ?? "follow",
+        initialShowExplanations: ov?.show_explanations ?? true,
+        effectiveAnswers: effective.answers,
+        effectiveExplanations: effective.explanations,
+        effectiveSource: effective.source,
+        updatedBy: ov?.updated_by ?? null,
+        updatedAt: ov?.updated_at ?? null,
+        updaterName: (ov?.updated_by && updaterName.get(ov.updated_by)) || null,
+      };
+    }
+    const rows = [...g.rw, ...g.math];
+    const graded = rows.filter((r) => r.status === "Submitted" || r.status === "Late");
+    const correct = graded.reduce((n, r) => n + (r.correct_count ?? 0), 0);
+    const total = graded.reduce((n, r) => n + (r.total_questions ?? 0), 0);
+    const [rwM1, rwM2] = flModuleCells(g.score.rw);
+    const [mathM1, mathM2] = flModuleCells(g.score.math);
+    const status: TestRowStatus = flFinished(g.score)
+      ? (g.score.status as TestRowStatus)
+      : g.score.status.startsWith("Closed")
+      ? "Late"
+      : "In progress";
+    const sorted = (list: SubmissionRow[]) =>
+      [...list].sort((a, b) => (a.adaptive_track === "module_1" ? 0 : 1) - (b.adaptive_track === "module_1" ? 0 : 1));
+    return {
+      key: `fl:${g.key}`,
+      testId: g.parentId,
+      testName: (testById.get(g.parentId)?.test_name as string | undefined) ?? "—",
+      section: null,
+      status,
+      currentModule: null,
+      ...assignmentFields(g.parentId),
+      moduleCount: 4,
+      correct,
+      total,
+      percentage: g.score.score?.pct ?? null,
+      scaledScore: g.score.total,
+      timeSeconds: rows.reduce((n, r) => n + (r.time_spent_seconds ?? 0), 0),
+      submittedAt: rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
+      attemptNumber: g.attemptNumber,
+      detailSubmissionId: graded[graded.length - 1]?.id ?? null,
+      detailHref: `/teacher/tests/${g.parentId}/results`,
+      statusLabel: flBadge(g.score).label,
+      isMultiModule: true,
+      moduleNames: [
+        { label: "Full-length SAT", name: `R&W M1 ${rwM1 || "—"} · M2 ${rwM2 || "—"}${g.score.rwTrack ? ` (${g.score.rwTrack})` : ""} · Math M1 ${mathM1 || "—"} · M2 ${mathM2 || "—"}${g.score.mathTrack ? ` (${g.score.mathTrack})` : ""}` },
+      ],
+      modules: [
+        ...sorted(g.rw).map((r) => ({ prefix: "R&W", r })),
+        ...sorted(g.math).map((r) => ({ prefix: "Math", r })),
+      ].map(({ prefix, r }) => ({
+        label: `${prefix} ${MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module"}`,
+        submissionId: r.id,
+        correct: r.correct_count ?? 0,
+        total: r.total_questions ?? 0,
+        percentage: r.percentage != null ? Number(r.percentage) : null,
+      })),
+      visibility,
+      score: g.score.score,
+      removable: false,
+    };
+  });
+  attemptRows.push(...flRows);
+
   const notStartedRows: TestRow[] = Array.from(assignments.values())
-    .filter((a) => !subsByTest.has(a.testId))
+    .filter((a) => !subsByTest.has(a.testId) && !flLatest.has(a.testId))
     .map((a) => ({
       key: `assigned-${a.testId}`,
       testId: a.testId,
@@ -578,8 +676,16 @@ export default async function AdminStudentDetailPage({
     groups.map((g) => (g.section === "Math" ? scoreOfGroup(g)?.sat : null)).find((x) => x != null) ?? null;
   const latestRWScore =
     groups.map((g) => (g.section === "Reading & Writing" ? scoreOfGroup(g)?.sat : null)).find((x) => x != null) ?? null;
+  // Prefer the latest finished full-length SAT total (a real one-sitting
+  // score) over adding up the latest section tests.
+  const latestFl = flScored
+    .filter((g) => flFinished(g.score) && g.score.total != null)
+    .map((g) => ({ total: g.score.total!, at: [...g.rw, ...g.math].map((r) => r.submitted_at ?? "").sort().pop() ?? "" }))
+    .sort((a, b) => b.at.localeCompare(a.at))[0];
   const estimatedTotal =
-    latestMathScore != null && latestRWScore != null
+    latestFl
+      ? latestFl.total
+      : latestMathScore != null && latestRWScore != null
       ? latestMathScore + latestRWScore
       : null;
 
@@ -698,7 +804,7 @@ export default async function AdminStudentDetailPage({
           </p>
         </div>
         <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Estimated Total</p>
+          <p className="text-soft-mute text-xs">{latestFl ? "Total · Full-length SAT" : "Estimated Total"}</p>
           <p className="text-3xl font-bold text-charcoal mt-1">
             {estimatedTotal ?? "—"}
           </p>

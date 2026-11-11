@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { getServiceClient } from "@/lib/supabase";
-import { childTestIds, hideChildTests } from "@/lib/full-length";
-import { attemptScore, averageSat } from "@/lib/score-display";
+import { childTestIds, fullLengthLinksOrNone, hideChildTests, type FullLengthLinks } from "@/lib/full-length";
+import { averageSat } from "@/lib/score-display";
+import { attemptGroupKey, flFinished, listedTestId, scoreAttemptGroup } from "@/lib/full-length-score";
 import { getTestSections } from "@/lib/teacher-access";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaUserIds, scopeIds } from "@/lib/qa";
@@ -46,6 +47,7 @@ type SubmissionRow = {
   total_questions: number | null;
   session_id: string | null;
   adaptive_track: string | null;
+  attempt_number: number | null;
 };
 
 // One finished attempt (a two-module session collapses to one).
@@ -54,6 +56,8 @@ type Attempt = {
   testId: string;
   sat: number | null;
   percentage: number | null;
+  /** Full-length SAT attempt: `sat` is the 400–1600 total (kept out of the overall SAT average). */
+  fullLength: boolean;
 };
 
 // Per-test aggregate within a single class group.
@@ -84,22 +88,25 @@ type GroupStat = {
 // from the combined counts, only once every module is in). Rows with a NULL
 // session_id are standalone attempts. Unfinished attempts are left out so
 // averages use finished attempts only.
-function buildAttempts(rows: SubmissionRow[], sectionOf: Map<string, string | null>): Attempt[] {
+// A full-length SAT attempt (both sections' rows) is one attempt under the
+// parent, finished once both sections are in.
+function buildAttempts(rows: SubmissionRow[], sectionOf: Map<string, string | null>, links: FullLengthLinks): Attempt[] {
   const bySession = new Map<string, SubmissionRow[]>();
   for (const r of rows) {
-    const key = r.session_id ?? `solo:${r.id}`;
+    const key = attemptGroupKey(r, links);
     bySession.set(key, [...(bySession.get(key) ?? []), r]);
   }
 
   const attempts: Attempt[] = [];
   for (const list of bySession.values()) {
-    const { status, score } = attemptScore(list, sectionOf.get(list[0].test_id));
-    if (status !== "Submitted" && status !== "Late") continue;
+    const { status, score, fullLength } = scoreAttemptGroup(list, links, sectionOf.get(list[0].test_id));
+    if (fullLength ? !flFinished(fullLength) : status !== "Submitted" && status !== "Late") continue;
     attempts.push({
       studentId: list[0].student_id,
-      testId: list[0].test_id,
+      testId: listedTestId(list[0].test_id, links),
       sat: score?.sat ?? null,
       percentage: score?.pct ?? null,
+      fullLength: Boolean(fullLength),
     });
   }
   return attempts;
@@ -124,7 +131,7 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
     scopeIds(db
       .from("submissions")
       .select(
-        "id, student_id, test_id, status, correct_count, total_questions, session_id, adaptive_track",
+        "id, student_id, test_id, status, correct_count, total_questions, session_id, adaptive_track, attempt_number",
       )
       .in("status", ["Submitted", "Late"]), "student_id", qaUsers, viewerIsQa),
   ]);
@@ -134,7 +141,7 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
   const tests = (testsRes.data ?? []) as TestRow[];
   const subRows = (submissionsRes.data ?? []) as SubmissionRow[];
   const sectionOf = await getTestSections(db, Array.from(new Set(subRows.map((r) => r.test_id))));
-  const attempts = buildAttempts(subRows, sectionOf);
+  const attempts = buildAttempts(subRows, sectionOf, await fullLengthLinksOrNone(db));
 
   // student_id -> set of group ids they belong to (may be several)
   const studentGroups = new Map<string, string[]>();
@@ -197,7 +204,7 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
     });
 
     const groupAttempts = Array.from(byTest.values()).flat();
-    const overallAvgSat = averageSat(groupAttempts.map((a) => a.sat));
+    const overallAvgSat = averageSat(groupAttempts.filter((a) => !a.fullLength).map((a) => a.sat));
     const overallAvgPercentage = mean(
       groupAttempts
         .map((a) => a.percentage)

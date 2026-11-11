@@ -6,6 +6,8 @@ import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { parseActivity, summarizeActivity, type ActivitySummary } from "@/lib/question-activity";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { fullLengthLinks } from "@/lib/full-length";
+import { flSectionScope } from "@/lib/full-length-score";
 
 export interface StudentQuestionRow {
   name: string;
@@ -61,6 +63,18 @@ export async function GET(
   const access = await getTeacherTestAccess(db, user, testId);
   if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  // Full-length SAT parent: no questions of its own — the page shows one
+  // tab per section the viewer may see, each the section child's analytics.
+  const flKids = (await fullLengthLinks(db)).childrenOf.get(testId);
+  if (flKids) {
+    const scope = await flSectionScope(db, user, flKids);
+    const sections = [
+      scope.rw && flKids.rw ? { key: "rw", label: "Reading and Writing", testId: flKids.rw } : null,
+      scope.math && flKids.math ? { key: "math", label: "Math", testId: flKids.math } : null,
+    ].filter(Boolean);
+    return NextResponse.json({ modules: [], submittedAttempts: 0, fullLength: { sections } });
   }
 
   const { data: test } = await db

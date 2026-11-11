@@ -199,6 +199,12 @@ export default async function FullLengthLanding({
                 <div className="text-warm-amber font-semibold">Test submitted</div>
               )}
             </div>
+            <Link
+              href={`/student/tests/${testId}/result`}
+              className="block w-full py-3 text-center rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold transition-colors"
+            >
+              View Result
+            </Link>
             {canRetake && <StartFullLengthButton testId={testId} label="Retake Test" isResume={false} />}
           </div>
         ) : isPastDue ? (

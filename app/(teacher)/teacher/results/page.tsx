@@ -12,7 +12,17 @@ import {
   type CrossTestResultRow,
 } from "@/components/analytics/CrossTestResultsTable";
 import PageIntro from "@/components/shared/PageIntro";
-import { attemptScore, averageSat } from "@/lib/score-display";
+import { averageSat } from "@/lib/score-display";
+import { expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
+import {
+  attemptGroupKey,
+  FL_ALL_SECTIONS,
+  flSectionScope,
+  listedTestId,
+  loadFlAttemptMeta,
+  scoreAttemptGroup,
+  type FlSectionScope,
+} from "@/lib/full-length-score";
 
 async function getCrossTestResults(teacherId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
@@ -40,18 +50,29 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
     testMap.set(t.id, { name: t.test_name, section: sectionOf.get(t.id) ?? null });
   }
 
-  // 3. Get all submissions for these tests
+  // 3. Get all submissions for these tests (a full-length SAT's are on its
+  // two section children; they're listed under the parent, one row per
+  // full-length attempt with the total).
+  const flLinks = await fullLengthLinksOrNone(db);
+  const flParents = testIds.filter((id) => flLinks.childrenOf.has(id));
+  const flMeta = await loadFlAttemptMeta(db, flParents);
+  // A single-subject teacher sees the total plus their own section only.
+  const flScopes = new Map<string, FlSectionScope>(
+    await Promise.all(
+      flParents.map(async (pid) => [pid, await flSectionScope(db, { userId: teacherId, role, isQa }, flLinks.childrenOf.get(pid)!)] as const),
+    ),
+  );
   const { data: submissions } = await scopeUsers(db
     .from("submissions")
     .select(
       `
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, scaled_score, scaled_section, submitted_at, time_spent_seconds,
-      session_id, adaptive_track,
+      session_id, adaptive_track, attempt_number,
       users!inner(display_name, email)
     `
     )
-    .in("test_id", testIds), isQa, "users.email")
+    .in("test_id", expandWithChildren(testIds, flLinks)), isQa, "users.email")
     .order("submitted_at", { ascending: false });
 
   // Non-admin filter: keep a submission only if EITHER the test was
@@ -61,7 +82,7 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
   // set would leak co-students from other classes who happened to
   // take the same test.
   const subs = (submissions ?? []).filter((s) => {
-    if (seesAllStudents(scope, s.test_id as string)) return true;
+    if (seesAllStudents(scope, listedTestId(s.test_id as string, flLinks))) return true;
     return scope.myStudentIds.has(s.student_id as string);
   });
 
@@ -88,7 +109,7 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
   };
   const sessionGroups = new Map<string, SubRow[]>();
   for (const s of subs as SubRow[]) {
-    const key = s.session_id ?? `solo:${s.id}`;
+    const key = attemptGroupKey(s, flLinks);
     const list = sessionGroups.get(key) ?? [];
     list.push(s);
     sessionGroups.set(key, list);
@@ -102,16 +123,18 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
     });
     const head = sorted[0];
     const u = head.users as unknown as { display_name: string; email: string };
-    const meta = testMap.get(head.test_id) ?? { name: "(unknown test)", section: null };
+    const testId = listedTestId(head.test_id, flLinks);
+    const meta = testMap.get(testId) ?? { name: "(unknown test)", section: null };
 
-    const attempt = attemptScore(sorted, meta.section);
+    const attempt = scoreAttemptGroup(sorted, flLinks, meta.section, flMeta, (pid) => flScopes.get(pid) ?? FL_ALL_SECTIONS);
     rows.push({
       // Link to the Module 2 (last) submission so the result detail
       // page can stitch both modules via session_id.
       submissionId: sorted[sorted.length - 1].id,
-      testId: head.test_id,
+      testId,
       testName: meta.name,
-      section: meta.section,
+      section: attempt.fullLength ? "Full-length SAT" : meta.section,
+      ...(attempt.fullLength ? { fullLength: true, detailHref: `/teacher/tests/${testId}/results` } : {}),
       studentId: head.student_id,
       studentName: u.display_name,
       email: u.email,
@@ -212,8 +235,10 @@ export default async function TeacherResultsPage() {
   const completed = data.rows.filter(
     (r) => r.status === "Submitted" || r.status === "Late"
   );
-  const avgSat = averageSat(completed.map((r) => r.sat));
-  const pcts = completed.map((r) => r.percentage).filter((p): p is number => p != null);
+  // Full-length totals (400–1600) are on another scale: left out of the SAT average.
+  const sectionCompleted = completed.filter((r) => !r.fullLength);
+  const avgSat = averageSat(sectionCompleted.map((r) => r.sat));
+  const pcts = sectionCompleted.map((r) => r.percentage).filter((p): p is number => p != null);
   const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
 
   return (

@@ -11,6 +11,8 @@ import type { AnalyticsModule, AnalyticsQuestion, StudentQuestionRow } from "@/a
 interface AnalyticsData {
   modules: AnalyticsModule[];
   submittedAttempts: number;
+  /** Full-length SAT parent: its sections' analytics are the children's. */
+  fullLength?: { sections: { key: string; label: string; testId: string }[] };
 }
 
 function fmtTime(seconds: number | null | undefined) {
@@ -40,23 +42,48 @@ function missedColor(pct: number) {
 // answer, time on it, answer changes and whether they skipped it first.
 export default function QuestionAnalyticsPage() {
   const params = useParams<{ id: string }>();
-  const testId = params.id;
+  const pageTestId = params.id;
 
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  // Full-length SAT: the section tabs and the selected section's own test
+  // id (analytics, flags and question detail all run on the section).
+  const [sections, setSections] = useState<{ key: string; label: string; testId: string }[] | null>(null);
+  const [sectionTestId, setSectionTestId] = useState<string | null>(null);
+  const testId = sectionTestId ?? pageTestId;
 
   useEffect(() => {
-    fetch(`/api/teacher/tests/${testId}/analytics`)
+    setLoading(true);
+    let next = false;
+    // A tab switch cancels the previous section's request (no stale data).
+    const ctrl = new AbortController();
+    fetch(`/api/teacher/tests/${testId}/analytics`, { signal: ctrl.signal })
       .then(async (r) => {
         if (r.status === 403) throw new Error("forbidden");
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        setData(await r.json());
+        const json = (await r.json()) as AnalyticsData;
+        if (json.fullLength && !sectionTestId) {
+          setSections(json.fullLength.sections);
+          if (json.fullLength.sections.length > 0) {
+            // Load the first section next (keeps the loading state).
+            next = true;
+            setSectionTestId(json.fullLength.sections[0].testId);
+            return;
+          }
+        }
+        if (ctrl.signal.aborted) return;
+        setData(json);
       })
-      .catch((err: Error) => setLoadError(err.message))
-      .finally(() => setLoading(false));
-  }, [testId]);
+      .catch((err: Error) => {
+        if (!ctrl.signal.aborted) setLoadError(err.message);
+      })
+      .finally(() => {
+        if (!next && !ctrl.signal.aborted) setLoading(false);
+      });
+    return () => ctrl.abort();
+  }, [testId, sectionTestId]);
 
   const toggleClassReview = useCallback(
     async (questionId: string, current: boolean) => {
@@ -119,7 +146,7 @@ export default function QuestionAnalyticsPage() {
       <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap">
         <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
-        <Link href={`/teacher/tests/${testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
+        <Link href={`/teacher/tests/${pageTestId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
         <span>/</span>
         <span className="text-charcoal">Question Analytics</span>
       </div>
@@ -132,6 +159,31 @@ export default function QuestionAnalyticsPage() {
           Nov 6, 2026 on. Click a question to see each student&rsquo;s answer, time, answer changes and skips.
         </p>
       </div>
+
+      {sections && sections.length > 0 && (
+        <div className="flex gap-2 border-b border-divider" role="tablist">
+          {sections.map((sec) => (
+            <button
+              key={sec.key}
+              type="button"
+              role="tab"
+              aria-selected={testId === sec.testId}
+              onClick={() => {
+                if (sec.testId === testId) return;
+                setOpen(new Set());
+                setData(null);
+                setSectionTestId(sec.testId);
+              }}
+              className={clsx(
+                "px-4 py-2 text-sm font-semibold -mb-px border-b-2 transition-colors",
+                testId === sec.testId ? "border-warm-coral text-charcoal" : "border-transparent text-soft-mute hover:text-charcoal",
+              )}
+            >
+              {sec.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {data.modules.length === 0 && (
         <div className="py-12 text-center text-soft-mute text-sm">This test has no questions yet.</div>

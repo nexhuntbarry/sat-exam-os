@@ -6,7 +6,9 @@ import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { getTestSections, inSubjects } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { formatShortDateTime } from "@/lib/datetime";
-import { attemptScore, averageSat } from "@/lib/score-display";
+import { averageSat } from "@/lib/score-display";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
 import {
   DataRow,
   DataTable,
@@ -74,7 +76,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
       ? db
           .from("submissions")
           .select(
-            "id, student_id, status, correct_count, total_questions, submitted_at, session_id, adaptive_track, test_id, tests!inner(test_name)",
+            "id, student_id, status, correct_count, total_questions, submitted_at, session_id, adaptive_track, attempt_number, started_at, test_id, tests!inner(test_name)",
           )
           .in("student_id", studentIds)
           .order("submitted_at", { ascending: false })
@@ -91,6 +93,8 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
     submitted_at: string | null;
     session_id: string | null;
     adaptive_track: string | null;
+    attempt_number: number | null;
+    started_at: string | null;
     test_id: string;
     tests:
       | { test_name: string }
@@ -98,15 +102,22 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
       | null;
   };
   const subRows = (subs ?? []) as unknown as Sub[];
+  // Full-length SAT section rows are one attempt under the parent (counted
+  // as completed; its total is kept out of the per-section SAT columns).
+  const flLinks = await fullLengthLinksOrNone(db);
+  const flParentIds = Array.from(new Set(subRows.map((s) => flLinks.parentOf.get(s.test_id)).filter((x): x is string => Boolean(x))));
+  const flMeta = await loadFlAttemptMeta(db, flParentIds);
 
   // Only tests on the viewer's QA side and in the subject this teacher
   // teaches the class.
   const qaTests = await getQaTestIds();
-  const candidateTests = new Set<string>(subRows.map((s) => s.test_id));
+  const candidateTests = new Set<string>(subRows.map((s) => listedTestId(s.test_id, flLinks)));
   for (const a of assignments ?? []) candidateTests.add(a.test_id as string);
   const sectionOf = await getTestSections(db, Array.from(candidateTests));
+  // A full-length parent has both subjects: any of the class's teachers sees it.
   const visible = (testId: string) =>
-    onSide(testId, qaTests, isQa) && inSubjects(sectionOf.get(testId) ?? null, subjects);
+    onSide(testId, qaTests, isQa) &&
+    (flLinks.childrenOf.has(testId) || inSubjects(sectionOf.get(testId) ?? null, subjects));
 
   // Assigned per student = tests assigned to this class ∪ assigned to the
   // student individually ∪ tests they took.
@@ -124,8 +135,8 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
   // Group module rows into attempts (two-module attempts share a session_id).
   const attempts = new Map<string, Sub[]>();
   for (const s of subRows) {
-    if (!visible(s.test_id)) continue;
-    const key = s.session_id ?? s.id;
+    if (!visible(listedTestId(s.test_id, flLinks))) continue;
+    const key = flLinks.parentOf.has(s.test_id) ? attemptGroupKey(s, flLinks) : s.session_id ?? s.id;
     attempts.set(key, [...(attempts.get(key) ?? []), s]);
   }
 
@@ -141,10 +152,14 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
     const head = rows[0];
     const sid = head.student_id;
     const slot = (perStudent[sid] ??= emptySlot());
-    (tested[sid] ??= new Set()).add(head.test_id);
-    const { status, score } = attemptScore(rows, sectionOf.get(head.test_id));
-    if (status !== "Submitted" && status !== "Late") continue;
-    (completedTests[sid] ??= new Set()).add(head.test_id);
+    const testId = listedTestId(head.test_id, flLinks);
+    (tested[sid] ??= new Set()).add(testId);
+    const { status, score, fullLength } = scoreAttemptGroup(rows, flLinks, sectionOf.get(head.test_id), flMeta);
+    if (fullLength ? !flFinished(fullLength) : status !== "Submitted" && status !== "Late") continue;
+    (completedTests[sid] ??= new Set()).add(testId);
+    // The averages and the "latest" SAT column are per section: a
+    // full-length attempt (total 400–1600) counts as completed only.
+    if (fullLength) continue;
     if (score?.sat != null) slot.sats.push(score.sat);
     if (score?.pct != null) slot.pcts.push(score.pct);
     const submittedAt = rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
@@ -152,7 +167,11 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
       const t = (Array.isArray(head.tests) ? head.tests[0] : head.tests) as
         | { test_name: string }
         | null;
-      slot.latest = { test_name: t?.test_name ?? "—", submitted_at: submittedAt, sat: score?.sat ?? null };
+      slot.latest = {
+        test_name: t?.test_name ?? "—",
+        submitted_at: submittedAt,
+        sat: score?.sat ?? null,
+      };
     }
   }
   for (const sid of studentIds) {

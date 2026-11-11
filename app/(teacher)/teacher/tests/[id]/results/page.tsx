@@ -12,6 +12,11 @@ import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { attemptScore, averageSat } from "@/lib/score-display";
+import { fullLengthLinksOrNone, type FullLengthChildren } from "@/lib/full-length";
+import { averageFullLength, flFinished, flSectionScope } from "@/lib/full-length-score";
+import { fullLengthTableRows, loadFullLengthResults } from "@/lib/full-length-results";
+import { studentClassNames } from "@/lib/result-printout";
+import { FullLengthResultsTable } from "@/components/analytics/FullLengthResultsTable";
 
 async function getResultsData(testId: string, userId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
@@ -207,6 +212,137 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
   };
 }
 
+// Full-length SAT parent (plan Phase 3): one row per attempt with the
+// total, both sections and every module; a teacher scoped to one subject
+// sees the total plus their own section.
+async function getFullLengthResultsData(
+  testId: string,
+  children: FullLengthChildren,
+  user: { userId: string; role: string; isQa: boolean },
+) {
+  const db = getServiceClient();
+  const access = await getTeacherTestAccess(db, user, testId);
+  if (access.mode === null) return null;
+  const [{ data: assignment }, { data: test }] = await Promise.all([
+    db.from("test_assignments").select("student_ids, class_group_ids").eq("test_id", testId).maybeSingle(),
+    db.from("tests").select("id, test_name, due_date, status").eq("id", testId).single(),
+  ]);
+  if (!assignment || !test) return null;
+  const allowlist = access.mode === "class" ? access.studentAllowlist : null;
+  const [studentIds, attempts, scope, { data: grants }] = await Promise.all([
+    getAssignedStudentIds(db, assignment, user.isQa, allowlist),
+    loadFullLengthResults(db, testId, children, { studentAllowlist: allowlist, isQa: user.isQa }),
+    flSectionScope(db, user, children),
+    db.from("test_retake_grants").select("student_id").eq("test_id", testId).is("consumed_at", null),
+  ]);
+  const classOf = await studentClassNames(db, user, Array.from(new Set(attempts.map((a) => a.studentId))));
+  const rows = fullLengthTableRows(attempts, {
+    children,
+    scope,
+    classOf,
+    retakePending: new Set((grants ?? []).map((g) => g.student_id as string)),
+    sectionHref: (childId, subId) => `/teacher/tests/${childId}/results/${subId}`,
+  });
+  const scores = attempts.map((a) => a.score);
+  const finished = scores.filter(flFinished);
+  const totals = finished.map((s) => s.total).filter((t): t is number => t != null);
+  const started = new Set(attempts.map((a) => a.studentId));
+  return {
+    test,
+    scope,
+    rows,
+    stats: {
+      totalAssigned: studentIds.size,
+      submittedCount: finished.length,
+      notStartedCount: Array.from(studentIds).filter((sid) => !started.has(sid)).length,
+      inProgressCount: scores.filter((s) => s.status === "In progress" || s.status === "On break").length,
+      closedCount: scores.filter((s) => s.status.startsWith("Closed")).length,
+      lateCount: scores.filter((s) => s.status === "Late").length,
+      avg: averageFullLength(scores),
+      highest: totals.length ? Math.max(...totals) : null,
+      lowest: totals.length ? Math.min(...totals) : null,
+    },
+  };
+}
+
+async function FullLengthResultsPage({
+  id,
+  kids,
+  user,
+}: {
+  id: string;
+  kids: FullLengthChildren;
+  user: { userId: string; role: string; isQa: boolean };
+}) {
+  const data = await getFullLengthResultsData(id, kids, user);
+  if (!data) notFound();
+  const { test, scope, rows, stats } = data;
+  return (
+    <div className="max-w-6xl mx-auto space-y-8">
+      <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap">
+        <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
+        <span>/</span>
+        <Link href={`/teacher/tests/${id}`} className="hover:text-charcoal transition-colors">{test.test_name}</Link>
+        <span>/</span>
+        <span className="text-charcoal">Results</span>
+      </div>
+
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-charcoal">{test.test_name} — Results</h1>
+          <p className="text-soft-mute text-sm mt-1">
+            Full-length SAT · Reading and Writing + Math · Total 400–1600
+            {test.due_date && ` · Due ${formatDate(test.due_date)}`}
+          </p>
+          {!(scope.rw && scope.math) && (
+            <p className="text-soft-mute text-xs mt-1">
+              You see the total and the {scope.math ? "Math" : "Reading and Writing"} section.
+            </p>
+          )}
+        </div>
+        <div className="flex items-start gap-3">
+          <ExportCsvButton
+            testId={id}
+            filename={`${test.test_name.replace(/[^a-z0-9]/gi, "_")}-results.csv`}
+          />
+          <Link
+            href={`/teacher/tests/${id}/analytics`}
+            className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral-text text-sm font-medium hover:bg-warm-coral/20 transition-colors"
+          >
+            Question Analytics
+          </Link>
+        </div>
+      </div>
+
+      <ResultsDownloadPanel testId={id} />
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard label="Total Assigned" value={stats.totalAssigned} color="default" />
+        <StatCard
+          label="Submitted"
+          value={`${stats.submittedCount}`}
+          sub={stats.totalAssigned > 0 ? `${((stats.submittedCount / stats.totalAssigned) * 100).toFixed(0)}%` : undefined}
+          color="lime"
+        />
+        <StatCard label="Not Started" value={stats.notStartedCount} color="default" />
+        <StatCard label="In Progress" value={stats.inProgressCount} sub="includes the break" color="blue" />
+        <StatCard label="Late Submissions" value={stats.lateCount} color="amber" />
+        <StatCard label="Closed" value={stats.closedCount} sub="Math not taken" color="default" />
+        <StatCard label="Avg Total" value={stats.avg.total ?? "—"} sub="out of 1600" color="emerald" />
+        {scope.rw && <StatCard label="Avg R&W" value={stats.avg.rw ?? "—"} color="emerald" />}
+        {scope.math && <StatCard label="Avg Math" value={stats.avg.math ?? "—"} color="emerald" />}
+        <StatCard label="Highest Total" value={stats.highest ?? "—"} color="lime" />
+        <StatCard label="Lowest Total" value={stats.lowest ?? "—"} color="rose" />
+      </div>
+
+      <div>
+        <h2 className="text-charcoal font-semibold text-lg mb-4">Student Results</h2>
+        <FullLengthResultsTable rows={rows} testId={id} scope={scope} />
+      </div>
+    </div>
+  );
+}
+
 function fmtTime(s: number | null) {
   if (!s) return "—";
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
@@ -221,6 +357,14 @@ export default async function TestResultsPage({
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
+  const flLinks = await fullLengthLinksOrNone(getServiceClient());
+  // A full-length section's results live on its parent.
+  const flParent = flLinks.parentOf.get(id);
+  if (flParent) redirect(`/teacher/tests/${flParent}/results`);
+  const flKids = flLinks.childrenOf.get(id);
+  if (flKids) {
+    return <FullLengthResultsPage id={id} kids={flKids} user={{ userId: user.userId, role: user.role ?? "", isQa: user.isQa }} />;
+  }
   const data = await getResultsData(id, user.userId, user.role ?? "", user.isQa);
   if (!data) notFound();
 

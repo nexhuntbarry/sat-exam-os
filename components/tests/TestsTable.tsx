@@ -82,6 +82,10 @@ export interface TestRow {
   dueDate: string | null;
   /** Not started, individually assigned only (no class): safe to unassign. */
   removable: boolean;
+  /** Overrides the result link (a full-length SAT opens its results page). */
+  detailHref?: string;
+  /** Overrides the status text (a full-length SAT: "On break", "Closed — Math not taken"). */
+  statusLabel?: string;
 }
 
 const STATUS_KEY: Record<TestRowStatus, string> = {
@@ -381,9 +385,10 @@ export default function TestsTable({
                       kind="attempt"
                       status={g.status}
                       label={
-                        g.status === "In progress" && g.currentModule != null && g.moduleCount > 1
+                        g.statusLabel ??
+                        (g.status === "In progress" && g.currentModule != null && g.moduleCount > 1
                           ? `${t(STATUS_KEY[g.status])} (${t("moduleOf", { n: String(g.currentModule), m: String(g.moduleCount) })})`
-                          : t(STATUS_KEY[g.status])
+                          : t(STATUS_KEY[g.status]))
                       }
                     />
                     {(g.attemptNumber ?? 1) > 1 && (
@@ -455,7 +460,7 @@ export default function TestsTable({
                       isDone && g.detailSubmissionId != null && {
                         label: t("viewDetail"),
                         icon: Eye,
-                        href: `/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`,
+                        href: g.detailHref ?? `/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`,
                       },
                       g.removable && {
                         label: t("removeAssignment"),

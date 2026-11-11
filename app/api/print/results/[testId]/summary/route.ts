@@ -5,7 +5,8 @@ import { listPrintableAttempts, loadResultPrintouts, PrintAccessError } from "@/
 
 // GET /api/print/results/<testId>/summary?subs=<id,…>  → CSV (UTF-8 with BOM, opens in Excel)
 // Student, class, SAT score, Module 1 and Module 2 correct counts, date —
-// the same score display as the results screens. Teachers/admins only.
+// the same score display as the results screens. A full-length SAT gets
+// Total, R&W and Math with each section's module counts. Teachers/admins only.
 export async function GET(req: Request, { params }: { params: Promise<{ testId: string }> }) {
   const user = await getCurrentUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -30,7 +31,36 @@ export async function GET(req: Request, { params }: { params: Promise<{ testId: 
       const m = r.attempt.modules.find((x) => x.number === n);
       return m ? (m.graded ? `${m.correct ?? 0}/${m.total ?? 0}` : "—") : "";
     };
-    const lines = [
+    const date = (r: (typeof rows)[number]) =>
+      r.takenAt ? new Date(r.takenAt).toLocaleDateString("en-CA", { timeZone: "America/New_York" }) : "";
+    // Full-length SAT: the same top-level columns as the results CSV
+    // (a single-subject teacher gets the total plus their own section).
+    const fl = rows.find((r) => r.fullLength)?.fullLength;
+    const flMod = (a: NonNullable<(typeof rows)[number]["fullLength"]>["rw"], n: number) => {
+      const m = a.modules.find((x) => x.number === n);
+      return m ? (m.graded ? `${m.correct ?? 0}/${m.total ?? 0}` : "—") : "";
+    };
+    const lines = (fl ? [
+      [
+        "Student", "Class", "Test", "Total (400–1600)",
+        ...(fl.scope.rw ? ["R&W (200–800)", "R&W M1", "R&W M2"] : []),
+        ...(fl.scope.math ? ["Math (200–800)", "Math M1", "Math M2"] : []),
+        "Status", "Date",
+      ],
+      ...rows.map((r) => {
+        const f = r.fullLength!;
+        return [
+          r.studentName,
+          r.className,
+          r.testName,
+          f.total ?? "",
+          ...(fl.scope.rw ? [f.rw.score?.sat ?? "", flMod(f.rw, 1), flMod(f.rw, 2)] : []),
+          ...(fl.scope.math ? [f.math.score?.sat ?? "", flMod(f.math, 1), flMod(f.math, 2)] : []),
+          f.status,
+          date(r),
+        ];
+      }),
+    ] : [
       ["Student", "Class", "Test", "SAT score", "Module 1", "Module 2", "Status", "Date"],
       ...rows.map((r) => [
         r.studentName,
@@ -42,7 +72,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ testId: 
         r.attempt.status,
         r.takenAt ? new Date(r.takenAt).toLocaleDateString("en-CA", { timeZone: "America/New_York" }) : "",
       ]),
-    ].map((row) => row.map(cell).join(","));
+    ]).map((row) => row.map(cell).join(","));
     const testName = rows[0]?.testName ?? "results";
     const file = `${testName} – score summary.csv`;
     return new Response("﻿" + lines.join("\r\n") + "\r\n", {

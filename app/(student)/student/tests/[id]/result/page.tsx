@@ -1,17 +1,16 @@
 import { getServiceClient } from "@/lib/supabase";
-import { resolveParentTestId } from "@/lib/full-length";
+import { fullLengthLinksOrNone, resolveParentTestId } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Clock, BarChart2, Printer } from "lucide-react";
 import { clsx } from "clsx";
-import MathMarkdown from "@/components/MathMarkdown";
 import { attemptScore } from "@/lib/score-display";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
-import ReportProblemButton from "@/components/tests/ReportProblemButton";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
-import { acceptedAnswersText, sprEntryFeedback } from "@/lib/answer-key";
+import AnswerReviewItem from "./AnswerReviewItem";
+import FullLengthResult from "./FullLengthResult";
 
 const TRACK_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -206,17 +205,48 @@ export default async function StudentResultPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ submission?: string }>;
+  searchParams: Promise<{ submission?: string; attempt?: string; section?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
-  const { submission: submissionId } = await searchParams;
+  const { submission: submissionId, attempt: attemptParam, section: sectionParam } = await searchParams;
   // A full-length SAT section's result lives under its parent.
   const parentId = await resolveParentTestId(getServiceClient(), id);
   if (parentId !== id) {
     redirect(`/student/tests/${parentId}/result${submissionId ? `?submission=${encodeURIComponent(submissionId)}` : ""}`);
+  }
+
+  // Full-length SAT parent: one combined result over its two sections.
+  const flKids = (await fullLengthLinksOrNone(getServiceClient())).childrenOf.get(id);
+  if (flKids) {
+    const db = getServiceClient();
+    let attempt = attemptParam;
+    let section = sectionParam;
+    // A section submission id (old links, printouts) → its attempt and tab.
+    if (submissionId && !attempt) {
+      const { data: sub } = await db
+        .from("submissions")
+        .select("test_id, attempt_number")
+        .eq("id", submissionId)
+        .eq("student_id", user.userId)
+        .maybeSingle();
+      if (sub && (sub.test_id === flKids.rw || sub.test_id === flKids.math)) {
+        attempt = String(sub.attempt_number ?? 1);
+        section = section ?? (sub.test_id === flKids.math ? "math" : "rw");
+      }
+    }
+    return (
+      <FullLengthResult
+        db={db}
+        testId={id}
+        studentId={user.userId}
+        attemptParam={attempt}
+        sectionParam={section}
+        reportsEnabled={await studentReportsEnabledFor(db, user)}
+      />
+    );
   }
 
   const data = await getResult(id, user.userId, submissionId);
@@ -465,142 +495,9 @@ export default async function StudentResultPage({
                 {group.label}
               </div>
             )}
-            {group.records.map((record) => {
-              const q = record.questions;
-              return (
-                <details key={record.id} data-print-open className="bg-surface border border-divider rounded-xl overflow-hidden group">
-                  <summary className="flex items-center gap-3 p-4 cursor-pointer hover:bg-surface transition-colors list-none">
-                    <div className={clsx(
-                      "w-6 h-6 rounded-full flex items-center justify-center shrink-0",
-                      record.is_correct ? "bg-status-success/20" : "bg-status-error/15"
-                    )}>
-                      {record.is_correct
-                        ? <CheckCircle size={14} className="text-status-success" />
-                        : <XCircle size={14} className="text-status-error" />
-                      }
-                    </div>
-                    <span className="text-soft-mute text-sm shrink-0">Q{q.original_question_number}</span>
-                    <MathMarkdown className="text-charcoal text-sm line-clamp-1 flex-1 prose prose-sm max-w-none [&_p]:my-0">{q.question_text}</MathMarkdown>
-                    <span className={clsx(
-                      "text-xs font-medium shrink-0",
-                      record.is_correct
-                        ? "text-status-success"
-                        : !record.student_answer || record.student_answer.trim() === ""
-                        ? "text-status-warning"
-                        : "text-status-error"
-                    )}>
-                      {record.is_correct
-                        ? "Correct"
-                        : !record.student_answer || record.student_answer.trim() === ""
-                        ? "Blank"
-                        : "Incorrect"}
-                    </span>
-                  </summary>
-                  <div className="px-4 pb-4 pt-2 space-y-3 border-t border-divider">
-                    <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-2">
-                      {q.question_text}
-                    </MathMarkdown>
-
-                    {/* Question figure: recovered crop(s) only — students never see the
-                        raw source scan page (M-20). Not lazy: a lazy figure inside a closed
-                        row never loads, so Ctrl/Cmd+P printed the review without diagrams. */}
-                    {q.image_urls && q.image_urls.length > 0 && (
-                      <div className="flex flex-wrap gap-3">
-                        {q.image_urls.map((url, i) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            key={url}
-                            src={`/api/blob-image?u=${encodeURIComponent(url)}`}
-                            alt={q.image_alts?.[i] || `Figure for question ${q.original_question_number}`}
-                            className="max-w-full md:max-w-lg rounded-xl border border-divider bg-white"
-                          />
-                        ))}
-                      </div>
-                    )}
-
-                    {q.question_type === "Multiple Choice" && (q.choices ?? []).length > 0 && (
-                      <div className="space-y-1.5">
-                        {(q.choices as { label: string; text: string; image_url?: string | null }[]).map((c) => (
-                          <div
-                            key={c.label}
-                            className={clsx(
-                              "flex items-start gap-2.5 p-2.5 rounded-lg text-sm",
-                              c.label === record.correct_answer
-                                ? "bg-status-success/10 border border-status-success/30 text-status-success"
-                                : c.label === record.student_answer && !record.is_correct
-                                ? "bg-status-error/10 border border-status-error/20 text-status-error"
-                                : "text-soft-mute"
-                            )}
-                          >
-                            <span className="font-semibold shrink-0">{c.label}.</span>
-                            <div className="min-w-0">
-                              {c.text && <MathMarkdown className="prose prose-sm max-w-none text-inherit [&_p]:my-0">{c.text}</MathMarkdown>}
-                              {c.image_url && (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={`/api/blob-image?u=${encodeURIComponent(c.image_url)}`}
-                                  alt={`Choice ${c.label} graph`}
-                                  className="max-w-full max-h-60 rounded-lg border border-divider bg-white mt-1"
-                                />
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {q.question_type === "Student Produced Response" && (
-                      <div className="space-y-1">
-                        <div className="text-soft-mute text-xs">
-                          Your answer:{" "}
-                          {record.student_answer && record.student_answer.trim() !== "" ? (
-                            <span className={record.is_correct ? "text-status-success" : "text-status-error"}>
-                              {record.student_answer}
-                            </span>
-                          ) : (
-                            <span className="text-status-warning italic">Blank</span>
-                          )}
-                        </div>
-                        <div className="text-soft-mute text-xs">Correct answer: <span className="text-status-success">{record.correct_answer}</span></div>
-                        {/* Official fill-in rules: every entry that counts, and why
-                            this one didn't (only rendered where answers are shown). */}
-                        {record.correct_answer && (
-                          <div className="text-soft-mute text-xs">
-                            Accepted answers:{" "}
-                            <span className="text-charcoal font-mono">{acceptedAnswersText(record.correct_answer, q.question_text)}</span>
-                          </div>
-                        )}
-                        {!record.is_correct && sprEntryFeedback(record.student_answer, record.correct_answer, q.question_text) && (
-                          <div className="text-status-warning text-xs">
-                            {sprEntryFeedback(record.student_answer, record.correct_answer, q.question_text)}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {visibility.explanations && q.explanation && (
-                      <div className="p-3 bg-warm-coral/5 border border-warm-coral/15 rounded-lg">
-                        <div className="text-warm-coral-text text-xs font-medium mb-1">Explanation</div>
-                        <MathMarkdown className="prose prose-sm max-w-none text-mid-gray [&_p]:my-1.5 [&_p]:leading-relaxed">
-                          {q.explanation}
-                        </MathMarkdown>
-                      </div>
-                    )}
-
-                    {reportsEnabled && (
-                      <div className="flex justify-end">
-                        <ReportProblemButton
-                          testId={id}
-                          submissionId={record.submission_id}
-                          questionId={record.question_id}
-                          context="results"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </details>
-              );
-            })}
+            {group.records.map((record) => (
+              <AnswerReviewItem key={record.id} record={record} visibility={visibility} reportsEnabled={reportsEnabled} testId={id} />
+            ))}
           </div>
           ))}
         </div>

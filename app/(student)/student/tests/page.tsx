@@ -11,6 +11,7 @@ import { formatShortDate } from "@/lib/datetime";
 import { getAssignedTestIds, getInProgressOrPendingM2TestIds, isModule2Track } from "@/lib/student-exam";
 import { getTestSections } from "@/lib/teacher-access";
 import { attemptScore } from "@/lib/score-display";
+import { fullLengthAttemptScore } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { getTranslations } from "next-intl/server";
@@ -265,7 +266,19 @@ async function getStudentTests(studentId: string) {
     const lastSubmittedAt = latestRows.reduce<string>((m, r) => (r.submitted_at && r.submitted_at > m ? r.submitted_at : m), "");
     // Same score display as everywhere else: SAT once every module is in,
     // per-module counts, unfinished modules as "—".
-    const score = latestRows.length > 0
+    // A full-length SAT: its latest attempt's total and both sections
+    // (lib/full-length-score), from the section children's own rows.
+    const flKids = flLinks.childrenOf.get(t.id);
+    const flRows = flKids
+      ? ((rawSubmissions ?? []) as TestSubmissionRow[]).filter((r) => r.test_id === flKids.rw || r.test_id === flKids.math)
+      : [];
+    const flLatest = flRows.length > 0 ? Math.max(...flRows.map((r) => r.attempt_number ?? 1)) : 1;
+    const flAttempt = flRows.filter((r) => (r.attempt_number ?? 1) === flLatest).map((r) => ({ ...r, student_id: studentId }));
+    const score = flKids
+      ? flAttempt.length > 0
+        ? fullLengthAttemptScore(flAttempt.filter((r) => r.test_id === flKids.rw), flAttempt.filter((r) => r.test_id === flKids.math)).score
+        : null
+      : latestRows.length > 0
       ? attemptScore(latestRows.map((r) => ({ ...r, student_id: studentId })), sectionOf.get(t.id)).score
       : null;
     return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score, resumeOnly: resumeOnlyIds.has(t.id) };

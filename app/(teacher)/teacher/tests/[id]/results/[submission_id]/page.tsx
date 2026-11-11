@@ -47,7 +47,20 @@ interface ModuleBreakdown {
   answers: AnswerDetail[];
 }
 
+interface FullLengthInfo {
+  parentId: string;
+  parentName: string;
+  section: "rw" | "math";
+  total: number | null;
+  status: string;
+  rwSat: number | null;
+  mathSat: number | null;
+  other: { label: string; href: string | null };
+}
+
 interface DetailData {
+  /** Set when this submission is a section of a full-length SAT. */
+  fullLength?: FullLengthInfo | null;
   student: StudentInfo;
   submission: SubmissionInfo;
   answers: AnswerDetail[];
@@ -182,14 +195,14 @@ export default function SubmissionDetailPage() {
       <div className="flex items-center gap-2 text-soft-mute text-sm flex-wrap print:hidden">
         <Link href="/teacher/tests" className="hover:text-charcoal transition-colors">Tests</Link>
         <span>/</span>
-        <Link href={`/teacher/tests/${testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
+        <Link href={`/teacher/tests/${data.fullLength?.parentId ?? testId}/results`} className="hover:text-charcoal transition-colors">Results</Link>
         <span>/</span>
         <span className="text-charcoal">{student.name}</span>
         {/* The student's printed result: preview at Letter size, same
             visibility as the student's own result page. Ctrl/Cmd+P on this
             page still prints every question with its figures. */}
         <a
-          href={`/print/results/${testId}?subs=${submissionId}`}
+          href={`/print/results/${data.fullLength?.parentId ?? testId}?subs=${submissionId}`}
           target="_blank"
           rel="noopener"
           className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-warm-coral hover:bg-warm-coral-dark text-white text-xs font-semibold transition-colors"
@@ -199,6 +212,34 @@ export default function SubmissionDetailPage() {
           Print
         </a>
       </div>
+
+      {data.fullLength && (
+        // Full-length SAT: this page is one section; the total and the
+        // other section sit on top.
+        <div className="bg-surface border border-divider rounded-2xl p-5 flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <div className="text-soft-mute text-xs uppercase tracking-wider">
+              Full-length SAT · {data.fullLength.parentName}
+            </div>
+            <div className="text-charcoal text-sm mt-1">
+              Showing {data.fullLength.section === "rw" ? "Reading and Writing" : "Math"}
+              {" · "}Total <span className="font-bold">{data.fullLength.total ?? "—"}</span>
+              <span className="text-soft-mute">/1600</span>
+              {data.fullLength.rwSat != null && <> · R&amp;W {data.fullLength.rwSat}</>}
+              {data.fullLength.mathSat != null && <> · Math {data.fullLength.mathSat}</>}
+              {data.fullLength.total == null && <span className="text-soft-mute"> ({data.fullLength.status})</span>}
+            </div>
+          </div>
+          {data.fullLength.other.href && (
+            <Link
+              href={data.fullLength.other.href}
+              className="px-3 py-1.5 rounded-lg border border-divider text-sm text-charcoal hover:border-warm-coral/40 transition-colors"
+            >
+              View {data.fullLength.other.label}
+            </Link>
+          )}
+        </div>
+      )}
 
       {/* Student header */}
       <div className="bg-surface border border-divider rounded-2xl p-5">

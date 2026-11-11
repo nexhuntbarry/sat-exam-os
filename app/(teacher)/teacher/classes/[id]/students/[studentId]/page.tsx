@@ -12,6 +12,8 @@ import { getServiceClient } from "@/lib/supabase";
 import { getStudentAssignments } from "@/lib/student-exam";
 import { studentTestProgress } from "@/lib/test-progress";
 import { attemptScore, averageSat, type ScoreDisplay } from "@/lib/score-display";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { flStatusText, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, scopedFlScore } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
@@ -87,7 +89,7 @@ async function loadStudent(
     .from("submissions")
     .select(
       `id, test_id, student_id, status, score, percentage, correct_count, total_questions,
-       started_at, submitted_at, session_id, adaptive_track,
+       started_at, submitted_at, session_id, adaptive_track, attempt_number,
        tests!inner(id, test_name, due_date, is_adaptive, module_2_id)`,
     )
     .eq("student_id", studentId)
@@ -107,6 +109,7 @@ async function loadStudent(
     submitted_at: string | null;
     session_id: string | null;
     adaptive_track: string | null;
+    attempt_number: number | null;
     tests:
       | TestMeta
       | TestMeta[]
@@ -119,7 +122,12 @@ async function loadStudent(
     is_adaptive: boolean | null;
     module_2_id: string | null;
   };
-  const rows = (subs ?? []) as unknown as SubRow[];
+  // Full-length SAT section rows are listed as one attempt under the parent
+  // (the total, both sections); the teacher of either subject sees it.
+  const flLinks = await fullLengthLinksOrNone(db);
+  const allRows = (subs ?? []) as unknown as SubRow[];
+  const flRows = allRows.filter((r) => flLinks.parentOf.has(r.test_id));
+  const rows = allRows.filter((r) => !flLinks.parentOf.has(r.test_id));
   const [qaTests, assignments] = await Promise.all([
     getQaTestIds(),
     getStudentAssignments(db, studentId),
@@ -129,7 +137,8 @@ async function loadStudent(
     Array.from(new Set([...rows.map((r) => r.test_id), ...assignments.keys()])),
   );
   const visible = (testId: string) =>
-    onSide(testId, qaTests, isQa) && inSubjects(sectionOf.get(testId) ?? null, subjects);
+    onSide(testId, qaTests, isQa) &&
+    (flLinks.childrenOf.has(testId) || inSubjects(sectionOf.get(testId) ?? null, subjects));
   for (const testId of Array.from(assignments.keys())) {
     if (!visible(testId)) assignments.delete(testId);
   }
@@ -219,12 +228,66 @@ async function loadStudent(
       hasSubmission: true,
       score: attemptScore(sorted, sectionOf.get(head.test_id)).score,
       submittedAt: sorted.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
+      href: undefined as string | undefined,
+      fullLength: false,
     };
   });
 
+  // Full-length SAT attempts: one row each, under the parent.
+  const flParentIds = Array.from(new Set(flRows.map((r) => flLinks.parentOf.get(r.test_id)!))).filter((p) => visible(p));
+  const [flMeta, { data: flParentMeta }] = await Promise.all([
+    loadFlAttemptMeta(db, flParentIds, studentId),
+    flParentIds.length
+      ? db.from("tests").select("id, test_name, due_date").in("id", flParentIds)
+      : Promise.resolve({ data: [] as { id: string; test_name: string; due_date: string | null }[] }),
+  ]);
+  const flParentById = new Map(((flParentMeta ?? []) as { id: string; test_name: string; due_date: string | null }[]).map((t) => [t.id, t]));
+  const flGroups = new Map<string, SubRow[]>();
+  for (const r of flRows) {
+    const parent = flLinks.parentOf.get(r.test_id)!;
+    if (!visible(parent)) continue;
+    const k = flAttemptKey(parent, r.student_id, r.attempt_number ?? 1);
+    flGroups.set(k, [...(flGroups.get(k) ?? []), r]);
+  }
+  const flTested = new Set<string>();
+  for (const [k, list] of flGroups) {
+    const parent = flLinks.parentOf.get(list[0].test_id)!;
+    flTested.add(parent);
+    const kids = flLinks.childrenOf.get(parent);
+    // The total plus only the section(s) this teacher teaches the class.
+    const fl = scopedFlScore(
+      fullLengthAttemptScore(
+        list.filter((r) => r.test_id !== kids?.math),
+        list.filter((r) => r.test_id === kids?.math),
+        flMeta.get(k),
+      ),
+      { rw: inSubjects("Reading & Writing", subjects), math: inSubjects("Math", subjects) },
+    );
+    const done = fl.status === "Submitted" || fl.status === "Late";
+    const ordered = [...list].sort((a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? ""));
+    const last = ordered[ordered.length - 1];
+    const p = flParentById.get(parent);
+    submissions.push({
+      id: last.id,
+      testId: parent,
+      testName: p?.test_name ?? "—",
+      dueDate: p?.due_date ?? null,
+      section: "Full-length SAT",
+      status: done ? fl.status : fl.status === "Not started" ? "Not started" : fl.status.startsWith("Closed") ? flStatusText(fl) : "In progress",
+      module: null,
+      assignedVia: assignedVia(parent),
+      assignedAt: assignments.get(parent)?.assignedAt ?? null,
+      hasSubmission: true,
+      score: fl.score,
+      submittedAt: ordered.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
+      href: `/teacher/tests/${parent}/results`,
+      fullLength: true,
+    });
+  }
+
   // Assigned tests (directly or via a class) the student hasn't started.
   const notStarted = Array.from(assignments.values())
-    .filter((a) => !subsByTest.has(a.testId))
+    .filter((a) => !subsByTest.has(a.testId) && !flTested.has(a.testId))
     .map((a) => {
       const t = testById.get(a.testId);
       return {
@@ -240,6 +303,8 @@ async function loadStudent(
         assignedVia: assignedVia(a.testId),
         assignedAt: a.assignedAt,
         hasSubmission: false,
+        href: undefined as string | undefined,
+        fullLength: flLinks.childrenOf.has(a.testId),
       };
     });
   // Not started / in progress first (soonest due first), then finished
@@ -258,7 +323,7 @@ async function loadStudent(
 
   // Assigned = tests assigned to the student (directly or via a class)
   // plus any they took, in the teacher's subject(s).
-  const assigned = new Set<string>([...assignments.keys(), ...subsByTest.keys()]);
+  const assigned = new Set<string>([...assignments.keys(), ...subsByTest.keys(), ...flTested]);
 
   return { group, student, submissions, tests, subjects, assignedCount: assigned.size };
 }
@@ -292,8 +357,10 @@ export default async function TeacherStudentResultsPage({
     (s) => s.status === "Submitted" || s.status === "Late",
   );
   // Averages use finished attempts only (SAT needs every module in).
-  const avgSat = averageSat(completed.map((s) => s.score?.sat));
-  const pcts = completed.map((s) => s.score?.pct).filter((p): p is number => p != null);
+  // Full-length totals (400–1600) are on another scale: left out.
+  const sectionCompleted = completed.filter((s) => !s.fullLength);
+  const avgSat = averageSat(sectionCompleted.map((s) => s.score?.sat));
+  const pcts = sectionCompleted.map((s) => s.score?.pct).filter((p): p is number => p != null);
   const avgPct = pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
 
   return (
@@ -381,7 +448,7 @@ export default async function TeacherStudentResultsPage({
               return (
                 <DataRow
                   key={s.id}
-                  href={isDone && s.hasSubmission ? `/teacher/tests/${s.testId}/results/${s.id}` : `/teacher/tests/${s.testId}`}
+                  href={s.href ?? (isDone && s.hasSubmission ? `/teacher/tests/${s.testId}/results/${s.id}` : `/teacher/tests/${s.testId}`)}
                   expandBelow="lg"
                   colSpan={6}
                   details={

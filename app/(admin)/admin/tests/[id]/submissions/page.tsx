@@ -6,7 +6,10 @@ import Link from "next/link";
 import GrantRetakeButton from "./GrantRetakeButton";
 import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
 import { formatDateTimeSeconds, formatShortDateTime, formatShortDate } from "@/lib/datetime";
-import { attemptScore, type AttemptScore } from "@/lib/score-display";
+import { type AttemptScore } from "@/lib/score-display";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { attemptGroupKey, flBadge, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
+import { sectionDetailRowId } from "@/lib/full-length-results";
 import { getTestSections } from "@/lib/teacher-access";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -60,22 +63,25 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
     // If not on the same side, classFilter* stays null — filter is silently ignored.
   }
 
+  // Full-length SAT parent: its attempts are on its two section children.
+  const flLinks = await fullLengthLinksOrNone(db);
+  const flKids = flLinks.childrenOf.get(testId) ?? null;
   let query = db
     .from("submissions")
     .select(`
-      id, student_id, status, score, correct_count, total_questions,
+      id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, attempt_number,
       adaptive_track, module_id, session_id,
       users!inner(display_name, email),
       modules!module_id(module_name)
     `)
-    .eq("test_id", testId);
+    .in("test_id", flKids ? [flKids.rw, flKids.math].filter((x): x is string => Boolean(x)) : [testId]);
 
   if (classFilterStudentIds && classFilterStudentIds.size > 0) {
     query = query.in("student_id", Array.from(classFilterStudentIds));
   } else if (classFilterStudentIds && classFilterStudentIds.size === 0) {
     // Class exists but has no members — return empty
-    return { test, submissions: [], pendingByStudent: new Set<string>(), classFilterName, classFilterId: classFilter ?? null };
+    return { test, submissions: [], pendingByStudent: new Set<string>(), classFilterName, classFilterId: classFilter ?? null, flLinks, flKids, flMeta: null };
   }
 
   const { data: submissions } = await query.order("submitted_at", { ascending: false });
@@ -89,7 +95,8 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
     .is("consumed_at", null);
   const pendingByStudent = new Set((grants ?? []).map((g) => g.student_id as string));
 
-  return { test, submissions: submissions ?? [], pendingByStudent, classFilterName, classFilterId: classFilter ?? null };
+  const flMeta = flKids ? await loadFlAttemptMeta(db, [testId]) : null;
+  return { test, submissions: submissions ?? [], pendingByStudent, classFilterName, classFilterId: classFilter ?? null, flLinks, flKids, flMeta };
 }
 
 const TRACK_LABEL: Record<string, string> = {
@@ -123,7 +130,7 @@ export default async function TestSubmissionsPage({
   const data = await getSubmissions(id, user.isQa, classParam);
   if (!data) notFound();
 
-  const { test, submissions, pendingByStudent, classFilterName, classFilterId } = data;
+  const { test, submissions, pendingByStudent, classFilterName, classFilterId, flLinks, flKids, flMeta } = data;
 
   type RawSubmission = (typeof submissions)[number];
   const section = (await getTestSections(getServiceClient(), [test.id])).get(test.id) ?? null;
@@ -135,10 +142,14 @@ export default async function TestSubmissionsPage({
     studentEmail: string;
     moduleHeadline: string;
     attempt: AttemptScore;
+    /** Full-length SAT: badge label ("On break", "Closed — Math not taken", "In progress · Math · Module 1"). */
+    statusLabel?: string;
     timeSpentSeconds: number;
     submittedAt: string | null;
     attemptNumber: number;
     detailSubmissionId: string;
+    /** The test of the detail row (a full-length section's own id), default the page's test. */
+    detailTestId?: string;
     // When the attempt is still in progress but a module is already
     // graded, point the admin at it so they can inspect what's done.
     partialDetailSubmissionId: string | null;
@@ -150,7 +161,8 @@ export default async function TestSubmissionsPage({
   // (session_id NULL) stay as their own group.
   const bySession = new Map<string, RawSubmission[]>();
   for (const s of submissions) {
-    const key = s.session_id ?? `solo:${s.id}`;
+    // A full-length SAT attempt (both sections) is one row.
+    const key = attemptGroupKey(s, flLinks);
     bySession.set(key, [...(bySession.get(key) ?? []), s]);
   }
 
@@ -166,7 +178,38 @@ export default async function TestSubmissionsPage({
     const trackLabel = head.adaptive_track
       ? TRACK_LABEL[head.adaptive_track] ?? head.adaptive_track
       : null;
-    const attempt = attemptScore(sorted, section);
+    const { fullLength: fl, ...attempt } = scoreAttemptGroup(sorted, flLinks, section, flMeta ?? undefined);
+    if (fl && flKids) {
+      const rwRows = sorted.filter((r) => r.test_id === flKids.rw);
+      const mathRows = sorted.filter((r) => r.test_id === flKids.math);
+      const part = (name: string, a: AttemptScore, track: string | null) =>
+        `${name} ${a.score?.modules ?? "—"}${track ? ` (${track})` : ""}`;
+      const rwDetail = flKids.rw ? sectionDetailRowId(rwRows) : null;
+      const mathDetail = flKids.math ? sectionDetailRowId(mathRows) : null;
+      const badge = flBadge(fl);
+      attempts.push({
+        key,
+        studentId: head.student_id,
+        studentDisplayName: u.display_name,
+        studentEmail: u.email,
+        moduleHeadline: `${part("R&W", fl.rw, fl.rwTrack)} · ${part("Math", fl.math, fl.mathTrack)}`,
+        attempt,
+        statusLabel: badge.label ?? (fl.status === "In progress" && fl.current ? `In progress · ${fl.current}` : undefined),
+        timeSpentSeconds: sorted.reduce((acc, r) => acc + (r.time_spent_seconds ?? 0), 0),
+        submittedAt:
+          sorted
+            .map((r) => r.submitted_at)
+            .filter((d): d is string => !!d)
+            .sort()
+            .pop() ?? null,
+        attemptNumber: head.attempt_number ?? 1,
+        // The section detail pages (R&W first; each links to the other).
+        detailSubmissionId: rwDetail ?? mathDetail ?? sorted[sorted.length - 1].id,
+        detailTestId: rwDetail ? flKids.rw! : flKids.math ?? test.id,
+        partialDetailSubmissionId: attempt.status === "In progress" ? rwDetail ?? mathDetail : null,
+      });
+      continue;
+    }
     attempts.push({
       key,
       studentId: head.student_id,
@@ -260,11 +303,12 @@ export default async function TestSubmissionsPage({
               // Rule 4: viewing the attempt is the visible action (and the
               // row link); Grant retake is in ⋯.
               const done = a.attempt.status === "Submitted" || a.attempt.status === "Late";
+              const detailTest = a.detailTestId ?? test.id;
               const primary =
                 done
-                  ? { label: "View detail", href: `/teacher/tests/${test.id}/results/${a.detailSubmissionId}` }
+                  ? { label: "View detail", href: `/teacher/tests/${detailTest}/results/${a.detailSubmissionId}` }
                   : a.partialDetailSubmissionId
-                  ? { label: "View partial", href: `/teacher/tests/${test.id}/results/${a.partialDetailSubmissionId}` }
+                  ? { label: "View partial", href: `/teacher/tests/${detailTest}/results/${a.partialDetailSubmissionId}` }
                   : null;
 
               return (
@@ -293,7 +337,7 @@ export default async function TestSubmissionsPage({
                     {a.moduleHeadline}
                   </Td>
                   <Td>
-                    <StatusBadge kind="attempt" status={a.attempt.status} module={a.attempt.module} />
+                    <StatusBadge kind="attempt" status={a.attempt.status} module={a.attempt.module} label={a.statusLabel} />
                   </Td>
                   <Td>
                     <ScoreCell score={a.attempt.score} />

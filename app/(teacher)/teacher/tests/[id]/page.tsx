@@ -5,7 +5,18 @@ import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { formatDate, formatDateTime, formatShortDateTime, formatShortDate } from "@/lib/datetime";
-import { attemptScore, averageSat, type AttemptScore } from "@/lib/score-display";
+import { averageSat, type AttemptScore } from "@/lib/score-display";
+import { expandFullLength, fullLengthLinksOrNone, type FullLengthLinks } from "@/lib/full-length";
+import {
+  attemptGroupKey,
+  FL_ALL_SECTIONS,
+  flBadge,
+  flSectionScope,
+  loadFlAttemptMeta,
+  scoreAttemptGroup,
+  type FlAttemptMeta,
+  type FlSectionScope,
+} from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
@@ -52,14 +63,17 @@ async function getTeacherTest(
 
   const studentIds: string[] = assignment?.student_ids ?? [];
 
+  // Full-length SAT parent: its attempts are on its two section children.
+  const flLinks = await fullLengthLinksOrNone(db);
+  const isFullLength = flLinks.childrenOf.has(testId);
   let subQuery = scopeUsers(db
     .from("submissions")
     .select(`
-      id, student_id, status, score, correct_count, total_questions,
-      percentage, submitted_at, time_spent_seconds, session_id, adaptive_track,
+      id, test_id, student_id, status, score, correct_count, total_questions,
+      percentage, submitted_at, time_spent_seconds, session_id, adaptive_track, attempt_number,
       users!inner(display_name, email)
     `)
-    .eq("test_id", testId), user.isQa, "users.email")
+    .in("test_id", isFullLength ? await expandFullLength(db, [testId]) : [testId]), user.isQa, "users.email")
     .order("submitted_at", { ascending: false });
   // A class-group teacher only sees their own class's attempts.
   if (access.mode === "class" && access.studentAllowlist) {
@@ -69,6 +83,11 @@ async function getTeacherTest(
 
   return {
     test,
+    isFullLength,
+    flLinks,
+    flMeta: isFullLength ? await loadFlAttemptMeta(db, [testId]) : new Map<string, FlAttemptMeta>(),
+    // A single-subject teacher sees the total plus their own section only.
+    flScope: isFullLength ? await flSectionScope(db, user, flLinks.childrenOf.get(testId)!) : FL_ALL_SECTIONS,
     section: (await getTestSections(db, [testId])).get(testId) ?? null,
     studentIds,
     submissions: submissions ?? [],
@@ -78,6 +97,8 @@ async function getTeacherTest(
 
 type RawSubmission = {
   id: string;
+  test_id: string;
+  attempt_number: number | null;
   student_id: string;
   status: string;
   score: number | null;
@@ -96,6 +117,7 @@ type SubmissionAttempt = {
   studentName: string;
   email: string;
   attempt: AttemptScore;
+  statusLabel?: string;
   timeSpentSeconds: number;
   submittedAt: string | null;
 };
@@ -104,10 +126,17 @@ type SubmissionAttempt = {
 // session_id; collapse them into one attempt scored with the shared
 // score display. Legacy single-module rows (session_id NULL) stay as
 // individual attempts.
-function buildSubmissionAttempts(rows: RawSubmission[], section: string | null): SubmissionAttempt[] {
+// A full-length SAT attempt (both sections) is one attempt with the total.
+function buildSubmissionAttempts(
+  rows: RawSubmission[],
+  section: string | null,
+  links: FullLengthLinks,
+  flMeta: Map<string, FlAttemptMeta>,
+  flScope: FlSectionScope,
+): SubmissionAttempt[] {
   const bySession = new Map<string, RawSubmission[]>();
   for (const r of rows) {
-    const key = r.session_id ?? `solo:${r.id}`;
+    const key = attemptGroupKey(r, links);
     bySession.set(key, [...(bySession.get(key) ?? []), r]);
   }
 
@@ -117,7 +146,11 @@ function buildSubmissionAttempts(rows: RawSubmission[], section: string | null):
       key,
       studentName: list[0].users.display_name,
       email: list[0].users.email,
-      attempt: attemptScore(list, section),
+      ...(() => {
+        const { fullLength, ...attempt } = scoreAttemptGroup(list, links, section, flMeta, () => flScope);
+        // Full-length badge label ("On break", "Closed — Math not taken").
+        return { attempt, statusLabel: fullLength ? flBadge(fullLength).label : undefined };
+      })(),
       timeSpentSeconds: list.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0),
       submittedAt:
         list
@@ -155,7 +188,7 @@ export default async function TeacherTestDetailPage({
   const data = await getTeacherTest(id, user);
   if (!data) notFound();
 
-  const { test, section, submissions, canManageSettings } = data;
+  const { test, section, submissions, canManageSettings, isFullLength, flLinks, flMeta, flScope } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -165,6 +198,9 @@ export default async function TeacherTestDetailPage({
   const attempts = buildSubmissionAttempts(
     submissions as unknown as RawSubmission[],
     section,
+    flLinks,
+    flMeta,
+    flScope,
   );
   const submitted = attempts.filter((a) => a.attempt.score?.sat != null);
   const avgSat = averageSat(submitted.map((a) => a.attempt.score?.sat));
@@ -182,7 +218,9 @@ export default async function TeacherTestDetailPage({
       <div>
         <h1 className="text-2xl font-bold text-charcoal">{test.test_name}</h1>
         <p className="text-soft-mute text-sm mt-1">
-          {mod
+          {isFullLength
+            ? "Full-length SAT · Reading and Writing + Math · Total 400–1600"
+            : mod
             ? <>{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</>
             : "Adaptive · Module 1 + Module 2 (easy/hard)"}
         </p>
@@ -219,7 +257,7 @@ export default async function TeacherTestDetailPage({
           <div className="text-2xl font-bold text-charcoal">{submitted.length} / {attempts.length}</div>
         </div>
         <div className="bg-surface border border-divider rounded-xl p-4">
-          <div className="text-soft-mute text-xs mb-1">Avg SAT</div>
+          <div className="text-soft-mute text-xs mb-1">{isFullLength ? "Avg Total" : "Avg SAT"}</div>
           <div className="text-2xl font-bold text-warm-amber">{avgSat ?? "—"}</div>
           {avgPct != null && <div className="text-soft-mute text-xs">{avgPct.toFixed(1)}% correct</div>}
         </div>
@@ -296,7 +334,7 @@ export default async function TeacherTestDetailPage({
                       />
                     </Td>
                     <Td>
-                      <StatusBadge kind="attempt" status={a.attempt.status} module={a.attempt.module} />
+                      <StatusBadge kind="attempt" status={a.attempt.status} module={a.attempt.module} label={a.statusLabel} />
                     </Td>
                     <Td>
                       <ScoreCell score={a.attempt.score} />

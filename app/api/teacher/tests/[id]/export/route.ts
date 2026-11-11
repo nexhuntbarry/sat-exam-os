@@ -6,6 +6,10 @@ import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { attemptScore } from "@/lib/score-display";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { studentClassNames } from "@/lib/result-printout";
+import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
+import { flCsvHeader, flCsvOrder, flCsvQuestionColumns, flCsvRow, flSectionScope } from "@/lib/full-length-score";
+import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
+import { loadFullLengthResults } from "@/lib/full-length-results";
 
 // GET /api/teacher/tests/[id]/export
 // CSV of student results, one row per attempt (module rows of a
@@ -27,6 +31,10 @@ export async function GET(
   if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+
+  // Full-length SAT parent: its own columns (plan Phase 3).
+  const flKids = (await fullLengthLinks(db)).childrenOf.get(testId);
+  if (flKids) return fullLengthCsv(db, user, testId, flKids, access.mode === "class" ? access.studentAllowlist : null);
 
   // Fetch test name + questions
   const { data: test } = await db
@@ -261,4 +269,146 @@ function csvCell(value: string | number): string {
 
 function csvRow(cells: (string | number)[]): string {
   return cells.map(csvCell).join(",");
+}
+
+type Db = ReturnType<typeof getServiceClient>;
+
+/**
+ * Full-length SAT CSV: one row per attempt with the total, both sections,
+ * each module's correct count and Module 2 track, extended time, then one
+ * column per question like the section export (RW M1 Q1 … Math M2 Hard
+ * Q22). A teacher scoped to one subject gets the total plus their own
+ * section's columns only.
+ */
+async function fullLengthCsv(
+  db: Db,
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
+  testId: string,
+  kids: FullLengthChildren,
+  studentAllowlist: Set<string> | null,
+): Promise<Response> {
+  const childIds = [kids.rw, kids.math].filter((x): x is string => Boolean(x));
+  const [{ data: test }, { data: childTests }, scope, attempts] = await Promise.all([
+    db.from("tests").select("id, test_name").eq("id", testId).single(),
+    db
+      .from("tests")
+      .select("id, is_adaptive, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
+      .in("id", childIds),
+    flSectionScope(db, user, kids),
+    loadFullLengthResults(db, testId, kids, { studentAllowlist, isQa: user.isQa }),
+  ]);
+  if (!test) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+  type Child = { id: string; is_adaptive: boolean | null; module_id: string | null; module_2_id: string | null; module_1_id: string | null; module_2_easy_id: string | null; module_2_hard_id: string | null };
+  const children = (childTests ?? []) as Child[];
+  // Module slots in test order, prefixed like the section export
+  // ("RW M1", "RW M2 Easy", "RW M2 Hard", "Math M1", …).
+  const moduleSlots = (child: Child | undefined, section: "rw" | "math", name: string) => {
+    if (!child) return [];
+    const slots = child.is_adaptive
+      ? [
+          { id: child.module_1_id, prefix: `${name} M1` },
+          { id: child.module_2_easy_id, prefix: `${name} M2 Easy` },
+          { id: child.module_2_hard_id, prefix: `${name} M2 Hard` },
+        ]
+      : [
+          { id: child.module_id, prefix: `${name} M1` },
+          { id: child.module_2_id, prefix: `${name} M2` },
+        ];
+    return slots.filter((m): m is { id: string; prefix: string } => Boolean(m.id)).map((m) => ({ ...m, section }));
+  };
+  const modules = [
+    ...moduleSlots(children.find((c) => c.id === kids.rw), "rw", "RW"),
+    ...moduleSlots(children.find((c) => c.id === kids.math), "math", "Math"),
+  ];
+  const moduleIds = modules.map((m) => m.id);
+
+  // Answers of the attempts' rows.
+  const rowIds = attempts.flatMap((a) => [...a.rw, ...a.math].map((r) => r.id));
+  const answerMap = new Map<string, string>();
+  const answeredIds = new Set<string>();
+  if (rowIds.length > 0) {
+    const { data: answerRecords, error } = await fetchAllRows<{ submission_id: string; question_id: string; student_answer: string | null }>(
+      (from, to) =>
+        db
+          .from("answer_records")
+          .select("submission_id, question_id, student_answer")
+          .in("submission_id", rowIds)
+          .order("id")
+          .range(from, to),
+    );
+    if (error) {
+      console.error("[teacher/tests/export answers]", error);
+      return NextResponse.json({ error: "Failed to load answers" }, { status: 500 });
+    }
+    for (const ar of answerRecords ?? []) {
+      answerMap.set(`${ar.submission_id}:${ar.question_id}`, ar.student_answer ?? "");
+      answeredIds.add(ar.question_id);
+    }
+  }
+
+  // Question columns: the student-visible (Approved) questions of each
+  // module, plus any question these attempts were graded on (a question
+  // demoted after the fact keeps its answers in the export).
+  let questionRows: { id: string; module_id: string; original_question_number: number | null; parsing_status: string | null }[] = [];
+  if (moduleIds.length > 0) {
+    const { data: qs, error } = await db
+      .from("questions")
+      .select("id, module_id, original_question_number, parsing_status")
+      .in("module_id", moduleIds);
+    if (error) {
+      console.error("[teacher/tests/export questions]", error);
+      return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
+    }
+    questionRows = (qs ?? []) as typeof questionRows;
+  }
+  const questions = flCsvQuestionColumns(
+    modules.map((m) => ({
+      section: m.section,
+      prefix: m.prefix,
+      questions: questionRows
+        .filter((q) => q.module_id === m.id && (q.parsing_status === STUDENT_VISIBLE_QUESTION_STATUS || answeredIds.has(q.id)))
+        .map((q) => ({ id: q.id, n: q.original_question_number ?? 0 })),
+    })),
+  );
+
+  const classOf = await studentClassNames(db, user, Array.from(new Set(attempts.map((a) => a.studentId))));
+  const lines = [csvRow(flCsvHeader(scope, questions))];
+  // Finished attempts oldest first, then unfinished ones.
+  const ordered = flCsvOrder(
+    attempts.map((a) => ({
+      ...a,
+      startedAt: [...a.rw, ...a.math].map((r) => r.started_at ?? "").filter(Boolean).sort()[0] ?? null,
+    })),
+  );
+  for (const a of ordered) {
+    lines.push(
+      csvRow(
+        flCsvRow(
+          {
+            studentName: a.studentName,
+            email: a.email,
+            grade: a.grade ?? "",
+            className: classOf.get(a.studentId) ?? "",
+            attemptNumber: a.attemptNumber,
+            score: a.score,
+            multiplier: a.multiplier,
+            timeSeconds: a.timeSeconds,
+            submittedAt: a.submittedAt,
+            rowIds: [...a.rw, ...a.math].map((r) => r.id),
+            answers: answerMap,
+          },
+          scope,
+          questions,
+        ),
+      ),
+    );
+  }
+
+  return new Response("\uFEFF" + lines.join("\r\n") + "\r\n", {
+    headers: {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${(test.test_name as string).replace(/[^a-z0-9]/gi, "_")}-results.csv"`,
+    },
+  });
 }

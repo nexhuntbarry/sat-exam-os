@@ -1,5 +1,14 @@
 import { getServiceClient } from "@/lib/supabase";
-import { childTestIds } from "@/lib/full-length";
+import { childTestIds, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
+import {
+  flFinished,
+  fullLengthAttemptScore,
+  groupFullLengthAttempts,
+  latestFlAttemptGroups,
+  listedTestId,
+  loadFlAttemptMeta,
+  type FlScoreRow,
+} from "@/lib/full-length-score";
 import { notFound } from "next/navigation";
 import ClassDetailClient from "./ClassDetailClient";
 import { getCurrentUser } from "@/lib/auth";
@@ -181,6 +190,10 @@ async function getAssignedTests(
   if (visibleRows.length === 0) return [];
 
   const testIds = visibleRows.map((r) => r.test_id as string);
+  // A full-length SAT's rows are on its two section children: read them
+  // too and count them under the parent (latest attempt per student).
+  const flLinks = await fullLengthLinksOrNone(db);
+  const flMeta = await loadFlAttemptMeta(db, testIds.filter((tid) => flLinks.childrenOf.has(tid)));
 
   // Fetch all submission rows for these tests scoped to this class's members.
   // Include test_id so we can group, plus every field summarizeTestProgress needs.
@@ -189,16 +202,16 @@ async function getAssignedTests(
       ? await db
           .from("submissions")
           .select(
-            "id, test_id, student_id, status, session_id, adaptive_track, started_at, correct_count, total_questions",
+            "id, test_id, student_id, status, session_id, adaptive_track, started_at, correct_count, total_questions, attempt_number",
           )
-          .in("test_id", testIds)
+          .in("test_id", expandWithChildren(testIds, flLinks))
           .in("student_id", memberStudentIds)
       : { data: [] as (ProgressSubmission & { test_id: string })[] };
 
   // Group by test_id.
   const subsByTest = new Map<string, (ProgressSubmission & { test_id: string })[]>();
   for (const s of allSubs ?? []) {
-    const tid = (s as { test_id: string }).test_id;
+    const tid = listedTestId((s as { test_id: string }).test_id, flLinks);
     const list = subsByTest.get(tid) ?? [];
     list.push(s as ProgressSubmission & { test_id: string });
     subsByTest.set(tid, list);
@@ -222,6 +235,27 @@ async function getAssignedTests(
     const twoModules = Boolean(tMeta?.module_2_id || tMeta?.is_adaptive);
 
     const testSubs = subsByTest.get(row.test_id as string) ?? [];
+    if (flLinks.childrenOf.has(row.test_id as string)) {
+      // Full-length SAT: latest attempt per student, total 400–1600.
+      const scores = latestFlAttemptGroups(groupFullLengthAttempts(testSubs as FlScoreRow[], flLinks).attempts).map((g) =>
+        fullLengthAttemptScore(g.rw, g.math, flMeta.get(g.key)),
+      );
+      const done = scores.filter(flFinished);
+      const pcts = done.map((sc) => sc.score?.pct).filter((x): x is number => x != null);
+      return {
+        id: row.test_id as string,
+        name: tMeta?.test_name ?? "Untitled test",
+        section: "Full-length SAT",
+        openDate: tMeta?.open_date ?? null,
+        dueDate: tMeta?.due_date ?? null,
+        status: tMeta?.status ?? null,
+        submitted: done.length,
+        inProgress: scores.filter((sc) => sc.status === "In progress" || sc.status === "On break").length,
+        total: memberStudentIds.length,
+        avgScore: pcts.length > 0 ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null,
+        avgSat: averageSat(done.map((sc) => sc.total)),
+      };
+    }
     const progress = summarizeTestProgress(testSubs, memberStudentIds, twoModules);
     // Avg SAT over finished students, same score display as the test page.
     const byStudent = new Map<string, ProgressSubmission[]>();

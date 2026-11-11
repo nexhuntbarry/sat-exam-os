@@ -12,6 +12,17 @@ import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { answerCandidates } from "@/lib/grade-submission";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
+import {
+  FL_ALL_SECTIONS,
+  flAttemptKey,
+  flBadge,
+  flFinished,
+  flSectionScope,
+  fullLengthAttemptScore,
+  loadFlAttemptMeta,
+  type FlSectionScope,
+} from "@/lib/full-length-score";
 
 export type PrintMode = "full" | "short";
 
@@ -49,7 +60,20 @@ export interface ResultQuestion {
 
 export interface ResultModule {
   label: string | null;
+  /** Full-length SAT: the section this module belongs to (a divider goes before Math). */
+  section?: "rw" | "math";
   questions: ResultQuestion[];
+}
+
+/** Full-length SAT printout header (plan Phase 3). */
+export interface FullLengthPrintScore {
+  /** R&W + Math (400–1600), null until both sections are finished. */
+  total: number | null;
+  rw: AttemptScore;
+  math: AttemptScore;
+  status: string;
+  /** Sections printed in full (a single-subject teacher gets the total plus their own section). */
+  scope: FlSectionScope;
 }
 
 export interface StudentResultPrintout {
@@ -62,6 +86,8 @@ export interface StudentResultPrintout {
   /** Last module's submitted_at. */
   takenAt: string | null;
   attempt: AttemptScore;
+  /** Set for a full-length SAT attempt: `attempt` then holds the combined cell (sat = total). */
+  fullLength?: FullLengthPrintScore;
   attemptNumber: number;
   visibility: VisibilityDecision;
   /** What this printout actually includes after clamping. */
@@ -177,6 +203,61 @@ async function allowedStudents(db: SupabaseClient, viewer: Viewer, testId: strin
 }
 
 /**
+ * The printed questions of graded modules, in the order given, with the
+ * student's answers and (only where they may see them) the key, marks and
+ * explanations. Short mode keeps the missed questions only.
+ */
+async function buildModules(
+  db: SupabaseClient,
+  graded: { sub: SubRow; label: string | null; section?: "rw" | "math" }[],
+  shows: { answers: boolean; explanations: boolean },
+  opts: PrintOptions,
+): Promise<{ modules: ResultModule[]; grid: StudentResultPrintout["grid"] }> {
+  const modules: ResultModule[] = [];
+  const grid: StudentResultPrintout["grid"] = [];
+  if (graded.length === 0 || opts.summaryOnly) return { modules, grid };
+  const { data: records, error } = await db
+    .from("answer_records")
+    .select(`submission_id, question_id, student_answer, correct_answer, is_correct,
+      questions!inner(original_question_number, question_text, choices, question_type, explanation, image_urls)`)
+    .in("submission_id", graded.map((g) => g.sub.id));
+  if (error) throw new Error(`printout: answers lookup failed: ${error.message}`);
+  type Rec = {
+    submission_id: string; question_id: string; student_answer: string | null; correct_answer: string | null; is_correct: boolean | null;
+    questions: { original_question_number: number; question_text: string; choices: ResultChoice[] | null; question_type: string; explanation: string | null; image_urls: string[] | null };
+  };
+  const recs = (records ?? []) as unknown as Rec[];
+  for (const { sub, label, section } of graded) {
+    const mine = recs.filter((r) => r.submission_id === sub.id).sort((a, b) => a.questions.original_question_number - b.questions.original_question_number);
+    const questions: ResultQuestion[] = mine.map((r, i) => {
+      const blank = !r.student_answer || r.student_answer.trim() === "";
+      const outcome: ResultQuestion["outcome"] = !shows.answers ? null : blank ? "blank" : r.is_correct ? "correct" : "wrong";
+      grid.push({ module: label, n: i + 1, outcome });
+      return {
+        id: r.question_id,
+        n: i + 1,
+        text: r.questions.question_text,
+        type: r.questions.question_type,
+        imageUrls: r.questions.image_urls ?? [],
+        choices: Array.isArray(r.questions.choices) ? r.questions.choices : [],
+        studentAnswer: blank ? null : r.student_answer,
+        correctAnswer: shows.answers ? answerCandidates(r.correct_answer).join(" or ") || r.correct_answer : null,
+        outcome,
+        explanation: shows.explanations ? r.questions.explanation : null,
+      };
+    });
+    modules.push({
+      label,
+      ...(section ? { section } : {}),
+      // Answers hidden → the student sees no per-question review, so
+      // neither does the paper. Short = missed (wrong or blank) only.
+      questions: !shows.answers ? [] : opts.mode === "short" ? questions.filter((q) => q.outcome !== "correct") : questions,
+    });
+  }
+  return { modules, grid };
+}
+
+/**
  * Printouts for the attempts identified by any one of their submission ids
  * (each id stands for that submission's whole two-module attempt). For a
  * student viewer, `submissionIds` may be empty = their latest finished attempt.
@@ -194,6 +275,10 @@ export async function loadResultPrintouts(
   if (viewer.role === "student" && !onSide(testId, await getQaTestIds(), viewer.isQa)) {
     throw new PrintAccessError(404, "Test not found");
   }
+
+  // Full-length SAT parent: one printout per full-length attempt.
+  const flKids = (await fullLengthLinks(db)).childrenOf.get(testId);
+  if (flKids) return loadFullLengthPrintouts(db, viewer, testId, test.test_name as string, flKids, allowed, submissionIds, opts);
 
   // Resolve requested ids → attempts.
   let picked: SubRow[] = [];
@@ -251,49 +336,13 @@ export async function loadResultPrintouts(
     const graded = rows.filter((r) => DONE.has(r.status));
     const shows = { answers: visibility.answers, explanations: visibility.answers && visibility.explanations && opts.explanations };
 
-    const modules: ResultModule[] = [];
-    const grid: StudentResultPrintout["grid"] = [];
-    if (graded.length > 0 && !opts.summaryOnly) {
-      const { data: records, error } = await db
-        .from("answer_records")
-        .select(`submission_id, question_id, student_answer, correct_answer, is_correct,
-          questions!inner(original_question_number, question_text, choices, question_type, explanation, image_urls)`)
-        .in("submission_id", graded.map((r) => r.id));
-      if (error) throw new Error(`printout: answers lookup failed: ${error.message}`);
-      type Rec = {
-        submission_id: string; question_id: string; student_answer: string | null; correct_answer: string | null; is_correct: boolean | null;
-        questions: { original_question_number: number; question_text: string; choices: ResultChoice[] | null; question_type: string; explanation: string | null; image_urls: string[] | null };
-      };
-      const recs = (records ?? []) as unknown as Rec[];
-      const two = rows.length > 1;
-      for (const sub of graded) {
-        const label = two ? (TRACK_LABEL[sub.adaptive_track ?? ""] ?? null) : null;
-        const mine = recs.filter((r) => r.submission_id === sub.id).sort((a, b) => a.questions.original_question_number - b.questions.original_question_number);
-        const questions: ResultQuestion[] = mine.map((r, i) => {
-          const blank = !r.student_answer || r.student_answer.trim() === "";
-          const outcome: ResultQuestion["outcome"] = !shows.answers ? null : blank ? "blank" : r.is_correct ? "correct" : "wrong";
-          grid.push({ module: label, n: i + 1, outcome });
-          return {
-            id: r.question_id,
-            n: i + 1,
-            text: r.questions.question_text,
-            type: r.questions.question_type,
-            imageUrls: r.questions.image_urls ?? [],
-            choices: Array.isArray(r.questions.choices) ? r.questions.choices : [],
-            studentAnswer: blank ? null : r.student_answer,
-            correctAnswer: shows.answers ? answerCandidates(r.correct_answer).join(" or ") || r.correct_answer : null,
-            outcome,
-            explanation: shows.explanations ? r.questions.explanation : null,
-          };
-        });
-        modules.push({
-          label,
-          // Answers hidden → the student sees no per-question review, so
-          // neither does the paper. Short = missed (wrong or blank) only.
-          questions: !shows.answers ? [] : opts.mode === "short" ? questions.filter((q) => q.outcome !== "correct") : questions,
-        });
-      }
-    }
+    const two = rows.length > 1;
+    const { modules, grid } = await buildModules(
+      db,
+      graded.map((sub) => ({ sub, label: two ? (TRACK_LABEL[sub.adaptive_track ?? ""] ?? null) : null })),
+      shows,
+      opts,
+    );
     out.push({
       submissionId: rows[rows.length - 1].id,
       studentId,
@@ -311,6 +360,155 @@ export async function loadResultPrintouts(
   }
   out.sort((a, b) => a.studentName.localeCompare(b.studentName));
   return out;
+}
+
+const SUB_COLS = "id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions";
+const byModuleOrder = (a: SubRow, b: SubRow) =>
+  (a.adaptive_track === "module_1" ? 0 : 1) - (b.adaptive_track === "module_1" ? 0 : 1) || (a.started_at ?? "").localeCompare(b.started_at ?? "");
+
+/**
+ * Full-length SAT printouts (plan Phase 3): each requested id stands for its
+ * whole full-length attempt (both sections). The header carries the total,
+ * R&W and Math; the grids and questions run R&W then Math. Visibility is
+ * the parent's decision, so nothing shows until Math Module 2 is graded.
+ */
+async function loadFullLengthPrintouts(
+  db: SupabaseClient,
+  viewer: Viewer,
+  testId: string,
+  testName: string,
+  kids: FullLengthChildren,
+  allowed: Set<string> | null,
+  submissionIds: string[],
+  opts: PrintOptions,
+): Promise<StudentResultPrintout[]> {
+  const childIds = [kids.rw, kids.math].filter((x): x is string => Boolean(x));
+  const meta = await loadFlAttemptMeta(db, [testId], viewer.role === "student" ? viewer.userId : undefined);
+  const scoreOf = (rows: SubRow[], studentId: string, n: number) =>
+    fullLengthAttemptScore(
+      rows.filter((r) => r.test_id === kids.rw),
+      rows.filter((r) => r.test_id === kids.math),
+      meta.get(flAttemptKey(testId, studentId, n)),
+    );
+
+  let picked: SubRow[] = [];
+  if (submissionIds.length > 0) {
+    const { data, error } = await db.from("submissions").select(SUB_COLS).in("test_id", childIds).in("id", submissionIds.slice(0, 500));
+    if (error) throw new Error(`printout: submissions lookup failed: ${error.message}`);
+    picked = (data ?? []) as SubRow[];
+    if (picked.length !== new Set(submissionIds).size) throw new PrintAccessError(404, "Submission not found");
+  } else if (viewer.role === "student") {
+    const { data } = await db.from("submissions").select(SUB_COLS).in("test_id", childIds).eq("student_id", viewer.userId);
+    const mine = (data ?? []) as SubRow[];
+    const numbers = Array.from(new Set(mine.map((r) => r.attempt_number ?? 1))).sort((a, b) => b - a);
+    const n = numbers.find((k) => flFinished(scoreOf(mine.filter((r) => (r.attempt_number ?? 1) === k), viewer.userId, k)));
+    if (n == null) throw new PrintAccessError(404, "No finished attempt");
+    picked = mine.filter((r) => (r.attempt_number ?? 1) === n).slice(0, 1);
+  }
+  const qaUsers = await getQaUserIds();
+  for (const s of picked) {
+    if (allowed && !allowed.has(s.student_id)) throw new PrintAccessError(403, "Forbidden");
+    if (!onSide(s.student_id, qaUsers, viewer.isQa)) throw new PrintAccessError(404, "Submission not found");
+  }
+
+  // Whole full-length attempts: every row of (student, attempt number) on both children.
+  const studentIds = Array.from(new Set(picked.map((s) => s.student_id)));
+  const wanted = new Set(picked.map((s) => `${s.student_id}:${s.attempt_number ?? 1}`));
+  const { data: allRows, error: rowsError } = studentIds.length
+    ? await fetchAllRows<SubRow>((from, to) =>
+        db.from("submissions").select(SUB_COLS).in("test_id", childIds).in("student_id", studentIds)
+          .order("id").range(from, to) as unknown as PromiseLike<{ data: SubRow[] | null; error: unknown }>)
+    : { data: [] as SubRow[], error: null };
+  if (rowsError) throw new Error(`printout: attempt rows lookup failed: ${(rowsError as { message?: string }).message ?? String(rowsError)}`);
+  const attempts = new Map<string, SubRow[]>();
+  for (const r of (allRows ?? []) as SubRow[]) {
+    const k = `${r.student_id}:${r.attempt_number ?? 1}`;
+    if (wanted.has(k)) attempts.set(k, [...(attempts.get(k) ?? []), r]);
+  }
+
+  const [visInputs, people, scope] = await Promise.all([
+    loadAnswerVisibilityInputs(db, [testId], studentIds),
+    namesAndClasses(db, studentIds, await visibleClassIds(db, viewer)),
+    viewer.role === "teacher" ? flSectionScope(db, viewer, kids) : Promise.resolve(FL_ALL_SECTIONS),
+  ]);
+
+  const out: StudentResultPrintout[] = [];
+  for (const rows of attempts.values()) {
+    const rw = rows.filter((r) => r.test_id === kids.rw).sort(byModuleOrder);
+    const math = rows.filter((r) => r.test_id === kids.math).sort(byModuleOrder);
+    const head = rw[0] ?? math[0];
+    const studentId = head.student_id;
+    const n = head.attempt_number ?? 1;
+    const fl = scoreOf(rows, studentId, n);
+    const input = visInputs.get(visibilityKey(testId, studentId));
+    let visibility: VisibilityDecision = input ? decideAnswerVisibility(input, "results") : { answers: false, explanations: false, source: "test" };
+    if (!visibility.answers && input) {
+      const review = decideAnswerVisibility(input, "class_review");
+      if (review.answers) visibility = review;
+    }
+    const shows = { answers: visibility.answers, explanations: visibility.answers && visibility.explanations && opts.explanations };
+    const label = (prefix: string, sub: SubRow) => `${prefix} · ${TRACK_LABEL[sub.adaptive_track ?? ""] ?? "Module"}`;
+    const graded = [
+      ...(scope.rw ? rw : []).filter((r) => DONE.has(r.status)).map((sub) => ({ sub, label: label("Reading and Writing", sub), section: "rw" as const })),
+      ...(scope.math ? math : []).filter((r) => DONE.has(r.status)).map((sub) => ({ sub, label: label("Math", sub), section: "math" as const })),
+    ];
+    const { modules, grid } = await buildModules(db, graded, shows, opts);
+    const ordered = [...rw, ...math];
+    out.push({
+      submissionId: ordered[ordered.length - 1].id,
+      studentId,
+      ...people(studentId),
+      testName,
+      section: null,
+      takenAt: graded.map((g) => g.sub.submitted_at).filter((d): d is string => Boolean(d)).sort().pop() ?? null,
+      attempt: { score: fl.score, status: flBadge(fl).status, module: null, modules: [] },
+      fullLength: { total: fl.total, rw: fl.rw, math: fl.math, status: fl.status, scope },
+      attemptNumber: n,
+      visibility,
+      shows,
+      grid,
+      modules,
+    });
+  }
+  out.sort((a, b) => a.studentName.localeCompare(b.studentName));
+  return out;
+}
+
+/** Latest finished full-length attempt per student (same picks as listPrintableAttempts). */
+async function fullLengthPrintPicks(
+  db: SupabaseClient,
+  testId: string,
+  kids: FullLengthChildren,
+  allowed: Set<string> | null,
+  viewer: Viewer,
+): Promise<{ studentId: string; submissionId: string }[]> {
+  const childIds = [kids.rw, kids.math].filter((x): x is string => Boolean(x));
+  // Paged (PostgREST caps a response at 1000 rows); stable order for the pages.
+  const { data, error } = await fetchAllRows<SubRow>((from, to) => {
+    let q = db.from("submissions").select(SUB_COLS).in("test_id", childIds);
+    if (allowed) q = q.in("student_id", Array.from(allowed));
+    return q.order("id").range(from, to) as unknown as PromiseLike<{ data: SubRow[] | null; error: unknown }>;
+  });
+  if (error) throw new Error(`printout: submissions lookup failed: ${(error as { message?: string }).message ?? String(error)}`);
+  const qaUsers = await getQaUserIds();
+  const rows = ((data ?? []) as SubRow[]).filter((r) => onSide(r.student_id, qaUsers, viewer.isQa));
+  const meta = await loadFlAttemptMeta(db, [testId]);
+  const byStudent = new Map<string, SubRow[]>();
+  for (const r of rows) byStudent.set(r.student_id, [...(byStudent.get(r.student_id) ?? []), r]);
+  const picks: { studentId: string; submissionId: string }[] = [];
+  for (const [studentId, list] of byStudent) {
+    const latest = Math.max(...list.map((r) => r.attempt_number ?? 1));
+    const attemptRows = list.filter((r) => (r.attempt_number ?? 1) === latest);
+    const fl = fullLengthAttemptScore(
+      attemptRows.filter((r) => r.test_id === kids.rw),
+      attemptRows.filter((r) => r.test_id === kids.math),
+      meta.get(flAttemptKey(testId, studentId, latest)),
+    );
+    if (!flFinished(fl)) continue;
+    const last = [...attemptRows].sort((a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? "")).pop()!;
+    picks.push({ studentId, submissionId: last.id });
+  }
+  return picks;
 }
 
 /** "Jane Doe – Test name – 2026-11-07.pdf", safe for every OS. */
@@ -339,6 +537,15 @@ export interface PrintableAttempt {
 /** Every finished attempt (latest per student) the viewer may print, by name. */
 export async function listPrintableAttempts(db: SupabaseClient, viewer: Viewer, testId: string): Promise<PrintableAttempt[]> {
   const allowed = await allowedStudents(db, viewer, testId);
+  const flKids = (await fullLengthLinks(db)).childrenOf.get(testId);
+  if (flKids) {
+    const flPicks = await fullLengthPrintPicks(db, testId, flKids, allowed, viewer);
+    if (flPicks.length === 0) return [];
+    const flPeople = await namesAndClasses(db, flPicks.map((p) => p.studentId), await visibleClassIds(db, viewer));
+    return flPicks
+      .map((p) => ({ submissionId: p.submissionId, studentId: p.studentId, ...flPeople(p.studentId) }))
+      .sort((a, b) => a.studentName.localeCompare(b.studentName));
+  }
   let q = db
     .from("submissions")
     .select("id, student_id, status, session_id, adaptive_track, attempt_number, started_at, correct_count, total_questions")

@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
-import { expandFullLength, resolveParentTestId } from "@/lib/full-length";
+import { expandFullLength, fullLengthLinks, resolveParentTestId } from "@/lib/full-length";
+import { averageFullLength, flFinished, flModuleCells, flSectionScope } from "@/lib/full-length-score";
+import { loadFullLengthResults } from "@/lib/full-length-results";
 import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import { studentClassNames } from "@/lib/result-printout";
@@ -42,6 +44,59 @@ export async function GET(
   }
   const studentAllowlist =
     access.mode === "class" ? access.studentAllowlist : null;
+
+  // Full-length SAT parent: one row per attempt with the total (400–1600),
+  // both sections and every module (lib/full-length-score). A teacher
+  // scoped to one subject gets the total plus their own section.
+  const flKids = (await fullLengthLinks(db)).childrenOf.get(testId);
+  if (flKids) {
+    const [{ data: flTest }, studentIds, attempts, scope] = await Promise.all([
+      db.from("tests").select("id, test_name, due_date, open_date, status, test_kind").eq("id", testId).single(),
+      getAssignedStudentIds(db, assignment, user.isQa, studentAllowlist),
+      loadFullLengthResults(db, testId, flKids, { studentAllowlist, isQa: user.isQa }),
+      flSectionScope(db, user, flKids),
+    ]);
+    if (!flTest) return NextResponse.json({ error: "Test not found" }, { status: 404 });
+    const classOf = await studentClassNames(db, user, Array.from(new Set(attempts.map((a) => a.studentId))));
+    const scores = attempts.map((a) => a.score);
+    const started = new Set(attempts.map((a) => a.studentId));
+    const avg = averageFullLength(scores);
+    const section = (a: (typeof attempts)[number]["score"]["rw"], track: string | null) => {
+      const [m1, m2] = flModuleCells(a);
+      return { sat: a.score?.sat ?? null, status: a.status, module1: m1, module2: m2, module2Track: track, notes: a.score?.notes ?? [] };
+    };
+    return NextResponse.json({
+      test: flTest,
+      fullLength: true,
+      scope,
+      stats: {
+        totalAssigned: studentIds.size,
+        submittedCount: scores.filter(flFinished).length,
+        notStartedCount: Array.from(studentIds).filter((sid) => !started.has(sid)).length,
+        inProgressCount: scores.filter((s) => s.status === "In progress" || s.status === "On break").length,
+        lateCount: scores.filter((s) => s.status === "Late").length,
+        avgTotal: avg.total,
+        avgRw: scope.rw ? avg.rw : null,
+        avgMath: scope.math ? avg.math : null,
+      },
+      students: attempts.map((a) => ({
+        studentId: a.studentId,
+        studentName: a.studentName,
+        email: a.email,
+        grade: a.grade,
+        classGroup: classOf.get(a.studentId) ?? null,
+        attemptNumber: a.attemptNumber,
+        status: a.score.status,
+        current: a.score.current,
+        total: a.score.total,
+        rw: scope.rw ? section(a.score.rw, a.score.rwTrack) : null,
+        math: scope.math ? section(a.score.math, a.score.mathTrack) : null,
+        extendedTime: a.multiplier > 1 ? a.multiplier : null,
+        timeSpentSeconds: a.timeSeconds,
+        submittedAt: a.submittedAt,
+      })),
+    });
+  }
 
   // Fetch test
   const { data: test } = await db

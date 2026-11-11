@@ -9,6 +9,8 @@ import { sectionTitleClass } from "@/lib/section-color";
 import { ClipboardList, Users, BarChart2, AlertTriangle } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import { expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
+import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
 
 async function getTeacherDashboardData(user: { userId: string; role: string | null; isQa: boolean }) {
   const db = getServiceClient();
@@ -21,6 +23,10 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
   }
   const testIds = Array.from(scope.testIds);
   const qaUsers = await getQaUserIds();
+  // A full-length SAT's attempts are on its two section children: counted
+  // under the parent, finished once Math Module 2 is graded.
+  const flLinks = await fullLengthLinksOrNone(db);
+  const flMeta = await loadFlAttemptMeta(db, testIds.filter((id) => flLinks.childrenOf.has(id)));
 
   const [{ data: tests, error: testsError }, { data: assignments, error: assignError }, { data: allSubs, error: subError }] = await Promise.all([
     db
@@ -33,8 +39,8 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     db.from("test_assignments").select("test_id, student_ids, class_group_ids").in("test_id", testIds),
     scopeIds(db
       .from("submissions")
-      .select("id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, users!inner(display_name, email)")
-      .in("test_id", testIds), "student_id", qaUsers, user.isQa),
+      .select("id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, users!inner(display_name, email)")
+      .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa),
   ]);
   if (testsError) throw new Error(`tests lookup failed: ${testsError.message}`);
   if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
@@ -62,25 +68,31 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     percentage: number | string | null;
     submitted_at: string | null;
     session_id: string | null;
+    adaptive_track: string | null;
+    attempt_number: number | null;
+    started_at: string | null;
     users: unknown;
   };
   const attemptRows = new Map<string, SubRow[]>();
   for (const s of (allSubs ?? []) as SubRow[]) {
-    if (!seesAllStudents(scope, s.test_id) && !scope.myStudentIds.has(s.student_id)) continue;
-    const key = s.session_id ?? s.id;
+    if (!seesAllStudents(scope, listedTestId(s.test_id, flLinks)) && !scope.myStudentIds.has(s.student_id)) continue;
+    const key = flLinks.parentOf.has(s.test_id) ? attemptGroupKey(s, flLinks) : s.session_id ?? s.id;
     attemptRows.set(key, [...(attemptRows.get(key) ?? []), s]);
   }
   const attempts = Array.from(attemptRows.entries()).map(([key, rows]) => {
     const correct = rows.reduce((n, r) => n + (r.correct_count ?? 0), 0);
     const total = rows.reduce((n, r) => n + (r.total_questions ?? 0), 0);
-    const done = rows.every((r) => r.status === "Submitted" || r.status === "Late");
+    const fl = scoreAttemptGroup(rows, flLinks, null, flMeta).fullLength;
+    const done = fl
+      ? flFinished(fl)
+      : rows.every((r) => r.status === "Submitted" || r.status === "Late");
     const percentage = total > 0
       ? (correct / total) * 100
       : rows[0].percentage != null ? Number(rows[0].percentage) : null;
     const submittedAt = rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
     return {
       id: key,
-      testId: rows[0].test_id,
+      testId: listedTestId(rows[0].test_id, flLinks),
       studentId: rows[0].student_id,
       status: done ? (rows.some((r) => r.status === "Late") ? "Late" : "Submitted") : "In Progress",
       done,

@@ -5,6 +5,9 @@ import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { forbidCrossSide } from "@/lib/qa";
 import { parseActivity, summarizeActivity } from "@/lib/question-activity";
 import { studentClassNames } from "@/lib/result-printout";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { flSectionScope, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey } from "@/lib/full-length-score";
+import { sectionDetailRowId } from "@/lib/full-length-results";
 
 // Two-track access model:
 // 1) admin → unrestricted
@@ -303,7 +306,61 @@ export async function GET(
   // truth for the two-module breakdown.
   const flatAnswers = modules.flatMap((m) => m.answers);
 
+  // Full-length SAT section (plan Phase 3): the attempt's total and a link
+  // to the other section when this viewer may see it.
+  let fullLength: {
+    parentId: string;
+    parentName: string;
+    section: "rw" | "math";
+    total: number | null;
+    status: string;
+    rwSat: number | null;
+    mathSat: number | null;
+    other: { label: string; href: string | null };
+  } | null = null;
+  const flLinks = await fullLengthLinksOrNone(db);
+  const parentId = flLinks.parentOf.get(testId);
+  const kids = parentId ? flLinks.childrenOf.get(parentId) : undefined;
+  if (parentId && kids) {
+    const n = (submission.attempt_number as number | null) ?? 1;
+    const studentId = submission.student_id as string;
+    const [{ data: parentRow }, { data: attemptRows }, meta, scope] = await Promise.all([
+      db.from("tests").select("test_name").eq("id", parentId).maybeSingle(),
+      db
+        .from("submissions")
+        .select("id, test_id, student_id, status, adaptive_track, session_id, started_at, correct_count, total_questions, attempt_number")
+        .in("test_id", [kids.rw, kids.math].filter((x): x is string => Boolean(x)))
+        .eq("student_id", studentId)
+        .eq("attempt_number", n),
+      loadFlAttemptMeta(db, [parentId], studentId),
+      flSectionScope(db, user, kids),
+    ]);
+    type R = { id: string; test_id: string; student_id: string; status: string; adaptive_track: string | null; started_at: string | null };
+    const rows = (attemptRows ?? []) as R[];
+    const rwRows = rows.filter((r) => r.test_id === kids.rw);
+    const mathRows = rows.filter((r) => r.test_id === kids.math);
+    const fl = fullLengthAttemptScore(rwRows, mathRows, meta.get(flAttemptKey(parentId, studentId, n)));
+    const section = testId === kids.math ? "math" : "rw";
+    const otherId = section === "rw" ? kids.math : kids.rw;
+    const otherRow = sectionDetailRowId(section === "rw" ? mathRows : rwRows);
+    const otherVisible = section === "rw" ? scope.math : scope.rw;
+    fullLength = {
+      parentId,
+      parentName: (parentRow?.test_name as string | undefined) ?? "Full-length SAT",
+      section,
+      total: fl.total,
+      status: fl.status,
+      rwSat: scope.rw ? fl.rw.score?.sat ?? null : null,
+      mathSat: scope.math ? fl.math.score?.sat ?? null : null,
+      other: {
+        label: section === "rw" ? "Math" : "Reading and Writing",
+        href: otherVisible && otherId && otherRow ? `/teacher/tests/${otherId}/results/${otherRow}` : null,
+      },
+    };
+  }
+
   return NextResponse.json({
+    fullLength,
     student: {
       name: u.display_name,
       email: u.email,

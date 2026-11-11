@@ -6,8 +6,9 @@ import { BarChart2, Eye } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatShortDate } from "@/lib/datetime";
 import { getTestSections } from "@/lib/teacher-access";
-import { fullLengthLinksOrNone } from "@/lib/full-length";
-import { attemptScore, type AttemptScore } from "@/lib/score-display";
+import { fullLengthLinksOrNone, type FullLengthLinks } from "@/lib/full-length";
+import { type AttemptScore } from "@/lib/score-display";
+import { attemptGroupKey, flBadge, listedTestId, scoreAttemptGroup } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
@@ -36,6 +37,7 @@ type ResultRow = {
   submitted_at: string | null;
   session_id: string | null;
   adaptive_track: string | null;
+  attempt_number: number | null;
   tests: {
     test_name: string;
     modules: { module_name: string; section: string } | null;
@@ -49,6 +51,8 @@ type ResultGroup = {
   section: string | null;
   moduleHeadline: string;
   attempt: AttemptScore;
+  /** Full-length SAT: "On break" / "Closed — Math not taken". */
+  statusLabel?: string;
   submittedAt: string | null;
   detailSubmissionId: string;
 };
@@ -59,7 +63,7 @@ async function getStudentResults(studentId: string) {
     .from("submissions")
     .select(`
       id, test_id, student_id, status, correct_count, total_questions,
-      submitted_at, session_id, adaptive_track,
+      submitted_at, session_id, adaptive_track, attempt_number,
       tests!inner(test_name, modules!module_id(module_name, section))
     `)
     .eq("student_id", studentId)
@@ -70,18 +74,29 @@ async function getStudentResults(studentId: string) {
   // Full-length SAT section rows link to the parent test (fail-open: on a
   // lookup error they keep their own test id, which redirects anyway).
   const [sectionOf, flLinks] = await Promise.all([getTestSections(db, testIds), fullLengthLinksOrNone(db)]);
-  const parents = flLinks.parentOf;
-  return { rows, sectionOf, parents };
+  const parentIds = Array.from(new Set(rows.map((r) => flLinks.parentOf.get(r.test_id)).filter((x): x is string => Boolean(x))));
+  const { data: parentRows } = parentIds.length
+    ? await db.from("tests").select("id, test_name").in("id", parentIds)
+    : { data: [] as { id: string; test_name: string }[] };
+  const parentName = new Map(((parentRows ?? []) as { id: string; test_name: string }[]).map((t) => [t.id, t.test_name]));
+  return { rows, sectionOf, flLinks, parentName };
 }
 
 // Two-module attempts (adaptive or non-adaptive two-module tests) span
 // two submission rows sharing one session_id: one row per attempt, scored
 // with the shared score display. Legacy single-module submissions
 // (session_id NULL) stay as individual rows.
-function buildResultGroups(rows: ResultRow[], sectionOf: Map<string, string | null>): ResultGroup[] {
+// A full-length SAT attempt (both sections) is one row under the parent,
+// with the total once both sections are in.
+function buildResultGroups(
+  rows: ResultRow[],
+  sectionOf: Map<string, string | null>,
+  links: FullLengthLinks,
+  parentName: Map<string, string>,
+): ResultGroup[] {
   const bySession = new Map<string, ResultRow[]>();
   for (const r of rows) {
-    const key = r.session_id ?? `solo:${r.id}`;
+    const key = attemptGroupKey(r, links);
     bySession.set(key, [...(bySession.get(key) ?? []), r]);
   }
 
@@ -94,6 +109,28 @@ function buildResultGroups(rows: ResultRow[], sectionOf: Map<string, string | nu
     const head = sorted[0];
     const section = sectionOf.get(head.test_id) ?? head.tests.modules?.section ?? null;
     const twoModules = sorted.some((r) => Boolean(r.adaptive_track));
+    const { fullLength, ...attempt } = scoreAttemptGroup(sorted, links, section);
+    if (fullLength) {
+      const parentId = listedTestId(head.test_id, links);
+      const badge = flBadge(fullLength);
+      groups.push({
+        key,
+        testId: parentId,
+        testName: parentName.get(parentId) ?? head.tests.test_name,
+        section: "Full-length SAT",
+        moduleHeadline: "Reading and Writing + Math",
+        attempt,
+        statusLabel: badge.label,
+        submittedAt:
+          sorted
+            .map((r) => r.submitted_at)
+            .filter((d): d is string => !!d)
+            .sort()
+            .pop() ?? null,
+        detailSubmissionId: sorted[sorted.length - 1].id,
+      });
+      continue;
+    }
     groups.push({
       key,
       testId: head.test_id,
@@ -102,7 +139,7 @@ function buildResultGroups(rows: ResultRow[], sectionOf: Map<string, string | nu
       moduleHeadline: twoModules
         ? "Module 1 + Module 2"
         : head.tests.modules?.module_name ?? "Adaptive · multi-module",
-      attempt: attemptScore(sorted, section),
+      attempt,
       submittedAt:
         sorted
           .map((r) => r.submitted_at)
@@ -129,10 +166,8 @@ export default async function StudentResultsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const { rows, sectionOf, parents } = await getStudentResults(user.userId);
-  const results = buildResultGroups(rows, sectionOf).map((g) =>
-    parents.has(g.testId) ? { ...g, testId: parents.get(g.testId)! } : g,
-  );
+  const { rows, sectionOf, flLinks, parentName } = await getStudentResults(user.userId);
+  const results = buildResultGroups(rows, sectionOf, flLinks, parentName);
   const breakdownRows = await getStudentBreakdownRows(user.userId);
   const occasions = await getStudentProgressOccasions(user.userId);
 
@@ -205,7 +240,7 @@ export default async function StudentResultsPage() {
                     <ScoreCell score={r.attempt.score} />
                   </Td>
                   <Td>
-                    <StatusBadge kind="attempt" status={r.attempt.status} module={r.attempt.module} />
+                    <StatusBadge kind="attempt" status={r.attempt.status} module={r.attempt.module} label={r.statusLabel} />
                   </Td>
                   <Td priority="md" className="text-soft-mute">
                     {r.submittedAt ? formatShortDate(r.submittedAt) : "—"}
