@@ -220,10 +220,17 @@ export async function PATCH(
       )
       .eq("id", id)
       .eq("student_id", user.userId)
-      .single();
+      .maybeSingle();
 
-    if (fetchError || !submission) {
-      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    // A read failure is transient (the client retries); a missing row means
+    // the exam was deleted (e.g. by an admin) and no retry will bring it
+    // back — the take page stops saving and tells the student.
+    if (fetchError) {
+      console.error("[student/submissions/patch] read", fetchError);
+      return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+    }
+    if (!submission) {
+      return NextResponse.json({ error: "Submission not found", code: "submission_gone" }, { status: 404 });
     }
 
     if (submission.status !== "In Progress") {

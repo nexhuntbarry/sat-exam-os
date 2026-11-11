@@ -89,10 +89,15 @@ export async function POST(
     )
     .eq("id", id)
     .eq("student_id", user.userId)
-    .single();
+    .maybeSingle();
 
-  if (subError || !submission) {
-    return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+  // Read failure → 500 (the client retries); no row → the exam was deleted.
+  if (subError) {
+    console.error("[student/submissions/submit] read", subError);
+    return NextResponse.json({ error: "Failed to load submission" }, { status: 500 });
+  }
+  if (!submission) {
+    return NextResponse.json({ error: "Submission not found", code: "submission_gone" }, { status: 404 });
   }
 
   // Fetch test. We pull adaptive routing fields too — they're only used

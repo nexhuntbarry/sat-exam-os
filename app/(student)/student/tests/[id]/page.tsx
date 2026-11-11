@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Clock, BookOpen, Calendar } from "lucide-react";
 import StartTestButton from "./StartTestButton";
 import FullLengthLanding from "./FullLengthLanding";
+import RefreshAtOpenTime from "./RefreshAtOpenTime";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import {
   isModule2Track,
@@ -338,6 +339,7 @@ export default async function StudentTestLandingPage({
         ) : isNotOpenYet && !isInProgress ? (
           <div className="p-4 bg-light-bg border border-divider rounded-xl text-center text-mid-gray">
             This test opens on {formatDateTime(test.open_date as string)}.
+            <RefreshAtOpenTime openAt={test.open_date as string} serverNow={Date.now()} />
           </div>
         ) : !isAssigned && !isInProgress ? (
           // Unassigned and no in-progress session: should normally be gated
