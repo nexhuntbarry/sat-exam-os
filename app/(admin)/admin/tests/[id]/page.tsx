@@ -21,6 +21,7 @@ import FullLengthSourcesCard from "./FullLengthSourcesCard";
 import AccommodationsCard from "./AccommodationsCard";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import {
+  accommodationKind,
   FL_SECTIONS,
   fullLengthEnabledFor,
   listAccommodations,
@@ -64,7 +65,7 @@ async function getTest(id: string, viewerIsQa: boolean) {
       open_date, due_date,
       show_answers_after_submission, show_explanations_after_submission, allow_retake, status, created_at, updated_at,
       is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, adaptive_threshold,
-      desmos_enabled, formula_sheet_url, review_unlocked,
+      desmos_enabled, formula_sheet_url, review_unlocked, is_untimed, test_kind, parent_test_id,
       modules!module_id(module_name, section, module_number, source_name)
     `)
     .eq("id", id)
@@ -285,6 +286,12 @@ export default async function TestDetailPage({
   const section = (await getTestSections(db, [test.id])).get(test.id) ?? null;
   const fl = (await fullLengthLinksOrNone(db)).childrenOf.has(test.id) ? await getFullLengthDetail(test.id) : null;
   const tf = await getTranslations("fullLength");
+  // Section test (single / two-module / adaptive): per-student extended
+  // time, as on a full-length test. Untimed tests have no clock to extend.
+  const sectionAccommodations =
+    !fl && !test.is_untimed && accommodationKind(test) === "section"
+      ? Object.fromEntries((await listAccommodations(db, test.id)).data.map((a) => [a.student_id, a.time_multiplier]))
+      : null;
 
   // Effective answer visibility for every student in the Students table
   // (individual + class-assigned + unassigned-with-work) — the same decision
@@ -717,6 +724,14 @@ export default async function TestDetailPage({
             />
           )}
         </>
+      )}
+      {sectionAccommodations && (
+        <AccommodationsCard
+          testId={test.id}
+          students={assignment.students.map((st) => ({ id: st.id, name: st.name, email: st.email }))}
+          initial={sectionAccommodations}
+          kind="section"
+        />
       )}
 
       {/* 4. Answers & review */}

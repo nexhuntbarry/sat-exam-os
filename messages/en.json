@@ -881,6 +881,7 @@
     "keepSource": "Keep current source",
     "accommodationsTitle": "Extended time",
     "accommodationsHint": "Per student. Applies to the four modules (not the break) of attempts started after the change.",
+    "accommodationsHintSection": "Per student. Applies to every module of attempts started after the change.",
     "standardTime": "Standard time",
     "noStudents": "No students assigned yet.",
     "saving": "Saving…",

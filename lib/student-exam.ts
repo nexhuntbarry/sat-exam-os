@@ -116,7 +116,9 @@ export interface ModuleTiming {
 
 /**
  * Server-owned submission metadata keys of a full-length SAT attempt
- * (lib/full-length.ts). Section tests never carry them.
+ * (lib/full-length.ts). Section tests only ever carry time_multiplier
+ * (stamped by POST /api/student/submissions). Module 2 inherits all of them
+ * (carriedModule1Metadata) and an admin reset keeps them.
  *   time_multiplier — extended time (1.25 / 1.5 / 2), applied to every module
  *   fl_attempt_id   — full_length_attempts.id
  *   fl_started_at   — when the whole full-length attempt started (Late rule)
@@ -125,7 +127,8 @@ export const FULL_LENGTH_METADATA_KEYS = ["time_multiplier", "fl_attempt_id", "f
 
 /**
  * Extended-time multiplier stamped on a submission (metadata.time_multiplier),
- * or 1 when absent / not a sane number. Only full-length attempts carry it.
+ * or 1 when absent / not a sane number. Stamped at attempt start from
+ * test_time_accommodations (full-length and section tests alike).
  */
 export function timeMultiplier(metadata?: unknown): number {
   const m = (metadata as Record<string, unknown> | null | undefined)?.time_multiplier;
@@ -433,10 +436,10 @@ const SERVER_OWNED_METADATA_KEYS = [
 ];
 
 /**
- * Metadata an admin reset keeps. A section test's row gets {} as always.
- * A full-length row (one carrying any full-length key) keeps those keys,
- * so the reset module keeps its extended time and attempt link, plus the
- * device, for support.
+ * Metadata an admin reset keeps. A plain section test's row gets {} as
+ * always. A row carrying any of these keys (full-length, or a section
+ * test with extended time) keeps them, so the reset module keeps its
+ * extended time and attempt link, plus the device, for support.
  */
 export function resetSubmissionMetadata(old: unknown): Record<string, unknown> {
   const meta = (old && typeof old === "object" ? old : {}) as Record<string, unknown>;

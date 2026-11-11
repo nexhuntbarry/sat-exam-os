@@ -7,7 +7,7 @@ import { headers } from "next/headers";
 import TestTakingClient from "./TestTakingClient";
 import Module2Intro from "./Module2Intro";
 import ClearTakeErrorReloads from "./ClearTakeErrorReloads";
-import { deviceInfoFromHeaders, isModule2Track, orderToQuestionIds, scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { deviceInfoFromHeaders, isModule2Track, moduleTimeLimitMinutes, orderToQuestionIds, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { RECOVERY_TEST_COLUMNS, recoverModule2, type RecoveryTest } from "@/lib/module2-handoff";
 import { studentTestAccess } from "@/lib/module2-access";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
@@ -206,11 +206,18 @@ async function getActiveSubmission(
   const now = Date.now();
   const elapsedSeconds = Math.floor((now - startedAt) / 1000);
   // Module 2 submissions get their own timer if the admin set
-  // time_limit_minutes_module_2; otherwise fall back to module 1's.
-  const activeTimeLimit = isModule2
-    ? test.time_limit_minutes_module_2 ?? test.time_limit_minutes
-    : test.time_limit_minutes;
-  const timeLimitSeconds = (activeTimeLimit ?? 35) * 60;
+  // time_limit_minutes_module_2; otherwise fall back to module 1's (35
+  // when none is set). Extended time (metadata.time_multiplier) included,
+  // same as the server deadline (moduleDeadlineMs).
+  const activeTimeLimit = moduleTimeLimitMinutes(
+    {
+      time_limit_minutes: test.time_limit_minutes ?? 35,
+      time_limit_minutes_module_2: test.time_limit_minutes_module_2,
+    },
+    submission.adaptive_track,
+    submissionMetadata,
+  ) ?? 35;
+  const timeLimitSeconds = Math.round(activeTimeLimit * 60);
   const timeRemainingSeconds = Math.max(0, timeLimitSeconds - elapsedSeconds);
 
   // Label the active module for the take UI so the student knows
@@ -233,7 +240,7 @@ async function getActiveSubmission(
     test: {
       id: test.id,
       name: test.test_name,
-      timeLimitMinutes: activeTimeLimit ?? 35,
+      timeLimitMinutes: activeTimeLimit,
       isUntimed: Boolean(test.is_untimed),
       dueDate: test.due_date,
       moduleLabel,
@@ -285,6 +292,12 @@ export default async function TestTakingPage({
         testName={data.test.name}
         questionCount={data.questions.length}
         timeLimitMinutes={data.test.isUntimed ? null : data.test.timeLimitMinutes}
+        // Extended time can give fractional minutes (×1.5 of 35): "52 min 30 s".
+        timeLimitSeconds={
+          data.test.isUntimed || Number.isInteger(data.test.timeLimitMinutes)
+            ? undefined
+            : Math.round(data.test.timeLimitMinutes * 60)
+        }
       />
       </>
     );

@@ -2,8 +2,8 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
-import { fullLengthLinksOrNone } from "@/lib/full-length";
 import {
+  accommodationKind,
   FULL_LENGTH_DISABLED_MESSAGE,
   fullLengthEnabledFor,
   listAccommodations,
@@ -13,7 +13,7 @@ import {
 } from "@/lib/full-length-admin";
 import { roleError } from "../../../_shared";
 
-// Per-student extended time on a full-length SAT test
+// Per-student extended time on a full-length SAT test or a section test
 // (test_time_accommodations). A change applies to attempts started
 // afterwards: each attempt snapshots its multiplier at start.
 
@@ -54,10 +54,17 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   if (crossSide) return crossSide;
 
   const db = getServiceClient();
-  if (!(await fullLengthEnabledFor(db, admin))) return bad(FULL_LENGTH_DISABLED_MESSAGE, 403);
-  if (!(await fullLengthLinksOrNone(db)).childrenOf.has(id)) {
-    return bad("Extended time can only be set on a full-length SAT test", 404);
-  }
+  const { data: test, error: testErr } = await db
+    .from("tests")
+    .select("test_kind, parent_test_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (testErr) return bad("Could not load the test", 500);
+  if (!test) return bad("Test not found", 404);
+  const kind = accommodationKind(test);
+  if (!kind) return bad("Set extended time on the full-length SAT test, not on one of its sections", 400);
+  // The full-length flag only gates full-length tests.
+  if (kind === "full_length" && !(await fullLengthEnabledFor(db, admin))) return bad(FULL_LENGTH_DISABLED_MESSAGE, 403);
   const roleErr = await roleError(db, [body.studentId], "student");
   if (roleErr) return bad(roleErr);
   // Clearing is always allowed (e.g. a student who left the class).

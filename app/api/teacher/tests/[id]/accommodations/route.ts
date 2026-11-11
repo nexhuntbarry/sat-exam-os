@@ -3,8 +3,8 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { forbidCrossSide } from "@/lib/qa";
-import { fullLengthLinksOrNone } from "@/lib/full-length";
 import {
+  accommodationKind,
   FULL_LENGTH_DISABLED_MESSAGE,
   fullLengthEnabledFor,
   listAccommodations,
@@ -13,7 +13,7 @@ import {
   studentOnFullLengthTest,
 } from "@/lib/full-length-admin";
 
-// Per-student extended time on a full-length SAT test, for teachers.
+// Per-student extended time on a full-length SAT test or a section test, for teachers.
 // Access as for the test's results (getTeacherTestAccess): a class
 // teacher only sees and sets their own class students. Changes apply to
 // attempts started afterwards.
@@ -56,12 +56,21 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
   const db = getServiceClient();
   const access = await getTeacherTestAccess(db, user, id);
   if (access.mode === null) return bad("Forbidden", 403);
-  if (!(await fullLengthEnabledFor(db, user))) return bad(FULL_LENGTH_DISABLED_MESSAGE, 403);
-  if (!(await fullLengthLinksOrNone(db)).childrenOf.has(id)) {
-    return bad("Extended time can only be set on a full-length SAT test", 404);
-  }
+  const { data: test, error: testErr } = await db
+    .from("tests")
+    .select("test_kind, parent_test_id")
+    .eq("id", id)
+    .maybeSingle();
+  if (testErr) return bad("Could not load the test", 500);
+  if (!test) return bad("Test not found", 404);
+  const kind = accommodationKind(test);
+  if (!kind) return bad("Set extended time on the full-length SAT test, not on one of its sections", 400);
+  // The full-length flag only gates full-length tests.
+  if (kind === "full_length" && !(await fullLengthEnabledFor(db, user))) return bad(FULL_LENGTH_DISABLED_MESSAGE, 403);
 
-  if (user.role !== "admin") {
+  // A section test is one subject, which getTeacherTestAccess already
+  // scoped; only a full-length test spans both.
+  if (kind === "full_length" && user.role !== "admin") {
     // A teacher pinned to one subject only sees one section of the test,
     // so extended time (which covers both sections) isn't theirs to set.
     const { data: rows, error: rowsErr } = await db
