@@ -136,7 +136,7 @@ export default async function TeacherTestReviewPage({
             <h2 className="text-charcoal font-semibold text-lg">{section.title}</h2>
             <div className="space-y-4">
               {section.questions.map((q) => (
-                <ReviewQuestionCard key={q.id} question={q as unknown as ReviewQuestion} showSourceFigure />
+                <ReviewQuestionCard key={q.id} question={q as unknown as ReviewQuestion} showSourceFigure testId={test.id} />
               ))}
             </div>
           </section>

@@ -36,6 +36,8 @@ interface Props {
   /** Show the raw source PDF page when no figure crop exists. Teachers only —
    *  students never see the raw scan (M-20). */
   showSourceFigure?: boolean;
+  /** Test being reviewed, passed to the source-page route for its access check. */
+  testId?: string;
   /** Extra control rendered at the end of the card (student "Report a problem"). */
   action?: ReactNode;
 }
@@ -46,6 +48,7 @@ export default function ReviewQuestionCard({
   showExplanation = true,
   wrongStudents,
   showSourceFigure = false,
+  testId,
   action,
 }: Props) {
   const choices = Array.isArray(q.choices) ? q.choices : [];
@@ -101,7 +104,7 @@ export default function ReviewQuestionCard({
       )}
       {needsFigureFallback && (
         <iframe
-          src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}`}
+          src={`/api/modules/${q.module_id}/page/${q.page_number ?? 1}${testId ? `?test=${encodeURIComponent(testId)}` : ""}`}
           className="w-full h-[420px] rounded-xl border border-divider bg-white"
           title={`Question figure (PDF page ${q.page_number ?? 1})`}
         />
