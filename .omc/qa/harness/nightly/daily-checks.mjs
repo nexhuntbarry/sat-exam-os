@@ -3987,4 +3987,97 @@ export async function runDailyChecks(h) {
     if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
     return notes.join("; ");
   }, 3 * 60 * 1000);
+
+  // ── D-20261111-4 ─────────────────────────────────────────
+  // Desmos calculator performance on a slow laptop (6× CPU throttle via CDP).
+  // Measures: (a) time from clicking Calculator until Desmos is usable
+  // (window.Calc defined in the frame), (b) time from clicking an answer
+  // choice until it shows as selected (aria-checked="true"), while the
+  // calculator is open, (c) the countdown timer ticks forward across two
+  // samples ~3 s apart, (d) navigating to the next question works,
+  // (e) no console errors or error-boundary text.
+  // PASS thresholds: (a) < 8 s, (b) < 1.5 s, (c) timer advances, (d) next Q OK.
+  await check("D-20261111-4", [], "慢速筆電（CPU 6× 降速）考數學：Desmos 開啟時間 < 8 s；開著計算機時選答案 < 1.5 s；倒數時間繼續走；按下一題能跳到下一題；沒有 console error", "裝置/瀏覽器",
+    () => asStudent(72, TESTS.mathLinear, async ({ page }) => {
+      const T = TESTS.mathLinear;
+      const notes = [], problems = [];
+
+      // Throttle CPU to emulate a slow laptop.
+      const cdp = await page.context().newCDPSession(page);
+      await cdp.send("Emulation.setCPUThrottlingRate", { rate: 6 });
+
+      // Collect console errors.
+      const consoleErrors = [];
+      page.on("console", (msg) => { if (msg.type() === "error") consoleErrors.push(msg.text()); });
+      page.on("pageerror", (err) => consoleErrors.push(String(err)));
+
+      await startTestBrowser(page, T);
+      await onQuestion(page, 1);
+
+      // ── (a) Time from clicking Calculator until Desmos is usable ──────────
+      const t0 = Date.now();
+      await page.locator('button[aria-label="Calculator"]').click();
+      const ifr = page.locator('iframe[title="Desmos calculator"]');
+      await ifr.waitFor({ timeout: 20000 });
+      // Poll until window.Calc is defined in the Desmos frame.
+      let calcReady = false;
+      const calcDeadline = Date.now() + 12000;
+      while (Date.now() < calcDeadline) {
+        const f = page.frames().find((fr) => fr.url().startsWith("https://www.desmos.com/calculator"));
+        if (f) {
+          calcReady = await f.evaluate(() => typeof window.Calc !== "undefined" && typeof window.Calc.getExpressions === "function").catch(() => false);
+          if (calcReady) break;
+        }
+        await sleep(300);
+      }
+      const calcMs = Date.now() - t0;
+      notes.push(`calculator usable: ${(calcMs / 1000).toFixed(2)} s`);
+      if (!calcReady) problems.push(`Desmos window.Calc never became available within ${(calcMs / 1000).toFixed(1)} s`);
+      else if (calcMs > 8000) problems.push(`calculator usable in ${(calcMs / 1000).toFixed(2)} s — exceeds 8 s threshold`);
+
+      // Type an expression into Desmos to confirm it's interactive.
+      const desmosFrame = page.frames().find((fr) => fr.url().startsWith("https://www.desmos.com/calculator"));
+      if (desmosFrame) {
+        await desmosFrame.evaluate(() => { try { window.Calc?.setExpression({ id: "qa-perf", latex: "y=x^2" }); } catch (_) {} }).catch(() => {});
+      }
+
+      // ── (b) Answer-select latency while calculator is open ────────────────
+      const t1 = Date.now();
+      await choice(page, "A").click();
+      const selected = await page.locator('button[role="radio"][aria-checked="true"]').waitFor({ timeout: 5000 }).then(() => true).catch(() => false);
+      const selectMs = Date.now() - t1;
+      notes.push(`answer select: ${(selectMs / 1000).toFixed(2)} s`);
+      if (!selected) problems.push("answer choice never showed as aria-checked=true");
+      else if (selectMs > 1500) problems.push(`answer select took ${(selectMs / 1000).toFixed(2)} s — exceeds 1.5 s threshold`);
+
+      // ── (c) Countdown timer keeps ticking ─────────────────────────────────
+      const timerEl = page.getByRole("timer").first();
+      const sample1 = await timerEl.innerText().catch(() => "");
+      await sleep(3100);
+      const sample2 = await timerEl.innerText().catch(() => "");
+      notes.push(`timer: ${sample1 || "(hidden)"} → ${sample2 || "(hidden)"}`);
+      if (!sample1 || !sample2) problems.push("timer not visible for sampling");
+      else if (sample1 === sample2) problems.push(`timer did not advance (stayed at "${sample1}" over 3 s)`);
+
+      // ── (d) Navigate to next question ─────────────────────────────────────
+      const nextBtn = page.getByRole("button", { name: /^Next/ }).first();
+      const nextOk = await nextBtn.click({ timeout: 10000 }).then(() => true).catch(() => false);
+      if (nextOk) {
+        const onQ2 = await page.getByText(/Question 2 of \d+/).first().waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+        if (!onQ2) problems.push("clicking Next did not navigate to Question 2");
+        else notes.push("next question: OK");
+      } else {
+        problems.push("Next button click failed");
+      }
+
+      // ── (e) Console errors / error-boundary text ──────────────────────────
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      if (/something went wrong|application error|unexpected error/i.test(bodyText)) problems.push("error-boundary text visible in page");
+      const relevantErrors = consoleErrors.filter((e) => !/favicon|analytics|gtag|_next\/static/i.test(e));
+      if (relevantErrors.length) problems.push(`console errors: ${relevantErrors.slice(0, 3).join(" | ")}`);
+      else notes.push("no console errors");
+
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
 }
