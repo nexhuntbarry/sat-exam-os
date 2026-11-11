@@ -52,6 +52,26 @@ export function questionIdsSpanModules(
 }
 
 /**
+ * Rows in the order of the test's question_ids (the teacher's pick order)
+ * when that list is the whole set (questionIdsSpanModules). Its questions
+ * come from several source tests, so their original_question_numbers
+ * collide and interleave. Any other test: `rows` unchanged, as queried.
+ */
+export function orderToQuestionIds<T>(
+  rows: T[],
+  test: QuestionSetScope,
+  moduleIds: string | readonly string[],
+  idOf: (row: T) => string,
+): T[] {
+  const mods = typeof moduleIds === "string" ? [moduleIds] : moduleIds;
+  if (!questionIdsSpanModules(test, mods)) return rows;
+  const ids = test.question_ids as string[];
+  const rank = new Map(ids.map((id, i) => [id, i] as const));
+  const at = (row: T) => rank.get(idOf(row)) ?? ids.length;
+  return [...rows].sort((a, b) => at(a) - at(b));
+}
+
+/**
  * Restrict a questions query to the student-visible set of `moduleIds`:
  * Approved only, plus the per-test question_ids subset on the legacy
  * non-adaptive path (adaptive tests grade every question of the module).

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
+import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 
 // GET /api/student/submissions/[id]/result
 export async function GET(
@@ -21,7 +22,7 @@ export async function GET(
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, attempt_number,
       tests!inner(
-        test_name,
+        test_name, module_id, module_2_id, is_adaptive, question_ids,
         modules!module_id(module_name, section)
       )
     `)
@@ -55,7 +56,10 @@ export async function GET(
       .eq("submission_id", id)
       .order("questions(original_question_number)", { ascending: true });
 
-    answerDetails = (records ?? []).map((r) => {
+    const test = submission.tests as unknown as QuestionSetScope;
+    // A quiz picked from several source tests: the teacher's pick order.
+    const ordered = orderToQuestionIds(records ?? [], test, test.module_id ? [test.module_id] : [], (r) => r.question_id as string);
+    answerDetails = ordered.map((r) => {
       if (visibility.explanations) return r;
       const q = r.questions as unknown as Record<string, unknown>;
       return { ...r, questions: { ...q, explanation: null } };

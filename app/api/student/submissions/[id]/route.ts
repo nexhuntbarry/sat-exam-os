@@ -9,6 +9,7 @@ import {
   moduleStartedAtIso,
   moduleTimeLimitMinutes,
   isModule2Track,
+  orderToQuestionIds,
   sanitizeClientMetadata,
   scopeToStudentQuestionSet,
   stampModule2Start,
@@ -146,7 +147,7 @@ export async function GET(
   return NextResponse.json({
     data: {
       ...submission,
-      questions: questions ?? [],
+      questions: orderToQuestionIds(questions ?? [], test, gradingModuleId, (q) => q.id),
       timeRemainingSeconds,
     },
   });

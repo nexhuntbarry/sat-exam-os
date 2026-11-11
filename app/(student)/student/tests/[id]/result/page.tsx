@@ -6,6 +6,7 @@ import Link from "next/link";
 import { CheckCircle, XCircle, Clock, BarChart2, Printer } from "lucide-react";
 import { clsx } from "clsx";
 import { attemptScore } from "@/lib/score-display";
+import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
@@ -42,7 +43,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
       started_at, submitted_at, time_spent_seconds, attempt_number,
       scaled_score, scaled_section, session_id, adaptive_track,
       tests!inner(
-        test_name,
+        test_name, module_id, module_2_id, is_adaptive, question_ids,
         modules!module_id(module_name, section)
       )
     `)
@@ -59,7 +60,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
   const { data: submission } = await query.maybeSingle();
   if (!submission) return null;
 
-  const test = submission.tests as unknown as { test_name: string; modules: { module_name: string; section: string } };
+  const test = submission.tests as unknown as QuestionSetScope & { test_name: string; modules: { module_name: string; section: string } };
 
   // Answer/explanation reveal: the shared server-side decision (test
   // setting, per-student override, retake safety) — never the raw flags.
@@ -165,6 +166,8 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
         (b.questions.original_question_number ?? 0)
       );
     });
+    // A quiz picked from several source tests: the teacher's pick order.
+    answerDetails = orderToQuestionIds(answerDetails ?? [], test, test.module_id ? [test.module_id] : [], (r) => r.question_id);
   }
 
   // Score-breakdown rows — is_correct + each question's section/domain, for

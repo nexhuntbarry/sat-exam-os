@@ -1,4 +1,4 @@
-import { scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { orderToQuestionIds, questionIdsSpanModules, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { getServiceClient } from "@/lib/supabase";
 import { reviewSectionTests } from "@/lib/full-length";
 import { getCurrentUser } from "@/lib/auth";
@@ -56,7 +56,10 @@ async function getTeacherReview(
 
   type Section = { moduleId: string; title: string; questions: NonNullable<typeof questions> };
   const groups = new Map<string, Section>();
-  for (const q of questions ?? []) {
+  // A quiz picked from several source tests is one section, in pick order.
+  const scope = parts[0]?.test ?? test;
+  const oneSection = questionIdsSpanModules(scope, moduleIds) ? scope.module_id : null;
+  for (const q of orderToQuestionIds(questions ?? [], scope, moduleIds, (x) => x.id)) {
     const mod = q.modules as unknown as { module_name: string; section: string; module_number: number | null } | null;
     const part = parts.find((p) => modulesOf(p.test).includes(q.module_id)) ?? { test, prefix: "" };
     const t = part.test;
@@ -69,9 +72,10 @@ async function getTeacherReview(
       if (q.module_id === t.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
       else if (q.module_id === t.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
     }
-    label = part.prefix + label;
-    if (!groups.has(q.module_id)) groups.set(q.module_id, { moduleId: q.module_id, title: label, questions: [] });
-    groups.get(q.module_id)!.questions.push(q);
+    label = oneSection ? test.test_name : part.prefix + label;
+    const key = oneSection ?? q.module_id;
+    if (!groups.has(key)) groups.set(key, { moduleId: key, title: label, questions: [] });
+    groups.get(key)!.questions.push(q);
   }
   // Module 1 first, then Module 2 (query order is by question number, which interleaves modules).
   const sections = Array.from(groups.values()).sort((a, b) => moduleIds.indexOf(a.moduleId) - moduleIds.indexOf(b.moduleId));

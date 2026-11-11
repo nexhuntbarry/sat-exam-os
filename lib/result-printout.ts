@@ -12,6 +12,7 @@ import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { answerCandidates } from "@/lib/grade-submission";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
 import {
   FL_ALL_SECTIONS,
@@ -227,8 +228,20 @@ async function buildModules(
     questions: { original_question_number: number; question_text: string; choices: ResultChoice[] | null; question_type: string; explanation: string | null; image_urls: string[] | null };
   };
   const recs = (records ?? []) as unknown as Rec[];
+  // A quiz picked from several source tests prints in the teacher's pick order.
+  const { data: scopeRows } = await db
+    .from("tests")
+    .select("id, module_id, module_2_id, is_adaptive, question_ids")
+    .in("id", [...new Set(graded.map((g) => g.sub.test_id))]);
+  const scopeOf = new Map(((scopeRows ?? []) as (QuestionSetScope & { id: string })[]).map((t) => [t.id, t]));
   for (const { sub, label, section } of graded) {
-    const mine = recs.filter((r) => r.submission_id === sub.id).sort((a, b) => a.questions.original_question_number - b.questions.original_question_number);
+    const scope: QuestionSetScope = scopeOf.get(sub.test_id) ?? {};
+    const mine = orderToQuestionIds(
+      recs.filter((r) => r.submission_id === sub.id).sort((a, b) => a.questions.original_question_number - b.questions.original_question_number),
+      scope,
+      scope.module_id ? [scope.module_id] : [],
+      (r) => r.question_id,
+    );
     const questions: ResultQuestion[] = mine.map((r, i) => {
       const blank = !r.student_answer || r.student_answer.trim() === "";
       const outcome: ResultQuestion["outcome"] = !shows.answers ? null : blank ? "blank" : r.is_correct ? "correct" : "wrong";

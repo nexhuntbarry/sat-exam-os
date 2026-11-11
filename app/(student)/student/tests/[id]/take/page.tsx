@@ -7,7 +7,7 @@ import { headers } from "next/headers";
 import TestTakingClient from "./TestTakingClient";
 import Module2Intro from "./Module2Intro";
 import ClearTakeErrorReloads from "./ClearTakeErrorReloads";
-import { deviceInfoFromHeaders, isModule2Track, scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { deviceInfoFromHeaders, isModule2Track, orderToQuestionIds, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { RECOVERY_TEST_COLUMNS, recoverModule2, type RecoveryTest } from "@/lib/module2-handoff";
 import { studentTestAccess } from "@/lib/module2-access";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
@@ -128,7 +128,7 @@ async function getActiveSubmission(
   const { data: questionRows } = await questionQuery;
   // The key never reaches the browser: only how many characters the
   // fill-in box must allow (5/6, more for a verified longer key).
-  const questions = (questionRows ?? []).map(({ correct_answer, ...q }) => ({
+  const questions = orderToQuestionIds(questionRows ?? [], test, activeModuleId, (q) => q.id).map(({ correct_answer, ...q }) => ({
     ...q,
     spr_max_chars: q.question_type === SPR_TYPE ? sprInputMaxChars(correct_answer as string | null) : null,
   }));

@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, onSide } from "@/lib/qa";
-import { scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { orderToQuestionIds, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { formatDate } from "@/lib/datetime";
 import PrintableTest, { type PrintModule, type PrintQuestion } from "@/components/tests/PrintableTest";
 import PrintPreview from "@/components/print/PrintPreview";
@@ -113,7 +113,7 @@ export default async function PrintTestPage({
       modules.push({
         label: part.sectionLabel ? [part.sectionLabel, slot.label ?? "Module 1"].join(" · ") : slot.label,
         section: part.sectionLabel ? null : ((mod?.section as string | null) ?? null),
-        questions: (questions ?? []) as PrintQuestion[],
+        questions: orderToQuestionIds((questions ?? []) as PrintQuestion[], part.test, slot.moduleId, (q) => q.id),
         ...(first && part.dividerBefore ? { dividerBefore: part.dividerBefore } : {}),
       });
       first = false;

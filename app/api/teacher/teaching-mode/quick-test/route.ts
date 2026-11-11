@@ -87,7 +87,9 @@ export async function POST(req: Request) {
 
   // Use the first question's module_id (tests reference a single module)
   const moduleId = qrows[0].module_id;
-  const validQuestionIds = qrows.map((q) => q.id);
+  // Keep the teacher's pick order: it is the order students see.
+  const found = new Set(qrows.map((q) => q.id as string));
+  const validQuestionIds = [...new Set(questionIds)].filter((id) => found.has(id));
 
   // Resolve cohort -> student_ids
   let studentIds: string[] = [];

@@ -8,7 +8,7 @@ import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { studentClassNames } from "@/lib/result-printout";
 import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
 import { flCsvHeader, flCsvOrder, flCsvQuestionColumns, flCsvRow, flSectionScope } from "@/lib/full-length-score";
-import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
+import { orderToQuestionIds, questionIdsSpanModules, STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import { loadFullLengthResults } from "@/lib/full-length-results";
 
 // GET /api/teacher/tests/[id]/export
@@ -95,10 +95,19 @@ export async function GET(
     const i = moduleId ? moduleOrder.indexOf(moduleId) : -1;
     return i === -1 ? moduleOrder.length : i;
   };
-  const questionList = [...(questions ?? [])].sort(
-    (a, b) =>
-      rank(a.module_id) - rank(b.module_id) ||
-      (a.original_question_number ?? 0) - (b.original_question_number ?? 0),
+  // A quiz picked from several source tests: pick order, numbered by
+  // position as the student saw it.
+  const testModules = test.module_id ? [test.module_id as string] : [];
+  const pickOrder = questionIdsSpanModules(test, testModules);
+  const questionList = orderToQuestionIds(
+    [...(questions ?? [])].sort(
+      (a, b) =>
+        rank(a.module_id) - rank(b.module_id) ||
+        (a.original_question_number ?? 0) - (b.original_question_number ?? 0),
+    ),
+    test,
+    testModules,
+    (q) => q.id,
   );
 
   // Fetch submissions. Class teachers see only their class roster.
@@ -183,9 +192,9 @@ export async function GET(
 
   // Unique question headers ("M1-Q1", "M2-Q1"; plain "Q1" for one module).
   const seen = new Map<string, number>();
-  const qHeaders = questionList.map((q) => {
+  const qHeaders = questionList.map((q, i) => {
     const prefix = q.module_id ? modulePrefix.get(q.module_id) : undefined;
-    const base = `${prefix ? `${prefix}-` : ""}Q${q.original_question_number}`;
+    const base = pickOrder ? `Q${i + 1}` : `${prefix ? `${prefix}-` : ""}Q${q.original_question_number}`;
     const n = (seen.get(base) ?? 0) + 1;
     seen.set(base, n);
     return n > 1 ? `${base} (${n})` : base;
