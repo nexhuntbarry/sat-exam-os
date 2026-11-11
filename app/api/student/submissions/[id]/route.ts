@@ -14,6 +14,7 @@ import {
   scopeToStudentQuestionSet,
   stampModule2Start,
 } from "@/lib/student-exam";
+import { keepaliveWriteDue } from "@/lib/live-progress-shared";
 
 // Autosave retries its optimistic write up to 3 times; give a slow
 // database moment room instead of the default limit.
@@ -173,6 +174,7 @@ export async function PATCH(
     questionMeta?: Record<string, unknown>;
     clientId?: unknown;
     clientSeq?: unknown;
+    keepalive?: unknown;
   };
   try {
     body = await req.json();
@@ -208,6 +210,14 @@ export async function PATCH(
   const clientSeq =
     typeof body.clientSeq === "number" && Number.isFinite(body.clientSeq) ? body.clientSeq : null;
   if (clientMetadata) delete clientMetadata.client_save_seq;
+  // Idle keepalive from the take page ({ keepalive: true } and nothing
+  // else): only stamps metadata.last_seen_at for the live progress view.
+  // Anything carrying answers / metadata is a regular save.
+  const keepaliveOnly =
+    body.keepalive === true &&
+    body.answers === undefined &&
+    body.metadata === undefined &&
+    body.questionMeta === undefined;
 
   const db = getServiceClient();
 
@@ -255,6 +265,34 @@ export async function PATCH(
     const savedMeta = (submission.metadata ?? {}) as Record<string, unknown>;
     const version = typeof savedMeta.answers_version === "number" ? savedMeta.answers_version : 0;
 
+    if (keepaliveOnly) {
+      // One best-effort write, never retried; its own failure is only
+      // logged (the checks above still answer 400/404/409/500 like any
+      // save, which tells the take page to stop). It does NOT bump answers_version, so a concurrent save's
+      // optimistic guard is unaffected; and it only lands while the row is
+      // exactly as read (same version, same attempt start, still In
+      // Progress) — any save / reset / submit in between turns it into a
+      // no-op instead of writing stale metadata back. Throttled per row.
+      if (keepaliveWriteDue(savedMeta, Date.now())) {
+        try {
+          let kq = db
+            .from("submissions")
+            .update({ metadata: { ...savedMeta, last_seen_at: new Date().toISOString() } })
+            .eq("id", id)
+            .eq("status", "In Progress")
+            .eq("started_at", submission.started_at);
+          kq = version === 0
+            ? kq.is("metadata->answers_version", null)
+            : kq.eq("metadata->answers_version", version);
+          const { error: keepaliveError } = await kq;
+          if (keepaliveError) console.error("[student/submissions/patch] keepalive", keepaliveError);
+        } catch (e) {
+          console.error("[student/submissions/patch] keepalive", e);
+        }
+      }
+      return NextResponse.json({ success: true, keepalive: true });
+    }
+
     const seqByClient =
       savedMeta.client_save_seq && typeof savedMeta.client_save_seq === "object"
         ? (savedMeta.client_save_seq as Record<string, number>)
@@ -267,6 +305,14 @@ export async function PATCH(
       }
     }
 
+    const nowIso = new Date().toISOString();
+    // "Active" = the student did something: answered, flagged / crossed
+    // out / highlighted, or moved to another question. A tab-switch-only
+    // save still counts as contact (last_seen_at) but not as activity.
+    const activeChange =
+      (body.answers != null && Object.keys(body.answers).length > 0) ||
+      (body.questionMeta != null && typeof body.questionMeta === "object" && Object.keys(body.questionMeta).length > 0) ||
+      (clientMetadata != null && "current_index" in clientMetadata && clientMetadata.current_index !== savedMeta.current_index);
     const updates: Record<string, unknown> = {};
     if (body.answers !== undefined) {
       const patch = body.answers as Record<string, string | null>;
@@ -284,6 +330,10 @@ export async function PATCH(
         ? applyQuestionMeta(savedMeta, body.questionMeta)
         : {}),
       answers_version: version + 1,
+      // Live progress (lib/live-progress-shared): server-stamped liveness,
+      // part of this same guarded write — no extra query, cannot fail alone.
+      last_seen_at: nowIso,
+      ...(activeChange ? { last_active_at: nowIso } : {}),
       ...(clientId && clientSeq != null
         ? { client_save_seq: { ...seqByClient, [clientId]: clientSeq } }
         : {}),

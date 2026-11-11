@@ -433,6 +433,10 @@ const SERVER_OWNED_METADATA_KEYS = [
   "auto_closed_unopened",
   // Full-length SAT attempt (extended time, attempt link, attempt start).
   ...FULL_LENGTH_METADATA_KEYS,
+  // Live progress (lib/live-progress): stamped by the autosave PATCH with
+  // server now() on every save / keepalive, so a client can't fake them.
+  "last_seen_at",
+  "last_active_at",
 ];
 
 /**
@@ -518,6 +522,12 @@ export async function stampModule2Start(
     module_2_started_at: new Date().toISOString(),
     answers_version: version + 1,
   };
+  // INVARIANT: every writer of an In Progress row's metadata must bump
+  // metadata.answers_version (or change status / started_at) in a write
+  // guarded on the version it read. The autosave keepalive relies on it:
+  // it writes without bumping, guarded on version + status + started_at,
+  // so a writer that changed metadata without any of those could have its
+  // change overwritten by a keepalive's stale copy.
   let q = db
     .from("submissions")
     .update({ metadata: next })
