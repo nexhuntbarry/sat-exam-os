@@ -4,14 +4,15 @@
 // (GET /api/modules/[id]/page/[n]):
 //   - question reviewers (admins, review-flag teachers): any page;
 //   - approved teachers: a page showing questions of a test they can open
-//     (getTeacherTestAccess on ?test=, else any test in getTeacherTestScope);
+//     (getTeacherTestAccess on the tests showing it, picked from ?test= or
+//     getTeacherTestScope);
 //   - approved students: a page showing questions of a module they were
 //     served — while that attempt is in progress, or afterwards when the
 //     answer-visibility rule lets them see the test's answers;
 //   - nobody else.
 // "Showing" means the page holds a question of that module (page_number,
 // NULL read as page 1 like the callers do) that the test includes —
-// Approved only for students, the set they are shown.
+// Approved only, the set students are shown.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CurrentUser } from "@/lib/auth";
@@ -58,27 +59,33 @@ export async function canViewModulePage(
   const { data: pageRows, error: qError } = await q;
   if (qError) throw new Error(`module page: questions lookup failed: ${qError.message}`);
   const rows = (pageRows ?? []) as { id: string; parsing_status: string }[];
-  if (rows.length === 0) return false;
+  // Only the Approved set students are shown (and teachers review) counts.
+  const pageIds = rows.filter((r) => r.parsing_status === STUDENT_VISIBLE_QUESTION_STATUS).map((r) => r.id);
+  if (pageIds.length === 0) return false;
 
   if (user.role === "teacher") {
-    const pageIds = rows.map((r) => r.id);
+    // Candidate tests: ?test= (a full-length parent → its section children)
+    // or the teacher's whole scope. Access is then checked on the tests that
+    // actually show the page — a section child carries its own subject, so a
+    // single-subject teacher never gets the other section's pages.
+    let candidateIds: string[];
     if (testHint) {
       if (!UUID_RE.test(testHint)) return false;
-      // A full-length parent shows its section children's questions.
       const kids = (await childrenOf(db, [testHint])).get(testHint);
-      const ids = [testHint, kids?.rw, kids?.math].filter((x): x is string => Boolean(x));
-      const tests = await loadTests(db, ids);
-      if (![...tests.values()].some((t) => testShowsModulePage(t, moduleId, pageIds))) return false;
-      return (await getTeacherTestAccess(db, user, testHint)).mode !== null;
+      candidateIds = [testHint, kids?.rw, kids?.math].filter((x): x is string => Boolean(x));
+    } else {
+      candidateIds = await expandFullLength(db, (await getTeacherTestScope(db, user)).testIds);
     }
-    const scope = await getTeacherTestScope(db, user);
-    const tests = await loadTests(db, await expandFullLength(db, scope.testIds));
-    return [...tests.values()].some((t) => testShowsModulePage(t, moduleId, pageIds));
+    const showing = [...(await loadTests(db, candidateIds)).values()].filter((t) =>
+      testShowsModulePage(t, moduleId, pageIds),
+    );
+    for (const t of showing) {
+      if ((await getTeacherTestAccess(db, user, t.id)).mode !== null) return true;
+    }
+    return false;
   }
 
   // Student: their own submissions decide.
-  const pageIds = rows.filter((r) => r.parsing_status === STUDENT_VISIBLE_QUESTION_STATUS).map((r) => r.id);
-  if (pageIds.length === 0) return false;
   const { data: subRows, error: subError } = await db
     .from("submissions")
     .select("test_id, module_id, status, attempt_number")

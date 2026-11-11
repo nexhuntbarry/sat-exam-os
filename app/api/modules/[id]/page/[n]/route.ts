@@ -84,7 +84,7 @@ export async function GET(
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="page-${pageNum}.pdf"`,
       // Per-user decision: never cache in a shared cache.
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": "private, max-age=600",
       Vary: "Cookie",
     },
   });
