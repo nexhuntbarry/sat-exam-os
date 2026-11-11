@@ -4080,4 +4080,74 @@ export async function runDailyChecks(h) {
       if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
       return notes.join("; ");
     }), 3 * 60 * 1000);
+
+  // ── D-20261111-5 ─────────────────────────────────────────
+  // A class teacher only gets tests that reach their own classes. Teacher 01
+  // teaches TEST Class A (Math). A throwaway Math test (copy of mathLinear,
+  // created by a QA admin) that is assigned nowhere and taken by nobody must
+  // be refused: Class Review page shows no questions (404) and the analytics
+  // API returns 403 — before the fix any same-subject test opened by direct
+  // link. Then the same test is assigned to Class A only: with no student
+  // started yet, the teacher can open its Class Review (prep before class).
+  await check("D-20261111-5", [], "老師只能打開和自己班有關的測驗：同科目但沒有指派給自己班、自己學生也沒考過的測驗，老師用直接連結打開「Class Review（投影講解）」要被拒絕（看不到題目和答案），API 要回 403；同一份測驗指派給老師的班後，學生還沒開始考，老師就能打開 Class Review 備課", "安全", async () => {
+    const teacher = C.teachers[0];
+    const classA = C.classes.find((k) => k.name === "TEST Class A");
+    const admin = C.admins[0];
+    if (!teacher?.clerkId || !classA || !admin) throw new Error("setup: Teacher 01 / Class A / Admin 01 missing from cast");
+    const { data: tcls } = await db.from("class_group_teachers").select("class_group_id, subject").eq("teacher_id", teacher.id);
+    if (!(tcls ?? []).some((r) => r.class_group_id === classA.id)) throw new Error("setup: Teacher 01 isn't a teacher of Class A");
+    const { data: src, error: srcErr } = await db.from("tests").select("*").eq("id", TESTS.mathLinear).single();
+    if (srcErr || !src) throw new Error(`setup: mathLinear not found (${srcErr?.message})`);
+    const modId = src.module_id ?? src.module_1_id;
+    const { data: mod } = await db.from("modules").select("section").eq("id", modId).single();
+    if (mod?.section !== "Math") throw new Error(`setup: mathLinear section is ${mod?.section}, expected Math`);
+    const teaches = (tcls ?? []).map((r) => r.subject ?? null);
+    if (!teaches.some((s) => !s || s === "Math")) throw new Error("setup: Teacher 01 doesn't teach Math (test wouldn't be same-subject)");
+
+    const name = `QA D-20261111-5 scope ${Date.now()}`;
+    const { id: _id, created_at: _c, updated_at: _u, ...copy } = src;
+    void _id; void _c; void _u;
+    const { data: tmp, error: insErr } = await db.from("tests").insert({ ...copy, test_name: name, status: "Draft", created_by: admin.id }).select("id").single();
+    if (insErr || !tmp) throw new Error(`setup: couldn't create the throwaway test (${insErr?.message})`);
+    const T = tmp.id;
+    const problems = [], notes = [];
+    const b = await chromium.launch();
+    try {
+      const { page, context } = await login(b, teacher.clerkId);
+      const openReview = async () => {
+        const res = await page.goto(`${BASE}/teacher/tests/${T}/review`, { waitUntil: "networkidle" }).catch(() => null);
+        await sleep(1000);
+        const txt = await page.locator("body").innerText().catch(() => "");
+        return { status: res?.status() ?? 0, txt, shown: txt.includes(`${name} — class review`) };
+      };
+
+      // 1) Unassigned same-subject test → refused.
+      const { count: subCount } = await db.from("submissions").select("id", { count: "exact", head: true }).eq("test_id", T);
+      if (subCount) throw new Error("setup: throwaway test already has submissions");
+      const r1 = await openReview();
+      if (r1.shown || r1.status === 200) problems.push(`unassigned Math test: Class Review opened (HTTP ${r1.status}${r1.shown ? ", questions shown" : ""}) — must be refused`);
+      const api1 = await context.request.get(`${BASE}/api/teacher/tests/${T}/analytics`);
+      if (api1.status() !== 403) problems.push(`unassigned Math test: analytics API → HTTP ${api1.status()} (expected 403)`);
+      const res1 = await context.request.get(`${BASE}/api/teacher/tests/${T}/results`);
+      if (res1.status() !== 403) problems.push(`unassigned Math test: results API → HTTP ${res1.status()} (expected 403)`);
+      notes.push(`unassigned: review HTTP ${r1.status}, analytics ${api1.status()}, results ${res1.status()}`);
+
+      // 2) Assigned to Class A (teacher not on teacher_ids), nobody started → opens.
+      const { error: aErr } = await db.from("test_assignments").insert({ test_id: T, teacher_ids: [], student_ids: [], class_group_ids: [classA.id], created_by: admin.id });
+      if (aErr) throw new Error(`setup: couldn't assign the test to Class A (${aErr.message})`);
+      const r2 = await openReview();
+      if (!r2.shown) problems.push(`assigned to Class A, no student started: Class Review didn't open (HTTP ${r2.status})`);
+      else if (/No questions in this test/.test(r2.txt)) problems.push("assigned to Class A: Class Review opened but shows no questions");
+      const api2 = await context.request.get(`${BASE}/api/teacher/tests/${T}/analytics`);
+      if (api2.status() !== 200) problems.push(`assigned to Class A: analytics API → HTTP ${api2.status()} (expected 200)`);
+      notes.push(`assigned to Class A (0 submissions): review HTTP ${r2.status}${r2.shown ? " shown" : ""}, analytics ${api2.status()}`);
+      await context.close();
+    } finally {
+      await b.close().catch(() => {});
+      await db.from("test_assignments").delete().eq("test_id", T);
+      await db.from("tests").delete().eq("id", T);
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
 }

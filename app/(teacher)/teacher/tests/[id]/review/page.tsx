@@ -16,8 +16,9 @@ import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/Revi
 // private Question Analytics page instead.
 //
 // Access: any teacher assigned to the test directly OR as the class-group
-// teacher (getTeacherTestAccess), so a class teacher whose students took
-// the test can run the review even when they're not on teacher_ids.
+// teacher (getTeacherTestAccess): a class teacher can run the review — even
+// before any student starts — when the test is assigned to their class or
+// students, or was taken by their students; any other test is a 404.
 async function getTeacherReview(
   testId: string,
   user: { userId: string; role: string | null | undefined; isQa: boolean },

@@ -6,14 +6,19 @@
 //      Gives full scope on the test (all students). Use for non-class
 //      reviewers / co-teachers.
 //   B) Class: teacher owns a class_group via class_group_teachers AND
-//      at least one of that group's students has activity on the test.
-//      Gives scope limited to the teacher's own class students.
+//      the test (or its full-length parent) is in their
+//      getTeacherTestScope: assigned to one of their class groups or
+//      students, on teacher_ids, or taken by one of their students, in a
+//      subject they teach. Gives scope limited to the teacher's own class
+//      students. A same-subject test unrelated to their classes is refused.
 //
 // Either track grants read access; track B is the common case after we
 // stopped requiring admins to populate teacher_ids on every test.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQaTestIds, getQaUserIds, onSide } from "./qa";
-import { parentOf, resolveParentTestId } from "./full-length";
+import { childrenOf, parentOf, resolveParentTestId } from "./full-length";
+import { fetchAllRows } from "./fetch-all-rows";
+import { reachesClassTeacher } from "./teacher-test-reach";
 
 // A test's subject is the section ("Math" | "Reading & Writing") of its
 // module (module_1_id for adaptive tests). Used to scope class teachers to
@@ -118,19 +123,29 @@ export async function getTeacherTestAccess(
         return { mode: null, studentAllowlist: null };
       }
     }
-    const groupIds = rows.map((r) => r.class_group_id as string);
+    const groupSubject = new Map<string, string | null>();
+    for (const r of rows) groupSubject.set(r.class_group_id as string, (r.subject as string | null) ?? null);
     const { data: members } = await db
       .from("class_group_members")
-      .select("student_id")
-      .in("class_group_id", groupIds);
+      .select("class_group_id, student_id")
+      .in("class_group_id", Array.from(groupSubject.keys()));
     const qaUsers = await getQaUserIds();
-    const allowlist = new Set(
-      (members ?? [])
-        .map((m) => m.student_id as string)
-        .filter((id) => onSide(id, qaUsers, user.isQa)),
-    );
-    if (allowlist.size === 0) return { mode: null, studentAllowlist: null };
-    return { mode: "class", studentAllowlist: allowlist };
+    const studentSubjects = new Map<string, (string | null)[]>();
+    for (const m of members ?? []) {
+      const sid = m.student_id as string;
+      if (!onSide(sid, qaUsers, user.isQa)) continue;
+      const list = studentSubjects.get(sid) ?? [];
+      list.push(groupSubject.get(m.class_group_id as string) ?? null);
+      studentSubjects.set(sid, list);
+    }
+    if (studentSubjects.size === 0) return { mode: null, studentAllowlist: null };
+    // The test must reach the teacher through their classes (the
+    // getTeacherTestScope rule). An assigned test can still be previewed
+    // (Class Review) before any student has started it.
+    if (!(await classTeacherReaches(db, user, testId, groupSubject, studentSubjects))) {
+      return { mode: null, studentAllowlist: null };
+    }
+    return { mode: "class", studentAllowlist: new Set(studentSubjects.keys()) };
   }
 
   // Not a class teacher → full access only if directly assigned. A
@@ -145,6 +160,83 @@ export async function getTeacherTestAccess(
     return { mode: "direct", studentAllowlist: null };
   }
   return { mode: null, studentAllowlist: null };
+}
+
+// Reach results memoized per Supabase client (one per request in practice:
+// getServiceClient() creates a new one each call), so a page that checks
+// both full-length sections, or one test several times, looks it up once.
+// Short TTL as in lib/full-length; failures aren't kept.
+const REACH_TTL_MS = 10_000;
+const reachMemo = new WeakMap<object, Map<string, { at: number; hit: Promise<boolean> }>>();
+
+/**
+ * Whether `testId` reaches this class teacher: reachesClassTeacher over the
+ * assignments of the test, its full-length parent and the parent's section
+ * children, then (only if no assignment matched) their submissions.
+ * Throws on a lookup error (callers fail closed).
+ */
+function classTeacherReaches(
+  db: SupabaseClient,
+  user: { userId: string; isQa: boolean },
+  testId: string,
+  groupSubject: Map<string, string | null>,
+  studentSubjects: Map<string, (string | null)[]>,
+): Promise<boolean> {
+  let memo = reachMemo.get(db);
+  if (!memo) {
+    memo = new Map();
+    reachMemo.set(db, memo);
+  }
+  const key = `${user.userId}|${user.isQa}|${testId}`;
+  const cached = memo.get(key);
+  if (cached && Date.now() - cached.at < REACH_TTL_MS) return cached.hit;
+
+  const hit = (async () => {
+    const parentId = await resolveParentTestId(db, testId);
+    const kids = (await childrenOf(db, [parentId])).get(parentId);
+    const ids = Array.from(
+      new Set([testId, parentId, kids?.rw, kids?.math].filter((x): x is string => !!x)),
+    );
+    const [{ data: assignments, error: assignError }, sections] = await Promise.all([
+      db
+        .from("test_assignments")
+        .select("test_id, teacher_ids, class_group_ids, student_ids")
+        .in("test_id", ids),
+      getTestSections(db, ids),
+    ]);
+    if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
+    const input = {
+      teacherId: user.userId,
+      groupSubject,
+      studentSubjects,
+      assignments: (assignments ?? []) as { test_id: string }[],
+      takenBy: [] as { test_id: string; student_id: string }[],
+      sections,
+    };
+    if (reachesClassTeacher(input)) return true;
+    // Not assigned to them: taken by one of their students (legacy).
+    const { data: subs, error: subError } = await fetchAllRows<{
+      id: string;
+      test_id: string;
+      student_id: string;
+    }>((from, to) =>
+      db
+        .from("submissions")
+        .select("id, test_id, student_id")
+        .in("test_id", ids)
+        .order("id")
+        .range(from, to),
+    );
+    if (subError) {
+      throw new Error(`submissions lookup failed: ${(subError as { message?: string }).message ?? String(subError)}`);
+    }
+    return reachesClassTeacher({ ...input, assignments: [], takenBy: subs });
+  })();
+  memo.set(key, { at: Date.now(), hit });
+  hit.catch(() => {
+    if (memo.get(key)?.hit === hit) memo.delete(key);
+  });
+  return hit;
 }
 
 export interface TeacherTestScope {
