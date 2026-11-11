@@ -192,7 +192,17 @@ async function runAll(h, state) {
     const b = await chromium.launch();
     try {
       const { page, context } = await login(b, clerkId);
-      return await fn({ b, page, context, req: page.request });
+      // Clerk's session cookie lives ~60 s and clerk-js refreshes it in the
+      // page; a request that lands on the refresh boundary gets 401. Retry a
+      // 401 once after a reload (fresh cookie); a real auth bug still fails.
+      const retry401 = (m) => async (url, opts) => {
+        const r = await page.request[m](url, opts);
+        if (r.status() !== 401) return r;
+        await page.reload({ waitUntil: "networkidle" }).catch(() => {});
+        return page.request[m](url, opts);
+      };
+      const req = { get: retry401("get"), post: retry401("post"), patch: retry401("patch"), put: retry401("put"), delete: retry401("delete"), fetch: (...a) => page.request.fetch(...a) };
+      return await fn({ b, page, context, req });
     } finally {
       await b.close().catch(() => {});
     }
