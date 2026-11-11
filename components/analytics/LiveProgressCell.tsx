@@ -17,6 +17,7 @@ import { formatTime } from "@/lib/datetime";
 import {
   LIVE_POLL_MS,
   WAITING_POLL_MS,
+  allLiveIdle,
   answeredPercent,
   compactModuleLine,
   connectionStatus,
@@ -41,6 +42,10 @@ interface LiveState {
   /** Polling right now (someone in progress and the tab visible). */
   polling: boolean;
   failed: boolean;
+  /** Stopped because nobody live was heard from in the last hour (pauseWhenIdle). */
+  idle: boolean;
+  /** One fetch now (the idle Refresh button); polling resumes if anyone is fresh. */
+  refresh: () => void;
 }
 
 const LiveContext = createContext<LiveState | null>(null);
@@ -49,6 +54,7 @@ export function LiveProgressProvider({
   endpoint,
   initial,
   active,
+  pauseWhenIdle = false,
   children,
 }: {
   /** GET endpoint returning { data: LiveSnapshot }. */
@@ -59,6 +65,8 @@ export function LiveProgressProvider({
    * in progress). Default: while the snapshot has someone in progress.
    */
   active?: boolean;
+  /** Stop polling once nobody live has been heard from in the last hour (allLiveIdle); offer a Refresh. */
+  pauseWhenIdle?: boolean;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -79,12 +87,15 @@ export function LiveProgressProvider({
     }
   }, [initial]);
 
-  const anyoneLive = active ?? (Object.keys(snapshot.live).length > 0 || snapshot.counts.inProgress > 0);
+  const idle = pauseWhenIdle && allLiveIdle(snapshot);
+  const anyoneLive = !idle && (active ?? (Object.keys(snapshot.live).length > 0 || snapshot.counts.inProgress > 0));
   // Every 20 s while someone is taking the test (or the page's own load
   // failed); once a minute while nobody is yet but someone hasn't started
   // and the test still takes starts (so a class start shows up).
   const pollMs =
-    anyoneLive || snapshot.degraded
+    idle
+      ? null
+      : anyoneLive || snapshot.degraded
       ? LIVE_POLL_MS
       : snapshot.counts.notStarted > 0 && snapshot.acceptingStarts
       ? WAITING_POLL_MS
@@ -136,7 +147,7 @@ export function LiveProgressProvider({
   }, [pollMs, visible, anyoneLive, poll]);
 
   return (
-    <LiveContext.Provider value={{ snapshot, receivedAt, now: Math.max(now, receivedAt), polling, failed }}>
+    <LiveContext.Provider value={{ snapshot, receivedAt, now: Math.max(now, receivedAt), polling, failed, idle, refresh: () => void poll() }}>
       {children}
     </LiveContext.Provider>
   );
@@ -163,11 +174,25 @@ export function LiveStatusBar({ className }: { className?: string }) {
   );
 }
 
-/** "● Live · Updated 10s ago" (or Reconnecting / Paused). */
+/** "● Live · Updated 10s ago" (or Reconnecting / Paused, and "Paused · Refresh" when idle). */
 export function LiveIndicator({ className }: { className?: string }) {
   const live = useLive();
   if (!live) return null;
-  const { receivedAt, now, polling, failed } = live;
+  const { receivedAt, now, polling, failed, idle, refresh } = live;
+  if (idle) {
+    return (
+      <span className={cn("inline-flex items-center gap-1.5 text-xs text-soft-mute", className)} aria-live="polite">
+        <span className="inline-block h-2 w-2 rounded-full bg-soft-mute" />
+        <span className="font-medium" title="Nobody in progress has been active in the last hour, so live updates stopped.">
+          Paused
+        </span>
+        <span>·</span>
+        <button type="button" onClick={refresh} className="font-medium text-warm-coral-text hover:underline">
+          Refresh
+        </button>
+      </span>
+    );
+  }
   return (
     <span className={cn("inline-flex items-center gap-1.5 text-xs text-soft-mute", className)} aria-live="polite">
       <span

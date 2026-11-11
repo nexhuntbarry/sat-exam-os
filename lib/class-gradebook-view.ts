@@ -266,6 +266,11 @@ export function anyLiveCell(columns: Pick<GradebookColumn, "id">[], rows: Pick<G
   }));
 }
 
+/** What the grid's live lookup is scoped to: its columns, students and sections. */
+export function gradebookLiveFrame(gb: Pick<Gradebook, "columns" | "rows" | "scope">) {
+  return { testIds: gb.columns.map((c) => c.id), studentIds: gb.rows.map((r) => r.studentId), scope: gb.scope };
+}
+
 /** "Retake in progress" / "Retake closed" for a score from an earlier attempt. */
 export function retakeLabel(cell: Pick<GradebookCell, "retake">): string | null {
   if (!cell.retake) return null;

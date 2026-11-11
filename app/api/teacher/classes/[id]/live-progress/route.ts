@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaClassGroupIds, onSide } from "@/lib/qa";
-import { gradebookSubjects, loadClassGradebook } from "@/lib/class-gradebook";
+import { gradebookSubjects, loadClassGradebookFrame } from "@/lib/class-gradebook";
 import { loadClassLiveSnapshot } from "@/lib/live-progress";
 
 // GET /api/teacher/classes/[id]/live-progress
@@ -25,13 +25,14 @@ export async function GET(
   try {
     const access = await gradebookSubjects(db, user, id);
     if (!access) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    const gradebook = await loadClassGradebook(db, {
-      classGroupId: id,
-      isQa: user.isQa,
-      subjects: access.subjects,
-      testHref: (testId) => `/teacher/tests/${testId}/results`,
+    // The grid's frame only (members, assigned tests in this teacher's subject): no full gradebook per poll.
+    const frame = await loadClassGradebookFrame(db, { classGroupId: id, isQa: user.isQa, subjects: access.subjects });
+    const snapshot = await loadClassLiveSnapshot(db, user, {
+      testIds: frame.tests.map((t) => t.id),
+      studentIds: frame.students.map((s) => s.id),
+      scope: frame.scope,
+      links: frame.links,
     });
-    const snapshot = await loadClassLiveSnapshot(db, user, gradebook);
     return NextResponse.json({ data: snapshot }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     console.error("[teacher/classes/live-progress]", e);

@@ -69,18 +69,21 @@ type AssignmentRow = {
     | null;
 };
 
-export async function loadClassGradebook(
+/**
+ * The grid's frame: the class's current members and its assigned tests,
+ * on the viewer's QA side and in their subjects (full-length parents,
+ * never a child). Also what the live poll scopes to (lib/live-progress
+ * loadClassLiveSnapshot), without reading any submissions.
+ */
+export async function loadClassGradebookFrame(
   db: SupabaseClient,
   opts: {
     classGroupId: string;
     isQa: boolean;
     /** Teacher's subjects for this class (null = both / admin). */
     subjects: string[] | null;
-    /** Column header link: the test's results page. */
-    testHref: (testId: string) => string;
-    now?: Date;
   },
-): Promise<Gradebook> {
+) {
   const [{ data: memberRows, error: memberErr }, { data: assignments, error: assignErr }, qaTests, qaUsers, links] =
     await Promise.all([
       fetchAllRows<MemberRow>((from, to) =>
@@ -135,7 +138,22 @@ export async function loadClassGradebook(
       openDate: a.t!.open_date,
       createdAt: a.t!.created_at,
     }));
+  return { students, tests, scope, links };
+}
 
+export async function loadClassGradebook(
+  db: SupabaseClient,
+  opts: {
+    classGroupId: string;
+    isQa: boolean;
+    /** Teacher's subjects for this class (null = both / admin). */
+    subjects: string[] | null;
+    /** Column header link: the test's results page. */
+    testHref: (testId: string) => string;
+    now?: Date;
+  },
+): Promise<Gradebook> {
+  const { students, tests, scope, links } = await loadClassGradebookFrame(db, opts);
   const testIds = tests.map((t) => t.id);
   const studentIds = students.map((s) => s.id);
   const flParents = testIds.filter((id) => links.childrenOf.has(id));

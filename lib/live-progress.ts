@@ -8,7 +8,7 @@
 // Reads only — nothing here writes.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { expandWithChildren, fullLengthLinksOrNone, type FullLengthLinks } from "@/lib/full-length";
 import {
   attemptGroupKey,
   FL_ALL_SECTIONS,
@@ -20,7 +20,6 @@ import {
 } from "@/lib/full-length-score";
 import { breakEndsAtMs } from "@/lib/full-length-attempt";
 import { getAssignedStudentIds, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
-import { cellIsLive, type Gradebook } from "@/lib/class-gradebook-view";
 import { getQaClassGroupIds, onSide, scopeUsers } from "@/lib/qa";
 import {
   isModule2Track,
@@ -36,7 +35,10 @@ import {
   answeredCount,
   byGradebookCell,
   emptyLiveSnapshot,
+  liveCandidateRow,
+  liveIsStale,
   questionNumberOf,
+  STALE_START_MS,
   summarizeCounts,
   type LiveProgress,
   type LiveSnapshot,
@@ -56,6 +58,8 @@ export interface LiveScope {
   studentIds?: Set<string> | null;
   /** Full-length: sections the viewer may see (a single-subject teacher). Default both. */
   flScope?: FlSectionScope;
+  /** Full-length links the caller already loaded. */
+  links?: FullLengthLinks;
 }
 
 type LightRow = {
@@ -114,7 +118,7 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
   const allow = scope.studentIds ?? null;
   if (allow && allow.size === 0) return emptyLiveSnapshot(generatedAt);
 
-  const links = await fullLengthLinksOrNone(db);
+  const links = scope.links ?? (await fullLengthLinksOrNone(db));
   const kids = links.childrenOf.get(scope.testId) ?? null;
   const testIds = kids ? [kids.rw, kids.math].filter((x): x is string => Boolean(x)) : [scope.testId];
   const flScope = scope.flScope ?? FL_ALL_SECTIONS;
@@ -220,6 +224,7 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
       breakRemainingSeconds: null,
       lastSeenAt: null,
       lastActiveAt: null,
+      startedAt: list.map((r) => r.started_at).filter((d): d is string => !!d).sort()[0] ?? null,
       tabSwitches: tabSwitchTotal(list),
     };
     if (flStatus === "On break") {
@@ -348,31 +353,68 @@ function lastSubmit(rows: { submitted_at: string | null }[]): string | null {
 /** Tests loaded at once by loadClassLiveSnapshot (each is a handful of batched reads). */
 const CLASS_TEST_BATCH = 4;
 
+type CandidateRow = {
+  test_id: string;
+  student_id: string;
+  status: string;
+  started_at: string | null;
+  submitted_at: string | null;
+  last_seen_at: string | null;
+  last_active_at: string | null;
+};
+
 /**
- * Live progress of a class Scores grid (lib/class-gradebook): for every
- * column with an unfinished cell (cellIsLive), the per-test loader above,
- * scoped to those students — and, for a teacher, to the test access rule
+ * Live progress of a class Scores grid (lib/class-gradebook). One batched
+ * read finds the (test, student) pairs worth a look — an open module that
+ * isn't stale, or a module submitted in the last 12 h (between modules /
+ * full-length break) — then the per-test loader above runs only for those
+ * tests and students; for a teacher, also scoped by the test access rule
  * (getTeacherTestAccess: class roster, subject) and the full-length
- * section scope (flSectionScope ∩ the class link's scope). `live` is keyed
- * by gradebookLiveKey(testId, studentId). Callers check class access and
- * pass the gradebook they loaded for this viewer (tests and students
- * already on their QA side and in their subjects).
+ * section scope (flSectionScope ∩ the class link's scope). Stale attempts
+ * (liveIsStale) get no live line. `live` is keyed by
+ * gradebookLiveKey(testId, studentId). Callers check class access and
+ * pass the frame for this viewer (loadClassGradebookFrame or the loaded
+ * gradebook: tests and students already on their QA side and in their
+ * subjects; tests are columns, i.e. full-length parents).
  */
 export async function loadClassLiveSnapshot(
   db: SupabaseClient,
   user: { userId: string; role: string | null | undefined; isQa: boolean },
-  gradebook: Gradebook,
+  frame: { testIds: string[]; studentIds: string[]; scope: FlSectionScope; links?: FullLengthLinks },
 ): Promise<LiveSnapshot> {
-  const generatedAt = new Date().toISOString();
-  const wanted = gradebook.columns
-    .map((c) => ({
-      testId: c.id,
-      students: new Set(gradebook.rows.filter((r) => r.cells[c.id] && cellIsLive(r.cells[c.id])).map((r) => r.studentId)),
-    }))
-    .filter((t) => t.students.size > 0);
+  const nowMs = Date.now();
+  const generatedAt = new Date(nowMs).toISOString();
+  if (frame.testIds.length === 0 || frame.studentIds.length === 0) return emptyLiveSnapshot(generatedAt);
+  const links = frame.links ?? (await fullLengthLinksOrNone(db));
+
+  // Open modules, and modules submitted recently: everything else is finished or abandoned.
+  const since = new Date(nowMs - STALE_START_MS).toISOString();
+  const testIds = expandWithChildren(frame.testIds, links);
+  const byTest = new Map<string, Set<string>>();
+  for (let i = 0; i < frame.studentIds.length; i += ID_CHUNK) {
+    const { data, error } = await fetchAllRows<CandidateRow>((from, to) =>
+      db
+        .from("submissions")
+        .select(
+          "id, test_id, student_id, status, started_at, submitted_at, " +
+            "last_seen_at:metadata->>last_seen_at, last_active_at:metadata->>last_active_at",
+        )
+        .in("test_id", testIds)
+        .in("student_id", frame.studentIds.slice(i, i + ID_CHUNK))
+        .or(`status.eq."In Progress",submitted_at.gte.${since}`)
+        .order("id")
+        .range(from, to) as unknown as PromiseLike<{ data: CandidateRow[] | null; error: unknown }>,
+    );
+    if (error) throw new Error(`class live progress: submissions lookup failed: ${(error as { message?: string }).message ?? error}`);
+    for (const r of data) {
+      if (!liveCandidateRow(r, nowMs)) continue;
+      const t = links.parentOf.get(r.test_id) ?? r.test_id;
+      byTest.set(t, (byTest.get(t) ?? new Set()).add(r.student_id));
+    }
+  }
+  const wanted = [...byTest].map(([testId, students]) => ({ testId, students }));
   if (wanted.length === 0) return emptyLiveSnapshot(generatedAt);
 
-  const links = await fullLengthLinksOrNone(db);
   const one = async ({ testId, students }: (typeof wanted)[number]) => {
     let allow = students;
     if (user.role !== "admin") {
@@ -388,9 +430,11 @@ export async function loadClassLiveSnapshot(
       testId,
       viewerIsQa: user.isQa,
       studentIds: allow,
-      flScope: { rw: viewer.rw && gradebook.scope.rw, math: viewer.math && gradebook.scope.math },
+      flScope: { rw: viewer.rw && frame.scope.rw, math: viewer.math && frame.scope.math },
+      links,
     });
-    return { testId, live: snap.live };
+    const fresh = Object.entries(snap.live).filter(([, p]) => !liveIsStale(p, nowMs));
+    return { testId, live: Object.fromEntries(fresh) };
   };
   const perTest: { testId: string; live: Record<string, LiveProgress> }[] = [];
   for (let i = 0; i < wanted.length; i += CLASS_TEST_BATCH) {

@@ -56,6 +56,8 @@ export interface LiveProgress {
   breakRemainingSeconds: number | null;
   lastSeenAt: string | null;
   lastActiveAt: string | null;
+  /** When the attempt was started (its first module). */
+  startedAt: string | null;
   /** Left-tab total over the attempt's modules. */
   tabSwitches: number | null;
 }
@@ -178,6 +180,65 @@ export function compactModuleLine(
     p.notOpened ? "not opened yet" : timeLeft,
   ];
   return parts.filter(Boolean).join(" · ") || "In module";
+}
+
+/** Class Scores grid: an attempt started longer ago than this is abandoned unless heard from recently. */
+export const STALE_START_MS = 12 * 3600_000;
+/** Contact within this long counts as recent; the grid stops polling when nobody live has any. */
+export const RECENT_CONTACT_MS = 3600_000;
+
+const ms = (iso: string | null | undefined) => (iso ? Date.parse(iso) : NaN);
+
+/** Latest of the liveness stamps (NaN when neither is set). */
+function contactMs(p: { lastSeenAt: string | null; lastActiveAt: string | null }): number {
+  const seen = ms(p.lastSeenAt);
+  const active = ms(p.lastActiveAt);
+  return Number.isFinite(seen) || Number.isFinite(active) ? Math.max(seen || -Infinity, active || -Infinity) : NaN;
+}
+
+/**
+ * An unfinished attempt nobody is taking any more (server rule for the
+ * class grid): started over 12 h ago and no contact in the last hour.
+ * It still shows as In progress / Late, just without a live line.
+ */
+export function liveIsStale(
+  p: { startedAt: string | null; lastSeenAt: string | null; lastActiveAt: string | null },
+  nowMs: number,
+): boolean {
+  const started = ms(p.startedAt);
+  if (!Number.isFinite(started) || nowMs - started <= STALE_START_MS) return false;
+  const contact = contactMs(p);
+  return !Number.isFinite(contact) || nowMs - contact > RECENT_CONTACT_MS;
+}
+
+/**
+ * Nobody in the snapshot has been heard from in the last hour (last
+ * contact, else the attempt's start) — the grid stops polling and offers
+ * a Refresh. True for an empty snapshot.
+ */
+export function allLiveIdle(snapshot: Pick<LiveSnapshot, "live" | "generatedAt">): boolean {
+  const now = ms(snapshot.generatedAt);
+  return Object.values(snapshot.live).every((p) => {
+    const c = contactMs(p);
+    const at = Number.isFinite(c) ? c : ms(p.startedAt);
+    return !Number.isFinite(at) || now - at > RECENT_CONTACT_MS;
+  });
+}
+
+/**
+ * A submissions row worth a live lookup for the class grid poll: an open
+ * module not stale (liveIsStale), or a module submitted within the last
+ * 12 h (the attempt may be between modules or on a full-length break).
+ */
+export function liveCandidateRow(
+  r: { status: string; started_at: string | null; submitted_at: string | null; last_seen_at: string | null; last_active_at: string | null },
+  nowMs: number,
+): boolean {
+  if (r.status === "In Progress") {
+    return !liveIsStale({ startedAt: r.started_at, lastSeenAt: r.last_seen_at, lastActiveAt: r.last_active_at }, nowMs);
+  }
+  const submitted = ms(r.submitted_at);
+  return Number.isFinite(submitted) && nowMs - submitted <= STALE_START_MS;
 }
 
 /** Live entry of a class Scores cell: column (test) id + student id. */

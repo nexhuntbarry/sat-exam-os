@@ -105,7 +105,8 @@ function GradebookView({
     URL.revokeObjectURL(url);
   }
 
-  // Poll only while an unfinished cell is on screen (after filters).
+  // Poll only while an unfinished cell is on screen (after filters), and
+  // stop once nobody live has been heard from in an hour (Paused · Refresh).
   const liveOnScreen = useMemo(() => anyLiveCell(columns, rows), [columns, rows]);
 
   const qs = viewQuery(filter, sort.key, sort.dir);
@@ -113,7 +114,7 @@ function GradebookView({
   const input = "rounded-lg border border-divider bg-surface px-2 py-1 text-xs text-charcoal";
 
   return (
-    <LiveProgressProvider endpoint={live.endpoint} initial={live.initial} active={liveOnScreen}>
+    <LiveProgressProvider endpoint={live.endpoint} initial={live.initial} active={liveOnScreen} pauseWhenIdle>
       <section aria-labelledby="class-scores-heading">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">

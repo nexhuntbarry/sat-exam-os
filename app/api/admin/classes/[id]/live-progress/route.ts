@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaClassGroupIds, onSide } from "@/lib/qa";
-import { loadClassGradebook } from "@/lib/class-gradebook";
+import { loadClassGradebookFrame } from "@/lib/class-gradebook";
 import { loadClassLiveSnapshot } from "@/lib/live-progress";
 
 // GET /api/admin/classes/[id]/live-progress
@@ -22,13 +22,14 @@ export async function GET(
 
   const db = getServiceClient();
   try {
-    const gradebook = await loadClassGradebook(db, {
-      classGroupId: id,
-      isQa: user.isQa,
-      subjects: null,
-      testHref: (testId) => `/admin/tests/${testId}/submissions`,
+    // The grid's frame only (members, assigned tests): no full gradebook per poll.
+    const frame = await loadClassGradebookFrame(db, { classGroupId: id, isQa: user.isQa, subjects: null });
+    const snapshot = await loadClassLiveSnapshot(db, user, {
+      testIds: frame.tests.map((t) => t.id),
+      studentIds: frame.students.map((s) => s.id),
+      scope: frame.scope,
+      links: frame.links,
     });
-    const snapshot = await loadClassLiveSnapshot(db, user, gradebook);
     return NextResponse.json({ data: snapshot }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     console.error("[admin/classes/live-progress]", e);

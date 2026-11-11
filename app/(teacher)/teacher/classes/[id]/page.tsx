@@ -10,6 +10,7 @@ import { averageSat } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
 import { loadClassGradebook } from "@/lib/class-gradebook";
+import { gradebookLiveFrame } from "@/lib/class-gradebook-view";
 import { loadClassLiveSnapshot } from "@/lib/live-progress";
 import { emptyLiveSnapshot } from "@/lib/live-progress-shared";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
@@ -235,7 +236,7 @@ export default async function TeacherClassDetailPage({
   });
   // Live lines for unfinished cells; a failure only leaves them out (the grid polls again).
   const liveInitial = gradebook
-    ? await loadClassLiveSnapshot(getServiceClient(), me, gradebook).catch((e) => {
+    ? await loadClassLiveSnapshot(getServiceClient(), me, gradebookLiveFrame(gradebook)).catch((e) => {
         console.error("[teacher/classes/live-progress] load failed:", e);
         return emptyLiveSnapshot();
       })

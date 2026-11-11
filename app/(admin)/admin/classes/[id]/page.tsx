@@ -8,7 +8,7 @@ import type { AssignedTest } from "./ClassDetailClient";
 import type { AvailableTest } from "./AssignTestButton";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { loadClassGradebook } from "@/lib/class-gradebook";
-import type { Gradebook } from "@/lib/class-gradebook-view";
+import { gradebookLiveFrame, type Gradebook } from "@/lib/class-gradebook-view";
 import { loadClassLiveSnapshot } from "@/lib/live-progress";
 import { emptyLiveSnapshot } from "@/lib/live-progress-shared";
 
@@ -302,7 +302,7 @@ export default async function ClassDetailPage({
   const [assignedTests, liveInitial] = await Promise.all([
     getAssignedTests(id, isQa, gradebook),
     gradebook && me
-      ? loadClassLiveSnapshot(getServiceClient(), me, gradebook).catch((e) => {
+      ? loadClassLiveSnapshot(getServiceClient(), me, gradebookLiveFrame(gradebook)).catch((e) => {
           console.error("[classes/live-progress] load failed:", e);
           return emptyLiveSnapshot();
         })
