@@ -473,14 +473,40 @@ await check("C-02", ["C-02"], "計分不變式：每份已提交的作答 total_
     approvedCounts[mid] = count ?? 0;
   }
 
+  // A non-adaptive test with question_ids grades only those (Approved)
+  // questions; a single-module one (e.g. a Teaching mode quiz picked from
+  // several source tests) takes them from any module — same rule as
+  // scopeToStudentQuestionSet / questionIdsSpanModules in lib/student-exam.ts.
+  const testIds = [...new Set(submitted.map((s) => s.test_id))];
+  const listed = new Map();
+  for (let i = 0; i < testIds.length; i += 200) {
+    const { data: ts } = await db.from("tests").select("id,module_id,module_2_id,is_adaptive,question_ids").in("id", testIds.slice(i, i + 200));
+    for (const t of ts ?? []) if (!t.is_adaptive && Array.isArray(t.question_ids) && t.question_ids.length > 0) listed.set(t.id, t);
+  }
+  const listedIds = [...new Set([...listed.values()].flatMap((t) => t.question_ids))];
+  const listedQ = new Map();
+  for (let i = 0; i < listedIds.length; i += 200) {
+    const { data: qs } = await db.from("questions").select("id,module_id,parsing_status").in("id", listedIds.slice(i, i + 200));
+    for (const q of qs ?? []) listedQ.set(q.id, q);
+  }
+  const expectedFor = (s) => {
+    const t = listed.get(s.test_id);
+    if (!t) return approvedCounts[s.module_id] ?? 0;
+    const anyModule = !t.module_2_id && s.module_id === t.module_id;
+    return t.question_ids.filter((id) => {
+      const q = listedQ.get(id);
+      return q && q.parsing_status === "Approved" && (anyModule || q.module_id === s.module_id);
+    }).length;
+  };
+
   const violations = submitted.filter((s) => {
-    const approved = approvedCounts[s.module_id] ?? 0;
+    const approved = expectedFor(s);
     return approved > 0 && s.total_questions !== approved;
   });
 
   if (violations.length > 0) {
     const examples = violations.slice(0, 5).map(
-      (s) => `sub=${s.id.slice(0, 8)} module=${s.module_id.slice(0, 8)} total=${s.total_questions} approved=${approvedCounts[s.module_id]}`
+      (s) => `sub=${s.id.slice(0, 8)} module=${s.module_id.slice(0, 8)} total=${s.total_questions} approved=${expectedFor(s)}`
     );
     fail(`${violations.length} submissions have total_questions != approved question count: ${examples.join("; ")}`);
   }

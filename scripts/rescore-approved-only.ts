@@ -27,6 +27,7 @@ import { createClient } from "@supabase/supabase-js";
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { answersMatch } from "../lib/grade-submission";
 import { scaleSectionScore } from "../lib/scoring";
+import { questionIdsSpanModules } from "../lib/student-exam";
 
 const envText = readFileSync(".env.local", "utf-8");
 for (const line of envText.split("\n")) {
@@ -60,6 +61,7 @@ type Test = {
   id: string;
   test_name: string;
   module_id: string | null;
+  module_2_id: string | null;
   question_ids: string[] | null;
   is_adaptive: boolean | null;
 };
@@ -100,7 +102,7 @@ async function main() {
   );
   const testIds = Array.from(new Set(subs.map((s) => s.test_id)));
   const tests = await fetchAll<Test>((a, b) =>
-    db.from("tests").select("id, test_name, module_id, question_ids, is_adaptive").in("id", testIds).range(a, b),
+    db.from("tests").select("id, test_name, module_id, module_2_id, question_ids, is_adaptive").in("id", testIds).range(a, b),
   );
   const testById = new Map(tests.map((t) => [t.id, t]));
 
@@ -120,6 +122,26 @@ async function main() {
       .order("id")
       .range(a, b),
   );
+  // A quiz picked from several source tests (questionIdsSpanModules, the
+  // rule scopeToStudentQuestionSet grades by) also has questions outside
+  // its module.
+  const listedIds = Array.from(
+    new Set(
+      subs.flatMap((s) => {
+        const t = testById.get(s.test_id);
+        const m = s.module_id ?? t?.module_id ?? null;
+        return t && m && questionIdsSpanModules(t, [m]) ? (t.question_ids ?? []) : [];
+      }),
+    ),
+  ).filter((id) => !questions.some((q) => q.id === id));
+  for (let i = 0; i < listedIds.length; i += 200) {
+    const { data, error } = await db
+      .from("questions")
+      .select("id, module_id, parsing_status, correct_answer, question_type, question_text")
+      .in("id", listedIds.slice(i, i + 200));
+    if (error) throw new Error(`listed questions: ${error.message}`);
+    questions.push(...((data ?? []) as (Question & { module_id: string })[]));
+  }
   const questionById = new Map(questions.map((q) => [q.id, q]));
   const questionsByModule = new Map<string, Question[]>();
   for (const q of questions) {
@@ -142,7 +164,12 @@ async function main() {
 
     // The set the student was graded on before (non-Rejected, plus the
     // legacy question_ids subset) vs the Approved-only set they saw.
-    let scope = (questionsByModule.get(moduleId) ?? []).filter((q) => q.parsing_status !== "Rejected");
+    // Same module/list rule as scopeToStudentQuestionSet; the status filter
+    // differs on purpose (the old grading kept every non-Rejected one).
+    let scope = questionIdsSpanModules(test, [moduleId])
+      ? (test.question_ids ?? []).flatMap((id) => questionById.get(id) ?? [])
+      : questionsByModule.get(moduleId) ?? [];
+    scope = scope.filter((q) => q.parsing_status !== "Rejected");
     if (!test.is_adaptive && Array.isArray(test.question_ids) && test.question_ids.length > 0) {
       const ids = new Set(test.question_ids);
       scope = scope.filter((q) => ids.has(q.id));

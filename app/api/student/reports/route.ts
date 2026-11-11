@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { isTestAssignedToStudent } from "@/lib/student-exam";
+import { isTestAssignedToStudent, questionIdsSpanModules } from "@/lib/student-exam";
 import {
   STUDENT_REPORT_KINDS,
   STUDENT_REPORT_NOTE_MAX,
@@ -76,7 +76,7 @@ export async function POST(req: Request) {
   const [{ data: test }, { data: question }] = await Promise.all([
     db
       .from("tests")
-      .select("id, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
+      .select("id, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id, is_adaptive, question_ids")
       .eq("id", testId)
       .maybeSingle(),
     db
@@ -91,10 +91,17 @@ export async function POST(req: Request) {
       (x): x is string => Boolean(x),
     ),
   );
-  if (!testModules.has(question.module_id as string)) return bad("Not found", 404);
-  // A submission covers one module; the question must be from it.
-  if (submissionModuleId && submissionModuleId !== question.module_id) {
-    return bad("Not found", 404);
+  // A quiz picked from several source tests: its question_ids list is the
+  // set, whatever module each question comes from.
+  const picked =
+    questionIdsSpanModules(test, test.module_id ? [test.module_id as string] : []) &&
+    ((test.question_ids as string[] | null) ?? []).includes(question.id as string);
+  if (!picked) {
+    if (!testModules.has(question.module_id as string)) return bad("Not found", 404);
+    // A submission covers one module; the question must be from it.
+    if (submissionModuleId && submissionModuleId !== question.module_id) {
+      return bad("Not found", 404);
+    }
   }
 
   // Rate limits: MAX_PER_SUBMISSION per submission (per test when there is

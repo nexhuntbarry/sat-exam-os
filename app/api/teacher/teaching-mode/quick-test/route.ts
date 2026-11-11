@@ -85,11 +85,11 @@ export async function POST(req: Request) {
     );
   }
 
-  // Use the first question's module_id (tests reference a single module)
-  const moduleId = qrows[0].module_id;
   // Keep the teacher's pick order: it is the order students see.
-  const found = new Set(qrows.map((q) => q.id as string));
-  const validQuestionIds = [...new Set(questionIds)].filter((id) => found.has(id));
+  const moduleOf = new Map(qrows.map((q) => [q.id as string, q.module_id as string] as const));
+  const validQuestionIds = [...new Set(questionIds)].filter((id) => moduleOf.has(id));
+  // Tests reference a single module: the teacher's first picked question's.
+  const moduleId = moduleOf.get(validQuestionIds[0]);
 
   // Resolve cohort -> student_ids
   let studentIds: string[] = [];
