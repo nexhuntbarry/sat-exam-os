@@ -297,7 +297,10 @@ async function runAll(h, state) {
   const startModule2 = (page) => page.getByRole("link", { name: /Start Module 2/ }).or(page.getByRole("button", { name: /Start Module 2/ })).first();
   const resumeBtn = (page) => page.getByRole("button", { name: /Resume testing/ }).first();
   const bodyText = async (page) => norm(await page.locator("body").innerText().catch(() => ""));
-  const BROKEN = /something went wrong|application error|NaN|undefined|Infinity/i;
+  // Error phrases case-insensitive; JS value leaks only as whole, case-exact words
+  // (a case-insensitive "nan" matched ordinary words like "financial").
+  const BROKEN_RE = [/something went wrong|application error/i, /\b(?:NaN|undefined|Infinity)\b/];
+  const brokenMatch = (t) => { for (const r of BROKEN_RE) { const m = t.match(r); if (m) return m; } return null; };
 
   // ═════════════════════════════════════════════════════════════════
   // FL-SMOKE — section-test exam path + lists + admin PATCH/publish.
@@ -579,7 +582,7 @@ async function runAll(h, state) {
       }
       const total = Number((text.match(/(\d{3,4})\/1600/) ?? [])[1]);
       if (!(total >= 400 && total <= 1600)) problems.push(`result page total "${(text.match(/\S+\/1600/) ?? ["none"])[0]}"`);
-      if (BROKEN.test(text)) problems.push(`result page shows "${text.match(BROKEN)[0]}"`);
+      { const m = brokenMatch(text); if (m) problems.push(`result page shows "${m[0]}" (…${text.slice(Math.max(0, m.index - 40), m.index + 40)}…)`); }
       if (pageErrors.length) problems.push(`page errors: ${pageErrors.join(" | ")}`);
       if (problems.length) fail(`${problems.join("; ")}. ${steps.join("; ")}`);
       return `${steps.join("; ")}; result ${total}/1600, ${["rwM1", "rwM2", "mathM1", "mathM2"].map((k) => cell(sl[k][0])).join(" · ")}`;
