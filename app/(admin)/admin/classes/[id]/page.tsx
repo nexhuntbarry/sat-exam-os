@@ -18,6 +18,7 @@ import type { AvailableTest } from "./AssignTestButton";
 import { studentTestProgress, summarizeTestProgress, type ProgressSubmission } from "@/lib/test-progress";
 import { averageSat, scoreDisplay } from "@/lib/score-display";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { loadClassGradebook } from "@/lib/class-gradebook";
 
 async function getClassGroup(id: string) {
   const db = getServiceClient();
@@ -358,7 +359,15 @@ export default async function ClassDetailPage({
   if (!classGroup) notFound();
 
   const memberStudentIds = members.map((m) => m.student_id);
-  const assignedTests = await getAssignedTests(id, memberStudentIds, isQa);
+  const [assignedTests, gradebook] = await Promise.all([
+    getAssignedTests(id, memberStudentIds, isQa),
+    loadClassGradebook(getServiceClient(), {
+      classGroupId: id,
+      isQa,
+      subjects: null,
+      testHref: (testId) => `/admin/tests/${testId}/submissions?class=${id}`,
+    }),
+  ]);
 
   return (
     <ClassDetailClient
@@ -369,6 +378,7 @@ export default async function ClassDetailPage({
       assignedTeachers={assignedTeachers}
       linkedTests={linkedTests}
       assignedTests={assignedTests}
+      gradebook={gradebook}
       availableTests={availableTests}
     />
   );

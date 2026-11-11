@@ -2,11 +2,20 @@
 // margin boxes, so page numbers and the running name print in every browser).
 const cssString = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, " ")}"`;
 
-export function printPageCss({ header, totalPages = true }: { header: { text: string } | { studentName: true }; totalPages?: boolean }): string {
+export function printPageCss({
+  header,
+  totalPages = true,
+  landscape = false,
+}: {
+  header: { text: string } | { studentName: true };
+  totalPages?: boolean;
+  /** Wide tables (the class gradebook). */
+  landscape?: boolean;
+}): string {
   const top = "studentName" in header ? "string(student)" : cssString(header.text);
   return `
 @page {
-  size: letter;
+  size: letter${landscape ? " landscape" : ""};
   margin: 0.5in 0.5in 0.55in 0.5in;
   @top-left { content: ${top}; font-size: 8pt; color: #555; vertical-align: bottom; padding-bottom: 6pt; }
   @bottom-right { content: "Page " counter(page)${totalPages ? ' " of " counter(pages)' : ""}; font-size: 8pt; color: #555; }

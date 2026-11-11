@@ -24,6 +24,8 @@ import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import SearchablePicker, { type PickerItem } from "@/components/ui/SearchablePicker";
 import AssignTestButton, { type AvailableTest } from "./AssignTestButton";
+import ClassGradebook from "@/components/analytics/ClassGradebook";
+import type { Gradebook } from "@/lib/class-gradebook-view";
 
 export interface AssignedTest {
   id: string;
@@ -91,6 +93,7 @@ interface Props {
   linkedTests: { id: string; name: string }[];
   assignedTests: AssignedTest[];
   availableTests: AvailableTest[];
+  gradebook: Gradebook;
 }
 
 export default function ClassDetailClient({
@@ -102,6 +105,7 @@ export default function ClassDetailClient({
   linkedTests,
   assignedTests,
   availableTests,
+  gradebook,
 }: Props) {
   const router = useRouter();
 
@@ -733,6 +737,8 @@ export default function ClassDetailClient({
           </tbody>
         </DataTable>
       </section>
+
+      <ClassGradebook classId={classGroup.id} className={classGroup.name} gradebook={gradebook} />
 
       {/* Members list */}
       <section>

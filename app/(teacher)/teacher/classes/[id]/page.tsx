@@ -9,6 +9,8 @@ import { formatShortDateTime } from "@/lib/datetime";
 import { averageSat } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
+import { loadClassGradebook } from "@/lib/class-gradebook";
+import ClassGradebook from "@/components/analytics/ClassGradebook";
 import {
   DataRow,
   DataTable,
@@ -182,7 +184,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
     slot.completed = completedTests[sid]?.size ?? 0;
   }
 
-  return { group, students, perStudent };
+  return { group, students, perStudent, subjects };
 }
 
 export default async function TeacherClassDetailPage({
@@ -198,7 +200,14 @@ export default async function TeacherClassDetailPage({
   if (!onSide(id, await getQaClassGroupIds(), me.isQa)) notFound();
   const data = await loadClass(id, me.userId, me.role === "admin", me.isQa);
   if (!data) notFound();
-  const { group, students, perStudent } = data;
+  const { group, students, perStudent, subjects } = data;
+  // Same grid as the admin class page, limited to this teacher's subject.
+  const gradebook = await loadClassGradebook(getServiceClient(), {
+    classGroupId: id,
+    isQa: me.isQa,
+    subjects,
+    testHref: (testId) => `/teacher/tests/${testId}/results`,
+  });
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -228,6 +237,8 @@ export default async function TeacherClassDetailPage({
           </div>
         </div>
       </div>
+
+      <ClassGradebook classId={group.id} className={group.name} gradebook={gradebook} />
 
       <section>
         <h2 className="text-charcoal font-semibold mb-3">Roster</h2>
