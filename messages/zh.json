@@ -881,6 +881,7 @@
     "keepSource": "保留目前來源",
     "accommodationsTitle": "延長時間",
     "accommodationsHint": "依學生個別設定。適用於四個模組（不含休息），只影響設定之後開始的作答。",
+    "accommodationsHintSection": "依學生個別設定。適用於每個模組，只影響設定之後開始的作答。",
     "standardTime": "標準時間",
     "noStudents": "尚未分配學生。",
     "saving": "儲存中…",

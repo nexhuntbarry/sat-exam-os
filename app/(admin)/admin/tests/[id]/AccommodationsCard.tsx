@@ -9,13 +9,16 @@ interface Props {
   students: { id: string; name: string; email: string }[];
   /** student id → current multiplier (1.25 / 1.5 / 2). */
   initial: Record<string, number>;
+  /** "section" on an ordinary section test (default: full-length wording). */
+  kind?: "full_length" | "section";
 }
 
 const OPTIONS = [1.25, 1.5, 2] as const;
 
-// Full-length SAT: per-student extended time (test_time_accommodations).
+// Per-student extended time (test_time_accommodations) on a full-length SAT
+// or a section test.
 // Each change saves at once; it applies to attempts started afterwards.
-export default function AccommodationsCard({ testId, students, initial }: Props) {
+export default function AccommodationsCard({ testId, students, initial, kind = "full_length" }: Props) {
   const tf = useTranslations("fullLength");
   const [values, setValues] = useState<Record<string, number>>(initial);
   const [saving, setSaving] = useState<string | null>(null);
@@ -64,7 +67,9 @@ export default function AccommodationsCard({ testId, students, initial }: Props)
           <Clock size={15} className="text-warm-coral-text" />
           {tf("accommodationsTitle")}
         </h2>
-        <p className="text-soft-mute text-xs">{tf("accommodationsHint")}</p>
+        <p className="text-soft-mute text-xs">
+          {tf(kind === "section" ? "accommodationsHintSection" : "accommodationsHint")}
+        </p>
       </div>
       {students.length === 0 ? (
         <p className="text-soft-mute text-sm">{tf("noStudents")}</p>

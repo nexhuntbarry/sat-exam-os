@@ -69,7 +69,7 @@ export async function finalizeStaleSubmission(
   const base = { submissionId: sub.id, studentId: sub.student_id, track: sub.adaptive_track };
   if (!test) return { ...base, action: "skipped", reason: "test row missing" };
 
-  // Extended time (full-length metadata.time_multiplier) included.
+  // Extended time (metadata.time_multiplier) included.
   const limitMinutes = moduleTimeLimitMinutes(test, sub.adaptive_track, sub.metadata);
   if (!limitMinutes) {
     return { ...base, action: "skipped", reason: "untimed or no time limit configured" };

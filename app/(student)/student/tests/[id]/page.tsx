@@ -15,6 +15,7 @@ import {
 } from "@/lib/student-exam";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
 import { module2RecoveryBlock } from "@/lib/module2-handoff";
+import { loadTimeMultiplier } from "@/lib/full-length-admin";
 
 async function getTestInfo(testId: string, studentId: string) {
   const db = getServiceClient();
@@ -221,15 +222,19 @@ export default async function StudentTestLandingPage({
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
-  const m1Limit = test.time_limit_minutes;
-  const m2Limit = test.time_limit_minutes_module_2 ?? m1Limit;
-  const timeLimitDisplay = test.is_untimed
+  // The student's extended time (test_time_accommodations), shown on the
+  // limits. Display only: the attempt is stamped at start by the server.
+  const mult = test.is_untimed ? 1 : await loadTimeMultiplier(linksDb, id, user.userId).catch(() => 1);
+  const withMult = (m: number | null) => (m == null ? m : Math.round(m * mult * 10) / 10);
+  const m1Limit = withMult(test.time_limit_minutes);
+  const m2Limit = withMult(test.time_limit_minutes_module_2 ?? test.time_limit_minutes);
+  const timeLimitDisplay = (test.is_untimed
     ? "Untimed"
     : isTwoModule && m1Limit
     ? `${m1Limit} + ${m2Limit} min`
     : m1Limit
     ? `${m1Limit} min`
-    : "—";
+    : "—") + (mult !== 1 && m1Limit ? ` (extended time ×${mult})` : "");
 
   const isPastDue = test.due_date && new Date(test.due_date) < new Date();
   const isNotOpenYet = Boolean(test.open_date && new Date(test.open_date) > new Date());

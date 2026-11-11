@@ -138,7 +138,7 @@ export async function GET(
   // Time remaining, measured from the module's real start (Module 2:
   // when it was first opened) — the same clock the take page, cron and
   // autosave deadline use.
-  // Extended time (metadata.time_multiplier) included; none on section tests.
+  // Extended time (metadata.time_multiplier) included.
   const limitMinutes = moduleTimeLimitMinutes(test, submission.adaptive_track, submission.metadata) ?? 35;
   const startIso = moduleStartedAtIso(submission);
   const elapsedSeconds = startIso

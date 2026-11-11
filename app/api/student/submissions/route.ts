@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { deviceInfoFromHeaders } from "@/lib/student-exam";
 import { recoverModule2 } from "@/lib/module2-handoff";
 import { studentTestAccess } from "@/lib/module2-access";
+import { loadTimeMultiplier } from "@/lib/full-length-admin";
 
 export const maxDuration = 60;
 
@@ -180,6 +181,17 @@ export async function POST(req: Request) {
   const adaptiveTrack =
     isAdaptive || isTwoModuleNonAdaptive ? "module_1" : null;
 
+  // Extended time (test_time_accommodations), snapshotted onto the attempt:
+  // Module 2 inherits it at the handoff, and a later change only affects
+  // attempts started afterwards. Server-owned; the client can't set it.
+  let timeMultiplier: number;
+  try {
+    timeMultiplier = await loadTimeMultiplier(db, body.testId, user.userId);
+  } catch (e) {
+    console.error("[student/submissions/post]", e);
+    return NextResponse.json({ error: "Couldn't start the test — please try again." }, { status: 503 });
+  }
+
   const { data: submission, error: subError } = await db
     .from("submissions")
     .insert({
@@ -189,7 +201,10 @@ export async function POST(req: Request) {
       status: "In Progress",
       started_at: new Date().toISOString(),
       attempt_number: attemptNumber,
-      metadata: device ? { device } : {},
+      metadata: {
+        ...(device ? { device } : {}),
+        ...(timeMultiplier !== 1 ? { time_multiplier: timeMultiplier } : {}),
+      },
       session_id: sessionId,
       module_id: moduleId,
       adaptive_track: adaptiveTrack,

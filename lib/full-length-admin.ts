@@ -375,8 +375,45 @@ export async function fullLengthStarted(
 }
 
 // ---------------------------------------------------------- accommodations
+// Extended time is set per (test, student) on a full-length parent or on an
+// ordinary section test (single module, two-module, adaptive). Never on a
+// full-length child section: its parent's row covers it.
 
 export const TIME_MULTIPLIERS = [1.25, 1.5, 2] as const;
+
+export type AccommodationKind = "full_length" | "section";
+
+/** Which kind of test takes extended time; null = none (child section / unknown kind). */
+export function accommodationKind(
+  test: { test_kind?: string | null; parent_test_id?: string | null } | null,
+): AccommodationKind | null {
+  if (!test || test.parent_test_id) return null;
+  if (test.test_kind === "full_length") return "full_length";
+  if (test.test_kind == null || test.test_kind === "section") return "section";
+  return null;
+}
+
+/** A stored accommodation as a multiplier to stamp: 1 unless ×1.25 / ×1.5 / ×2. */
+export function accommodationMultiplier(row: { time_multiplier?: unknown } | null): number {
+  const m = row?.time_multiplier != null ? Number(row.time_multiplier) : 1;
+  return (TIME_MULTIPLIERS as readonly number[]).includes(m) ? m : 1;
+}
+
+/**
+ * The student's extended time on a section test, for stamping onto a new
+ * attempt (submissions.metadata.time_multiplier). Throws on a lookup error:
+ * never start an attempt without the student's extended time because of a blip.
+ */
+export async function loadTimeMultiplier(db: SupabaseClient, testId: string, studentId: string): Promise<number> {
+  const { data, error } = await db
+    .from("test_time_accommodations")
+    .select("time_multiplier")
+    .eq("test_id", testId)
+    .eq("student_id", studentId)
+    .maybeSingle();
+  if (error) throw new Error(`accommodation lookup: ${error.message}`);
+  return accommodationMultiplier(data as { time_multiplier?: unknown } | null);
+}
 
 /** null clears the accommodation; otherwise one of ×1.25 / ×1.5 / ×2. */
 export function multiplierError(v: unknown): string | null {
@@ -411,9 +448,10 @@ export async function listAccommodations(
 }
 
 /**
- * Is the student on this full-length test: assigned individually or
- * through a class group, or has work on it (rows on a section, or an
- * attempt)? Fails closed (false) on a lookup error.
+ * Is the student on this full-length (or section) test: assigned
+ * individually or through a class group, or has work on it (rows on a
+ * section / on the section test itself, or an attempt)? Fails closed
+ * (false) on a lookup error.
  */
 export async function studentOnFullLengthTest(
   db: SupabaseClient,
@@ -445,12 +483,12 @@ export async function studentOnFullLengthTest(
   ]);
   if (kidsErr || attemptErr) return false;
   if ((attempt ?? []).length > 0) return true;
+  // A section test has no children: its own submissions are the work.
   const kidIds = ((kids ?? []) as { id: string }[]).map((k) => k.id);
-  if (kidIds.length === 0) return false;
   const { data: subs, error: subsErr } = await db
     .from("submissions")
     .select("id")
-    .in("test_id", kidIds)
+    .in("test_id", kidIds.length > 0 ? kidIds : [parentId])
     .eq("student_id", studentId)
     .limit(1);
   return !subsErr && (subs ?? []).length > 0;
