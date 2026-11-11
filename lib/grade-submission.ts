@@ -119,6 +119,8 @@ export interface FinalizeSubmissionInput {
     id: string;
     module_id: string | null;
     question_ids: string[] | null;
+    /** A test with a Module 2 keeps question_ids per module. */
+    module_2_id: string | null;
     is_adaptive: boolean | null;
     due_date: string | null;
     time_limit_minutes?: number | null;
@@ -244,9 +246,9 @@ export async function finalizeSubmission(
   const questionQuery = scopeToStudentQuestionSet(
     db
       .from("questions")
-      .select("id, correct_answer, question_type, question_text, original_question_number")
-      .eq("module_id", gradingModuleId),
+      .select("id, correct_answer, question_type, question_text, original_question_number"),
     test,
+    gradingModuleId,
   ).order("original_question_number", { ascending: true });
   const { data: questions, error: qErr } = await questionQuery;
   if (qErr || !questions) {

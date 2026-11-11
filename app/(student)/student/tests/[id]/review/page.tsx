@@ -5,7 +5,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { Eye } from "lucide-react";
 import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/ReviewQuestionCard";
-import { isTestAssignedToStudent, scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { isTestAssignedToStudent, orderToQuestionIds, questionIdsSpanModules, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import ReportProblemButton from "@/components/tests/ReportProblemButton";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
@@ -59,9 +59,9 @@ async function getReviewData(testId: string, studentId: string) {
       .from("questions")
       .select(
         "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
-      )
-      .in("module_id", moduleIds),
+      ),
     parts[0]?.test ?? test,
+    moduleIds,
   ).order("original_question_number", { ascending: true });
 
   const { data: rawQuestions } = await qquery;
@@ -107,11 +107,14 @@ async function getReviewData(testId: string, studentId: string) {
     questions: NonNullable<typeof questions>;
   };
   const groups = new Map<string, Section>();
-  for (const q of questions ?? []) {
+  // A quiz picked from several source tests is one section, in pick order.
+  const scope = parts[0]?.test ?? test;
+  const oneSection = questionIdsSpanModules(scope, moduleIds) ? scope.module_id : null;
+  for (const q of orderToQuestionIds(questions ?? [], scope, moduleIds, (x) => x.id)) {
     const mod = q.modules as unknown as
       | { module_name: string; section: string; module_number: number | null }
       | null;
-    const key = q.module_id;
+    const key = oneSection ?? q.module_id;
     const part = parts.find((p) => modulesOf(p.test).includes(q.module_id)) ?? { test, prefix: "" };
     const t = part.test;
     let label = mod?.module_name ?? "Module";
@@ -123,7 +126,7 @@ async function getReviewData(testId: string, studentId: string) {
       if (q.module_id === t.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
       else if (q.module_id === t.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
     }
-    label = part.prefix + label;
+    label = oneSection ? test.test_name : part.prefix + label;
     if (!groups.has(key)) {
       groups.set(key, { moduleId: key, title: label, questions: [] });
     }

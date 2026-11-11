@@ -9,6 +9,7 @@ import {
   moduleStartedAtIso,
   moduleTimeLimitMinutes,
   isModule2Track,
+  orderToQuestionIds,
   sanitizeClientMetadata,
   scopeToStudentQuestionSet,
   stampModule2Start,
@@ -81,7 +82,7 @@ export async function GET(
       time_spent_seconds, attempt_number, metadata, module_id, adaptive_track,
       tests!inner(
         id, test_name, module_id, time_limit_minutes, time_limit_minutes_module_2, is_untimed, due_date, show_answers_after_submission,
-        is_adaptive, question_ids,
+        is_adaptive, question_ids, module_2_id,
         modules!module_id(module_name, section)
       )
     `)
@@ -102,6 +103,7 @@ export async function GET(
     time_limit_minutes_module_2?: number | null;
     is_untimed?: boolean | null;
     question_ids?: string[] | null;
+    module_2_id?: string | null;
     is_adaptive?: boolean | null;
   };
   const gradingModuleId = submission.module_id ?? test.module_id;
@@ -116,10 +118,10 @@ export async function GET(
       // field they fetch is visible in DevTools. The post-submit review
       // page reads correct_answer from submission_answers on its own
       // server-rendered path.
-      .select("id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, section, domain, skill, difficulty")
-      .eq("module_id", gradingModuleId),
+      .select("id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, section, domain, skill, difficulty"),
     // Same Approved-only set the take page shows and submit grades.
     test,
+    gradingModuleId,
   ).order("original_question_number", { ascending: true });
 
   // Handing out Module 2's questions opens it: start the clock now if it
@@ -147,7 +149,7 @@ export async function GET(
   return NextResponse.json({
     data: {
       ...submission,
-      questions: questions ?? [],
+      questions: orderToQuestionIds(questions ?? [], test, gradingModuleId, (q) => q.id),
       timeRemainingSeconds,
     },
   });

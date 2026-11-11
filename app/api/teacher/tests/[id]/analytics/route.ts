@@ -3,7 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
-import { scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { orderToQuestionIds, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { parseActivity, summarizeActivity, type ActivitySummary } from "@/lib/question-activity";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { fullLengthLinks } from "@/lib/full-length";
@@ -104,11 +104,11 @@ export async function GET(
       const { data } = await scopeToStudentQuestionSet(
         db
           .from("questions")
-          .select("id, original_question_number, question_text, correct_answer, difficulty, domain")
-          .eq("module_id", slot.moduleId),
+          .select("id, original_question_number, question_text, correct_answer, difficulty, domain"),
         test,
+        slot.moduleId,
       ).order("original_question_number", { ascending: true });
-      return data ?? [];
+      return orderToQuestionIds(data ?? [], test, slot.moduleId, (q) => q.id as string);
     }),
   );
   const questionIds = moduleQuestions.flat().map((q) => q.id as string);

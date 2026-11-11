@@ -25,19 +25,72 @@ interface FilterLike {
 export interface QuestionSetScope {
   is_adaptive?: boolean | null;
   question_ids?: string[] | null;
+  module_id?: string | null;
+  module_2_id?: string | null;
 }
 
 /**
- * Restrict a questions query to the student-visible set: Approved only,
- * plus the per-test question_ids subset on the legacy single-module path
- * (adaptive / two-module tests grade every question of the module).
- * The caller still applies the module filter and ordering.
+ * True when the test's question_ids list is its whole question set, so
+ * the questions may come from any module: a non-adaptive single-module
+ * test with a question_ids list, read through its own module. A Teaching
+ * mode quick test picks questions for one skill from several source
+ * tests, but tests.module_id can only name one of their modules
+ * (D-20261109-3).
  */
-export function scopeToStudentQuestionSet<Q>(query: Q, test: QuestionSetScope): Q {
+export function questionIdsSpanModules(
+  test: QuestionSetScope,
+  moduleIds: readonly string[],
+): boolean {
+  return (
+    !test.is_adaptive &&
+    !test.module_2_id &&
+    Array.isArray(test.question_ids) &&
+    test.question_ids.length > 0 &&
+    !!test.module_id &&
+    moduleIds.includes(test.module_id)
+  );
+}
+
+/**
+ * Rows in the order of the test's question_ids (the teacher's pick order)
+ * when that list is the whole set (questionIdsSpanModules). Its questions
+ * come from several source tests, so their original_question_numbers
+ * collide and interleave. Any other test: `rows` unchanged, as queried.
+ */
+export function orderToQuestionIds<T>(
+  rows: T[],
+  test: QuestionSetScope,
+  moduleIds: string | readonly string[],
+  idOf: (row: T) => string,
+): T[] {
+  const mods = typeof moduleIds === "string" ? [moduleIds] : moduleIds;
+  if (!questionIdsSpanModules(test, mods)) return rows;
+  const ids = test.question_ids as string[];
+  const rank = new Map(ids.map((id, i) => [id, i] as const));
+  const at = (row: T) => rank.get(idOf(row)) ?? ids.length;
+  return [...rows].sort((a, b) => at(a) - at(b));
+}
+
+/**
+ * Restrict a questions query to the student-visible set of `moduleIds`:
+ * Approved only, plus the per-test question_ids subset on the legacy
+ * non-adaptive path (adaptive tests grade every question of the module).
+ * When the list is the test's whole set (questionIdsSpanModules) it
+ * replaces the module filter. The caller still applies ordering.
+ */
+export function scopeToStudentQuestionSet<Q>(
+  query: Q,
+  test: QuestionSetScope,
+  moduleIds: string | readonly string[],
+): Q {
+  const mods = typeof moduleIds === "string" ? [moduleIds] : moduleIds;
   let q = (query as unknown as FilterLike).eq(
     "parsing_status",
     STUDENT_VISIBLE_QUESTION_STATUS,
   );
+  if (!questionIdsSpanModules(test, mods)) {
+    q = mods.length === 1 ? q.eq("module_id", mods[0]) : q.in("module_id", mods);
+  }
   if (
     !test.is_adaptive &&
     Array.isArray(test.question_ids) &&

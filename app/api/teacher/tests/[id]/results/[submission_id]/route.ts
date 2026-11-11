@@ -8,6 +8,7 @@ import { studentClassNames } from "@/lib/result-printout";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { flSectionScope, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey } from "@/lib/full-length-score";
 import { sectionDetailRowId } from "@/lib/full-length-results";
+import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 
 // Two-track access model:
 // 1) admin → unrestricted
@@ -258,8 +259,15 @@ export async function GET(
       studentAnnotations: annotationsByQid[q.id] ?? null,
     };
   };
+  // A quiz picked from several source tests: the teacher's pick order.
+  const { data: scopeTest } = await db
+    .from("tests")
+    .select("module_id, module_2_id, is_adaptive, question_ids")
+    .eq("id", testId)
+    .maybeSingle();
+  const scope = (scopeTest ?? {}) as QuestionSetScope;
   const recordsByModule = new Map<string, RawAnswer[]>();
-  for (const ar of ((answerRecords ?? []) as unknown) as RawAnswer[]) {
+  for (const ar of orderToQuestionIds(((answerRecords ?? []) as unknown) as RawAnswer[], scope, scope.module_id ? [scope.module_id] : [], (r) => r.question_id)) {
     const list = recordsByModule.get(ar.submission_id) ?? [];
     list.push(ar);
     recordsByModule.set(ar.submission_id, list);

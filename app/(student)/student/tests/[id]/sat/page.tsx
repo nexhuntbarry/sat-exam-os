@@ -59,9 +59,9 @@ async function moduleQuestions(child: FlChildTest, moduleId: string) {
   const { data } = await scopeToStudentQuestionSet(
     getServiceClient()
       .from("questions")
-      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, correct_answer")
-      .eq("module_id", moduleId),
+      .select("id, module_id, original_question_number, question_text, choices, question_type, has_image, has_table, source_pdf_url, page_number, section, image_urls, correct_answer"),
     child,
+    moduleId,
   ).order("original_question_number", { ascending: true });
   // The key never reaches the browser, only the fill-in box length.
   return (data ?? []).map(({ correct_answer, ...q }) => ({
@@ -73,8 +73,9 @@ async function moduleQuestions(child: FlChildTest, moduleId: string) {
 async function questionCount(child: FlChildTest, moduleId: string | null): Promise<number> {
   if (!moduleId) return 0;
   const { count } = await scopeToStudentQuestionSet(
-    getServiceClient().from("questions").select("id", { count: "exact", head: true }).eq("module_id", moduleId),
+    getServiceClient().from("questions").select("id", { count: "exact", head: true }),
     child,
+    moduleId,
   );
   return count ?? 0;
 }

@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, onSide } from "@/lib/qa";
-import { scopeToStudentQuestionSet } from "@/lib/student-exam";
+import { orderToQuestionIds, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { formatDate } from "@/lib/datetime";
 import PrintableTest, { type PrintModule, type PrintQuestion } from "@/components/tests/PrintableTest";
 import PrintPreview from "@/components/print/PrintPreview";
@@ -105,15 +105,15 @@ export default async function PrintTestPage({
         scopeToStudentQuestionSet(
           db
             .from("questions")
-            .select("id, original_question_number, question_text, choices, question_type, image_urls, correct_answer")
-            .eq("module_id", slot.moduleId),
+            .select("id, original_question_number, question_text, choices, question_type, image_urls, correct_answer"),
           part.test,
+          slot.moduleId,
         ).order("original_question_number", { ascending: true }),
       ]);
       modules.push({
         label: part.sectionLabel ? [part.sectionLabel, slot.label ?? "Module 1"].join(" · ") : slot.label,
         section: part.sectionLabel ? null : ((mod?.section as string | null) ?? null),
-        questions: (questions ?? []) as PrintQuestion[],
+        questions: orderToQuestionIds((questions ?? []) as PrintQuestion[], part.test, slot.moduleId, (q) => q.id),
         ...(first && part.dividerBefore ? { dividerBefore: part.dividerBefore } : {}),
       });
       first = false;

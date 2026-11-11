@@ -225,6 +225,7 @@ export async function POST(
         id: test.id,
         module_id: test.module_id,
         question_ids: (test.question_ids as string[] | null) ?? null,
+        module_2_id: (test.module_2_id as string | null) ?? null,
         is_adaptive: test.is_adaptive,
         due_date: test.due_date,
         time_limit_minutes: test.time_limit_minutes,
