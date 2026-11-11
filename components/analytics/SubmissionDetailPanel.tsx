@@ -233,7 +233,7 @@ export function SubmissionDetailPanel({
                         </p>
                       )}
                       <iframe
-                        src={`/api/modules/${a.moduleId}/page/${a.pageNumber ?? 1}`}
+                        src={`/api/modules/${a.moduleId}/page/${a.pageNumber ?? 1}?test=${encodeURIComponent(testId)}`}
                         title={`Question figure (PDF page ${a.pageNumber ?? 1})`}
                         className="w-full h-[420px] rounded-xl border border-divider bg-white print:hidden"
                       />

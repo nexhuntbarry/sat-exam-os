@@ -3,13 +3,19 @@ import { PDFDocument } from "pdf-lib";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { parseBlobUrl } from "@/lib/blob-url";
+import { canViewModulePage, UUID_RE } from "@/lib/module-page-access";
 
 // GET /api/modules/[id]/page/[n]
 // Returns a single-page PDF extracted from the module's source PDF.
 // Used inside question-rendering iframes so students see ONLY the figure
 // page, not the rest of the exam.
+//
+// Access (lib/module-page-access.ts): question reviewers any page; approved
+// teachers pages of tests they can open; approved students pages of modules
+// they were served (in progress, or finished with answers visible to them).
+// Optional ?test=<id> tells a teacher check which test to verify.
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string; n: string }> },
 ) {
   const user = await getCurrentUser();
@@ -20,8 +26,22 @@ export async function GET(
   if (!Number.isFinite(pageNum) || pageNum < 1) {
     return NextResponse.json({ error: "Bad page" }, { status: 400 });
   }
+  if (!UUID_RE.test(id)) {
+    return NextResponse.json({ error: "Module not found" }, { status: 404 });
+  }
 
   const db = getServiceClient();
+  const testHint = new URL(req.url).searchParams.get("test");
+  let allowed: boolean;
+  try {
+    allowed = await canViewModulePage(db, user, id, pageNum, testHint);
+  } catch (e) {
+    console.error("[modules/page] access check failed", e);
+    return NextResponse.json({ error: "Access check failed" }, { status: 500 });
+  }
+  if (!allowed) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
   const { data: mod } = await db
     .from("modules")
     .select("pdf_url, module_name")
@@ -63,7 +83,9 @@ export async function GET(
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="page-${pageNum}.pdf"`,
+      // Per-user decision: never cache in a shared cache.
       "Cache-Control": "private, max-age=3600",
+      Vary: "Cookie",
     },
   });
 }
