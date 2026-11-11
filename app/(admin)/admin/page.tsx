@@ -3,6 +3,8 @@ import { getCurrentUser } from "@/lib/auth";
 import { Users, GraduationCap, BookOpen, ClipboardList, HelpCircle, Clock, BarChart3 } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
 import { scopeUsers } from "@/lib/qa";
+import { Suspense } from "react";
+import QuestionQualityCard from "./QuestionQualityCard";
 
 async function getAdminStats(viewerIsQa: boolean) {
   const db = getServiceClient();
@@ -93,6 +95,10 @@ export default async function AdminDashboardPage() {
           </a>
         ))}
       </div>
+
+      <Suspense fallback={<div className="bg-surface border border-divider rounded-2xl p-6 h-32 animate-pulse" />}>
+        <QuestionQualityCard viewerIsQa={user?.isQa ?? false} />
+      </Suspense>
 
       {/* Two column layout */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

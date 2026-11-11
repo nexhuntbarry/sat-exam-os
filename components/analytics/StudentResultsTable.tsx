@@ -8,6 +8,7 @@ import type { ScoreDisplay } from "@/lib/score-display";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate } from "@/lib/datetime";
+import { TabSwitchCount, TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
 import {
   DataTable,
   HeadRow,
@@ -44,6 +45,8 @@ export interface StudentResultRow {
   timeSpentSeconds: number | null;
   submittedAt: string | null;
   retakePending: boolean;
+  /** Times the student left the exam tab, all modules (lib/tab-switches). */
+  tabSwitches: number | null;
 }
 
 interface StudentResultsTableProps {
@@ -51,7 +54,7 @@ interface StudentResultsTableProps {
   testId: string;
 }
 
-type SortKey = "studentName" | "status" | "sat" | "timeSpentSeconds" | "submittedAt";
+type SortKey = "studentName" | "status" | "sat" | "timeSpentSeconds" | "tabSwitches" | "submittedAt";
 
 function fmtTime(s: number | null) {
   if (!s) return "—";
@@ -125,8 +128,8 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
 
   const selectCls = "bg-light-bg border border-divider rounded-lg px-3 py-1.5 text-sm text-charcoal focus:outline-none focus:border-warm-coral/50";
 
-  // Student + grade + class + status + score + time + submitted + action = 8
-  const COL_COUNT = 8;
+  // Student + grade + class + status + score + time + left tab + submitted + action = 9
+  const COL_COUNT = 9;
 
   return (
     <div className="space-y-4">
@@ -177,6 +180,11 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                 Time <SortIcon k="timeSpentSeconds" />
               </button>
             </Th>
+            <Th priority="md">
+              <button className="flex items-center gap-1" onClick={() => toggleSort("tabSwitches")}>
+                <TabSwitchHeader /> <SortIcon k="tabSwitches" />
+              </button>
+            </Th>
             <Th priority="lg">
               <button className="flex items-center gap-1" onClick={() => toggleSort("submittedAt")}>
                 Submitted <SortIcon k="submittedAt" />
@@ -215,6 +223,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                     <DetailItem label="Grade" priority="md">{row.grade ?? "—"}</DetailItem>
                     <DetailItem label="Class" priority="md">{row.classGroup ?? "—"}</DetailItem>
                     <DetailItem label="Time" priority="md">{fmtTime(row.timeSpentSeconds)}</DetailItem>
+                    <DetailItem label="Left tab" priority="md"><TabSwitchCount count={row.tabSwitches} /></DetailItem>
                     <DetailItem label="Submitted" priority="lg">
                       {row.submittedAt
                         ? <span title={formatDateTime(row.submittedAt)}>{formatShortDate(row.submittedAt)}</span>
@@ -239,6 +248,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                   <ScoreCell score={row.score} />
                 </Td>
                 <Td priority="md" className="text-mid-gray whitespace-nowrap">{fmtTime(row.timeSpentSeconds)}</Td>
+                <Td priority="md" className="whitespace-nowrap"><TabSwitchCount count={row.tabSwitches} /></Td>
                 <Td priority="lg" className="text-soft-mute whitespace-nowrap">
                   {row.submittedAt
                     ? <span title={formatDateTime(row.submittedAt)}>{formatShortDate(row.submittedAt)}</span>

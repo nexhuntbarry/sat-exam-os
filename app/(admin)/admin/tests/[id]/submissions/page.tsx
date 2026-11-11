@@ -14,6 +14,8 @@ import { getTestSections } from "@/lib/teacher-access";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { X, Eye } from "lucide-react";
+import { tabSwitchTotal } from "@/lib/tab-switches";
+import { TabSwitchCount, TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
 import {
   DataTable,
   HeadRow,
@@ -71,7 +73,7 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
     .select(`
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, attempt_number,
-      adaptive_track, module_id, session_id,
+      adaptive_track, module_id, session_id, tab_switches:metadata->tab_switches,
       users!inner(display_name, email),
       modules!module_id(module_name)
     `)
@@ -147,6 +149,8 @@ export default async function TestSubmissionsPage({
     timeSpentSeconds: number;
     submittedAt: string | null;
     attemptNumber: number;
+    /** Times the student left the exam tab, all modules / both sections. */
+    tabSwitches: number | null;
     detailSubmissionId: string;
     /** The test of the detail row (a full-length section's own id), default the page's test. */
     detailTestId?: string;
@@ -203,6 +207,7 @@ export default async function TestSubmissionsPage({
             .sort()
             .pop() ?? null,
         attemptNumber: head.attempt_number ?? 1,
+        tabSwitches: tabSwitchTotal(sorted),
         // The section detail pages (R&W first; each links to the other).
         detailSubmissionId: rwDetail ?? mathDetail ?? sorted[sorted.length - 1].id,
         detailTestId: rwDetail ? flKids.rw! : flKids.math ?? test.id,
@@ -231,6 +236,7 @@ export default async function TestSubmissionsPage({
           .sort()
           .pop() ?? null,
       attemptNumber: head.attempt_number ?? 1,
+      tabSwitches: tabSwitchTotal(sorted),
       // Detail link routes to the Module 2 (last) submission so the
       // result view can stitch both modules via session_id.
       detailSubmissionId: sorted[sorted.length - 1].id,
@@ -248,7 +254,7 @@ export default async function TestSubmissionsPage({
     return 0;
   });
 
-  const COL_SPAN = 8;
+  const COL_SPAN = 9;
 
   return (
     <div className="space-y-6">
@@ -290,6 +296,7 @@ export default async function TestSubmissionsPage({
               <Th>Status</Th>
               <Th>Score</Th>
               <Th priority="2xl">Time</Th>
+              <Th priority="md"><TabSwitchHeader /></Th>
               <Th priority="lg">Submitted</Th>
               <Th priority="2xl">Attempt</Th>
               <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
@@ -321,6 +328,7 @@ export default async function TestSubmissionsPage({
                     <>
                       <DetailItem label="Module" priority="md">{a.moduleHeadline}</DetailItem>
                       <DetailItem label="Time" priority="2xl">{formatDuration(a.timeSpentSeconds)}</DetailItem>
+                      <DetailItem label="Left tab" priority="md"><TabSwitchCount count={a.tabSwitches} /></DetailItem>
                       <DetailItem label="Submitted" priority="lg">{submittedLabel}</DetailItem>
                       <DetailItem label="Attempt" priority="2xl">#{a.attemptNumber}</DetailItem>
                     </>
@@ -344,6 +352,9 @@ export default async function TestSubmissionsPage({
                   </Td>
                   <Td priority="2xl" className="text-mid-gray">
                     {formatDuration(a.timeSpentSeconds)}
+                  </Td>
+                  <Td priority="md" className="whitespace-nowrap">
+                    <TabSwitchCount count={a.tabSwitches} />
                   </Td>
                   <Td priority="lg" className="text-soft-mute" title={submittedTitle}>
                     {submittedLabel}
