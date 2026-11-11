@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
-import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { getTeacherTestAccess, testOwningQuestion } from "@/lib/teacher-access";
 
 // GET /api/teacher/tests/[id]/analytics/[question_id]
 export async function GET(
@@ -22,6 +22,13 @@ export async function GET(
   }
   const studentAllowlist =
     access.mode === "class" ? access.studentAllowlist : null;
+  // The question must belong to this test (or, for a full-length parent, to
+  // a section the caller may see) — else any question's answer and
+  // explanation could be read through a test the caller has access to.
+  const ownerTestId = await testOwningQuestion(db, user, testId, questionId);
+  if (!ownerTestId) {
+    return NextResponse.json({ error: "Question is not part of this test" }, { status: 404 });
+  }
 
   // Fetch question
   const { data: question } = await db
@@ -39,7 +46,7 @@ export async function GET(
   let submissionsQuery = db
     .from("submissions")
     .select("id, student_id")
-    .eq("test_id", testId)
+    .eq("test_id", ownerTestId)
     .in("status", ["Submitted", "Late"])
     // Skip Module 2s the cron closed unopened (no real answers).
     .or("metadata->auto_closed_unopened.is.null,metadata->auto_closed_unopened.neq.true");

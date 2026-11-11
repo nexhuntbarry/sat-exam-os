@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
-import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { getTeacherBankSubjects, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 
 // GET /api/teacher/teaching-mode/skill-questions?skill=Linear+equations&limit=10
@@ -24,14 +25,30 @@ export async function GET(req: Request) {
 
   const db = getServiceClient();
 
-  // 1. Pull every approved question with this skill
-  const { data: candidates } = await db
+  // 1. Pull approved questions with this skill, in a subject the teacher
+  //    teaches; real teachers never get modules uploaded by QA accounts.
+  const subjects = await getTeacherBankSubjects(db, user);
+  if (subjects && subjects.length === 0) {
+    return NextResponse.json({ error: "No subject assigned to you yet — ask an admin to add you to a class." }, { status: 403 });
+  }
+  let candidatesQuery = db
     .from("questions")
-    .select("id, original_question_number, question_text, domain, skill, difficulty, has_image, module_id")
+    .select("id, original_question_number, question_text, domain, skill, difficulty, has_image, module_id, modules!inner(section, uploaded_by)")
     .eq("skill", skill)
-    .limit(200);
+    .eq("parsing_status", STUDENT_VISIBLE_QUESTION_STATUS);
+  if (subjects) candidatesQuery = candidatesQuery.in("modules.section", subjects);
+  const { data: rawCandidates, error: candError } = await candidatesQuery.limit(200);
+  if (candError) {
+    console.error("[teaching-mode/skill-questions] questions", candError);
+    return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
+  }
+  const qaUploaders = user.isQa ? new Set<string>() : await getQaUserIds();
+  const candidates = (rawCandidates ?? []).filter((q) => {
+    const by = (q.modules as unknown as { uploaded_by: string | null } | null)?.uploaded_by;
+    return !by || !qaUploaders.has(by);
+  });
 
-  if (!candidates || candidates.length === 0) {
+  if (candidates.length === 0) {
     return NextResponse.json({ questions: [] });
   }
 

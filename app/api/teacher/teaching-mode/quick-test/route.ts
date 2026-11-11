@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
-import { forbidCrossSide } from "@/lib/qa";
+import { forbidCrossSide, getQaUserIds } from "@/lib/qa";
+import { getTeacherBankSubjects } from "@/lib/teacher-access";
+import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 
 // POST /api/teacher/teaching-mode/quick-test
 // Body: { name: string, questionIds: string[], cohortId?: string }
@@ -35,7 +37,11 @@ export async function POST(req: Request) {
   // A non-admin may only target a class they teach (class_group_teachers),
   // in a subject they teach there.
   let cohortSubject: string | null = null;
-  let teacherSubjects: (string | null)[] = [];
+  // Subjects they teach (classes, else teacher_profiles.specialty); none → refuse.
+  const teacherSubjects = await getTeacherBankSubjects(db, teacher);
+  if (teacherSubjects && teacherSubjects.length === 0) {
+    return NextResponse.json({ error: "No subject assigned to you yet — ask an admin to add you to a class." }, { status: 403 });
+  }
   if (teacher.role !== "admin") {
     const { data: myGroups, error: groupError } = await db
       .from("class_group_teachers")
@@ -45,7 +51,6 @@ export async function POST(req: Request) {
       console.error("[teaching-mode/quick-test] class groups", groupError);
       return NextResponse.json({ error: "Failed to verify class" }, { status: 500 });
     }
-    teacherSubjects = (myGroups ?? []).map((g) => (g.subject as string | null) ?? null);
     if (cohortId) {
       const mine = (myGroups ?? []).find((g) => g.class_group_id === cohortId);
       if (!mine) {
@@ -55,13 +60,25 @@ export async function POST(req: Request) {
     }
   }
 
-  // Verify questions exist and pull a module_id (tests require a module_id)
-  const { data: qrows } = await db
+  // Verify questions exist and pull a module_id (tests require a module_id).
+  // Approved only (what students are shown and graded on); real teachers
+  // never get questions from modules uploaded by QA accounts.
+  const { data: rawRows, error: qError } = await db
     .from("questions")
-    .select("id, module_id, modules!inner(section)")
-    .in("id", questionIds);
+    .select("id, module_id, modules!inner(section, uploaded_by)")
+    .in("id", questionIds)
+    .eq("parsing_status", STUDENT_VISIBLE_QUESTION_STATUS);
+  if (qError) {
+    console.error("[teaching-mode/quick-test] questions", qError);
+    return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
+  }
+  const qaUploaders = teacher.isQa ? new Set<string>() : await getQaUserIds();
+  const qrows = (rawRows ?? []).filter((q) => {
+    const by = (q.modules as unknown as { uploaded_by: string | null } | null)?.uploaded_by;
+    return !by || !qaUploaders.has(by);
+  });
 
-  if (!qrows || qrows.length === 0) {
+  if (qrows.length === 0) {
     return NextResponse.json({ error: "no valid questions" }, { status: 400 });
   }
 
@@ -77,8 +94,8 @@ export async function POST(req: Request) {
     );
   }
   const section = Array.from(sections)[0];
-  const allowed = cohortId ? [cohortSubject] : teacherSubjects;
-  if (teacher.role !== "admin" && allowed.length > 0 && section && !allowed.some((s) => !s || s === section)) {
+  const allowed = cohortId ? [cohortSubject] : teacherSubjects ?? [null];
+  if (teacher.role !== "admin" && (!section || !allowed.some((s) => !s || s === section))) {
     return NextResponse.json(
       { error: `You don't teach ${section} for this class` },
       { status: 403 },

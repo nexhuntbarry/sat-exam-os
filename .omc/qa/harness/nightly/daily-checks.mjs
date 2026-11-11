@@ -4088,7 +4088,8 @@ export async function runDailyChecks(h) {
   // be refused: Class Review page shows no questions (404) and the analytics
   // API returns 403 — before the fix any same-subject test opened by direct
   // link. Then the same test is assigned to Class A only: with no student
-  // started yet, the teacher can open its Class Review (prep before class).
+  // started yet, the teacher can open its Class Review (prep before class),
+  // but analytics/[question_id] with another test's question is refused.
   await check("D-20261111-5", [], "老師只能打開和自己班有關的測驗：同科目但沒有指派給自己班、自己學生也沒考過的測驗，老師用直接連結打開「Class Review（投影講解）」要被拒絕（看不到題目和答案），API 要回 403；同一份測驗指派給老師的班後，學生還沒開始考，老師就能打開 Class Review 備課", "安全", async () => {
     const teacher = C.teachers[0];
     const classA = C.classes.find((k) => k.name === "TEST Class A");
@@ -4111,8 +4112,9 @@ export async function runDailyChecks(h) {
     if (insErr || !tmp) throw new Error(`setup: couldn't create the throwaway test (${insErr?.message})`);
     const T = tmp.id;
     const problems = [], notes = [];
-    const b = await chromium.launch();
+    let b = null;
     try {
+      b = await chromium.launch();
       const { page, context } = await login(b, teacher.clerkId);
       const openReview = async () => {
         const res = await page.goto(`${BASE}/teacher/tests/${T}/review`, { waitUntil: "networkidle" }).catch(() => null);
@@ -4141,11 +4143,23 @@ export async function runDailyChecks(h) {
       const api2 = await context.request.get(`${BASE}/api/teacher/tests/${T}/analytics`);
       if (api2.status() !== 200) problems.push(`assigned to Class A: analytics API → HTTP ${api2.status()} (expected 200)`);
       notes.push(`assigned to Class A (0 submissions): review HTTP ${r2.status}${r2.shown ? " shown" : ""}, analytics ${api2.status()}`);
+
+      // 3) A question from another test (a module this test doesn't use),
+      //    asked through the test the teacher may open → refused, no key.
+      const ownModules = [src.module_id, src.module_2_id, src.module_1_id, src.module_2_easy_id, src.module_2_hard_id].filter(Boolean);
+      const { data: foreign } = await db.from("questions").select("id, correct_answer").not("module_id", "in", `(${ownModules.join(",")})`).limit(1).maybeSingle();
+      if (!foreign) throw new Error("setup: no question outside the test's modules");
+      const qx = await context.request.get(`${BASE}/api/teacher/tests/${T}/analytics/${foreign.id}`);
+      const qxTxt = await qx.text();
+      if (![403, 404].includes(qx.status()) || /"correct_answer"|"explanation"/.test(qxTxt)) problems.push(`question from another test via analytics/[question_id] → HTTP ${qx.status()} (expected 404/403, no answer)`);
+      notes.push(`foreign question → ${qx.status()}`);
       await context.close();
     } finally {
-      await b.close().catch(() => {});
-      await db.from("test_assignments").delete().eq("test_id", T);
-      await db.from("tests").delete().eq("id", T);
+      if (b) await b.close().catch(() => {});
+      const { error: dAsg } = await db.from("test_assignments").delete().eq("test_id", T);
+      if (dAsg) console.error(`[D-20261111-5] cleanup: test_assignments delete failed for ${T}: ${dAsg.message}`);
+      const { error: dTest } = await db.from("tests").delete().eq("id", T);
+      if (dTest) console.error(`[D-20261111-5] cleanup: throwaway test ${T} delete failed: ${dTest.message}`);
     }
     if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
     return notes.join("; ");

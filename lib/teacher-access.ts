@@ -27,20 +27,22 @@ export async function getTestSection(
   db: SupabaseClient,
   testId: string,
 ): Promise<string | null> {
-  const { data: test } = await db
+  const { data: test, error } = await db
     .from("tests")
     .select("module_id, module_1_id")
     .eq("id", testId)
     .maybeSingle();
+  if (error) throw new Error(`test section lookup failed: ${error.message}`);
   if (!test) return null;
   const moduleId =
     (test.module_id as string | null) ?? (test.module_1_id as string | null);
   if (!moduleId) return null;
-  const { data: mod } = await db
+  const { data: mod, error: modError } = await db
     .from("modules")
     .select("section")
     .eq("id", moduleId)
     .maybeSingle();
+  if (modError) throw new Error(`module section lookup failed: ${modError.message}`);
   return (mod?.section as string | null) ?? null;
 }
 
@@ -51,10 +53,11 @@ export async function getTestSections(
 ): Promise<Map<string, string | null>> {
   const out = new Map<string, string | null>();
   if (testIds.length === 0) return out;
-  const { data: tests } = await db
+  const { data: tests, error } = await db
     .from("tests")
     .select("id, module_id, module_1_id")
     .in("id", testIds);
+  if (error) throw new Error(`test sections lookup failed: ${error.message}`);
   const moduleOf = new Map<string, string | null>();
   const moduleIds = new Set<string>();
   for (const t of tests ?? []) {
@@ -62,9 +65,10 @@ export async function getTestSections(
     moduleOf.set(t.id as string, m);
     if (m) moduleIds.add(m);
   }
-  const { data: mods } = moduleIds.size
+  const { data: mods, error: modError } = moduleIds.size
     ? await db.from("modules").select("id, section").in("id", Array.from(moduleIds))
-    : { data: [] as { id: string; section: string | null }[] };
+    : { data: [] as { id: string; section: string | null }[], error: null };
+  if (modError) throw new Error(`module sections lookup failed: ${modError.message}`);
   const sectionOf = new Map((mods ?? []).map((m) => [m.id as string, m.section as string | null]));
   for (const [testId, m] of moduleOf) out.set(testId, m ? sectionOf.get(m) ?? null : null);
   return out;
@@ -106,10 +110,11 @@ export async function getTeacherTestAccess(
   // otherwise an English teacher who happens to be on teacher_ids would see
   // Math tests and students outside their class. Only a pure reviewer (on
   // teacher_ids but NOT a class teacher) gets full "direct" access.
-  const { data: myGroups } = await db
+  const { data: myGroups, error: groupError } = await db
     .from("class_group_teachers")
     .select("class_group_id, subject")
     .eq("teacher_id", user.userId);
+  if (groupError) throw new Error(`class_group_teachers lookup failed: ${groupError.message}`);
   const rows = myGroups ?? [];
 
   if (rows.length > 0) {
@@ -125,10 +130,11 @@ export async function getTeacherTestAccess(
     }
     const groupSubject = new Map<string, string | null>();
     for (const r of rows) groupSubject.set(r.class_group_id as string, (r.subject as string | null) ?? null);
-    const { data: members } = await db
+    const { data: members, error: memberError } = await db
       .from("class_group_members")
       .select("class_group_id, student_id")
       .in("class_group_id", Array.from(groupSubject.keys()));
+    if (memberError) throw new Error(`class_group_members lookup failed: ${memberError.message}`);
     const qaUsers = await getQaUserIds();
     const studentSubjects = new Map<string, (string | null)[]>();
     for (const m of members ?? []) {
@@ -224,6 +230,7 @@ function classTeacherReaches(
         .from("submissions")
         .select("id, test_id, student_id")
         .in("test_id", ids)
+        .in("student_id", Array.from(studentSubjects.keys()))
         .order("id")
         .range(from, to),
     );
@@ -496,4 +503,81 @@ export async function getTeacherSubjectsForStudent(
 /** Keep items whose section is one of `subjects` (null = keep everything). */
 export function inSubjects(section: string | null | undefined, subjects: string[] | null): boolean {
   return subjects === null || (!!section && subjects.includes(section));
+}
+
+/**
+ * The test a question belongs to, among `testId` and — for a full-length
+ * parent — the section children the caller may see (flSectionScope, so a
+ * Math-only teacher never reaches R&W). A question belongs to a test when
+ * it's in its question_ids or one of its modules. null → not part of the
+ * test (callers 404). Call after getTeacherTestAccess has granted the test.
+ */
+export async function testOwningQuestion(
+  db: SupabaseClient,
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
+  testId: string,
+  questionId: string,
+): Promise<string | null> {
+  const ids = [testId];
+  const kids = (await childrenOf(db, [testId])).get(testId);
+  if (kids) {
+    // Lazy: full-length-score loads this module lazily too (no cycle at load).
+    const { flSectionScope } = await import("./full-length-score");
+    const scope = await flSectionScope(db, user, kids);
+    if (scope.rw && kids.rw) ids.push(kids.rw);
+    if (scope.math && kids.math) ids.push(kids.math);
+  }
+  const [{ data: tests, error: testError }, { data: question, error: qError }] = await Promise.all([
+    db
+      .from("tests")
+      .select("id, question_ids, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
+      .in("id", ids),
+    db.from("questions").select("id, module_id").eq("id", questionId).maybeSingle(),
+  ]);
+  if (testError) throw new Error(`tests lookup failed: ${testError.message}`);
+  if (qError) throw new Error(`question lookup failed: ${qError.message}`);
+  if (!question) return null;
+  for (const id of ids) {
+    const t = (tests ?? []).find((r) => r.id === id);
+    if (!t) continue;
+    const modules = [t.module_id, t.module_2_id, t.module_1_id, t.module_2_easy_id, t.module_2_hard_id].filter(Boolean);
+    if (((t.question_ids as string[] | null) ?? []).includes(questionId) || modules.includes(question.module_id)) {
+      return id;
+    }
+  }
+  return null;
+}
+
+const SECTIONS = ["Math", "Reading & Writing"];
+
+/**
+ * Subjects a teacher may pull bank questions from (teaching mode): the
+ * subjects of their class_group_teachers rows (a NULL row = both), or —
+ * with no classes — their teacher_profiles.specialty when it names a
+ * section. null = every subject (admin, or a "both" class); [] = none
+ * (callers refuse).
+ */
+export async function getTeacherBankSubjects(
+  db: SupabaseClient,
+  user: { userId: string; role: string | null | undefined },
+): Promise<string[] | null> {
+  if (user.role === "admin") return null;
+  const { data: rows, error } = await db
+    .from("class_group_teachers")
+    .select("subject")
+    .eq("teacher_id", user.userId);
+  if (error) throw new Error(`class_group_teachers lookup failed: ${error.message}`);
+  if ((rows ?? []).length > 0) {
+    const subjects = (rows ?? []).map((r) => (r.subject as string | null) ?? null);
+    if (subjects.some((s) => !s)) return null;
+    return Array.from(new Set(subjects as string[]));
+  }
+  const { data: profile, error: profileError } = await db
+    .from("teacher_profiles")
+    .select("specialty")
+    .eq("user_id", user.userId)
+    .maybeSingle();
+  if (profileError) throw new Error(`teacher_profiles lookup failed: ${profileError.message}`);
+  const specialty = (profile?.specialty as string | null) ?? null;
+  return specialty && SECTIONS.includes(specialty) ? [specialty] : [];
 }

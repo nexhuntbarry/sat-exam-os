@@ -1,6 +1,7 @@
 import { orderToQuestionIds, questionIdsSpanModules, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { getServiceClient } from "@/lib/supabase";
-import { reviewSectionTests } from "@/lib/full-length";
+import { childrenOf, reviewSectionTests } from "@/lib/full-length";
+import { flSectionScope } from "@/lib/full-length-score";
 import { getCurrentUser } from "@/lib/auth";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { redirect, notFound } from "next/navigation";
@@ -34,7 +35,13 @@ async function getTeacherReview(
   if (!test) return null;
 
   // A full-length SAT is walked through its section children (R&W, then Math).
-  const parts = await reviewSectionTests(db, test, columns);
+  // A teacher scoped to one subject only gets their own section's questions.
+  let parts = await reviewSectionTests(db, test, columns);
+  const kids = (await childrenOf(db, [test.id])).get(test.id);
+  if (kids) {
+    const flScope = await flSectionScope(db, user, kids);
+    parts = parts.filter((p) => (p.test.id === kids.rw ? flScope.rw : p.test.id === kids.math ? flScope.math : false));
+  }
   const modulesOf = (t: typeof test) =>
     t.is_adaptive
       ? [t.module_1_id, t.module_2_easy_id, t.module_2_hard_id].filter((x): x is string => Boolean(x))

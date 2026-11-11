@@ -4,14 +4,14 @@ import { getServiceClient } from "@/lib/supabase";
 import { parseBlobUrl } from "@/lib/blob-url";
 
 // GET /api/modules/[id]/pdf
-// Streams the FULL module PDF. Restricted to admin / teacher only — students
-// must use /api/modules/[id]/page/[n] which extracts a single page so they
-// can't navigate past the figure to other questions in the module.
+// Streams the FULL module PDF. Admin only: no teacher UI uses it, and a
+// teacher must not download whole exams. Question figures use
+// /api/modules/[id]/page/[n], which extracts a single page.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireRole(["admin", "teacher"]);
+  const auth = await requireRole("admin");
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
