@@ -17,6 +17,7 @@ import {
   type FlChildTest,
 } from "@/lib/full-length-attempt";
 import StartFullLengthButton from "./StartFullLengthButton";
+import RefreshAtOpenTime from "./RefreshAtOpenTime";
 
 // Landing page of a full-length SAT (plan Phase 2): the two sections with
 // their effective times (extended time included), the break, where the
@@ -214,6 +215,7 @@ export default async function FullLengthLanding({
         ) : isNotOpenYet ? (
           <div className="p-4 bg-light-bg border border-divider rounded-xl text-center text-mid-gray">
             This test opens on {formatDateTime(parent.open_date as string)}.
+            <RefreshAtOpenTime openAt={parent.open_date as string} serverNow={now} />
           </div>
         ) : canStartNew ? (
           <StartFullLengthButton testId={testId} isResume={false} />

@@ -115,6 +115,8 @@ type SubmitPayload = {
   // 400 "already submitted" (the cron or an earlier request graded it).
   alreadySubmitted?: boolean;
   error?: string;
+  // "submission_gone": the exam row was deleted (e.g. by an admin).
+  code?: string;
   nextSubmissionId?: string | null;
 };
 
@@ -289,6 +291,19 @@ export default function TestTakingClient({
 
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [sessionExpired, setSessionExpired] = useState(false);
+  // The server says this exam no longer exists (an admin deleted it):
+  // saving stops for good and a banner links back to the test page, where
+  // a fresh exam can be started (D-20261111-1).
+  const [examGone, setExamGone] = useState(false);
+  const examGoneRef = useRef(false);
+  function markExamGone() {
+    examGoneRef.current = true;
+    setExamGone(true);
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+  }
 
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const answersRef = useRef(answers);
@@ -580,7 +595,7 @@ export default function TestTakingClient({
     }
     // An in-flight save re-checks for newer changes when it finishes; a
     // submit in flight carries the answers itself (failure reschedules).
-    if (submittedRef.current || saveInFlightRef.current || submitInFlightRef.current) return;
+    if (submittedRef.current || examGoneRef.current || saveInFlightRef.current || submitInFlightRef.current) return;
     if (!hasUnsavedChanges()) {
       setSaveStatus("saved");
       return;
@@ -591,6 +606,7 @@ export default function TestTakingClient({
     setSaveStatus("saving");
     let ok = false;
     let retryable = true;
+    let gone = false;
     let serverAnswers: unknown = undefined;
     let serverQuestionMeta: unknown = undefined;
     let remainingSeconds: unknown = undefined;
@@ -623,11 +639,19 @@ export default function TestTakingClient({
         const err = await res.json().catch(() => null);
         if (res.status === 400 || err?.error === "time_up") retryable = false;
       }
+      if (res.status === 404) {
+        const err = await res.json().catch(() => null);
+        if (err?.code === "submission_gone") gone = true;
+      }
     } catch {
       // Network failure — retried below.
     }
     saveInFlightRef.current = false;
     if (submittedRef.current) return;
+    if (gone) {
+      markExamGone();
+      return;
+    }
     if (ok) {
       if (markSynced(seq, builtAt)) {
         adoptServerAnswers(serverAnswers, builtAt);
@@ -667,7 +691,7 @@ export default function TestTakingClient({
   // close, tab hidden, unmount). keepalive lets the request outlive the
   // document; the local backup covers the case where it still fails.
   function flushWithKeepalive() {
-    if (submittedRef.current) return;
+    if (submittedRef.current || examGoneRef.current) return;
     const order = nextSaveOrder();
     const seq = changeSeqRef.current;
     lastFlushedSeqRef.current = seq;
@@ -1284,7 +1308,12 @@ export default function TestTakingClient({
         // Server error / unexpected reply: retry in the background.
         // Other 4xx (e.g. 404) won't fix themselves.
         const transient = res.status >= 500 || (res.ok && !isJsonOk(res));
-        if (transient) {
+        if (res.status === 404 && payload?.code === "submission_gone") {
+          markExamGone();
+          setSubmitError(
+            "Couldn't submit — this exam was removed by your teacher or an admin, so there's nothing left to submit. Go back to the test page to start it again.",
+          );
+        } else if (transient) {
           setSubmitError(`Not submitted yet — the server had a problem. Retrying automatically… ${savedNote()}`);
           scheduleSubmitRetry();
         } else {
@@ -1389,7 +1418,7 @@ export default function TestTakingClient({
           className="shrink-0 bg-status-error text-white text-sm px-4 py-2 flex flex-wrap items-center justify-center gap-3 text-center font-medium"
         >
           <span>{submitError}</span>
-          {!isSubmitting && (
+          {!isSubmitting && !examGone && (
             <button
               type="button"
               onClick={retrySubmitNow}
@@ -1398,6 +1427,22 @@ export default function TestTakingClient({
               {submitRetrying ? "Retry now" : "Try submitting again"}
             </button>
           )}
+        </div>
+      )}
+      {examGone && (
+        <div
+          role="alert"
+          className="shrink-0 bg-status-error text-white text-sm px-4 py-3 flex flex-wrap items-center justify-center gap-3 text-center font-medium"
+        >
+          <span>
+            This exam was removed by your teacher or an admin, so your answers here are no longer being saved.
+          </span>
+          <a
+            href={`/student/tests/${testId}`}
+            className="whitespace-nowrap rounded-md bg-white text-status-error px-3 py-1 font-semibold hover:bg-white/90"
+          >
+            Back to the test page
+          </a>
         </div>
       )}
       {sessionExpired && (
@@ -1488,18 +1533,20 @@ export default function TestTakingClient({
             aria-live="polite"
             className={clsx(
               "shrink-0 text-xs",
-              saveStatus === "error" || saveStatus === "closed" ? "text-status-error font-medium" : "text-soft-mute",
+              examGone || saveStatus === "error" || saveStatus === "closed" ? "text-status-error font-medium" : "text-soft-mute",
             )}
           >
-            {saveStatus === "saving"
-              ? "Saving…"
-              : saveStatus === "error"
-                ? sessionExpired
-                  ? "Not saved — sign in again"
-                  : "Not saved — retrying"
-                : saveStatus === "closed"
-                  ? "Not saved — press Submit"
-                  : "Saved"}
+            {examGone
+              ? "Not saved — exam removed"
+              : saveStatus === "saving"
+                ? "Saving…"
+                : saveStatus === "error"
+                  ? sessionExpired
+                    ? "Not saved — sign in again"
+                    : "Not saved — retrying"
+                  : saveStatus === "closed"
+                    ? "Not saved — press Submit"
+                    : "Saved"}
           </span>
         </div>
 

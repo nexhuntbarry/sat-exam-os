@@ -38,7 +38,7 @@ export async function GET(
   // while a submit is in flight, so a lost submit response can't strand
   // the student on "Submitting…".
   if (new URL(req.url).searchParams.get("status") === "1") {
-    const { data: row } = await db
+    const { data: row, error: statusError } = await db
       .from("submissions")
       .select(
         "status, submitted_at, adaptive_track, session_id, started_at, metadata, tests!inner(time_limit_minutes, time_limit_minutes_module_2, is_untimed)",
@@ -46,6 +46,8 @@ export async function GET(
       .eq("id", id)
       .eq("student_id", user.userId)
       .maybeSingle();
+    // A DB hiccup must not look like a deleted exam.
+    if (statusError) return NextResponse.json({ error: "Couldn't check the exam. Please try again." }, { status: 500 });
     if (!row) return NextResponse.json({ error: "Submission not found" }, { status: 404 });
     // "ready" = safe to leave the page. Module 1 is claimed (status flips)
     // before grading and the Module 2 insert, so also wait for the Module 2
@@ -220,10 +222,17 @@ export async function PATCH(
       )
       .eq("id", id)
       .eq("student_id", user.userId)
-      .single();
+      .maybeSingle();
 
-    if (fetchError || !submission) {
-      return NextResponse.json({ error: "Submission not found" }, { status: 404 });
+    // A read failure is transient (the client retries); a missing row means
+    // the exam was deleted (e.g. by an admin) and no retry will bring it
+    // back — the take page stops saving and tells the student.
+    if (fetchError) {
+      console.error("[student/submissions/patch] read", fetchError);
+      return NextResponse.json({ error: "Failed to save" }, { status: 500 });
+    }
+    if (!submission) {
+      return NextResponse.json({ error: "Submission not found", code: "submission_gone" }, { status: 404 });
     }
 
     if (submission.status !== "In Progress") {
