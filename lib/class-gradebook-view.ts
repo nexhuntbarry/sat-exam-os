@@ -250,6 +250,22 @@ export function cellHint(cell: Pick<GradebookCell, "state" | "statusLabel">): st
   return STATE_HINT[cell.state];
 }
 
+/**
+ * The student's latest attempt isn't finished (in progress, on break,
+ * started past due, or a retake in progress): the cell gets a live line.
+ */
+export function cellIsLive(cell: Pick<GradebookCell, "state" | "retake">): boolean {
+  return cell.state === "in-progress" || cell.state === "late" || cell.retake?.state === "in-progress";
+}
+
+/** Any live cell in these columns × rows (the grid on screen, after filters). */
+export function anyLiveCell(columns: Pick<GradebookColumn, "id">[], rows: Pick<GradebookRow, "cells">[]): boolean {
+  return rows.some((r) => columns.some((c) => {
+    const cell = r.cells[c.id];
+    return cell ? cellIsLive(cell) : false;
+  }));
+}
+
 /** "Retake in progress" / "Retake closed" for a score from an earlier attempt. */
 export function retakeLabel(cell: Pick<GradebookCell, "retake">): string | null {
   if (!cell.retake) return null;

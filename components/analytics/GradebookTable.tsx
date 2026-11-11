@@ -6,6 +6,7 @@ import {
   TIER_LABEL,
   TIER_MARK,
   cellHint,
+  cellIsLive,
   cellLabel,
   formatChange,
   retakeLabel,
@@ -20,10 +21,14 @@ import {
   type SortDir,
   type SortKey,
 } from "@/lib/class-gradebook-view";
+import { gradebookLiveKey } from "@/lib/live-progress-shared";
+import { LiveProgressCell } from "@/components/analytics/LiveProgressCell";
 
 // The class gradebook grid. No hooks: the screen (ClassGradebook, with
 // sort buttons) and the printout (/print/classes/[id]/scores, compact)
-// render the same table, so both show the same columns.
+// render the same table, so both show the same columns. On screen, an
+// unfinished cell also gets its live line (LiveProgressCell, inside the
+// ClassGradebook's LiveProgressProvider; nothing without one / in print).
 
 const TIER_BG = { high: "bg-emerald-50", mid: "bg-amber-50", low: "bg-rose-50" } as const;
 // Weight steps with the tier too, so the scale survives grayscale.
@@ -218,6 +223,7 @@ export default function GradebookTable({
                   ) : (
                     body
                   )}
+                  {!compact && cellIsLive(cell) && <LiveProgressCell compact attemptKey={gradebookLiveKey(c.id, r.studentId)} />}
                 </td>
               );
             })}

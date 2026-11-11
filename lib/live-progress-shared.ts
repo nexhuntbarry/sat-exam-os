@@ -157,6 +157,52 @@ export function positionText(p: Pick<LiveProgress, "moduleLabel" | "questionNumb
   return [p.moduleLabel, q].filter(Boolean).join(" · ") || null;
 }
 
+/** "Module 2" → "M2", "R&W · Module 1" → "R&W M1" (the class Scores grid's short form). */
+export function shortModuleLabel(label: string | null): string | null {
+  if (!label) return null;
+  return label.replace(/(?:\s*·\s*)?Module (\d+)$/, (_m, n: string) => ` M${n}`).trim() || null;
+}
+
+/**
+ * One-line position for a grid cell: "M2 · Q14 · 11/22 · 12:34 left",
+ * "R&W M2 · not opened yet". `timeLeft` is timeLeftText's output (now).
+ */
+export function compactModuleLine(
+  p: Pick<LiveProgress, "moduleLabel" | "questionNumber" | "answered" | "total" | "notOpened">,
+  timeLeft: string | null,
+): string {
+  const parts = [
+    shortModuleLabel(p.moduleLabel),
+    p.questionNumber != null ? `Q${p.questionNumber}` : null,
+    p.answered != null ? (p.total != null ? `${p.answered}/${p.total}` : `${p.answered} answered`) : null,
+    p.notOpened ? "not opened yet" : timeLeft,
+  ];
+  return parts.filter(Boolean).join(" · ") || "In module";
+}
+
+/** Live entry of a class Scores cell: column (test) id + student id. */
+export function gradebookLiveKey(testId: string, studentId: string): string {
+  return `${testId}:${studentId}`;
+}
+
+/**
+ * Per-test live maps (attempt key → progress) → one map by grid cell
+ * (gradebookLiveKey). Two unfinished attempts of one test (rare) → the
+ * one heard from last.
+ */
+export function byGradebookCell(perTest: { testId: string; live: Record<string, LiveProgress> }[]): Record<string, LiveProgress> {
+  const out: Record<string, LiveProgress> = {};
+  const contact = (p: LiveProgress) => Math.max(Date.parse(p.lastSeenAt ?? "") || 0, Date.parse(p.lastActiveAt ?? "") || 0);
+  for (const { testId, live } of perTest) {
+    for (const p of Object.values(live)) {
+      const k = gradebookLiveKey(testId, p.studentId);
+      const cur = out[k];
+      if (!cur || contact(p) > contact(cur)) out[k] = { ...p, key: k };
+    }
+  }
+  return out;
+}
+
 /** Answered share 0–100 for the progress bar, or null. */
 export function answeredPercent(answered: number | null, total: number | null): number | null {
   if (answered == null || !total || total <= 0) return null;

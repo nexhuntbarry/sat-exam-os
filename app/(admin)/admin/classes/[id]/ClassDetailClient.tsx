@@ -24,7 +24,7 @@ import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import SearchablePicker, { type PickerItem } from "@/components/ui/SearchablePicker";
 import AssignTestButton, { type AvailableTest } from "./AssignTestButton";
-import ClassGradebook from "@/components/analytics/ClassGradebook";
+import ClassGradebook, { type ClassLive } from "@/components/analytics/ClassGradebook";
 import type { Gradebook } from "@/lib/class-gradebook-view";
 
 export interface AssignedTest {
@@ -99,6 +99,8 @@ interface Props {
   availableTests: AvailableTest[];
   /** null = it couldn't load (the Scores section says so). */
   gradebook: Gradebook | null;
+  /** Live progress of the Scores grid's unfinished cells. */
+  live: ClassLive;
 }
 
 export default function ClassDetailClient({
@@ -111,6 +113,7 @@ export default function ClassDetailClient({
   assignedTests,
   availableTests,
   gradebook,
+  live,
 }: Props) {
   const router = useRouter();
 
@@ -750,7 +753,7 @@ export default function ClassDetailClient({
         </DataTable>
       </section>
 
-      <ClassGradebook classId={classGroup.id} className={classGroup.name} gradebook={gradebook} />
+      <ClassGradebook classId={classGroup.id} className={classGroup.name} gradebook={gradebook} live={live} />
 
       {/* Members list */}
       <section>

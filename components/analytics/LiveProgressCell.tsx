@@ -18,6 +18,7 @@ import {
   LIVE_POLL_MS,
   WAITING_POLL_MS,
   answeredPercent,
+  compactModuleLine,
   connectionStatus,
   positionText,
   secondsLeftAfter,
@@ -26,8 +27,10 @@ import {
   timeLeftText,
   updatedAgoText,
   type ConnectionKind,
+  type LiveProgress,
   type LiveSnapshot,
 } from "@/lib/live-progress-shared";
+import { TAB_SWITCH_HELP, TAB_SWITCH_WARN_AT } from "@/lib/tab-switches";
 
 interface LiveState {
   snapshot: LiveSnapshot;
@@ -45,11 +48,17 @@ const LiveContext = createContext<LiveState | null>(null);
 export function LiveProgressProvider({
   endpoint,
   initial,
+  active,
   children,
 }: {
   /** GET endpoint returning { data: LiveSnapshot }. */
   endpoint: string;
   initial: LiveSnapshot;
+  /**
+   * The page decides when to poll (class Scores grid: a cell on screen is
+   * in progress). Default: while the snapshot has someone in progress.
+   */
+  active?: boolean;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -70,7 +79,7 @@ export function LiveProgressProvider({
     }
   }, [initial]);
 
-  const anyoneLive = Object.keys(snapshot.live).length > 0 || snapshot.counts.inProgress > 0;
+  const anyoneLive = active ?? (Object.keys(snapshot.live).length > 0 || snapshot.counts.inProgress > 0);
   // Every 20 s while someone is taking the test (or the page's own load
   // failed); once a minute while nobody is yet but someone hasn't started
   // and the test still takes starts (so a class start shows up).
@@ -149,21 +158,29 @@ export function LiveStatusBar({ className }: { className?: string }) {
   return (
     <div className={cn("flex flex-wrap items-center gap-x-4 gap-y-1 text-sm", className)}>
       <span className="text-charcoal font-medium">{summaryText(snapshot.counts)}</span>
-      {anyoneLive && (
-        <span className="inline-flex items-center gap-1.5 text-xs text-soft-mute" aria-live="polite">
-          <span
-            className={cn(
-              "inline-block h-2 w-2 rounded-full",
-              failed ? "bg-status-warning" : polling ? "bg-status-success animate-pulse" : "bg-soft-mute",
-            )}
-          />
-          <span className={cn("font-medium", failed ? "text-status-warning" : polling ? "text-status-success" : "")}>
-            {failed ? "Reconnecting" : polling ? "Live" : "Paused"}
-          </span>
-          <span>· {updatedAgoText(now - receivedAt)}</span>
-        </span>
-      )}
+      {anyoneLive && <LiveIndicator />}
     </div>
+  );
+}
+
+/** "● Live · Updated 10s ago" (or Reconnecting / Paused). */
+export function LiveIndicator({ className }: { className?: string }) {
+  const live = useLive();
+  if (!live) return null;
+  const { receivedAt, now, polling, failed } = live;
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 text-xs text-soft-mute", className)} aria-live="polite">
+      <span
+        className={cn(
+          "inline-block h-2 w-2 rounded-full",
+          failed ? "bg-status-warning" : polling ? "bg-status-success animate-pulse" : "bg-soft-mute",
+        )}
+      />
+      <span className={cn("font-medium", failed ? "text-status-warning" : polling ? "text-status-success" : "")}>
+        {failed ? "Reconnecting" : polling ? "Live" : "Paused"}
+      </span>
+      <span>· {updatedAgoText(now - receivedAt)}</span>
+    </span>
   );
 }
 
@@ -185,12 +202,22 @@ const DOT_TEXT: Record<ConnectionKind, string> = {
  * "11 / 22 answered", and "Active now" / "Idle 3 min" / "Offline since …".
  * Renders nothing for a finished (or unknown) attempt.
  */
-export function LiveProgressCell({ attemptKey, className }: { attemptKey: string; className?: string }) {
+export function LiveProgressCell({
+  attemptKey,
+  className,
+  compact = false,
+}: {
+  attemptKey: string;
+  className?: string;
+  /** Class Scores grid: "M2 · Q14 · 11/22 · 12:34 left" over "● Active now · Left tab 2×". */
+  compact?: boolean;
+}) {
   const live = useLive();
   const p = live?.snapshot.live[attemptKey];
   if (!live || !p) return null;
   const elapsed = live.now - live.receivedAt;
   const serverNow = Date.parse(live.snapshot.generatedAt) + elapsed;
+  if (compact) return <CompactLive p={p} elapsed={elapsed} serverNow={serverNow} className={className} />;
 
   if (p.phase === "break") {
     const left = secondsLeftAfter(p.breakRemainingSeconds, elapsed);
@@ -261,5 +288,41 @@ export function LiveTabSwitchCount({ attemptKey, count }: { attemptKey: string; 
     >
       <TabSwitchCount count={value} />
     </span>
+  );
+}
+
+function CompactLive({ p, elapsed, serverNow, className }: { p: LiveProgress; elapsed: number; serverNow: number; className?: string }) {
+  const tabs = p.tabSwitches != null && p.tabSwitches > 0 ? (
+    <span className={p.tabSwitches >= TAB_SWITCH_WARN_AT ? "font-semibold text-status-warning" : "text-mid-gray"} title={TAB_SWITCH_HELP}>
+      Left tab {p.tabSwitches}×
+    </span>
+  ) : null;
+  let line: string;
+  let conn: { kind: ConnectionKind; text: string } | null = null;
+  if (p.phase === "break") {
+    const left = secondsLeftAfter(p.breakRemainingSeconds, elapsed);
+    line = `On break${left != null ? (left > 0 ? ` · ${timeLeftText(left)}` : " · break over") : ""}`;
+  } else if (p.phase === "between") {
+    line = "Between modules";
+  } else {
+    line = compactModuleLine(p, timeLeftText(secondsLeftAfter(p.remainingSeconds, elapsed)));
+    conn = connectionStatus(p.lastSeenAt, p.lastActiveAt, serverNow);
+  }
+  return (
+    <div className={cn("mt-0.5 text-[11px] leading-tight whitespace-nowrap", className)}>
+      <div className="text-charcoal tabular-nums">{line}</div>
+      {(conn || tabs) && (
+        <div className="flex items-center gap-1" title={p.lastSeenAt ? `Last contact ${formatTime(p.lastSeenAt)}` : undefined}>
+          {conn && (
+            <>
+              <span className={cn("inline-block h-1.5 w-1.5 rounded-full", DOT[conn.kind])} aria-hidden />
+              <span className={DOT_TEXT[conn.kind]}>{conn.text}</span>
+            </>
+          )}
+          {conn && tabs && <span className="text-soft-mute">·</span>}
+          {tabs}
+        </div>
+      )}
+    </div>
   );
 }

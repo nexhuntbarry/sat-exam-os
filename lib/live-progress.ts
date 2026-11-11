@@ -3,7 +3,7 @@
 // Server side of the live progress view (types + text rules in
 // lib/live-progress-shared.ts). One loader for every watching page and its
 // polling endpoint: the admin Submissions page, the teacher test page and
-// (later) the class Scores grid. Callers do the permission checks and pass
+// the class Scores grid (loadClassLiveSnapshot). Callers do the permission checks and pass
 // the student scope; this applies QA isolation to the students it returns.
 // Reads only — nothing here writes.
 
@@ -13,12 +13,14 @@ import {
   attemptGroupKey,
   FL_ALL_SECTIONS,
   flAttemptKey,
+  flSectionScope,
   loadFlAttemptMeta,
   scoreAttemptGroup,
   type FlSectionScope,
 } from "@/lib/full-length-score";
 import { breakEndsAtMs } from "@/lib/full-length-attempt";
-import { getAssignedStudentIds, getTestSections } from "@/lib/teacher-access";
+import { getAssignedStudentIds, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
+import { cellIsLive, type Gradebook } from "@/lib/class-gradebook-view";
 import { getQaClassGroupIds, onSide, scopeUsers } from "@/lib/qa";
 import {
   isModule2Track,
@@ -32,6 +34,7 @@ import { tabSwitchTotal } from "@/lib/tab-switches";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import {
   answeredCount,
+  byGradebookCell,
   emptyLiveSnapshot,
   questionNumberOf,
   summarizeCounts,
@@ -340,4 +343,65 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
 
 function lastSubmit(rows: { submitted_at: string | null }[]): string | null {
   return rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
+}
+
+/** Tests loaded at once by loadClassLiveSnapshot (each is a handful of batched reads). */
+const CLASS_TEST_BATCH = 4;
+
+/**
+ * Live progress of a class Scores grid (lib/class-gradebook): for every
+ * column with an unfinished cell (cellIsLive), the per-test loader above,
+ * scoped to those students — and, for a teacher, to the test access rule
+ * (getTeacherTestAccess: class roster, subject) and the full-length
+ * section scope (flSectionScope ∩ the class link's scope). `live` is keyed
+ * by gradebookLiveKey(testId, studentId). Callers check class access and
+ * pass the gradebook they loaded for this viewer (tests and students
+ * already on their QA side and in their subjects).
+ */
+export async function loadClassLiveSnapshot(
+  db: SupabaseClient,
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
+  gradebook: Gradebook,
+): Promise<LiveSnapshot> {
+  const generatedAt = new Date().toISOString();
+  const wanted = gradebook.columns
+    .map((c) => ({
+      testId: c.id,
+      students: new Set(gradebook.rows.filter((r) => r.cells[c.id] && cellIsLive(r.cells[c.id])).map((r) => r.studentId)),
+    }))
+    .filter((t) => t.students.size > 0);
+  if (wanted.length === 0) return emptyLiveSnapshot(generatedAt);
+
+  const links = await fullLengthLinksOrNone(db);
+  const one = async ({ testId, students }: (typeof wanted)[number]) => {
+    let allow = students;
+    if (user.role !== "admin") {
+      const access = await getTeacherTestAccess(db, user, testId);
+      if (access.mode === null) return null;
+      const roster = access.studentAllowlist;
+      if (roster) allow = new Set([...students].filter((s) => roster.has(s)));
+      if (allow.size === 0) return null;
+    }
+    const kids = links.childrenOf.get(testId);
+    const viewer = kids ? await flSectionScope(db, user, kids) : FL_ALL_SECTIONS;
+    const snap = await loadLiveSnapshot(db, {
+      testId,
+      viewerIsQa: user.isQa,
+      studentIds: allow,
+      flScope: { rw: viewer.rw && gradebook.scope.rw, math: viewer.math && gradebook.scope.math },
+    });
+    return { testId, live: snap.live };
+  };
+  const perTest: { testId: string; live: Record<string, LiveProgress> }[] = [];
+  for (let i = 0; i < wanted.length; i += CLASS_TEST_BATCH) {
+    for (const r of await Promise.all(wanted.slice(i, i + CLASS_TEST_BATCH).map(one))) if (r) perTest.push(r);
+  }
+  const live = byGradebookCell(perTest);
+  return {
+    generatedAt,
+    live,
+    counts: { submitted: 0, inProgress: Object.keys(live).length, notStarted: 0 },
+    notStarted: [],
+    acceptingStarts: false,
+  };
 }

@@ -9,6 +9,8 @@ import type { AvailableTest } from "./AssignTestButton";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { loadClassGradebook } from "@/lib/class-gradebook";
 import type { Gradebook } from "@/lib/class-gradebook-view";
+import { loadClassLiveSnapshot } from "@/lib/live-progress";
+import { emptyLiveSnapshot } from "@/lib/live-progress-shared";
 
 async function getClassGroup(id: string) {
   const db = getServiceClient();
@@ -270,7 +272,8 @@ export default async function ClassDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const isQa = (await getCurrentUser())?.isQa ?? false;
+  const me = await getCurrentUser();
+  const isQa = me?.isQa ?? false;
   if (!onSide(id, await getQaClassGroupIds(), isQa)) notFound();
   const [classGroup, members, allStudents, allTeachers, assignedTeachers, linkedTests, availableTests] = await Promise.all([
     getClassGroup(id),
@@ -295,7 +298,16 @@ export default async function ClassDetailPage({
     console.error("[classes/gradebook] load failed:", e);
     return null;
   });
-  const assignedTests = await getAssignedTests(id, isQa, gradebook);
+  // Live lines for unfinished cells; a failure only leaves them out (the grid polls again).
+  const [assignedTests, liveInitial] = await Promise.all([
+    getAssignedTests(id, isQa, gradebook),
+    gradebook && me
+      ? loadClassLiveSnapshot(getServiceClient(), me, gradebook).catch((e) => {
+          console.error("[classes/live-progress] load failed:", e);
+          return emptyLiveSnapshot();
+        })
+      : emptyLiveSnapshot(),
+  ]);
 
   return (
     <ClassDetailClient
@@ -307,6 +319,7 @@ export default async function ClassDetailPage({
       linkedTests={linkedTests}
       assignedTests={assignedTests}
       gradebook={gradebook}
+      live={{ endpoint: `/api/admin/classes/${id}/live-progress`, initial: liveInitial }}
       availableTests={availableTests}
     />
   );

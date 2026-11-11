@@ -10,6 +10,8 @@ import { averageSat } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
 import { loadClassGradebook } from "@/lib/class-gradebook";
+import { loadClassLiveSnapshot } from "@/lib/live-progress";
+import { emptyLiveSnapshot } from "@/lib/live-progress-shared";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import ClassGradebook from "@/components/analytics/ClassGradebook";
 import {
@@ -231,6 +233,13 @@ export default async function TeacherClassDetailPage({
     console.error("[teacher/classes/gradebook] load failed:", e);
     return null;
   });
+  // Live lines for unfinished cells; a failure only leaves them out (the grid polls again).
+  const liveInitial = gradebook
+    ? await loadClassLiveSnapshot(getServiceClient(), me, gradebook).catch((e) => {
+        console.error("[teacher/classes/live-progress] load failed:", e);
+        return emptyLiveSnapshot();
+      })
+    : emptyLiveSnapshot();
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -261,7 +270,12 @@ export default async function TeacherClassDetailPage({
         </div>
       </div>
 
-      <ClassGradebook classId={group.id} className={group.name} gradebook={gradebook} />
+      <ClassGradebook
+        classId={group.id}
+        className={group.name}
+        gradebook={gradebook}
+        live={{ endpoint: `/api/teacher/classes/${group.id}/live-progress`, initial: liveInitial }}
+      />
 
       <section>
         <h2 className="text-charcoal font-semibold mb-3">Roster</h2>
