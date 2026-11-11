@@ -5,7 +5,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import GrantRetakeButton from "./GrantRetakeButton";
 import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
-import { formatDateTimeSeconds, formatShortDateTime, formatShortDate } from "@/lib/datetime";
+import { formatDateTimeSeconds, formatShortDate } from "@/lib/datetime";
 import { type AttemptScore } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey, flBadge, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
@@ -15,7 +15,15 @@ import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { X, Eye } from "lucide-react";
 import { tabSwitchTotal } from "@/lib/tab-switches";
-import { TabSwitchCount, TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
+import { TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
+import { loadLiveSnapshot } from "@/lib/live-progress";
+import { submittedColumnText } from "@/lib/live-progress-shared";
+import {
+  LiveProgressCell,
+  LiveProgressProvider,
+  LiveStatusBar,
+  LiveTabSwitchCount,
+} from "@/components/analytics/LiveProgressCell";
 import {
   DataTable,
   HeadRow,
@@ -83,7 +91,7 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
     query = query.in("student_id", Array.from(classFilterStudentIds));
   } else if (classFilterStudentIds && classFilterStudentIds.size === 0) {
     // Class exists but has no members — return empty
-    return { test, submissions: [], pendingByStudent: new Set<string>(), classFilterName, classFilterId: classFilter ?? null, flLinks, flKids, flMeta: null };
+    return { test, submissions: [], pendingByStudent: new Set<string>(), classFilterName, classFilterId: classFilter ?? null, classFilterStudentIds, flLinks, flKids, flMeta: null };
   }
 
   const { data: submissions } = await query.order("submitted_at", { ascending: false });
@@ -98,7 +106,7 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
   const pendingByStudent = new Set((grants ?? []).map((g) => g.student_id as string));
 
   const flMeta = flKids ? await loadFlAttemptMeta(db, [testId]) : null;
-  return { test, submissions: submissions ?? [], pendingByStudent, classFilterName, classFilterId: classFilter ?? null, flLinks, flKids, flMeta };
+  return { test, submissions: submissions ?? [], pendingByStudent, classFilterName, classFilterId: classFilter ?? null, classFilterStudentIds, flLinks, flKids, flMeta };
 }
 
 const TRACK_LABEL: Record<string, string> = {
@@ -132,7 +140,15 @@ export default async function TestSubmissionsPage({
   const data = await getSubmissions(id, user.isQa, classParam);
   if (!data) notFound();
 
-  const { test, submissions, pendingByStudent, classFilterName, classFilterId, flLinks, flKids, flMeta } = data;
+  const { test, submissions, pendingByStudent, classFilterName, classFilterId, classFilterStudentIds, flLinks, flKids, flMeta } = data;
+  // Live progress of unfinished attempts + the not-started roster, kept
+  // current on the client by polling the same loader's endpoint.
+  const liveSnapshot = await loadLiveSnapshot(getServiceClient(), {
+    testId: test.id,
+    viewerIsQa: user.isQa,
+    studentIds: classFilterStudentIds,
+  });
+  const liveEndpoint = `/api/admin/tests/${test.id}/live-progress${classFilterStudentIds && classFilterId ? `?class=${encodeURIComponent(classFilterId)}` : ""}`;
 
   type RawSubmission = (typeof submissions)[number];
   const section = (await getTestSections(getServiceClient(), [test.id])).get(test.id) ?? null;
@@ -148,6 +164,8 @@ export default async function TestSubmissionsPage({
     statusLabel?: string;
     timeSpentSeconds: number;
     submittedAt: string | null;
+    /** When the attempt started (its first module). */
+    startedAt: string | null;
     attemptNumber: number;
     /** Times the student left the exam tab, all modules / both sections. */
     tabSwitches: number | null;
@@ -183,6 +201,7 @@ export default async function TestSubmissionsPage({
       ? TRACK_LABEL[head.adaptive_track] ?? head.adaptive_track
       : null;
     const { fullLength: fl, ...attempt } = scoreAttemptGroup(sorted, flLinks, section, flMeta ?? undefined);
+    const startedAt = sorted.map((r) => r.started_at as string | null).filter((d): d is string => !!d).sort()[0] ?? null;
     if (fl && flKids) {
       const rwRows = sorted.filter((r) => r.test_id === flKids.rw);
       const mathRows = sorted.filter((r) => r.test_id === flKids.math);
@@ -206,6 +225,7 @@ export default async function TestSubmissionsPage({
             .filter((d): d is string => !!d)
             .sort()
             .pop() ?? null,
+        startedAt,
         attemptNumber: head.attempt_number ?? 1,
         tabSwitches: tabSwitchTotal(sorted),
         // The section detail pages (R&W first; each links to the other).
@@ -235,6 +255,7 @@ export default async function TestSubmissionsPage({
           .filter((d): d is string => !!d)
           .sort()
           .pop() ?? null,
+      startedAt,
       attemptNumber: head.attempt_number ?? 1,
       tabSwitches: tabSwitchTotal(sorted),
       // Detail link routes to the Module 2 (last) submission so the
@@ -247,7 +268,12 @@ export default async function TestSubmissionsPage({
     });
   }
 
+  const isDone = (a: Attempt) => a.attempt.status === "Submitted" || a.attempt.status === "Late";
+  // Students taking the test right now first (latest start first), then
+  // finished attempts, newest submission first.
   attempts.sort((a, b) => {
+    if (isDone(a) !== isDone(b)) return isDone(a) ? 1 : -1;
+    if (!isDone(a)) return (b.startedAt ?? "").localeCompare(a.startedAt ?? "");
     if (a.submittedAt && b.submittedAt) return b.submittedAt.localeCompare(a.submittedAt);
     if (a.submittedAt) return -1;
     if (b.submittedAt) return 1;
@@ -255,6 +281,7 @@ export default async function TestSubmissionsPage({
   });
 
   const COL_SPAN = 9;
+  const notStarted = liveSnapshot.notStarted;
 
   return (
     <div className="space-y-6">
@@ -283,7 +310,9 @@ export default async function TestSubmissionsPage({
 
       {attempts.length > 0 && <ResultsDownloadPanel testId={test.id} />}
 
-      {attempts.length === 0 ? (
+      <LiveProgressProvider endpoint={liveEndpoint} initial={liveSnapshot}>
+      <LiveStatusBar />
+      {attempts.length === 0 && notStarted.length === 0 ? (
         <div className="py-16 text-center text-soft-mute text-sm border-y border-divider">
           No submissions yet.
         </div>
@@ -304,12 +333,14 @@ export default async function TestSubmissionsPage({
           </thead>
           <tbody>
             {attempts.map((a) => {
-              const submittedLabel = a.submittedAt ? formatShortDateTime(a.submittedAt) : "—";
-              const submittedTitle = a.submittedAt ? formatDateTimeSeconds(a.submittedAt) : undefined;
-
               // Rule 4: viewing the attempt is the visible action (and the
               // row link); Grant retake is in ⋯.
-              const done = a.attempt.status === "Submitted" || a.attempt.status === "Late";
+              const done = isDone(a);
+              // Unfinished: when it started (a graded Module 1's time isn't a submission).
+              const submittedLabel = submittedColumnText({ finished: done, submittedAt: a.submittedAt, startedAt: a.startedAt });
+              const submittedTitle = done
+                ? a.submittedAt ? formatDateTimeSeconds(a.submittedAt) : undefined
+                : a.startedAt ? `Started ${formatDateTimeSeconds(a.startedAt)}` : undefined;
               const detailTest = a.detailTestId ?? test.id;
               const primary =
                 done
@@ -328,8 +359,8 @@ export default async function TestSubmissionsPage({
                     <>
                       <DetailItem label="Module" priority="md">{a.moduleHeadline}</DetailItem>
                       <DetailItem label="Time" priority="2xl">{formatDuration(a.timeSpentSeconds)}</DetailItem>
-                      <DetailItem label="Left tab" priority="md"><TabSwitchCount count={a.tabSwitches} /></DetailItem>
-                      <DetailItem label="Submitted" priority="lg">{submittedLabel}</DetailItem>
+                      <DetailItem label="Left tab" priority="md"><LiveTabSwitchCount attemptKey={a.key} count={a.tabSwitches} /></DetailItem>
+                      <DetailItem label={done ? "Submitted" : "Started"} priority="lg">{submittedLabel}</DetailItem>
                       <DetailItem label="Attempt" priority="2xl">#{a.attemptNumber}</DetailItem>
                     </>
                   }
@@ -346,6 +377,7 @@ export default async function TestSubmissionsPage({
                   </Td>
                   <Td>
                     <StatusBadge kind="attempt" status={a.attempt.status} module={a.attempt.module} label={a.statusLabel} />
+                    {!done && <LiveProgressCell attemptKey={a.key} />}
                   </Td>
                   <Td>
                     <ScoreCell score={a.attempt.score} />
@@ -354,7 +386,7 @@ export default async function TestSubmissionsPage({
                     {formatDuration(a.timeSpentSeconds)}
                   </Td>
                   <Td priority="md" className="whitespace-nowrap">
-                    <TabSwitchCount count={a.tabSwitches} />
+                    <LiveTabSwitchCount attemptKey={a.key} count={a.tabSwitches} />
                   </Td>
                   <Td priority="lg" className="text-soft-mute" title={submittedTitle}>
                     {submittedLabel}
@@ -379,9 +411,28 @@ export default async function TestSubmissionsPage({
                 </DataRow>
               );
             })}
+            {/* Assigned, no attempt yet. */}
+            {notStarted.map((s) => (
+              <DataRow key={`not-started:${s.studentId}`} expandBelow="2xl" colSpan={COL_SPAN}>
+                <Td kind="main" sticky="left">
+                  <TwoLineCell main={s.name} detail={s.email} mainClassName="font-medium text-charcoal" />
+                </Td>
+                <Td kind="long" priority="md" className="text-soft-mute">—</Td>
+                <Td>
+                  <StatusBadge kind="attempt" status="Not started" />
+                </Td>
+                <Td className="text-soft-mute">—</Td>
+                <Td priority="2xl" className="text-soft-mute">—</Td>
+                <Td priority="md" className="text-soft-mute">—</Td>
+                <Td priority="lg" className="text-soft-mute">—</Td>
+                <Td priority="2xl" className="text-soft-mute">—</Td>
+                <Td kind="actions" sticky="right"><span className="sr-only">No actions</span></Td>
+              </DataRow>
+            ))}
           </tbody>
         </DataTable>
       )}
+      </LiveProgressProvider>
     </div>
   );
 }

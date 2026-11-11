@@ -32,6 +32,7 @@ import {
   recordArrive,
   recordLeave,
 } from "@/lib/question-activity";
+import { KEEPALIVE_INTERVAL_MS } from "@/lib/live-progress-shared";
 
 interface Question {
   id: string;
@@ -920,6 +921,44 @@ export default function TestTakingClient({
       window.removeEventListener("online", handleRetryNow);
       window.removeEventListener("focus", handleRetryNow);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Live progress keepalive: while the page is open and nothing needs
+  // saving, tell the server the student is still here, so teachers can
+  // tell "reading a long passage" from "laptop died". Fire-and-forget: it
+  // touches no exam state, is skipped while a save or submit is in flight
+  // or work is unsaved (that save stamps the same thing), and stops for
+  // good once the attempt is submitted, gone or closed.
+  const keepaliveStoppedRef = useRef(false);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      try {
+        if (
+          keepaliveStoppedRef.current ||
+          submittedRef.current ||
+          examGoneRef.current ||
+          submitInFlightRef.current ||
+          saveInFlightRef.current ||
+          hasUnsavedChanges()
+        ) {
+          return;
+        }
+        fetchWithAuthRetry(saveUrl, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keepalive: true }),
+        })
+          .then((res) => {
+            // Submitted / deleted / time up: nothing left to keep alive.
+            if (res.status === 400 || res.status === 404 || res.status === 409) keepaliveStoppedRef.current = true;
+          })
+          .catch(() => {});
+      } catch {
+        // Never let the keepalive disturb the exam.
+      }
+    }, KEEPALIVE_INTERVAL_MS);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

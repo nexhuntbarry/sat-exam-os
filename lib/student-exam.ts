@@ -433,6 +433,10 @@ const SERVER_OWNED_METADATA_KEYS = [
   "auto_closed_unopened",
   // Full-length SAT attempt (extended time, attempt link, attempt start).
   ...FULL_LENGTH_METADATA_KEYS,
+  // Live progress (lib/live-progress): stamped by the autosave PATCH with
+  // server now() on every save / keepalive, so a client can't fake them.
+  "last_seen_at",
+  "last_active_at",
 ];
 
 /**
