@@ -47,17 +47,25 @@ export async function getTestSection(
 }
 
 // Batch version: testId → section, for filtering a set of tests at once.
+// `strict` (authorization / subject filtering): throw on a lookup error so
+// access fails closed. Default (display, student pages): log and carry on
+// with what loaded (missing sections read as null), never 500 the page.
 export async function getTestSections(
   db: SupabaseClient,
   testIds: string[],
+  opts: { strict?: boolean } = {},
 ): Promise<Map<string, string | null>> {
+  const failed = (what: string, message: string) => {
+    if (opts.strict) throw new Error(`${what} lookup failed: ${message}`);
+    console.error(`[getTestSections] ${what} lookup failed`, message);
+  };
   const out = new Map<string, string | null>();
   if (testIds.length === 0) return out;
   const { data: tests, error } = await db
     .from("tests")
     .select("id, module_id, module_1_id")
     .in("id", testIds);
-  if (error) throw new Error(`test sections lookup failed: ${error.message}`);
+  if (error) failed("test sections", error.message);
   const moduleOf = new Map<string, string | null>();
   const moduleIds = new Set<string>();
   for (const t of tests ?? []) {
@@ -68,7 +76,7 @@ export async function getTestSections(
   const { data: mods, error: modError } = moduleIds.size
     ? await db.from("modules").select("id, section").in("id", Array.from(moduleIds))
     : { data: [] as { id: string; section: string | null }[], error: null };
-  if (modError) throw new Error(`module sections lookup failed: ${modError.message}`);
+  if (modError) failed("module sections", modError.message);
   const sectionOf = new Map((mods ?? []).map((m) => [m.id as string, m.section as string | null]));
   for (const [testId, m] of moduleOf) out.set(testId, m ? sectionOf.get(m) ?? null : null);
   return out;
@@ -208,7 +216,7 @@ function classTeacherReaches(
         .from("test_assignments")
         .select("test_id, teacher_ids, class_group_ids, student_ids")
         .in("test_id", ids),
-      getTestSections(db, ids),
+      getTestSections(db, ids, { strict: true }),
     ]);
     if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
     const input = {
@@ -395,7 +403,7 @@ export async function getTeacherTestScope(
   // A full-length section child (reached through a student's submission)
   // is subject-checked on its own section, but the parent is what's added.
   const [sections, parents] = await Promise.all([
-    getTestSections(db, Array.from(candidates.keys())),
+    getTestSections(db, Array.from(candidates.keys()), { strict: true }),
     parentOf(db, candidates.keys()),
   ]);
   for (const [testId, c] of candidates) {

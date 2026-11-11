@@ -97,7 +97,7 @@ export async function POST(req: Request) {
   const allowed = cohortId ? [cohortSubject] : teacherSubjects ?? [null];
   if (teacher.role !== "admin" && (!section || !allowed.some((s) => !s || s === section))) {
     return NextResponse.json(
-      { error: `You don't teach ${section} for this class` },
+      { error: section ? `You don't teach ${section} for this class` : "These questions have no subject set. Ask an admin to fix them." },
       { status: 403 },
     );
   }

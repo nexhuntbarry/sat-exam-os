@@ -25,7 +25,13 @@ export async function GET(
   // The question must belong to this test (or, for a full-length parent, to
   // a section the caller may see) — else any question's answer and
   // explanation could be read through a test the caller has access to.
-  const ownerTestId = await testOwningQuestion(db, user, testId, questionId);
+  let ownerTestId: string | null;
+  try {
+    ownerTestId = await testOwningQuestion(db, user, testId, questionId);
+  } catch (e) {
+    console.error("[teacher/analytics/question] ownership lookup failed", e);
+    return NextResponse.json({ error: "Couldn't load this question. Please try again." }, { status: 500 });
+  }
   if (!ownerTestId) {
     return NextResponse.json({ error: "Question is not part of this test" }, { status: 404 });
   }

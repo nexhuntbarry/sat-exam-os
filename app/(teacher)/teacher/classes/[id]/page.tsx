@@ -113,7 +113,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
   const qaTests = await getQaTestIds();
   const candidateTests = new Set<string>(subRows.map((s) => listedTestId(s.test_id, flLinks)));
   for (const a of assignments ?? []) candidateTests.add(a.test_id as string);
-  const sectionOf = await getTestSections(db, Array.from(candidateTests));
+  const sectionOf = await getTestSections(db, Array.from(candidateTests), { strict: true });
   // A full-length parent has both subjects: any of the class's teachers sees it.
   const visible = (testId: string) =>
     onSide(testId, qaTests, isQa) &&

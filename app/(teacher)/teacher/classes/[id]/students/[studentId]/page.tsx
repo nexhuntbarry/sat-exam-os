@@ -135,6 +135,7 @@ async function loadStudent(
   const sectionOf = await getTestSections(
     db,
     Array.from(new Set([...rows.map((r) => r.test_id), ...assignments.keys()])),
+    { strict: true },
   );
   const visible = (testId: string) =>
     onSide(testId, qaTests, isQa) &&
