@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Play, RotateCcw } from "lucide-react";
 
@@ -21,8 +21,21 @@ export default function StartTestButton({ testId, submissionId, isResume, label 
   // to guess they should press again. Keep it visibly disabled until ready.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
+  // A double-click must open exactly one exam: the second click can arrive
+  // before React re-renders the button as disabled.
+  const starting = useRef(false);
+  // Back button restores this page from bfcache with loading still set; unlock it.
+  useEffect(() => {
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) { starting.current = false; setLoading(false); }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   async function handleStart() {
+    if (starting.current) return;
+    starting.current = true;
     setLoading(true);
     setError("");
     try {
@@ -47,6 +60,7 @@ export default function StartTestButton({ testId, submissionId, isResume, label 
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
       setLoading(false);
+      starting.current = false;
     }
   }
 
