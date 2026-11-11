@@ -5,7 +5,7 @@
 // Same helper bag as edge-checks.mjs. Uses QA students 072–080 only.
 // Called from run.mjs: await runDailyChecks({ check, fail, ... })
 import { chromium, webkit } from "playwright";
-import { login, db, BASE, borrowLogin, clerk } from "../lib.mjs";
+import { login, db, BASE, borrowLogin, clerk, cast } from "../lib.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -160,7 +160,7 @@ export async function runDailyChecks(h) {
       const DELAY = 8000;
       let delayed = 0;
       const slowJs = async (route) => { delayed++; await sleep(DELAY); await route.continue().catch(() => {}); };
-      await page.route(/\/_next\/static\/chunks\/.*\.js/, slowJs);
+      await page.route(/\/_next\/static\/(immutable\/)?chunks\/.*\.js/, slowJs);
       const t0 = Date.now();
       await page.goto(`${BASE}/student/tests/${T}`, { waitUntil: "domcontentloaded", timeout: 60000 });
       const btn = page.locator("button").filter({ hasText: /Start Test|Resume Test|Loading\.\.\./ }).first();
@@ -182,7 +182,7 @@ export async function runDailyChecks(h) {
       await page.waitForFunction(() => [...document.querySelectorAll("button")].some((b) => /Start Test/.test(b.textContent) && !b.disabled), null, { timeout: 60000 })
         .catch(() => problems.push("the button never turned into a clickable Start Test after the page loaded"));
       const readyMs = Date.now() - t0;
-      await page.unroute(/\/_next\/static\/chunks\/.*\.js/, slowJs);
+      await page.unroute(/\/_next\/static\/(immutable\/)?chunks\/.*\.js/, slowJs);
       const preRows = await subs(s.id, T);
       if (preRows.length) problems.push(`${preRows.length} exam(s) started by clicks made while the button said Loading`);
       if (!problems.some((p) => p.startsWith("the button never"))) {
@@ -2581,4 +2581,1410 @@ export async function runDailyChecks(h) {
       if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
       return notes.join("; ");
     }), 3 * 60 * 1000);
+
+  // ── D-20261108-1 ─────────────────────────────────────────
+  // Today's 3c6b77d/4e02749: an admin removes a student from their class
+  // ("Remove from class" on the Students page) while the student is mid-exam.
+  // The admin's warning must see the live exam; the student must still find
+  // the exam on My Tests ("Finish your attempt"), resume it with the answers
+  // intact and finish both modules, but never start a new attempt or a test
+  // they hadn't begun. Second student: Module 1 graded, Module 2 never created
+  // (failed handoff) when removed → "Continue to Module 2" must still work.
+  await check("D-20261108-1", [], "學生考到一半時被管理員移出班級：管理員要被提醒有人在考；學生在「我的測驗」還找得到這份考卷、答案都在、能把兩個模組考完；但不能開始新的一次或還沒考過的測驗", "老師/管理員動作", async () => {
+    const T = TESTS.engLinear, TM = TESTS.mathLinear;
+    const A = studentByN(78), B = studentByN(73);
+    if (!A || !B) throw new Error("students 078/073 not found");
+    const orig = C.students[0].id;
+    const tName = (await db.from("tests").select("test_name").eq("id", T).single()).data.test_name;
+    const mName = (await db.from("tests").select("test_name").eq("id", TM).single()).data.test_name;
+    const asg = (await db.from("test_assignments").select("class_group_ids,student_ids").eq("test_id", T).single()).data;
+    if ((asg.student_ids ?? []).length) throw new Error("setup: engLinear now has direct student assignments");
+    const memOf = async (st) => ((await db.from("class_group_members").select("class_group_id").eq("student_id", st.id)).data ?? []).map((m) => m.class_group_id);
+    const memA = await memOf(A), memB = await memOf(B);
+    const cgA = memA.filter((c) => asg.class_group_ids.includes(c)), cgB = memB.filter((c) => asg.class_group_ids.includes(c));
+    if (cgA.length !== 1 || cgB.length !== 1) throw new Error(`setup: expected one assigned class each (078: ${cgA.length}, 073: ${cgB.length})`);
+    const clean = async () => { for (const st of [A, B]) for (const t of [T, TM]) await deleteSubs(st.id, t).catch(() => {}); };
+    const restore = async () => {
+      for (const [st, cgs] of [[A, memA], [B, memB]]) for (const cg of cgs)
+        await db.from("class_group_members").upsert({ class_group_id: cg, student_id: st.id }, { onConflict: "class_group_id,student_id" });
+    };
+    const problems = [], notes = [];
+    await clean();
+    const b = await chromium.launch();
+    let admin;
+    try {
+      admin = await login(b, ADMIN_CLERK);
+      const AR = admin.context.request;
+      const removeFromClass = async (st, cg) => {
+        const r = await AR.post(`${BASE}/api/admin/class-groups/${cg}/members`, { data: { action: "remove", studentId: st.id } });
+        if (r.status() !== 200) throw new Error(`setup: admin remove-from-class → ${r.status()} ${(await r.text()).slice(0, 120)}`);
+        if ((await memOf(st)).includes(cg)) throw new Error("setup: membership still there after remove");
+      };
+      // The My Tests row for a test name → its action link text ("" = not listed).
+      const myTestsAction = async (page, name) => {
+        await page.goto(`${BASE}/student/tests`, { waitUntil: "networkidle" });
+        await page.locator("main").first().waitFor({ timeout: 20000 });
+        const row = page.locator("tr", { hasText: name }).first();
+        if (!(await row.count())) return { listed: false, actions: "" };
+        const actions = (await row.locator("a").allInnerTexts()).map((x) => x.trim()).filter((x) => x && x !== name && !x.includes(name));
+        return { listed: true, actions: actions.join(" | "), row };
+      };
+
+      // ── A: 078 mid-Module 1, tab closed, removed from class ──
+      let x = await borrowAs(b, 78);
+      let page = x.page;
+      await startTestBrowser(page, T);
+      const [m1] = await subs(A.id, T);
+      const qs1 = await moduleQs(m1.module_id);
+      await onQuestion(page, 1); await choice(page, "A").click();
+      await page.getByRole("button", { name: /^Next/ }).first().click();
+      await onQuestion(page, 2); await choice(page, "B").click();
+      const saved = await waitRow(m1.id, (r) => r.answers?.[qs1[0].id] === "A" && r.answers?.[qs1[1].id] === "B", 20000);
+      if (!(saved?.answers?.[qs1[1].id] === "B")) throw new Error("setup: Q1/Q2 didn't save before the removal");
+      await page.close();
+      // Admin side: the new "who is mid-test" warning must see this exam.
+      const chk = await AR.post(`${BASE}/api/admin/class-groups/${cgA[0]}/in-progress-check`, { data: { studentIds: [A.id] } });
+      const chkJ = await chk.json().catch(() => ({}));
+      const hit = (chkJ.tests ?? []).find((t) => t.id === T);
+      if (chk.status() !== 200 || !hit || !(hit.inProgressCount >= 1)) problems.push(`the admin's "students mid-test" warning didn't list this exam (${chk.status()} ${JSON.stringify(chkJ).slice(0, 120)}), so the admin isn't warned`);
+      else notes.push(`admin warning lists the exam (${hit.inProgressCount} mid-test)`);
+      await removeFromClass(A, cgA[0]);
+      page = await x.context.newPage();
+      const lA = await myTestsAction(page, tName);
+      const lM = await myTestsAction(page, mName);
+      notes.push(`078 removed: My Tests shows exam ${lA.listed ? `"${lA.actions}"` : "NOT listed"}; never-started math test ${lM.listed ? `listed "${lM.actions}"` : "not listed"}`);
+      if (!lA.listed) problems.push("after being removed from the class mid-exam, the student's exam disappeared from My Tests");
+      else if (!/Finish your attempt|Continue/i.test(lA.actions)) problems.push(`My Tests row for the unfinished exam offers "${lA.actions}" instead of a way to finish it`);
+      if (lM.listed && /Start/i.test(lM.actions)) problems.push("a test the student never started is still offered (Start) after removal from the class");
+      const newM = await x.context.request.post(`${BASE}/api/student/submissions`, { data: { testId: TM } });
+      if (newM.status() < 400) problems.push(`after removal the student could still start a test they hadn't begun (${newM.status()})`);
+      if (lA.listed) {
+        await myTestsAction(page, tName);
+        await page.locator("tr", { hasText: tName }).first().getByRole("link", { name: /Finish your attempt|Continue/i }).first().click();
+        await page.waitForURL(/\/student\/tests\/[^/]+(\/take)?$/, { timeout: 30000 }).catch(() => {});
+        if (!/\/take/.test(page.url())) {
+          const resume = page.getByRole("button", { name: /Resume Test/ });
+          await resume.click({ timeout: 20000 }).catch(() => problems.push(`the exam page didn't offer Resume (${page.url().replace(BASE, "")})`));
+          await page.waitForURL(/\/take/, { timeout: 45000, waitUntil: "commit" }).catch(() => {});
+        }
+      } else {
+        await page.goto(`${BASE}/student/tests/${T}/take`, { waitUntil: "networkidle" });
+      }
+      const opened = await waitTake(page).then(() => true, () => false);
+      if (!opened) throw new Error(`078 could not reopen the exam after removal (${page.url().replace(BASE, "")}) — ${problems.join("; ") || "no take page"}`);
+      await jumpTo(page, 1);
+      const picked = await isPicked(page, "A");
+      if (!picked) problems.push("after reopening, Q1 no longer shows the answer A saved before the removal");
+      await jumpTo(page, 3); await choice(page, "C").click();
+      const r3 = await waitRow(m1.id, (r) => r.answers?.[qs1[2].id] === "C", 20000);
+      if (r3?.answers?.[qs1[2].id] !== "C") problems.push("after removal, a new answer (Q3=C) didn't save");
+      await goToSubmitModal(page, await totalOf(page));
+      await page.getByRole("button", { name: /Submit Test/ }).last().click();
+      const toM2 = await page.getByText("Module 1 submitted").first().waitFor({ timeout: 45000 }).then(() => true, () => false);
+      const f1 = await waitRow(m1.id, (r) => r.status !== "In Progress", 20000);
+      if (f1?.status !== "Submitted") problems.push(`Module 1 ended ${f1?.status} after removal`);
+      const kept = ["A", "B", "C"].filter((l, i) => f1?.answers?.[qs1[i].id] === l).length;
+      if (kept !== 3) problems.push(`only ${kept}/3 Module 1 answers kept (Q1=A, Q2=B before removal, Q3=C after)`);
+      if (!toM2) problems.push(`submitting Module 1 after removal didn't reach the Module 2 screen (${page.url().replace(BASE, "")})`);
+      else {
+        await page.getByRole("link", { name: /Start Module 2/ }).click({ timeout: 30000 });
+        const m2open = await waitTake(page).then(() => true, () => false);
+        if (!m2open) problems.push(`Start Module 2 after removal didn't open Module 2 (${page.url().replace(BASE, "")})`);
+        else {
+          await onQuestion(page, 1); await choice(page, "D").click();
+          await goToSubmitModal(page, await totalOf(page));
+          await page.getByRole("button", { name: /Submit Test/ }).last().click();
+          const res = await page.waitForURL(/\/result/, { timeout: 45000 }).then(() => true, () => false);
+          if (!res) problems.push("Module 2 submit after removal did not open the result page");
+          else {
+            const body = await page.locator("body").innerText().catch(() => "");
+            if (/404|not found|could not be found/i.test(body.slice(0, 400))) problems.push("the result page after finishing shows Not Found");
+          }
+        }
+      }
+      const rowsA = await subs(A.id, T);
+      const m2A = rowsA.filter((r) => String(r.adaptive_track).startsWith("module_2"));
+      if (m2A.length !== 1 || m2A[0].status !== "Submitted" || !Object.values(m2A[0].answers ?? {}).includes("D"))
+        problems.push(`Module 2 after removal: ${m2A.map((r) => `${r.status}/${Object.keys(r.answers ?? {}).length} answers`).join(", ") || "none"} (expected one Submitted with D)`);
+      notes.push(`078 resumed (Q1=A shown: ${picked}), M1 ${f1?.status} ${kept}/3 kept, M2 ${m2A.map((r) => r.status).join(",") || "none"}`);
+      // Finished: no new attempt, no Start on My Tests.
+      const again = await x.context.request.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+      const againJ = await again.json().catch(() => ({}));
+      if (again.status() < 400 && againJ.data?.id && !rowsA.some((r) => r.id === againJ.data.id)) problems.push(`after finishing, the removed student could start a new attempt (${again.status()})`);
+      const lA2 = await myTestsAction(page, tName);
+      if (lA2.listed && /Start|Finish your attempt/i.test(lA2.actions)) problems.push(`after finishing, My Tests still offers "${lA2.actions}"`);
+      notes.push(`after finishing: new attempt → ${again.status()}, My Tests ${lA2.listed ? `"${lA2.actions}"` : "not listed"}`);
+      await x.context.close();
+      await borrowLogin(orig, STUDENT1_CLERK);
+
+      // ── B: 073 Module 1 graded, Module 2 never created, then removed ──
+      x = await borrowAs(b, 73);
+      page = x.page;
+      const R = x.context.request;
+      const st = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+      const bM1 = (await st.json().catch(() => ({}))).data?.id;
+      if (!bM1) throw new Error(`setup: 073 start ${st.status()}`);
+      const bQs = await moduleQs((await db.from("submissions").select("module_id").eq("id", bM1).single()).data.module_id);
+      await R.patch(`${BASE}/api/student/submissions/${bM1}`, { data: { answers: { [bQs[0].id]: "B" }, metadata: {} } });
+      const sb = await R.post(`${BASE}/api/student/submissions/${bM1}/submit`, { data: { answers: { [bQs[0].id]: "B" }, metadata: {} } });
+      if (sb.status() >= 400) throw new Error(`setup: 073 M1 submit ${sb.status()}`);
+      await sleep(1500);
+      const pre = (await subs(B.id, T)).filter((r) => r.id !== bM1);
+      for (const r of pre) { await db.from("answer_records").delete().eq("submission_id", r.id); await db.from("submissions").delete().eq("id", r.id); }
+      if ((await subs(B.id, T)).length !== 1) throw new Error("setup: couldn't simulate the failed Module 2 handoff");
+      await removeFromClass(B, cgB[0]);
+      const lB = await myTestsAction(page, tName);
+      notes.push(`073 (M1 graded, no M2) removed: My Tests ${lB.listed ? `"${lB.actions}"` : "NOT listed"}`);
+      if (!lB.listed) problems.push("a removed student whose Module 2 handoff failed can't find the exam on My Tests");
+      const tp = await page.goto(`${BASE}/student/tests/${T}`, { waitUntil: "networkidle" });
+      const cont = page.getByRole("button", { name: /Continue to Module 2/ }).first();
+      const hasCont = await cont.waitFor({ timeout: 20000 }).then(() => true, () => false);
+      if (!hasCont) problems.push(`the exam page (HTTP ${tp?.status()}) doesn't offer "Continue to Module 2" to the removed student`);
+      else {
+        await cont.click();
+        await page.getByText("Module 1 submitted").first().waitFor({ timeout: 30000 }).catch(() => {});
+        await page.getByRole("link", { name: /Start Module 2/ }).click({ timeout: 30000 }).catch(() => {});
+        const ok = await waitTake(page).then(() => true, () => false);
+        if (!ok) problems.push(`"Continue to Module 2" didn't open Module 2 for the removed student (${page.url().replace(BASE, "")})`);
+        else {
+          await onQuestion(page, 1); await choice(page, "C").click();
+          await goToSubmitModal(page, await totalOf(page));
+          await page.getByRole("button", { name: /Submit Test/ }).last().click();
+          await page.waitForURL(/\/result/, { timeout: 45000 }).catch(() => problems.push("073's Module 2 submit did not open the result page"));
+        }
+      }
+      const rowsB = await subs(B.id, T);
+      const m2B = rowsB.filter((r) => String(r.adaptive_track).startsWith("module_2"));
+      if (m2B.length !== 1 || m2B[0].status !== "Submitted" || !Object.values(m2B[0].answers ?? {}).includes("C"))
+        problems.push(`073's Module 2: ${m2B.map((r) => `${r.status}/${Object.keys(r.answers ?? {}).length} answers`).join(", ") || "none"} (expected one Submitted with C)`);
+      notes.push(`073 M2 ${m2B.map((r) => r.status).join(",") || "none"}`);
+      await x.context.close();
+    } finally {
+      await restore().catch(() => {});
+      await admin?.context.close().catch(() => {});
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      await clean();
+    }
+    const back = [(await memOf(A)).length === memA.length, (await memOf(B)).length === memB.length];
+    if (back.includes(false)) problems.push("CLEANUP: class membership was not restored");
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 4 * 60 * 1000);
+
+  // ── D-20261108-2 ─────────────────────────────────────────
+  // Today's 6fcf7e0 added printable student results (/print/results/<test>,
+  // a PDF route, a CSV summary) plus a sign-in bypass for a signed "pt"
+  // ticket. The printout must follow the same rules as the result page:
+  // a student prints only their own finished attempt, never another
+  // student's; nothing while the exam (or a retake) is running, nor the
+  // Module 2 they're taking; nothing once the admin set "Hide"; a teacher
+  // only their own classes; a missing / forged / foreign ticket opens nothing.
+  await check("D-20261108-2", [], "新的「列印成績」功能：學生只能印自己考完的成績，印不到別的同學的；考試中、重考中、管理員設定隱藏答案時都印不出答案；老師只能印自己班的學生；沒登入或偽造的列印票一律打不開", "安全", async () => {
+    const T = TESTS.mathLinear;
+    const main = studentByN(77), other = studentByN(79), live = studentByN(76);
+    if (!main || !other || !live) throw new Error("students 076/077/079 not found");
+    const orig = C.students[0].id;
+    const studs = [main, other, live];
+    const t0 = (await db.from("tests").select("module_id,module_2_id,review_unlocked,show_answers_after_submission,show_explanations_after_submission,allow_retake").eq("id", T).single()).data;
+    if (!t0.show_answers_after_submission || t0.show_explanations_after_submission === false || !t0.allow_retake)
+      throw new Error(`setup: mathLinear flags changed (${JSON.stringify(t0)})`);
+    const teacher = cast().teachers[0];
+    const tClasses = ((await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", teacher.id)).data ?? []).map((r) => r.class_group_id);
+    const inTeacherClass = async (st) => ((await db.from("class_group_members").select("class_group_id").eq("student_id", st.id).in("class_group_id", tClasses)).data ?? []).length > 0;
+    if (!teacher.clerkId || (await inTeacherClass(main)) || (await inTeacherClass(other))) throw new Error("setup: Teacher 01 has no login or teaches 077/079's class");
+    const clean = async () => {
+      for (const st of studs) {
+        await deleteSubs(st.id, T).catch(() => {});
+        await db.from("student_answer_visibility").delete().eq("test_id", T).eq("student_id", st.id);
+        await db.from("student_answer_visibility_log").delete().eq("test_id", T).eq("student_id", st.id);
+      }
+    };
+    const { data: qrows } = await db.from("questions").select("module_id,explanation,question_text").in("module_id", [t0.module_id, t0.module_2_id]).eq("parsing_status", "Approved");
+    const run = (x) => String(x ?? "").match(/[A-Za-z][A-Za-z0-9 ,]{24,}/)?.[0]?.slice(0, 24);
+    const uniq = (a) => [...new Set(a.filter(Boolean))];
+    const expl = uniq((qrows ?? []).map((q) => run(q.explanation)));
+    const stems1 = uniq((qrows ?? []).filter((q) => q.module_id === t0.module_id).map((q) => run(q.question_text)));
+    const stems2 = uniq((qrows ?? []).filter((q) => q.module_id === t0.module_2_id).map((q) => run(q.question_text)));
+    if (expl.length < 5 || stems1.length < 5 || stems2.length < 5) throw new Error(`only ${expl.length}/${stems1.length}/${stems2.length} snippets usable`);
+    const seen = (html, list) => list.filter((x) => html.includes(x)).length;
+    const scan = (html) => ({ s1: seen(html, stems1), s2: seen(html, stems2), e: seen(html, expl) });
+    const leaks = (v) => v.s1 + v.s2 + v.e > 0;
+    const fmt = (v, st) => `${st ? `HTTP ${st}, ` : ""}${v.s1} M1 + ${v.s2} M2 questions, ${v.e} explanations`;
+    const PR = (q = "") => `${BASE}/print/results/${T}?expl=1${q}`;
+    const problems = [], notes = [];
+    await clean();
+    const b = await chromium.launch();
+    let admin, tch;
+    try {
+      admin = await login(b, ADMIN_CLERK);
+      const setMode = async (st, mode) => {
+        const r = await admin.context.request.post(`${BASE}/api/teacher/tests/${T}/student-answer-visibility`, { data: { studentId: st.id, mode, showExplanations: true } });
+        if (r.status() !== 200) throw new Error(`setup: admin set ${mode} → ${r.status()}`);
+      };
+      const get = async (R, url) => { const r = await R.get(url, { maxRedirects: 0 }).catch(() => null); const html = r ? await r.text().catch(() => "") : ""; return { st: r?.status() ?? 0, v: scan(html), html }; };
+
+      // 079 and 077 each finish an attempt.
+      let x = await borrowAs(b, 79);
+      const aO = await apiTakeTest(x.context.request, other.id, T);
+      await x.context.close();
+      x = await borrowAs(b, 77);
+      let R = x.context.request;
+      const a1 = await apiTakeTest(R, main.id, T);
+      if (!a1.m2Id) throw new Error("setup: no Module 2");
+      // Control: 077 prints their own result → the scan must see it.
+      const own = await get(R, PR());
+      if (!(own.st === 200 && own.v.s1 > 0 && own.v.s2 > 0 && own.v.e > 0)) throw new Error(`setup: 077 can't print their own result (${fmt(own.v, own.st)}) — scan not valid`);
+      notes.push(`own printout: ${fmt(own.v, own.st)}`);
+      // Another student's attempt (alone, or mixed with own).
+      for (const [label, q] of [["other's id", `&subs=${aO.m1Id}`], ["other's M2 id", `&subs=${aO.m2Id}`], ["own+other ids", `&subs=${a1.m1Id},${aO.m1Id}`]]) {
+        const g = await get(R, PR(q));
+        const otherName = (await db.from("users").select("display_name").eq("id", other.id).single()).data?.display_name;
+        const named = otherName && otherName.length > 3 && g.html.includes(otherName);
+        if (g.st === 200 && (leaks(g.v) || named)) problems.push(`student printing with ${label} got another student's result (${fmt(g.v, g.st)}${named ? ", their name" : ""})`);
+        notes.push(`${label}: ${g.st}`);
+      }
+      const pdf = await R.get(`${BASE}/api/print/results/${T}/pdf?sub=${aO.m1Id}`);
+      if (pdf.status() < 400 || /pdf/i.test(pdf.headers()["content-type"] ?? "")) problems.push(`the PDF download of another student's result answered ${pdf.status()} ${pdf.headers()["content-type"]}`);
+      for (const api of ["students", "summary"]) {
+        const r = await R.get(`${BASE}/api/print/results/${T}/${api}`);
+        const t = await r.text();
+        if (r.status() < 400 || t.includes(other.id)) problems.push(`student calling the ${api} list got ${r.status()}${t.includes(other.id) ? " with another student in it" : ""}`);
+      }
+      // Admin set Hide → nothing printable.
+      await setMode(main, "hide");
+      const hid = await get(R, PR());
+      if (leaks(hid.v)) problems.push(`admin set Hide, the printout still shows ${fmt(hid.v, hid.st)}`);
+      notes.push(`hide: ${fmt(hid.v, hid.st)}`);
+      await setMode(main, "follow");
+      // Retake running → the first attempt's printout shows no answers.
+      const st2 = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+      const rt = (await st2.json().catch(() => ({}))).data?.id;
+      const rtRow = rt && (await db.from("submissions").select("attempt_number").eq("id", rt).single()).data;
+      if (!rtRow || rtRow.attempt_number !== 2) throw new Error(`setup: retake start ${st2.status()}`);
+      for (const [label, q] of [["retake running", ""], ["retake running, old id", `&subs=${a1.m1Id}`], ["retake running, new id", `&subs=${rt}`]]) {
+        const g = await get(R, PR(q));
+        if (leaks(g.v)) problems.push(`${label}: the printout shows the answer key of the exam being retaken (${fmt(g.v, g.st)})`);
+        notes.push(`${label}: ${fmt(g.v, g.st)}`);
+      }
+      await x.context.close();
+
+      // 076 taking the exam for the first time: Module 1, then Module 2.
+      x = await borrowAs(b, 76);
+      R = x.context.request;
+      const st3 = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+      const lm1 = (await st3.json().catch(() => ({}))).data?.id;
+      if (!lm1) throw new Error(`setup: 076 start ${st3.status()}`);
+      for (const q of ["", `&subs=${lm1}`]) {
+        const g = await get(R, PR(q));
+        if (leaks(g.v)) problems.push(`a student in the middle of Module 1 prints ${fmt(g.v, g.st)}${q ? " (own in-progress id)" : ""}`);
+      }
+      const sb = await R.post(`${BASE}/api/student/submissions/${lm1}/submit`, { data: { answers: {}, metadata: {} } });
+      const lm2 = (await sb.json().catch(() => ({}))).data?.nextSubmissionId;
+      if (!lm2) throw new Error(`setup: 076 M1 submit ${sb.status()} gave no Module 2`);
+      for (const q of ["", `&subs=${lm2}`]) {
+        const g = await get(R, PR(q));
+        if (g.v.s2 > 0) problems.push(`a student in the middle of Module 2 prints Module 2's questions with answers (${fmt(g.v, g.st)})`);
+        notes.push(`mid-Module 2${q ? " (M2 id)" : ""}: ${fmt(g.v, g.st)}`);
+      }
+      await x.context.close();
+
+      // Teacher 01 (Class A only) → 077/079 are not theirs.
+      tch = await login(b, teacher.clerkId);
+      const TR = tch.context.request;
+      const tg = await get(TR, PR(`&subs=${a1.m1Id}`));
+      if (tg.st === 200 && leaks(tg.v)) problems.push(`a teacher printed a student outside their classes (${fmt(tg.v, tg.st)})`);
+      const tl = await TR.get(`${BASE}/api/print/results/${T}/students`);
+      const tlT = await tl.text();
+      if (tlT.includes(main.id) || tlT.includes(other.id)) problems.push("the teacher's printable-students list includes students outside their classes");
+      const ts = await TR.get(`${BASE}/api/print/results/${T}/summary?subs=${a1.m1Id},${aO.m1Id}`);
+      const tsT = await ts.text();
+      if (ts.status() < 400 && /\d+\/\d+/.test(tsT)) problems.push(`the teacher's score CSV for students outside their classes answered ${ts.status()} with scores`);
+      const tAll = await get(TR, PR());
+      if (seen(tAll.html, [main.id, other.id]) || tAll.html.includes(a1.m1Id) || tAll.html.includes(aO.m1Id)) problems.push("the teacher's 'print all' includes students outside their classes");
+      notes.push(`teacher: subs ${tg.st}, list ${tl.status()}, csv ${ts.status()}`);
+
+      // Signed out: no ticket, junk, forged, other test's id.
+      const adminId = cast().admins[0].id;
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+      const forgedBody = b64({ viewer: { userId: adminId, role: "admin", isQa: true }, testId: T, subs: [aO.m1Id], opts: { mode: "full", explanations: true, explanationsAt: "inline" }, exp: Date.now() + 3600e3 });
+      const tickets = { none: null, junk: "x", dot: ".", "body-only": `${forgedBody}.`, forged: `${forgedBody}.${"A".repeat(43)}`, "forged-long": `${forgedBody}.${"A".repeat(86)}` };
+      const outRes = [];
+      for (const [label, pt] of Object.entries(tickets)) {
+        const url = pt == null ? PR(`&subs=${aO.m1Id}`) : `${BASE}/print/results/${T}?pt=${encodeURIComponent(pt)}`;
+        const r = await fetch(url, { redirect: "manual" });
+        const html = await r.text().catch(() => "");
+        const v = scan(html);
+        outRes.push(`${label} ${r.status}`);
+        if (leaks(v) || (r.status === 200 && html.includes(aO.m1Id))) problems.push(`signed out with ${label} ticket: ${fmt(v, r.status)}`);
+      }
+      const pdfOut = await fetch(`${BASE}/api/print/results/${T}/pdf?sub=${aO.m1Id}`, { redirect: "manual" });
+      if (pdfOut.status !== 401) problems.push(`signed-out PDF download answered ${pdfOut.status}`);
+      notes.push(`signed out: ${outRes.join(", ")}, pdf ${pdfOut.status}`);
+    } finally {
+      await tch?.context.close().catch(() => {});
+      await admin?.context.close().catch(() => {});
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      await clean();
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
+
+  // ── D-20261109-1 ─────────────────────────────────────────
+  // Browser storage refuses every write: Safari private browsing on older
+  // iPads, a device whose site storage is full, or a school-managed browser.
+  // The take page keeps its device backup in localStorage (and Desmos and
+  // other widgets may use it). Every setItem throws QuotaExceededError,
+  // installed after sign-in. The exam must still open, save answers and
+  // marks to the server (also after an offline moment), show them again
+  // after a reload, use Desmos, and go Module 1 → Module 2 → result page.
+  // Students 074, mathLinear.
+  await check("D-20261109-1", [], "瀏覽器不能存任何資料（Safari 私密瀏覽、儲存空間滿了）時考數學：考卷打得開、答案和標記存得進去、斷網再連上也會補存、重新整理後還在、能用 Desmos、能交卷進第二模組再到成績頁", "裝置/瀏覽器", () =>
+    asStudent(74, TESTS.mathLinear, async ({ s, page, context }) => {
+      const T = TESTS.mathLinear;
+      const notes = [], problems = [], pageErrors = [];
+      page.on("pageerror", (e) => pageErrors.push(String(e?.message ?? e).slice(0, 160)));
+      await context.addInitScript(() => {
+        window.__qaStorageRefusals = 0;
+        Storage.prototype.setItem = function () {
+          window.__qaStorageRefusals++;
+          throw new DOMException("The quota has been exceeded.", "QuotaExceededError");
+        };
+      });
+      await startTestBrowser(page, T);
+      // Control: storage really refuses writes on this page.
+      const probe = await page.evaluate(() => { try { localStorage.setItem("qa-probe", "1"); return "stored"; } catch (e) { return e.name; } });
+      if (probe !== "QuotaExceededError") throw new Error(`setup: storage still writable (${probe})`);
+      const m1 = (await subs(s.id, T)).find((r) => r.adaptive_track === "module_1");
+      if (!m1) throw new Error("setup: no Module 1 row");
+      const qs = await moduleQs(m1.module_id);
+      const mc = qs.map((q, i) => ({ q, n: i + 1 })).filter((x) => x.q.question_type === "Multiple Choice").slice(0, 3);
+      if (mc.length < 3) throw new Error("setup: fewer than 3 multiple-choice questions");
+      const [a, bq, c] = mc;
+      const picked = async (l) => (await choice(page, l).getAttribute("aria-checked").catch(() => null)) === "true";
+      const flagBtn = () => page.getByRole("button", { name: /Mark(ed)? for Review/ }).first();
+
+      await jumpTo(page, a.n); await choice(page, "A").click();
+      await jumpTo(page, bq.n); await choice(page, "B").click();
+      await flagBtn().click();
+      let row = await waitRow(m1.id, (r) => r.answers?.[a.q.id] === "A" && r.answers?.[bq.q.id] === "B" && (r.metadata?.flagged ?? []).includes(bq.q.id), 25000);
+      if (row?.answers?.[a.q.id] !== "A" || row?.answers?.[bq.q.id] !== "B") problems.push(`answers didn't reach the server: ${JSON.stringify(row?.answers ?? {})}`);
+      if (!(row?.metadata?.flagged ?? []).includes(bq.q.id)) problems.push(`Q${bq.n} mark for review didn't reach the server`);
+
+      // Offline moment: pick while offline, come back online.
+      await context.setOffline(true);
+      await jumpTo(page, c.n); await choice(page, "C").click();
+      await sleep(2500);
+      await context.setOffline(false);
+      row = await waitRow(m1.id, (r) => r.answers?.[c.q.id] === "C", 40000);
+      if (row?.answers?.[c.q.id] !== "C") problems.push(`Q${c.n}=C picked while offline never reached the server after reconnecting (40 s)`);
+      const refusals = await page.evaluate(() => window.__qaStorageRefusals);
+      notes.push(`storage writes refused: ${refusals}`);
+
+      // Desmos with no storage.
+      await page.locator('button[title="Desmos calculator"]').click();
+      const desmosOk = await page.locator('iframe[title="Desmos calculator"]').waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+      if (!desmosOk) problems.push("Desmos calculator didn't open");
+      else {
+        await sleep(5000);
+        const frame = page.frames().find((f) => f.url().includes("desmos"));
+        const n = await frame?.evaluate(() => { window.Calc?.setExpression({ id: "qa", latex: "y=x^2" }); return window.Calc?.getExpressions?.().length ?? 0; }).catch(() => 0);
+        if (!n) problems.push("Desmos opened but couldn't draw a graph");
+        await page.locator('button[title="Desmos calculator"]').click().catch(() => {});
+      }
+
+      // Reload: answers and mark come back from the server.
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await waitTake(page);
+      await jumpTo(page, a.n); if (!(await picked("A"))) problems.push(`after reload Q${a.n} no longer shows A`);
+      await jumpTo(page, bq.n); if (!(await picked("B"))) problems.push(`after reload Q${bq.n} no longer shows B`);
+      if ((await flagBtn().getAttribute("aria-pressed").catch(() => null)) !== "true") problems.push(`after reload Q${bq.n} is no longer marked for review`);
+      await jumpTo(page, c.n); if (!(await picked("C"))) problems.push(`after reload Q${c.n} no longer shows C`);
+
+      // Module 1 → Module 2 → result.
+      await goToSubmitModal(page, await totalOf(page));
+      await page.getByRole("button", { name: /Submit Test/ }).last().click();
+      const m2Open = await page.getByText("Module 1 submitted").first().waitFor({ timeout: 45000 }).then(() => true).catch(() => false);
+      if (!m2Open) fail(`${problems.concat("Module 1 submit did not reach the Module 2 screen within 45 s").join("; ")}. page errors: ${pageErrors.join(" | ") || "none"}`);
+      await page.locator('a:has-text("Start Module 2")').click();
+      await waitTake(page);
+      await onQuestion(page, 1);
+      const m2Mc = await choice(page, "D").isVisible().catch(() => false);
+      if (m2Mc) await choice(page, "D").click();
+      await goToSubmitModal(page, await totalOf(page));
+      await page.getByRole("button", { name: /Submit Test/ }).last().click();
+      const res = await page.waitForURL(/\/result/, { timeout: 45000 }).then(() => true).catch(() => false);
+      if (!res) problems.push("Module 2 submit did not open the result page within 45 s");
+      else {
+        const body = await page.locator("body").innerText().catch(() => "");
+        if (/something went wrong|application error/i.test(body)) problems.push("result page shows an error");
+      }
+
+      const rows = await subs(s.id, T);
+      const r1 = rows.find((r) => r.adaptive_track === "module_1"), r2 = rows.find((r) => r.adaptive_track !== "module_1");
+      if (!r1 || r1.status !== "Submitted") problems.push(`Module 1 status ${r1?.status}`);
+      else {
+        const got = [a.q.id, bq.q.id, c.q.id].map((id) => r1.answers?.[id] ?? "-").join("");
+        if (got !== "ABC") problems.push(`graded Module 1 answers ${got}, expected ABC`);
+      }
+      if (!r2 || r2.status !== "Submitted") problems.push(`Module 2 status ${r2?.status}`);
+      else if (m2Mc) {
+        const q1 = (await moduleQs(r2.module_id))[0];
+        if (r2.answers?.[q1.id] !== "D") problems.push(`Module 2 Q1=D not graded (${r2.answers?.[q1.id]})`);
+      }
+      const storageErrs = pageErrors.filter((e) => /quota|storage|setItem/i.test(e));
+      if (storageErrs.length) problems.push(`uncaught storage errors on the page: ${storageErrs.join(" | ")}`);
+      if (refusals < 1) problems.push("setup: the page never tried to write storage, so the situation wasn't exercised");
+      notes.push(`Q${a.n}/Q${bq.n}/Q${c.n} = A/B/C; M1 ${r1?.status} ${r1?.correct_count}/${r1?.total_questions}; M2 ${r2?.status}`);
+      if (pageErrors.length) notes.push(`other page errors: ${pageErrors.slice(0, 3).join(" | ")}`);
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
+
+  // ── D-20261109-2 ─────────────────────────────────────────
+  // Figures and tables as the student really sees them. BANK-IMG opens each
+  // image straight from Vercel Blob with the server token; students get them
+  // through /api/blob-image (host allow-list, two-store token fallback, see
+  // c4f8f69 / 3c5d5c9) and fc2b591 moved figures next to the passage.
+  // (a) Every image of every Approved question in a module used by any test
+  //     (stem figures and image choices) must load and decode through the
+  //     student's proxy, signed in as a student.
+  // (b) On the take page of mathLinear M1 and engLinear M1, on a laptop
+  //     (1366×768) and an iPad held upright (810×1080), every figure
+  //     question shows its picture (loaded, ≥ 60 px wide, not cut off at the
+  //     right edge) and every table question shows a real table with the
+  //     header cells from the question, no raw "|---|" and no raw "$\frac".
+  // Student 077. Read-only apart from its own QA submissions.
+  await check("D-20261109-2", [], "考試畫面上的圖和表：題庫裡每一張學生會用到的題目圖片都要透過學生的帳號載得出來；在筆電和直拿的 iPad 上，有圖的題目要看得到完整的圖、有表格的題目要顯示成真正的表格（不能出現 |---| 或 $\\frac 這種原始符號）", "題目內容", () =>
+    asStudent(77, [TESTS.mathLinear, TESTS.engLinear], async ({ s, page }) => {
+      const notes = [], problems = [];
+      async function allRows(table, sel, f) {
+        let out = [];
+        for (let i = 0; ; i += 1000) {
+          let q = db.from(table).select(sel).range(i, i + 999);
+          if (f) q = f(q);
+          const { data, error } = await q;
+          if (error) throw new Error(error.message);
+          out = out.concat(data);
+          if (data.length < 1000) break;
+        }
+        return out;
+      }
+      // (a) bank-wide through the student proxy.
+      const tests = await allRows("tests", "module_id,module_2_id,module_1_id,module_2_easy_id,module_2_hard_id");
+      const mods = new Set(tests.flatMap((t) => [t.module_id, t.module_2_id, t.module_1_id, t.module_2_easy_id, t.module_2_hard_id]).filter(Boolean));
+      const modNames = new Map((await allRows("modules", "id,module_name")).map((m) => [m.id, m.module_name]));
+      const qs = (await allRows("questions", "id,module_id,original_question_number,image_urls,choices", (q) => q.eq("parsing_status", "Approved")))
+        .filter((q) => mods.has(q.module_id));
+      const jobs = [];
+      for (const q of qs) {
+        const where = `${modNames.get(q.module_id) ?? q.module_id} Q${q.original_question_number}`;
+        for (const u of q.image_urls ?? []) if (u) jobs.push({ where, u });
+        for (const c of q.choices ?? []) if (c?.image_url) jobs.push({ where: `${where} choice ${c.label}`, u: c.image_url });
+      }
+      if (jobs.length < 20) throw new Error(`setup: only ${jobs.length} images found`);
+      await page.goto(`${BASE}/student`, { waitUntil: "domcontentloaded" });
+      const bad = await page.evaluate(async (jobs) => {
+        const out = [];
+        const load = (j) => new Promise((res) => {
+          const img = new Image();
+          const t = setTimeout(() => res(`${j.where}: timed out`), 30000);
+          img.onload = () => { clearTimeout(t); res(img.naturalWidth > 0 && img.naturalHeight > 0 ? null : `${j.where}: decoded to 0×0`); };
+          img.onerror = async () => {
+            clearTimeout(t);
+            const r = await fetch(`/api/blob-image?u=${encodeURIComponent(j.u)}`).catch(() => null);
+            res(`${j.where}: doesn't load (HTTP ${r?.status ?? "?"} ${(r?.headers.get("content-type") ?? "").slice(0, 30)})`);
+          };
+          img.src = `/api/blob-image?u=${encodeURIComponent(j.u)}`;
+        });
+        for (let i = 0; i < jobs.length; i += 6) out.push(...(await Promise.all(jobs.slice(i, i + 6).map(load))));
+        return out.filter(Boolean);
+      }, jobs);
+      if (bad.length) problems.push(`${bad.length} of ${jobs.length} question images don't load for a student: ${bad.slice(0, 6).join("; ")}`);
+      notes.push(`proxy: ${jobs.length - bad.length}/${jobs.length} images load`);
+
+      // (b) take pages.
+      const VIEWS = [{ tag: "laptop", w: 1366, h: 768 }, { tag: "iPad", w: 810, h: 1080 }];
+      let figures = 0, tables = 0;
+      for (const key of ["mathLinear", "engLinear"]) {
+        const T = TESTS[key];
+        await page.setViewportSize({ width: 1366, height: 768 });
+        await startTestBrowser(page, T);
+        const m1 = (await subs(s.id, T)).find((r) => r.adaptive_track === "module_1");
+        const { data: mq } = await db.from("questions").select("id,original_question_number,question_text,has_image,has_table,image_urls,choices")
+          .eq("module_id", m1.module_id).eq("parsing_status", "Approved").order("original_question_number");
+        const targets = mq.map((q, i) => ({ q, n: i + 1 })).filter(({ q }) => q.image_urls?.length || q.choices?.some((c) => c?.image_url) || /\n\s*\|.*\|/.test(q.question_text ?? ""));
+        if (!targets.length) throw new Error(`setup: ${key} M1 has no figure/table questions`);
+        for (const v of VIEWS) {
+          await page.setViewportSize({ width: v.w, height: v.h });
+          for (const { q, n } of targets) {
+            await jumpTo(page, n);
+            await sleep(400);
+            const where = `${key} Q${n} (${v.tag})`;
+            const nImgs = (q.image_urls?.length ?? 0) + (q.choices ?? []).filter((c) => c?.image_url).length;
+            if (nImgs) {
+              figures++;
+              const imgs = page.locator('img[src*="/api/blob-image"]');
+              await page.waitForFunction(() => [...document.querySelectorAll('img[src*="/api/blob-image"]')].every((i) => i.complete), null, { timeout: 30000 }).catch(() => {});
+              const info = await imgs.evaluateAll((els) => els.map((i) => {
+                const r = i.getBoundingClientRect();
+                return { ok: i.complete && i.naturalWidth > 0, w: Math.round(r.width), right: Math.round(r.right), vis: getComputedStyle(i).visibility !== "hidden" && r.height > 0 };
+              }));
+              if (info.length < nImgs) problems.push(`${where}: ${info.length} of ${nImgs} pictures on the page`);
+              info.forEach((i, k) => {
+                if (!i.ok) problems.push(`${where}: picture ${k + 1} didn't load`);
+                else if (!i.vis || i.w < 60) problems.push(`${where}: picture ${k + 1} only ${i.w} px wide`);
+                else if (i.right > v.w + 1) problems.push(`${where}: picture ${k + 1} cut off at the right (${i.right} px > ${v.w})`);
+              });
+            }
+            const md = (q.question_text ?? "").split("\n").filter((l) => /^\s*\|.*\|\s*$/.test(l));
+            if (md.length >= 2) {
+              tables++;
+              const header = md[0].split("|").map((x) => x.trim()).filter(Boolean).filter((x) => !/[$\\]/.test(x)).slice(0, 3);
+              const t = await page.evaluate(() => {
+                const ts = [...document.querySelectorAll("main table, table")].filter((x) => !x.querySelector("caption"));
+                const body = document.body.innerText;
+                return {
+                  tables: ts.map((x) => {
+                    const r = x.getBoundingClientRect();
+                    let p = x.parentElement, scrolls = false;
+                    while (p && p !== document.body) { const o = getComputedStyle(p).overflowX; if ((o === "auto" || o === "scroll") && p.getBoundingClientRect().right <= innerWidth + 1) { scrolls = true; break; } p = p.parentElement; }
+                    return { text: x.innerText, rows: x.querySelectorAll("tr").length, right: Math.round(r.right), scrolls };
+                  }),
+                  raw: /\|\s*-{3,}\s*\|/.test(body), rawTex: /\$\\frac|\\frac\{/.test(body),
+                };
+              });
+              const hit = t.tables.find((x) => header.every((h) => x.text.includes(h)));
+              if (!hit) problems.push(`${where}: no table with the header ${JSON.stringify(header)} on the page`);
+              else {
+                if (hit.rows < md.length - 1) problems.push(`${where}: table has ${hit.rows} rows, question has ${md.length - 1}`);
+                if (hit.right > v.w + 1 && !hit.scrolls) problems.push(`${where}: table cut off at the right (${hit.right} px > ${v.w}) and can't be scrolled`);
+              }
+              if (t.raw) problems.push(`${where}: raw "|---|" table text shown`);
+              if (t.rawTex) problems.push(`${where}: raw "\\frac" shown`);
+            }
+          }
+        }
+      }
+      notes.push(`take pages: ${figures} figure and ${tables} table views checked on laptop + iPad`);
+      if (problems.length) fail(`${problems.slice(0, 12).join("; ")}${problems.length > 12 ? ` (+${problems.length - 12} more)` : ""}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
+
+  // ── D-20261109-3 ─────────────────────────────────────────
+  // Teacher "Teaching mode" quick test. Teaching mode suggests questions for
+  // one skill from the whole bank (skill-questions), so a teacher naturally
+  // picks questions that come from several different tests. The teacher
+  // builds the quick test through the real API, the admin publishes it and
+  // assigns student 080, and the student opens it. Every picked question must
+  // be on the exam ("Question 1 of 4"), and answering all 4 correctly must
+  // grade 4/4. Teacher 01 (Math), skill picked at run time; the quick test is
+  // deleted in finally.
+  await check("D-20261109-3", [], "老師在「教學模式」用同一個技能挑了 4 題（來自不同的考卷）做成小考、指派給學生：學生打開小考要看到全部 4 題，4 題都答對要算 4/4", "老師/管理員動作", async () => {
+    const s = studentByN(80);
+    if (!s) throw new Error("student 080 not found");
+    const T1 = C.teachers[0];
+    const orig = C.students[0].id;
+    const NAME = `TEST qa-teacher QT D-20261109-3 ${Date.now()}`;
+    const notes = [], problems = [];
+    let qtId = null;
+    const b = await chromium.launch();
+    try {
+      const pub = (await db.from("tests").select("module_id,module_2_id").eq("status", "Published")).data ?? [];
+      const liveMods = new Set(pub.flatMap((t) => [t.module_id, t.module_2_id]).filter(Boolean));
+      const tch = await login(b, T1.clerkId);
+      let pick = null, skillUsed = null;
+      for (const skill of ["Linear equations in one variable", "Linear equations in two variables", "Equivalent expressions", "Quadratic equations"]) {
+        const r = await tch.context.request.get(`${BASE}/api/teacher/teaching-mode/skill-questions?skill=${encodeURIComponent(skill)}&limit=30`);
+        const list = (await r.json().catch(() => ({}))).questions ?? [];
+        if (!list.length) continue;
+        const { data: rows } = await db.from("questions").select("id,module_id,question_type,correct_answer,parsing_status,has_image,has_table,choices")
+          .in("id", list.map((q) => q.questionId));
+        const ok = (rows ?? []).filter((q) => q.parsing_status === "Approved" && q.question_type === "Multiple Choice" && !q.has_image && !q.has_table
+          && liveMods.has(q.module_id) && /^[A-D]$/.test(String(q.correct_answer ?? "").trim()));
+        const byMod = new Map();
+        for (const q of ok) byMod.set(q.module_id, [...(byMod.get(q.module_id) ?? []), q]);
+        const two = [...byMod.values()].filter((v) => v.length >= 2).slice(0, 2);
+        if (two.length === 2) { pick = [...two[0].slice(0, 2), ...two[1].slice(0, 2)]; skillUsed = skill; break; }
+      }
+      if (!pick) throw new Error("setup: no skill offered 2+2 usable questions from two different tests");
+      const create = await tch.context.request.post(`${BASE}/api/teacher/teaching-mode/quick-test`, { data: { name: NAME, questionIds: pick.map((q) => q.id) } });
+      qtId = (await create.json().catch(() => ({}))).data?.id ?? null;
+      if (!qtId) throw new Error(`setup: quick test not created (${create.status()})`);
+      await tch.context.close();
+      notes.push(`skill "${skillUsed}", 4 questions from 2 tests`);
+
+      const adm = await login(b, ADMIN_CLERK);
+      const p = await adm.context.request.patch(`${BASE}/api/admin/tests/${qtId}`, { data: { status: "Published", studentIds: [s.id] } });
+      if (!p.ok()) throw new Error(`setup: admin publish/assign answered ${p.status()} ${(await p.text()).slice(0, 120)}`);
+      await adm.context.close();
+
+      await deleteSubs(s.id, qtId);
+      const st = await borrowAs(b, 80);
+      await startTestBrowser(st.page, qtId);
+      const shown = await totalOf(st.page);
+      notes.push(`student sees ${shown} question(s)`);
+      if (shown !== 4) problems.push(`the teacher picked 4 questions but the student's exam shows only ${shown}`);
+      const row = (await subs(s.id, qtId))[0];
+      if (!row) throw new Error("setup: no submission row");
+      const answers = Object.fromEntries(pick.map((q) => [q.id, String(q.correct_answer).trim()]));
+      const sv = await st.context.request.patch(`${BASE}/api/student/submissions/${row.id}`, { data: { answers, answersMode: "merge", metadata: {} } });
+      if (!sv.ok()) problems.push(`saving the 4 answers answered ${sv.status()}`);
+      const sub = await st.context.request.post(`${BASE}/api/student/submissions/${row.id}/submit`, { data: {} });
+      if (!sub.ok()) problems.push(`submit answered ${sub.status()}`);
+      const done = await waitRow(row.id, (r) => r.status !== "In Progress", 20000);
+      notes.push(`graded ${done?.correct_count}/${done?.total_questions} (${done?.status})`);
+      if (done?.total_questions !== 4 || done?.correct_count !== 4)
+        problems.push(`all 4 answered correctly but graded ${done?.correct_count}/${done?.total_questions}`);
+      await st.context.close();
+    } finally {
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      const left = (await db.from("tests").select("id").eq("test_name", NAME)).data ?? [];
+      for (const id of new Set([qtId, ...left.map((t) => t.id)].filter(Boolean))) {
+        await deleteSubs(s.id, id).catch(() => {});
+        await db.from("test_assignments").delete().eq("test_id", id);
+        await db.from("tests").delete().eq("id", id);
+      }
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
+
+  // ── D-20261110-1 ─────────────────────────────────────────
+  // Exam day: the teacher sets the test to open at the start of class and
+  // the students sit on the test page waiting. Before the open time nothing
+  // may start; once it passes, the page must offer Start Test by itself
+  // (students don't know to reload), and starting must work.
+  await check("D-20261110-1", [], "學生在測驗開放前就打開測驗頁面等待：開放前不能開始考試；開放時間一到，頁面不用重新整理就要出現「開始考試」，按下去能正常考", "考試流程", () =>
+    asStudent(72, TESTS.untimedEng, async ({ s, page }) => {
+      const T = TESTS.untimedEng;
+      const orig = (await db.from("tests").select("open_date,due_date").eq("id", T).single()).data;
+      const problems = [], notes = [];
+      const openAt = new Date(Date.now() + 40000);
+      openAt.setUTCSeconds(openAt.getUTCSeconds(), 0);
+      try {
+        const up = await db.from("tests").update({ open_date: openAt.toISOString() }).eq("id", T);
+        if (up.error) throw new Error(`setup: couldn't set open_date: ${up.error.message}`);
+        // Before the open time: the waiting page.
+        await page.goto(`${BASE}/student/tests/${T}`, { waitUntil: "networkidle" });
+        const waiting = await page.getByText(/This test opens on/).first().waitFor({ timeout: 20000 }).then(() => true, () => false);
+        const body0 = await page.locator("main").first().innerText().catch(() => "");
+        const nyTime = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit", hour12: true }).format(openAt);
+        if (!waiting) problems.push(`before the open time the test page doesn't say when it opens ("${body0.replace(/\s+/g, " ").slice(0, 120)}")`);
+        else if (!body0.includes(nyTime)) problems.push(`the page says it opens at a different time than set (expected ${nyTime} New York time): "${(body0.match(/This test opens on[^\n]*/) ?? [""])[0]}"`);
+        const startBtn = page.getByRole("button", { name: /Start Test/ });
+        if (await startBtn.count()) problems.push("a Start Test button is offered before the test opens");
+        const early = await page.context().request.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        if (early.status() < 400) problems.push(`starting before the open time was accepted (${early.status()})`);
+        if ((await subs(s.id, T)).length) problems.push("an exam row was created before the open time");
+        notes.push(`waiting page OK (${nyTime}), early start → ${early.status()}`);
+        // Wait on the same page, no reload, until 30 s after the open time.
+        const until = openAt.getTime() + 30000;
+        let appearedAt = null;
+        while (Date.now() < until) {
+          if (Date.now() > openAt.getTime() && await startBtn.isVisible().catch(() => false)) { appearedAt = Date.now(); break; }
+          await sleep(1000);
+        }
+        if (appearedAt) notes.push(`Start Test appeared by itself ${Math.round((appearedAt - openAt.getTime()) / 1000)}s after the open time`);
+        else {
+          const still = await page.locator("main").first().innerText().catch(() => "");
+          problems.push(`30 s after the open time the page (not reloaded) still shows "${(still.match(/This test opens on[^\n]*/) ?? ["no Start Test button"])[0]}" — a waiting student has no way to start without reloading`);
+          await page.reload({ waitUntil: "networkidle" });
+          if (!(await startBtn.isVisible({ timeout: 15000 }).catch(() => false))) {
+            await startBtn.waitFor({ timeout: 15000 }).catch(() => problems.push("even after a reload there is no Start Test button"));
+          } else notes.push("after a reload Start Test is there");
+        }
+        // Starting after the open time must work normally.
+        if (await startBtn.count()) {
+          await startBtn.click({ timeout: 15000 });
+          await page.waitForURL(/\/take/, { timeout: 45000, waitUntil: "commit" }).catch(() => {});
+          const opened = await waitTake(page).then(() => true, () => false);
+          if (!opened) problems.push(`Start Test after the open time didn't open the exam (${page.url().replace(BASE, "")})`);
+          else {
+            const [row] = await subs(s.id, T);
+            await onQuestion(page, 1);
+            await choice(page, "B").click();
+            const qs = await moduleQs(row.module_id);
+            const r = await waitRow(row.id, (x) => x.answers?.[qs[0].id] === "B", 20000);
+            if (r?.answers?.[qs[0].id] !== "B") problems.push("after starting, the first answer didn't save");
+            if (Date.parse(row.started_at) < openAt.getTime()) problems.push(`the exam's start time ${row.started_at} is before the open time`);
+            notes.push("started after opening, answer saved");
+          }
+        }
+      } finally {
+        await db.from("tests").update({ open_date: orig.open_date }).eq("id", T);
+      }
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
+
+  // ── D-20261110-2 ─────────────────────────────────────────
+  // Students here mostly browse in Chinese, so Chrome offers (or
+  // auto-runs, "Always translate English") Google Translate on the English
+  // exam page. Translate swaps every text node for <font><font>…</font></font>
+  // and keeps doing it for new text, behind React's back — a known cause of
+  // React crashes (removeChild NotFoundError) and frozen text. Simulated
+  // here the way Translate does it (same words, so only the DOM changes);
+  // pages that opt out (translate="no" / meta google notranslate) are left
+  // alone, as Chrome would.
+  const TRANSLATE_SIM = `(() => {
+    const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "INPUT", "SELECT", "OPTION"]);
+    const st = (window.__xl = { n: 0, on: false, blocked: false });
+    const optedOut = () => document.documentElement.getAttribute("translate") === "no"
+      || (document.body && document.body.getAttribute("translate") === "no")
+      || !!document.querySelector('meta[name="google"][content="notranslate"]')
+      || document.documentElement.classList.contains("notranslate");
+    const skip = (node) => {
+      for (let e = node.parentElement; e; e = e.parentElement) {
+        if (SKIP.has(e.tagName) || e.isContentEditable || e.getAttribute("translate") === "no" || e.classList.contains("notranslate")) return true;
+        if (e.tagName === "FONT" && e.dataset.xl) return true;
+      }
+      return false;
+    };
+    const tr = (node) => {
+      if (!node.parentNode || !node.nodeValue || !node.nodeValue.trim() || skip(node)) return;
+      const outer = document.createElement("font"); outer.style.verticalAlign = "inherit"; outer.dataset.xl = "1";
+      const inner = document.createElement("font"); inner.style.verticalAlign = "inherit"; inner.textContent = node.nodeValue;
+      outer.appendChild(inner);
+      node.parentNode.replaceChild(outer, node);
+      st.n++;
+    };
+    const walk = (root) => {
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); const list = [];
+      while (w.nextNode()) list.push(w.currentNode);
+      list.forEach(tr);
+    };
+    const start = () => {
+      if (optedOut()) { st.blocked = true; return; }
+      st.on = true; walk(document.body);
+      new MutationObserver((ms) => {
+        for (const m of ms) {
+          if (m.type === "characterData") tr(m.target);
+          for (const n of m.addedNodes) { if (n.nodeType === 3) tr(n); else if (n.nodeType === 1) walk(n); }
+        }
+      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    };
+    if (document.readyState === "complete") setTimeout(start, 800);
+    else addEventListener("load", () => setTimeout(start, 800));
+  })();`;
+  await check("D-20261110-2", [], "學生的 Chrome 開著「自動翻譯成中文」考英文：考試畫面不能當掉或變白，題號、倒數時間要跟著更新，選的答案和標記都要存到，能交卷進第二模組、最後看到成績頁", "裝置/瀏覽器", () =>
+    asStudent(75, TESTS.engLinear, async ({ s, b }) => {
+      const T = TESTS.engLinear;
+      const problems = [], notes = [];
+      const { page, context } = await login(b, STUDENT1_CLERK, { locale: "zh-TW" });
+      await context.addInitScript(TRANSLATE_SIM);
+      const errs = [];
+      page.on("pageerror", (e) => errs.push(String(e.message || e).slice(0, 160)));
+      // The take page's per-question error boundary catches render crashes
+      // and only logs them, so read the console too.
+      page.on("console", (m) => { if (m.type() === "error") errs.push(m.text().slice(0, 160)); });
+      const crashed = async () => /Application error|client-side exception|Something went wrong|failed to render|發生錯誤/i.test(await page.locator("body").innerText().catch(() => ""));
+      // Translate's <font> pieces become flex items, so innerText splits the
+      // "Question 1 of 27" label over lines; read textContent instead.
+      const totalOfXl = async () => Number((await page.getByText(/Question \d+ of \d+/).first().textContent()).replace(/\s+/g, " ").match(/of (\d+)/)[1]);
+      const timerXl = async () => {
+        const m = ((await page.getByRole("timer").first().textContent({ timeout: 10000 })) ?? "").replace(/\s+/g, "").match(/(\d+):(\d{2})/);
+        return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+      };
+      const xl = () => page.evaluate(() => window.__xl ?? null).catch(() => null);
+      // Each step: on a failure note it and stop (later steps depend on it).
+      const step = async (name, fn) => {
+        try { await fn(); return true; } catch (e) {
+          problems.push(`${name}: ${String(e.message || e).split("\n")[0].slice(0, 140)}${(await crashed()) ? " (the page shows an error screen)" : ""}`);
+          return false;
+        }
+      };
+      let m1, qs1, total;
+      const ok = await step("opening the exam with translation on", async () => {
+        await page.goto(`${BASE}/student/tests/${T}`, { waitUntil: "networkidle" });
+        await page.waitForFunction(() => window.__xl && (window.__xl.on || window.__xl.blocked), null, { timeout: 15000 });
+        await page.getByRole("button", { name: /Start Test|Resume Test/ }).click({ timeout: 30000 });
+        await page.waitForURL(/\/take/, { timeout: 45000, waitUntil: "commit" });
+        await waitTake(page);
+        await page.waitForFunction(() => window.__xl && (window.__xl.on || window.__xl.blocked), null, { timeout: 15000 });
+        [m1] = await subs(s.id, T);
+        qs1 = await moduleQs(m1.module_id);
+        total = await totalOfXl();
+      });
+      const x0 = await xl();
+      if (x0?.blocked) notes.push("the exam page opts out of translation (translate=no), so Chrome wouldn't translate it");
+      else if (ok && !(x0?.n > 30)) throw new Error(`translation simulation didn't run (${JSON.stringify(x0)})`);
+      else if (ok) notes.push(`${x0.n} text pieces translated on load`);
+      if (ok) {
+        await sleep(1500);
+        const broken = ((await page.locator("body").innerText().catch(() => "")).match(/Question \d+ failed to render/) ?? [])[0];
+        if (broken) problems.push(`right after opening, the exam shows "${broken}" instead of the question and its choices`);
+      }
+      let go = ok && await step("Q1 = A, then Next to Q2", async () => {
+        await onQuestion(page, 1);
+        await choice(page, "A").click();
+        await page.getByRole("button", { name: /^Next/ }).first().click();
+        await page.getByText(/Question 2 of \d+/).first().waitFor({ timeout: 10000 }).catch(() => { throw new Error("after Next the question label does not say 'Question 2' (stuck text)"); });
+      });
+      go = go && await step("Q2 = B and Mark for Review", async () => {
+        await choice(page, "B").click();
+        await page.getByRole("button", { name: /Mark for Review/ }).first().click();
+      });
+      if (go) {
+        const t1 = await timerXl().catch(() => null);
+        await sleep(4000);
+        const t2 = await timerXl().catch(() => null);
+        notes.push(`timer ${t1}s → ${t2}s`);
+        if (t1 == null || t2 == null || !(t2 < t1)) problems.push(`the countdown on screen didn't move in 4 s (${t1} → ${t2})`);
+      }
+      go = go && await step("navigator jump to Q5, Q5 = C", async () => {
+        await jumpTo(page, 5);
+        await choice(page, "C").click();
+      });
+      if (go) {
+        const want = { 0: "A", 1: "B", 4: "C" };
+        const r = await waitRow(m1.id, (x) => Object.entries(want).every(([i, l]) => x.answers?.[qs1[i].id] === l) && (x.metadata?.flagged ?? []).includes(qs1[1].id), 20000);
+        const got = Object.entries(want).filter(([i, l]) => r?.answers?.[qs1[i].id] === l).length;
+        if (got !== 3) problems.push(`only ${got}/3 answers saved (Q1=A, Q2=B, Q5=C)`);
+        if (!(r?.metadata?.flagged ?? []).includes(qs1[1].id)) problems.push("the mark on Q2 wasn't saved");
+        go = await step("Review & Submit shows 3 answered", async () => {
+          await goToSubmitModal(page, total);
+          const dlg = await page.getByRole("dialog").last().innerText();
+          if (!new RegExp(`\\b3\\s*/\\s*${total}\\b`).test(dlg)) throw new Error(`the review screen doesn't show 3 / ${total} answered: "${dlg.replace(/\s+/g, " ").slice(0, 120)}"`);
+        });
+      }
+      go = go && await step("Submit Module 1 → Module 2", async () => {
+        await page.getByRole("button", { name: /Submit Test/ }).last().click();
+        await page.getByText("Module 1 submitted").first().waitFor({ timeout: 45000 });
+        await page.getByRole("link", { name: /Start Module 2/ }).click({ timeout: 30000 });
+        await waitTake(page);
+        await onQuestion(page, 1);
+        await choice(page, "D").click();
+      });
+      const f1 = await waitRow(m1.id, (r) => r.status !== "In Progress", 5000);
+      if (go && f1?.status !== "Submitted") problems.push(`Module 1 ended ${f1?.status}`);
+      go = go && await step("Submit Module 2 → result page", async () => {
+        const m2 = (await subs(s.id, T)).find((r) => r.id !== m1.id);
+        if (!m2) throw new Error("no Module 2 row");
+        const qs2 = await moduleQs(m2.module_id);
+        const r2 = await waitRow(m2.id, (r) => r.answers?.[qs2[0].id] === "D", 20000);
+        if (r2?.answers?.[qs2[0].id] !== "D") throw new Error("the Module 2 answer didn't save");
+        await goToSubmitModal(page, await totalOfXl());
+        await page.getByRole("button", { name: /Submit Test/ }).last().click();
+        await page.waitForURL(/\/result/, { timeout: 45000 });
+        await page.locator("main").first().waitFor({ timeout: 20000 });
+        await sleep(1500);
+        if (await crashed()) throw new Error("the result page shows an error screen");
+      });
+      if (go) notes.push("M1 and M2 submitted, result page shown");
+      const reactErrs = errs.filter((e) => /removeChild|insertBefore|NotFoundError|not a child|Minified React error/i.test(e));
+      if (reactErrs.length) problems.push(`${reactErrs.length} render crash error(s), e.g. "${reactErrs[0].split("\n")[0]}"`);
+      else if (errs.length) notes.push(`other page errors: ${errs[0]}`);
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
+
+  // ── D-20261110-3 ─────────────────────────────────────────
+  // adff6a3 added "Assign test" to the student page, so a student who
+  // already gets a test through their class can now also get it directly.
+  // While they are mid-exam the admin then tidies up: "Remove assignment"
+  // from the student page (must refuse — they started) and "Remove students
+  // + delete their work" from the test page (must keep the work: the class
+  // still gives the test). The exam must carry on untouched.
+  await check("D-20261110-3", [], "學生已經透過班級拿到測驗，管理員又在學生頁「指派測驗」給他，學生考到一半時管理員再把這個個別指派移除（甚至勾選刪除作答）：我的測驗只能出現一次、只能開出一份考卷；學生已經開始的考卷不能被刪掉，要能繼續考完兩個模組", "老師/管理員動作", () =>
+    asStudent(79, TESTS.mathLinear, async ({ s, b, page }) => {
+      const T = TESTS.mathLinear;
+      const problems = [], notes = [];
+      const orig = (await db.from("test_assignments").select("student_ids,class_group_ids").eq("test_id", T).single()).data;
+      if ((orig.student_ids ?? []).includes(s.id)) throw new Error("setup: 079 is already directly assigned");
+      const mem = ((await db.from("class_group_members").select("class_group_id").eq("student_id", s.id)).data ?? []).map((m) => m.class_group_id);
+      if (!mem.some((c) => orig.class_group_ids.includes(c))) throw new Error("setup: 079's class isn't assigned to mathLinear");
+      const tName = (await db.from("tests").select("test_name").eq("id", T).single()).data.test_name;
+      let admin;
+      try {
+        admin = await login(b, ADMIN_CLERK);
+        const AR = admin.context.request;
+        // The student page's Assign test (same route the new menu calls).
+        const add = await AR.post(`${BASE}/api/admin/tests/${T}/add-students`, { data: { studentIds: [s.id] } });
+        const addJ = await add.json().catch(() => ({}));
+        if (add.status() !== 200) throw new Error(`setup: Assign test → ${add.status()} ${JSON.stringify(addJ).slice(0, 120)}`);
+        const add2 = await AR.post(`${BASE}/api/admin/tests/${T}/add-students`, { data: { studentIds: [s.id] } });
+        const add2J = await add2.json().catch(() => ({}));
+        if (add2.status() !== 200 || add2J.added !== 0) problems.push(`assigning the same student twice wasn't a no-op (${add2.status()} added=${add2J.added})`);
+        const ids1 = (await db.from("test_assignments").select("student_ids").eq("test_id", T).single()).data.student_ids;
+        if (ids1.filter((x) => x === s.id).length !== 1) problems.push(`the student is in the direct list ${ids1.filter((x) => x === s.id).length} times`);
+        // My Tests: once, and starting opens one exam.
+        await page.goto(`${BASE}/student/tests`, { waitUntil: "networkidle" });
+        await page.locator("main").first().waitFor({ timeout: 20000 });
+        const rows = await page.locator("tr", { hasText: tName }).count();
+        if (rows !== 1) problems.push(`My Tests lists the test ${rows} times (class + direct assignment)`);
+        const apiList = await (await page.context().request.get(`${BASE}/api/student/tests`)).json().catch(() => ({}));
+        const apiRows = JSON.stringify(apiList).split(`"${T}"`).length - 1;
+        notes.push(`My Tests rows: ${rows}; /api/student/tests mentions it ${apiRows}×`);
+        await startTestBrowser(page, T);
+        let all = await subs(s.id, T);
+        if (all.length !== 1) problems.push(`starting created ${all.length} exam rows`);
+        const m1 = all[0];
+        const qs1 = await moduleQs(m1.module_id);
+        const mcIdx = qs1.map((q, i) => [q, i]).filter(([q]) => q.question_type === "Multiple Choice").map(([, i]) => i).slice(0, 2);
+        if (mcIdx.length < 2) throw new Error("setup: mathLinear M1 has < 2 multiple-choice questions");
+        await jumpTo(page, mcIdx[0] + 1);
+        await choice(page, "A").click();
+        if ((await waitRow(m1.id, (r) => r.answers?.[qs1[mcIdx[0]].id] === "A", 20000))?.answers?.[qs1[mcIdx[0]].id] !== "A") throw new Error("setup: first answer didn't save");
+        // Student page "Remove assignment" (onlyIfNotStarted): must refuse.
+        const rmSafe = await AR.post(`${BASE}/api/admin/tests/${T}/remove-students`, { data: { studentIds: [s.id], onlyIfNotStarted: true } });
+        if (rmSafe.status() !== 409) problems.push(`"Remove assignment" on a student who is mid-exam answered ${rmSafe.status()} instead of refusing (409)`);
+        const ids2 = (await db.from("test_assignments").select("student_ids").eq("test_id", T).single()).data.student_ids;
+        if (!ids2.includes(s.id)) problems.push("the refused \"Remove assignment\" still removed the student");
+        // Test page "Remove students" with delete-their-work.
+        const rm = await AR.post(`${BASE}/api/admin/tests/${T}/remove-students`, { data: { studentIds: [s.id], deleteSubmissions: true } });
+        const rmJ = await rm.json().catch(() => ({}));
+        notes.push(`remove+delete → ${rm.status()} removed=${rmJ.removed} deleted=${rmJ.deletedSubmissions} stillViaClass=${(rmJ.stillVisibleViaGroup ?? []).includes(s.id)}`);
+        if (rm.status() !== 200) problems.push(`remove-students answered ${rm.status()}`);
+        if (!(rmJ.stillVisibleViaGroup ?? []).includes(s.id)) problems.push("the admin isn't told the student still has the test through their class");
+        all = await subs(s.id, T);
+        if (!all.some((r) => r.id === m1.id)) {
+          problems.push("the student's in-progress exam was DELETED although their class still gives them the test");
+        } else {
+          // The open tab carries on.
+          await jumpTo(page, mcIdx[1] + 1);
+          await choice(page, "B").click();
+          const r = await waitRow(m1.id, (x) => x.answers?.[qs1[mcIdx[1]].id] === "B", 20000);
+          if (r?.answers?.[qs1[mcIdx[1]].id] !== "B") problems.push("after the removal a new answer didn't save");
+          await goToSubmitModal(page, await totalOf(page));
+          await page.getByRole("button", { name: /Submit Test/ }).last().click();
+          const toM2 = await page.getByText("Module 1 submitted").first().waitFor({ timeout: 45000 }).then(() => true, () => false);
+          const f1 = await waitRow(m1.id, (x) => x.status !== "In Progress", 20000);
+          if (f1?.status !== "Submitted") problems.push(`Module 1 ended ${f1?.status}`);
+          if (f1?.answers?.[qs1[mcIdx[0]].id] !== "A" || f1?.answers?.[qs1[mcIdx[1]].id] !== "B") problems.push("Module 1 lost an answer (before/after the removal)");
+          if (!toM2) problems.push("submitting Module 1 didn't reach the Module 2 screen");
+          else {
+            await page.getByRole("link", { name: /Start Module 2/ }).click({ timeout: 30000 });
+            const m2open = await waitTake(page).then(() => true, () => false);
+            if (!m2open) problems.push("Start Module 2 didn't open Module 2");
+            else {
+              await goToSubmitModal(page, await totalOf(page));
+              await page.getByRole("button", { name: /Submit Test/ }).last().click();
+              if (!(await page.waitForURL(/\/result/, { timeout: 45000 }).then(() => true, () => false))) problems.push("Module 2 submit didn't open the result page");
+              all = await subs(s.id, T);
+              const st = all.map((r) => `${r.adaptive_track ?? "?"}:${r.status}`).join(", ");
+              notes.push(`rows: ${st}`);
+              if (all.length !== 2 || all.some((r) => r.status !== "Submitted")) problems.push(`expected 2 Submitted modules, got ${st}`);
+            }
+          }
+        }
+      } finally {
+        // Put the direct list back exactly as it was.
+        await db.from("test_assignments").update({ student_ids: orig.student_ids }).eq("test_id", T);
+        await admin?.context.close().catch(() => {});
+      }
+      const back = (await db.from("test_assignments").select("student_ids").eq("test_id", T).single()).data.student_ids;
+      if (JSON.stringify(back) !== JSON.stringify(orig.student_ids)) throw new Error("cleanup: mathLinear's direct assignment list wasn't restored");
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
+
+  // ── D-20261111-1 ─────────────────────────────────────────
+  // DELETE /api/admin/submissions/[id] (manage-submissions "Delete") wipes
+  // the row. An admin can do it while the student is mid-exam (a wrong click,
+  // or "let them start over"). The open tab then autosaves into a row that
+  // no longer exists: PATCH answers 404. Must be true: the student is never
+  // told "Saved"; within ~40 s the screen says the attempt is gone (or leaves
+  // the exam), not an endless "Not saved — retrying"; Submit gives a clear
+  // message (no endless "Submitting…"); the old tab creates no row; and the
+  // test page then starts a clean exam (Q1, nothing picked, full time) that
+  // the still-open old tab can't write into.
+  await check("D-20261111-1", [], "學生考到一半時管理員把他的考卷刪掉：學生畫面不能還顯示「已儲存」，要在一分鐘內清楚告訴學生這份考卷已經不在了（不能一直顯示「重試中」讓學生白寫）；按交卷要有清楚的訊息；回到測驗頁能重新開始一份全新的考卷", "老師/管理員動作", () =>
+    asStudent(73, TESTS.engLinear, async ({ s, b, page, context }) => {
+      const T = TESTS.engLinear;
+      const problems = [], notes = [];
+      const limit = (await db.from("tests").select("time_limit_minutes").eq("id", T).single()).data.time_limit_minutes;
+      const statusText = async (p) => (await p.locator('[role="status"]').filter({ hasText: /Saved|Saving|Not saved/ }).first().textContent({ timeout: 2000 }).catch(() => "")).trim();
+      const TOLD = /removed|deleted|no longer (available|exists|active|there)|isn'?t there|wasn'?t found|not found|was reset|start (it )?(again|over)|contact your teacher|ask your teacher/i;
+      const BROKEN = /something went wrong|application error|failed to render/i;
+
+      await startTestBrowser(page, T);
+      const [m1] = await subs(s.id, T);
+      const qs = await moduleQs(m1.module_id);
+      const [q1, q2, q3] = qs.map((q) => q.id);
+      const total = await totalOf(page);
+      await onQuestion(page, 1); await choice(page, "A").click();
+      if ((await waitRow(m1.id, (r) => r.answers?.[q1] === "A", 20000))?.answers?.[q1] !== "A") throw new Error("setup: Q1=A didn't save");
+      await page.waitForFunction(() => [...document.querySelectorAll('[role="status"]')].some((e) => e.textContent.trim() === "Saved"), null, { timeout: 15000 }).catch(() => {});
+      const toldBefore = TOLD.test(await page.locator("body").innerText().catch(() => ""));
+
+      // The admin deletes the in-progress exam.
+      const admin = await login(b, ADMIN_CLERK);
+      const del = await admin.page.request.delete(`${BASE}/api/admin/submissions/${m1.id}`);
+      await admin.context.close().catch(() => {});
+      if (del.status() !== 200) throw new Error(`setup: admin DELETE → HTTP ${del.status()}`);
+      if ((await subs(s.id, T)).length) throw new Error("setup: the row is still there after the admin delete");
+      notes.push("admin deleted the in-progress exam (HTTP 200)");
+
+      // The student keeps going: Q2 = B, then watch the screen for 40 s.
+      await jumpTo(page, 2); await choice(page, "B").click();
+      const pickedAt = Date.now();
+      const seen = [];
+      let sawNotSaved = false, falseSaved = false, toldAt = null, leftAt = null;
+      while (Date.now() - pickedAt < 40000) {
+        const st = await statusText(page);
+        if (st && seen.at(-1) !== st) seen.push(st);
+        if (/Saving|Not saved/.test(st)) sawNotSaved = true;
+        else if (st === "Saved" && (sawNotSaved || Date.now() - pickedAt > 5000)) falseSaved = true;
+        if (!toldAt && !toldBefore && TOLD.test(await page.locator("body").innerText().catch(() => ""))) toldAt = Date.now();
+        if (!leftAt && !/\/take/.test(page.url())) leftAt = Date.now();
+        if (toldAt || leftAt) break;
+        await sleep(500);
+      }
+      notes.push(`after the delete the save status went ${seen.map((x) => `"${x}"`).join(" → ") || "(none)"}`);
+      if (falseSaved) problems.push("the screen said \"Saved\" for an answer picked after the exam was deleted (it went nowhere)");
+      if (toldAt) notes.push(`student told after ${Math.round((toldAt - pickedAt) / 1000)} s`);
+      else if (leftAt) notes.push(`page left the exam after ${Math.round((leftAt - pickedAt) / 1000)} s (${new URL(page.url()).pathname})`);
+      else problems.push(`40 s after the exam was deleted the student still sees "${seen.at(-1) ?? "?"}" and nothing says the exam is gone — they would keep answering into nothing`);
+
+      // Submit (only if still on the exam).
+      if (/\/take/.test(page.url())) {
+        await jumpTo(page, 3); await choice(page, "C").click().catch(() => {});
+        await goToSubmitModal(page, total);
+        await page.getByRole("button", { name: /Submit Test/ }).last().click();
+        const t0 = Date.now();
+        let msg = null;
+        while (Date.now() - t0 < 30000) {
+          if (!/\/take/.test(page.url())) { msg = `left to ${new URL(page.url()).pathname}`; break; }
+          const body = await page.locator("body").innerText().catch(() => "");
+          const m = body.match(/(Couldn't submit[^\n]*|Not submitted yet[^\n]*)/);
+          if (m && !/Retrying automatically/.test(m[1])) { msg = m[1].slice(0, 160); break; }
+          if (m) msg = m[1].slice(0, 160);
+          await sleep(1000);
+        }
+        notes.push(`Submit → ${msg ?? "nothing within 30 s"}`);
+        if (!msg) problems.push("pressing Submit on the deleted exam showed nothing for 30 s (stuck)");
+        else if (/Retrying automatically/.test(msg)) problems.push(`pressing Submit on the deleted exam says "${msg.slice(0, 80)}" — it will never succeed`);
+        if (BROKEN.test(await page.locator("body").innerText().catch(() => ""))) problems.push("the old tab shows an error screen");
+      }
+      const zombie = await subs(s.id, T);
+      if (zombie.length) problems.push(`the old tab re-created ${zombie.length} exam row(s) after the delete (${zombie.map((r) => `${r.adaptive_track}:${r.status}`).join(", ")})`);
+
+      // The student opens the test page in a new tab (the old one stays open, retrying).
+      const p2 = await context.newPage();
+      await p2.goto(`${BASE}/student/tests/${T}`, { waitUntil: "networkidle" });
+      const tp = await p2.locator("body").innerText().catch(() => "");
+      if (BROKEN.test(tp)) problems.push("the test page shows an error after the delete");
+      const startBtn = p2.getByRole("button", { name: /Start Test|Resume Test/ }).first();
+      const label = (await startBtn.textContent({ timeout: 20000 }).catch(() => "")).trim();
+      if (!label) problems.push("the test page has no Start button after the delete");
+      else {
+        if (/Resume/.test(label)) problems.push(`the test page offers "${label}" for a deleted exam`);
+        await startBtn.click();
+        await p2.waitForURL(/\/take/, { timeout: 45000, waitUntil: "commit" });
+        await waitTake(p2);
+        await sleep(8000); // old tab's retries + any restore on the new tab
+        const rows = await subs(s.id, T);
+        if (rows.length !== 1) problems.push(`starting again made ${rows.length} rows (expected 1)`);
+        const fresh = rows.at(-1);
+        const where = Number((await p2.getByText(/Question \d+ of \d+/).first().innerText()).match(/Question (\d+)/)[1]);
+        const secs = await timerSecsOf(p2);
+        const shown = [];
+        for (const i of [1, 2, 3]) {
+          if (i !== where) await jumpTo(p2, i);
+          for (const l of ["A", "B", "C", "D"]) if (await isPicked(p2, l)) shown.push(`Q${i}=${l}`);
+        }
+        notes.push(`new exam opened at Q${where}, timer ${secs}s of ${limit * 60}s, server answers ${Object.keys(fresh?.answers ?? {}).length}`);
+        if (where !== 1) problems.push(`the new exam opened at question ${where}`);
+        if (secs == null || secs < limit * 60 - 90) problems.push(`the new exam's timer shows ${secs}s, not the full ${limit * 60}s`);
+        if (shown.length) problems.push(`the new exam shows answers from the deleted one: ${shown.join(", ")}`);
+        const old = [[q1, "Q1"], [q2, "Q2"], [q3, "Q3"]].filter(([id]) => fresh?.answers?.[id]).map(([id, n]) => `${n}=${fresh.answers[id]}`);
+        if (old.length) problems.push(`the deleted exam's answers landed in the new exam on the server: ${old.join(", ")}`);
+        await jumpTo(p2, 1); await choice(p2, "D").click();
+        if (fresh && (await waitRow(fresh.id, (r) => r.answers?.[q1] === "D", 20000))?.answers?.[q1] !== "D") problems.push("Q1=D in the new exam didn't save");
+      }
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
+
+  // ── D-20261111-2 ─────────────────────────────────────────
+  // A whole Math exam on a small phone (iPhone SE, 375×667, Mobile Safari
+  // engine, touch only). H-14-15 only checks the top bar on a 390 px screen
+  // and D-20261031-3 is an iPad. On a phone the Desmos panel takes the bottom
+  // 55% of the screen, the question gets what's left. Must be true: no
+  // sideways scrolling; top-bar items don't overlap; with Desmos open the
+  // choices / Next / the answer box can still be reached and tapped, and the
+  // calculator is big enough to use; the navigator fits; Module 1 → Module 2
+  // → result page all by touch, with every tapped/typed answer graded.
+  await check("D-20261111-2", [], "用手機（iPhone SE 小螢幕）考完整份數學：畫面不能左右跑，上方的時間/按鈕不能疊在一起；打開 Desmos 計算機時還是點得到選項、下一題和填答框，計算機也夠大能用；用手指點完兩個模組、看到成績頁，點的答案都有算分", "裝置/瀏覽器", async () => {
+    const T = TESTS.mathLinear;
+    const s = studentByN(74);
+    if (!s) throw new Error("student 074 not found");
+    const orig = C.students[0].id;
+    const { devices } = await import("playwright");
+    const phone = devices["iPhone SE"];
+    await deleteSubs(s.id, T);
+    const b = await webkit.launch();
+    const problems = [], notes = [];
+    try {
+      await borrowLogin(s.id, STUDENT1_CLERK);
+      const { page } = await login(b, STUDENT1_CLERK, { ...phone });
+      const vp = page.viewportSize();
+      const next = page.getByRole("button", { name: /^Next/ }).first();
+      const box = async (loc) => (await loc.first().isVisible().catch(() => false)) ? loc.first().boundingBox() : null;
+      const inView = async (loc, what, tag) => {
+        const el = loc.first();
+        if (!(await el.isVisible().catch(() => false))) { problems.push(`${tag}: ${what} not visible`); return false; }
+        await el.scrollIntoViewIfNeeded().catch(() => {});
+        const bx = await el.boundingBox();
+        if (!bx || bx.x < -1 || bx.y < -1 || bx.x + bx.width > vp.width + 1 || bx.y + bx.height > vp.height + 1 || bx.height < 8) {
+          problems.push(`${tag}: ${what} can't be brought fully on screen (${bx ? `${Math.round(bx.x)},${Math.round(bx.y)} ${Math.round(bx.width)}×${Math.round(bx.height)}` : "no box"})`);
+          return false;
+        }
+        // Is it the element a finger at its centre would hit (not covered by a panel/bar)?
+        const hit = await el.evaluate((n) => {
+          const r = n.getBoundingClientRect();
+          const t = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+          return !!t && (n === t || n.contains(t));
+        }).catch(() => false);
+        if (!hit) { problems.push(`${tag}: ${what} is covered by something else`); return false; }
+        return true;
+      };
+      const sideways = async (tag) => {
+        const o = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+        if (o > 1) problems.push(`${tag}: page scrolls sideways by ${o}px`);
+      };
+      const overlap = (a, c) => a && c && a.x < c.x + c.width - 1 && c.x < a.x + a.width - 1 && a.y < c.y + c.height - 1 && c.y < a.y + a.height - 1;
+      const topBar = async (tag) => {
+        const items = {
+          timer: await box(page.getByRole("timer")),
+          "question label": await box(page.getByRole("button", { name: /Question \d+ of \d+/ })),
+          calculator: await box(page.locator('button[aria-label="Calculator"]')),
+          "save status": await box(page.locator('[role="status"]').filter({ hasText: /Saved|Saving|Not saved/ })),
+        };
+        const k = Object.keys(items);
+        for (let i = 0; i < k.length; i++) for (let j = i + 1; j < k.length; j++) if (overlap(items[k[i]], items[k[j]])) problems.push(`${tag}: ${k[i]} and ${k[j]} overlap`);
+        if (!items.timer) problems.push(`${tag}: timer not visible`);
+        if (!items.calculator) problems.push(`${tag}: Calculator button not visible`);
+      };
+
+      await page.waitForURL(/\/student/, { timeout: 30000 }).catch(() => {});
+      await page.waitForLoadState("networkidle").catch(() => {});
+      await startTestBrowser(page, T).catch(async () => { await sleep(2000); await startTestBrowser(page, T); });
+      const [m1] = await subs(s.id, T);
+      const qs = await moduleQs(m1.module_id);
+      const total = await totalOf(page);
+      const mcIdx = qs.map((q, i) => (q.question_type === "Multiple Choice" ? i : -1)).filter((i) => i >= 0);
+      const sprIdx = qs.findIndex((q) => q.question_type !== "Multiple Choice");
+      if (mcIdx.length < 2) throw new Error("setup: fewer than 2 multiple-choice questions in Module 1");
+      const want = {};
+      await onQuestion(page, 1);
+      await topBar("Q1");
+      await sideways("Q1");
+
+      // Two multiple-choice answers, the second with Desmos open.
+      const [a, c] = [mcIdx[0], mcIdx[1]];
+      if (a + 1 !== 1) await jumpTo(page, a + 1);
+      for (const l of ["A", "B", "C", "D"]) await inView(choice(page, l), `choice ${l}`, `Q${a + 1}`);
+      await choice(page, "A").tap(); want[qs[a].id] = "A";
+      await page.locator('button[aria-label="Calculator"]').first().tap();
+      const ifr = page.locator('iframe[title="Desmos calculator"]').first();
+      await ifr.waitFor({ timeout: 20000 }).catch(() => problems.push("tapping Calculator didn't open Desmos"));
+      const ib = await box(ifr);
+      notes.push(`Desmos panel ${ib ? `${Math.round(ib.width)}×${Math.round(ib.height)}` : "missing"}`);
+      if (ib && (ib.height < 180 || ib.width < vp.width * 0.8)) problems.push(`Desmos panel is only ${Math.round(ib.width)}×${Math.round(ib.height)} px on the phone — too small to use`);
+      await topBar("Desmos open");
+      await sideways("Desmos open");
+      await jumpTo(page, c + 1);
+      let okD = true;
+      for (const l of ["A", "B", "C", "D"]) okD = (await inView(choice(page, l), `choice ${l} (Desmos open)`, `Q${c + 1}`)) && okD;
+      if (okD) { await choice(page, "D").tap(); want[qs[c].id] = "D"; }
+      await inView(next, "Next (Desmos open)", `Q${c + 1}`);
+      // The answer box of a grid-in, Desmos still open.
+      if (sprIdx >= 0) {
+        await jumpTo(page, sprIdx + 1);
+        const inp = page.getByPlaceholder("Enter your answer").first();
+        if (await inView(inp, "answer box (Desmos open)", `Q${sprIdx + 1}`)) {
+          await inp.tap(); await inp.fill("12"); want[qs[sprIdx].id] = "12";
+        }
+      } else notes.push("no grid-in in Module 1");
+      await page.getByRole("button", { name: "Close panel" }).first().tap().catch(() => problems.push("couldn't close the Desmos panel"));
+      await sleep(500);
+      if (await ifr.isVisible().catch(() => false)) problems.push("Desmos panel still open after Close");
+      const saved = await waitRow(m1.id, (r) => Object.entries(want).every(([id, v]) => r.answers?.[id] === v), 25000);
+      const missing = Object.entries(want).filter(([id, v]) => saved?.answers?.[id] !== v).map(([id, v]) => `Q${qs.findIndex((q) => q.id === id) + 1}=${v}`);
+      if (missing.length) problems.push(`not saved from the phone: ${missing.join(", ")}`);
+
+      // Navigator must fit; tap the last question.
+      await page.getByRole("button", { name: /Question \d+ of \d+/ }).first().tap();
+      const nav = page.getByRole("dialog", { name: "Question Navigator" });
+      await nav.waitFor({ timeout: 10000 });
+      const nb = await nav.boundingBox();
+      if (!nb || nb.x < -1 || nb.x + nb.width > vp.width + 1) problems.push(`navigator is wider than the phone (${nb ? Math.round(nb.width) : "?"} px)`);
+      const lastBtn = nav.getByRole("button", { name: String(total), exact: true }).first();
+      if (await inView(lastBtn, `navigator button ${total}`, "navigator")) await lastBtn.tap();
+      else await jumpTo(page, total);
+      await onQuestion(page, total);
+
+      // Submit Module 1 by touch, start Module 2, submit, result page.
+      const rs = page.getByRole("button", { name: /Review & Submit/ }).first();
+      await inView(rs, "Review & Submit", `Q${total}`);
+      await rs.tap();
+      const sub = page.getByRole("button", { name: /Submit Test/ }).last();
+      await sub.waitFor({ timeout: 15000 });
+      await inView(sub, "Submit Test", "submit dialog");
+      await sub.tap();
+      if (!(await page.getByText("Module 1 submitted").first().waitFor({ timeout: 45000 }).then(() => true, () => false))) problems.push("tapping Submit Test didn't reach the Module 2 screen");
+      const f1 = await waitRow(m1.id, (r) => r.status !== "In Progress", 20000);
+      const { data: recs } = await db.from("answer_records").select("question_id,student_answer").eq("submission_id", m1.id);
+      const graded = Object.entries(want).filter(([id, v]) => String((recs ?? []).find((x) => x.question_id === id)?.student_answer ?? "").trim() === v).length;
+      notes.push(`Module 1 ${f1?.status}, ${graded}/${Object.keys(want).length} tapped/typed answers graded`);
+      if (f1?.status !== "Submitted") problems.push(`Module 1 ended ${f1?.status}`);
+      if (graded !== Object.keys(want).length) problems.push(`only ${graded}/${Object.keys(want).length} answers from the phone were graded`);
+      const sm2 = page.getByRole("link", { name: /Start Module 2/ }).or(page.getByRole("button", { name: /Start Module 2/ })).first();
+      if (await sm2.isVisible().catch(() => false)) {
+        await inView(sm2, "Start Module 2", "Module 2 screen");
+        await sm2.tap();
+        if (await waitTake(page).then(() => true, () => false)) {
+          await topBar("Module 2");
+          await sideways("Module 2");
+          await choice(page, "B").tap().catch(() => {});
+          const t2 = await totalOf(page);
+          await jumpTo(page, t2);
+          await page.getByRole("button", { name: /Review & Submit/ }).first().tap();
+          await page.getByRole("button", { name: /Submit Test/ }).last().tap({ timeout: 15000 });
+          if (!(await page.waitForURL(/\/result/, { timeout: 45000 }).then(() => true, () => false))) problems.push("Module 2 submit didn't open the result page");
+          else {
+            await page.waitForLoadState("networkidle").catch(() => {});
+            const rt = await page.locator("main").innerText().catch(() => "");
+            if (/something went wrong|application error|NaN|undefined/i.test(rt)) problems.push("the result page shows an error / NaN on the phone");
+            await sideways("result page");
+          }
+        } else problems.push("Start Module 2 didn't open Module 2");
+      }
+      const rows = await subs(s.id, T);
+      notes.push(`rows: ${rows.map((r) => `${r.adaptive_track ?? "?"}:${r.status}`).join(", ")}`);
+      if (rows.length !== 2 || rows.some((r) => r.status !== "Submitted")) problems.push(`expected 2 Submitted modules, got ${rows.map((r) => r.status).join(", ")}`);
+    } finally {
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      await deleteSubs(s.id, T).catch(() => {});
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
+
+  // ── D-20261111-3 ─────────────────────────────────────────
+  // A class teacher must only see their own classes' students. Teacher 01
+  // teaches TEST Class A (Math). 076 is in class A, 078 in class C; both take
+  // mathLinear (assigned to all QA classes) and get Q1 wrong. Every teacher
+  // surface — results list/detail API and pages, CSV export, per-question
+  // "who got it wrong", class pages, student page, dashboard — must show 076
+  // and never 078; writing tutor notes / granting a retake for 078 must be
+  // refused. Guard for d32f7dc, which rewrites all of these for full-length
+  // tests and isn't deployed yet.
+  await check("D-20261111-3", [], "老師只能看到自己班上的學生：別班學生的成績、作答內容、名字不能出現在老師的成績列表、成績明細、匯出檔、題目分析、班級頁和首頁；老師也不能替別班學生寫筆記或給重考；自己班的學生要看得到", "安全", async () => {
+    const T = TESTS.mathLinear;
+    const mine = studentByN(76), other = studentByN(78);
+    if (!mine || !other) throw new Error("students 076/078 not found");
+    const teacher = C.teachers[0];
+    const classA = C.classes.find((k) => k.name === "TEST Class A"), classC = C.classes.find((k) => k.name === "TEST Class C");
+    // Setup facts (else the check means nothing).
+    const { data: tcls } = await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", teacher.id);
+    const myClasses = (tcls ?? []).map((r) => r.class_group_id);
+    const { data: mem } = await db.from("class_group_members").select("class_group_id,student_id").in("student_id", [mine.id, other.id]);
+    const inMine = (sid) => (mem ?? []).some((m) => m.student_id === sid && myClasses.includes(m.class_group_id));
+    if (!myClasses.includes(classA.id) || myClasses.includes(classC.id)) throw new Error("setup: Teacher 01 isn't (only) on class A");
+    if (!inMine(mine.id) || inMine(other.id)) throw new Error("setup: 076 must be in Teacher 01's classes and 078 must not");
+    const { data: asg } = await db.from("test_assignments").select("teacher_ids").eq("test_id", T).single();
+    if ((asg?.teacher_ids ?? []).includes(teacher.id)) throw new Error("setup: Teacher 01 is a direct teacher of mathLinear (sees everyone by design)");
+
+    const startedAt = new Date().toISOString();
+    const orig = C.students[0].id;
+    const took = {};
+    const problems = [], notes = [];
+    for (const st of [mine, other]) await deleteSubs(st.id, T);
+    const b = await chromium.launch();
+    try {
+      // Both students finish mathLinear with Q1 wrong.
+      for (const st of [mine, other]) {
+        await borrowLogin(st.id, STUDENT1_CLERK);
+        const { context } = await login(b, STUDENT1_CLERK);
+        const trow = (await db.from("tests").select("module_id,module_1_id").eq("id", T).single()).data;
+        const q = await moduleQs(trow.module_1_id ?? trow.module_id);
+        const mc = q.find((x) => x.question_type === "Multiple Choice");
+        if (!mc) throw new Error("setup: no multiple-choice question in Module 1");
+        const wrong = ["A", "B", "C", "D"].find((l) => !String(mc.correct_answer ?? "").toUpperCase().includes(l));
+        took[st.id] = await apiTakeTest(context.request, st.id, T, { forceM1Answers: { [mc.id]: wrong, [q[q.length - 1].id]: "A" } });
+        took[st.id].qWrong = mc.id;
+        await context.close();
+      }
+      await borrowLogin(orig, STUDENT1_CLERK);
+      const sOther = await subs(other.id, T), sMine = await subs(mine.id, T);
+      if (sOther.length !== 2 || sMine.length !== 2 || [...sOther, ...sMine].some((r) => r.status !== "Submitted")) throw new Error("setup: both students should have 2 Submitted modules");
+
+      const { page, context } = await login(b, teacher.clerkId);
+      const req = context.request;
+      const tag = (st) => [st.name, st.email, st.id];
+      const leaks = (txt, st) => tag(st).filter((x) => x && String(txt).includes(x));
+      const showsMine = (txt) => String(txt).includes(mine.name);
+
+      // APIs.
+      const list = await req.get(`${BASE}/api/teacher/tests/${T}/results`);
+      const listTxt = await list.text();
+      if (list.status() !== 200) problems.push(`results API → HTTP ${list.status()}`);
+      if (!listTxt.includes(mine.id) && !showsMine(listTxt)) problems.push("results API doesn't list the teacher's own student 076 (control)");
+      if (leaks(listTxt, other).length) problems.push("results API lists the other class's student 078");
+      for (const r of sOther) {
+        const d = await req.get(`${BASE}/api/teacher/tests/${T}/results/${r.id}`);
+        const dt = await d.text();
+        if (d.status() === 200 || leaks(dt, other).length || /"answers"/.test(dt)) problems.push(`078's ${r.adaptive_track} detail → HTTP ${d.status()} (must be refused, no data)`);
+      }
+      const dm = await req.get(`${BASE}/api/teacher/tests/${T}/results/${sMine[0].id}`);
+      if (dm.status() !== 200) problems.push(`076's own detail → HTTP ${dm.status()} (control)`);
+      const csv = await req.get(`${BASE}/api/teacher/tests/${T}/export`);
+      const csvTxt = await csv.text();
+      if (csv.status() !== 200 || !showsMine(csvTxt)) problems.push(`CSV export → HTTP ${csv.status()}, own student 076 ${showsMine(csvTxt) ? "listed" : "missing"} (control)`);
+      if (leaks(csvTxt, other).length) problems.push("CSV export contains the other class's student 078");
+      const qa = await req.get(`${BASE}/api/teacher/tests/${T}/analytics/${took[other.id].qWrong}`);
+      const qaTxt = await qa.text();
+      if (leaks(qaTxt, other).length) problems.push("per-question analytics names 078 (other class) among wrong answers");
+      const qm = took[mine.id].qWrong === took[other.id].qWrong ? qaTxt : await (await req.get(`${BASE}/api/teacher/tests/${T}/analytics/${took[mine.id].qWrong}`)).text();
+      notes.push(`question analytics HTTP ${qa.status()}, own student ${showsMine(qm) ? "named" : "not named"}`);
+      const an = await req.get(`${BASE}/api/teacher/tests/${T}/analytics`);
+      if (leaks(await an.text(), other).length) problems.push("test analytics API names 078");
+
+      // Writes on the other class's student.
+      const tn = await req.patch(`${BASE}/api/teacher/tests/${T}/results/${sOther[0].id}`, { data: { tutorNotes: "qa-probe D-20261111-3" } });
+      const tnRow = (await db.from("submissions").select("tutor_notes").eq("id", sOther[0].id).single()).data;
+      if (tn.status() < 400 || /qa-probe/.test(tnRow?.tutor_notes ?? "")) problems.push(`teacher wrote tutor notes on 078's exam (HTTP ${tn.status()})`);
+      const gr = await req.post(`${BASE}/api/teacher/tests/${T}/grant-retake`, { data: { studentId: other.id } });
+      const { data: grants } = await db.from("test_retake_grants").select("id").eq("test_id", T).eq("student_id", other.id).gte("granted_at", startedAt);
+      if (gr.status() < 400 || (grants ?? []).length) problems.push(`teacher granted 078 (other class) a retake (HTTP ${gr.status()})`);
+      notes.push(`078 detail ${sOther.length}× refused, tutor notes → ${tn.status()}, grant → ${gr.status()}`);
+
+      // Pages.
+      const pageText = async (path) => {
+        const res = await page.goto(BASE + path, { waitUntil: "networkidle" }).catch(() => null);
+        await sleep(1500);
+        return { status: res?.status() ?? 0, txt: await page.locator("body").innerText().catch(() => "") };
+      };
+      const rp = await pageText(`/teacher/tests/${T}/results`);
+      if (!showsMine(rp.txt)) problems.push("results page doesn't show own student 076 (control)");
+      const pages = [
+        `/teacher/tests/${T}/results`, `/teacher/tests/${T}/results/${sOther[0].id}`, `/teacher/tests/${T}/results/${sOther[1].id}`,
+        `/teacher/classes/${classC.id}`, `/teacher/classes/${classA.id}/students/${other.id}`, `/teacher/classes/${classA.id}`,
+        `/teacher/results`, `/teacher`, `/teacher/analysis`, `/teacher/tests/${T}/analytics`, `/teacher/tests/${T}/analytics/${took[other.id].qWrong}`,
+      ];
+      const pageLeaks = [];
+      for (const p of pages) {
+        const { status, txt } = p === pages[0] ? rp : await pageText(p);
+        const l = leaks(txt, other);
+        if (l.length) pageLeaks.push(`${p.replace(T, "<test>").replace(other.id, "<078>").replace(classA.id, "<A>").replace(classC.id, "<C>").replace(sOther[0].id, "<078 M1>").replace(sOther[1].id, "<078 M2>")} (HTTP ${status})`);
+      }
+      if (pageLeaks.length) problems.push(`078 (other class) shown on: ${pageLeaks.join(", ")}`);
+      notes.push(`${pages.length} teacher pages + 5 APIs checked; own student visible on results API/page/CSV`);
+      await context.close();
+    } finally {
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      for (const st of [mine, other]) await deleteSubs(st.id, T).catch(() => {});
+      await db.from("test_retake_grants").delete().eq("test_id", T).eq("student_id", other.id).gte("granted_at", startedAt);
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
 }

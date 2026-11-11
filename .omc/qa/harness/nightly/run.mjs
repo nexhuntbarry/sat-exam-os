@@ -40,7 +40,7 @@ const TEACHER1_CLERK = C.teachers[0].clerkId;  // Math
 const TEACHER2_CLERK = C.teachers[1].clerkId;  // R&W
 const STUDENT1_CLERK = C.students[0].clerkId;  // 001 class A
 const STUDENT2_CLERK = C.students[1].clerkId;  // 002 class B
-const REAL_ADMIN_CLERK = "user_3CooOaLGeVAgcwv17iCAypNcSwU"; // Barry read-only
+const REAL_ADMIN_CLERK = "user_3LvAA5udwaB4iYPlyTQvxdaokHL"; // Barry read-only
 
 function studentByN(n) {
   return C.students.find((s) => s.name === `TEST Student ${String(n).padStart(3, "0")}`);
