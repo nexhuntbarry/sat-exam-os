@@ -24,6 +24,8 @@ import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import SearchablePicker, { type PickerItem } from "@/components/ui/SearchablePicker";
 import AssignTestButton, { type AvailableTest } from "./AssignTestButton";
+import ClassGradebook from "@/components/analytics/ClassGradebook";
+import type { Gradebook } from "@/lib/class-gradebook-view";
 
 export interface AssignedTest {
   id: string;
@@ -32,13 +34,17 @@ export interface AssignedTest {
   openDate: string | null;
   dueDate: string | null;
   status: string | null;
-  submitted: number;
-  /** Students in this class with an In Progress submission for this test. */
-  inProgress: number;
-  total: number;
-  /** % correct, secondary to avgSat. */
-  avgScore: number | null;
-  avgSat: number | null;
+  /** From the Scores gradebook's column; null when it couldn't load. */
+  progress: {
+    /** Students with a finished attempt. */
+    submitted: number;
+    /** Students whose latest attempt isn't finished (a retake in progress counts). */
+    inProgress: number;
+    total: number;
+    /** % correct, secondary to avgSat. */
+    avgScore: number | null;
+    avgSat: number | null;
+  } | null;
 }
 
 interface ClassGroup {
@@ -91,6 +97,8 @@ interface Props {
   linkedTests: { id: string; name: string }[];
   assignedTests: AssignedTest[];
   availableTests: AvailableTest[];
+  /** null = it couldn't load (the Scores section says so). */
+  gradebook: Gradebook | null;
 }
 
 export default function ClassDetailClient({
@@ -102,6 +110,7 @@ export default function ClassDetailClient({
   linkedTests,
   assignedTests,
   availableTests,
+  gradebook,
 }: Props) {
   const router = useRouter();
 
@@ -274,8 +283,9 @@ export default function ClassDetailClient({
   const [unassignTarget, setUnassignTarget] = useState<{
     id: string;
     name: string;
-    submitted: number;
-    inProgress: number;
+    /** null = unknown (progress couldn't load). */
+    submitted: number | null;
+    inProgress: number | null;
   } | null>(null);
   const [unassignStep, setUnassignStep] = useState<"confirm" | "confirm-inprogress">("confirm");
   const [unassignBusy, setUnassignBusy] = useState(false);
@@ -284,7 +294,8 @@ export default function ClassDetailClient({
   async function confirmUnassign() {
     if (!unassignTarget) return;
     // If students are mid-exam, require an extra step before proceeding.
-    if (unassignStep === "confirm" && unassignTarget.inProgress > 0) {
+    // Unknown counts take the cautious path too.
+    if (unassignStep === "confirm" && (unassignTarget.inProgress ?? 1) > 0) {
       setUnassignStep("confirm-inprogress");
       return;
     }
@@ -576,8 +587,9 @@ export default function ClassDetailClient({
                     <>
                       <h3 className="font-bold text-charcoal text-base">Students are mid-exam — are you sure?</h3>
                       <p className="text-status-error text-xs mt-1 font-medium leading-relaxed">
-                        {unassignTarget.inProgress} student{unassignTarget.inProgress !== 1 ? "s are" : " is"} currently
-                        taking this test. Unassigning now will not interrupt their current session, but they will
+                        {unassignTarget.inProgress === null
+                          ? "Progress couldn't load, so some students may be taking this test right now."
+                          : `${unassignTarget.inProgress} student${unassignTarget.inProgress !== 1 ? "s are" : " is"} currently taking this test.`} Unassigning now will not interrupt their current session, but they will
                         not be able to start a new attempt afterwards.
                       </p>
                       <p className="text-mid-gray text-xs mt-1">Their submissions are always kept.</p>
@@ -590,13 +602,13 @@ export default function ClassDetailClient({
                         <strong>{unassignTarget.name}</strong> will lose access. Students mid-exam can still finish
                         their current attempt. (Individual assignments are unaffected.)
                       </p>
-                      {unassignTarget.submitted > 0 && (
+                      {(unassignTarget.submitted ?? 0) > 0 && (
                         <p className="text-status-warning text-xs mt-2 font-medium">
                           {unassignTarget.submitted} student{unassignTarget.submitted !== 1 ? "s have" : " has"} already
                           submitted — their results are kept.
                         </p>
                       )}
-                      {unassignTarget.inProgress > 0 && (
+                      {(unassignTarget.inProgress ?? 0) > 0 && (
                         <p className="text-status-warning text-xs mt-1 font-medium">
                           {unassignTarget.inProgress} student{unassignTarget.inProgress !== 1 ? "s are" : " is"} currently
                           mid-exam and can still finish.
@@ -689,18 +701,22 @@ export default function ClassDetailClient({
                     />
                   </Td>
                   <Td>
-                    <TwoLineCell
-                      main={`${t.submitted}/${t.total} submitted`}
-                      detail={
-                        t.avgSat !== null ? (
-                          <>
-                            Avg SAT {t.avgSat}
-                            {t.avgScore !== null && <span className="text-soft-mute"> · {t.avgScore.toFixed(1)}% correct</span>}
-                          </>
-                        ) : undefined
-                      }
-                      mainClassName="text-charcoal"
-                    />
+                    {t.progress ? (
+                      <TwoLineCell
+                        main={`${t.progress.submitted}/${t.progress.total} submitted`}
+                        detail={
+                          t.progress.avgSat !== null ? (
+                            <>
+                              Avg SAT {t.progress.avgSat}
+                              {t.progress.avgScore !== null && <span className="text-soft-mute"> · {t.progress.avgScore.toFixed(1)}% correct</span>}
+                            </>
+                          ) : undefined
+                        }
+                        mainClassName="text-charcoal"
+                      />
+                    ) : (
+                      <span className="text-soft-mute text-xs">Couldn&rsquo;t load</span>
+                    )}
                   </Td>
                   <Td kind="actions" sticky="right">
                     <RowActions>
@@ -720,7 +736,7 @@ export default function ClassDetailClient({
                             onSelect: () => {
                               setUnassignError(null);
                               setUnassignStep("confirm");
-                              setUnassignTarget({ id: t.id, name: t.name, submitted: t.submitted, inProgress: t.inProgress });
+                              setUnassignTarget({ id: t.id, name: t.name, submitted: t.progress?.submitted ?? null, inProgress: t.progress?.inProgress ?? null });
                             },
                           },
                         ]}
@@ -733,6 +749,8 @@ export default function ClassDetailClient({
           </tbody>
         </DataTable>
       </section>
+
+      <ClassGradebook classId={classGroup.id} className={classGroup.name} gradebook={gradebook} />
 
       {/* Members list */}
       <section>

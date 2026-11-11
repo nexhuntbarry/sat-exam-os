@@ -9,6 +9,9 @@ import { formatShortDateTime } from "@/lib/datetime";
 import { averageSat } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
+import { loadClassGradebook } from "@/lib/class-gradebook";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
+import ClassGradebook from "@/components/analytics/ClassGradebook";
 import {
   DataRow,
   DataTable,
@@ -70,18 +73,23 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
   const studentIds = students.map((s) => s.id);
 
   // Pull every submission for these students so we can compute averages
-  // and last-active per student.
+  // and last-active per student. Paged: PostgREST caps a response at 1000 rows.
   const [{ data: subs }, { data: assignments }] = await Promise.all([
     studentIds.length
-      ? db
-          .from("submissions")
-          .select(
-            "id, student_id, status, correct_count, total_questions, submitted_at, session_id, adaptive_track, attempt_number, started_at, test_id, tests!inner(test_name)",
-          )
-          .in("student_id", studentIds)
-          .order("submitted_at", { ascending: false })
+      ? fetchAllRows((from, to) =>
+          db
+            .from("submissions")
+            .select(
+              "id, student_id, status, correct_count, total_questions, submitted_at, session_id, adaptive_track, attempt_number, started_at, test_id, tests!inner(test_name)",
+            )
+            .in("student_id", studentIds)
+            .order("id")
+            .range(from, to),
+        )
       : Promise.resolve({ data: [] }),
-    db.from("test_assignments").select("test_id, student_ids, class_group_ids"),
+    fetchAllRows((from, to) =>
+      db.from("test_assignments").select("test_id, student_ids, class_group_ids").order("test_id").range(from, to),
+    ),
   ]);
 
   type Sub = {
@@ -141,17 +149,22 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
   }
 
   // Averages / latest use finished attempts only, scored with the shared
-  // score display (a graded Module 1 alone is not finished).
+  // score display (a graded Module 1 alone is not finished). Each test
+  // counts once per student, with their latest FINISHED attempt (the
+  // gradebook's rule: a retake in progress keeps the earlier score).
   type Latest = { test_name: string; submitted_at: string | null; sat: number | null };
   type Slot = { total: number; completed: number; sats: number[]; pcts: number[]; latest: Latest | null };
   const emptySlot = (): Slot => ({ total: 0, completed: 0, sats: [], pcts: [], latest: null });
   const perStudent: Record<string, Slot> = {};
   const tested: Record<string, Set<string>> = {};
   const completedTests: Record<string, Set<string>> = {};
+  // student:test → its latest finished section attempt. "Latest" = most
+  // recently started session (studentTestProgress's order).
+  const finished = new Map<string, { sid: string; rank: string; rows: Sub[]; sat: number | null; pct: number | null }>();
   for (const rows of attempts.values()) {
     const head = rows[0];
     const sid = head.student_id;
-    const slot = (perStudent[sid] ??= emptySlot());
+    perStudent[sid] ??= emptySlot();
     const testId = listedTestId(head.test_id, flLinks);
     (tested[sid] ??= new Set()).add(testId);
     const { status, score, fullLength } = scoreAttemptGroup(rows, flLinks, sectionOf.get(head.test_id), flMeta);
@@ -160,9 +173,17 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
     // The averages and the "latest" SAT column are per section: a
     // full-length attempt (total 400–1600) counts as completed only.
     if (fullLength) continue;
-    if (score?.sat != null) slot.sats.push(score.sat);
-    if (score?.pct != null) slot.pcts.push(score.pct);
-    const submittedAt = rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
+    const rank = rows.map((r) => r.started_at ?? "").sort().pop() ?? "";
+    const k = `${sid}:${testId}`;
+    const cur = finished.get(k);
+    if (!cur || rank > cur.rank) finished.set(k, { sid, rank, rows, sat: score?.sat ?? null, pct: score?.pct ?? null });
+  }
+  for (const f of finished.values()) {
+    const slot = perStudent[f.sid];
+    if (f.sat != null) slot.sats.push(f.sat);
+    if (f.pct != null) slot.pcts.push(f.pct);
+    const head = f.rows[0];
+    const submittedAt = f.rows.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
     if (!slot.latest || (submittedAt ?? "") > (slot.latest.submitted_at ?? "")) {
       const t = (Array.isArray(head.tests) ? head.tests[0] : head.tests) as
         | { test_name: string }
@@ -170,7 +191,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
       slot.latest = {
         test_name: t?.test_name ?? "—",
         submitted_at: submittedAt,
-        sat: score?.sat ?? null,
+        sat: f.sat,
       };
     }
   }
@@ -182,7 +203,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
     slot.completed = completedTests[sid]?.size ?? 0;
   }
 
-  return { group, students, perStudent };
+  return { group, students, perStudent, subjects };
 }
 
 export default async function TeacherClassDetailPage({
@@ -198,7 +219,18 @@ export default async function TeacherClassDetailPage({
   if (!onSide(id, await getQaClassGroupIds(), me.isQa)) notFound();
   const data = await loadClass(id, me.userId, me.role === "admin", me.isQa);
   if (!data) notFound();
-  const { group, students, perStudent } = data;
+  const { group, students, perStudent, subjects } = data;
+  // Same grid as the admin class page, limited to this teacher's subject.
+  // A failed read shows a notice in Scores; the roster still renders.
+  const gradebook = await loadClassGradebook(getServiceClient(), {
+    classGroupId: id,
+    isQa: me.isQa,
+    subjects,
+    testHref: (testId) => `/teacher/tests/${testId}/results`,
+  }).catch((e) => {
+    console.error("[teacher/classes/gradebook] load failed:", e);
+    return null;
+  });
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -228,6 +260,8 @@ export default async function TeacherClassDetailPage({
           </div>
         </div>
       </div>
+
+      <ClassGradebook classId={group.id} className={group.name} gradebook={gradebook} />
 
       <section>
         <h2 className="text-charcoal font-semibold mb-3">Roster</h2>
