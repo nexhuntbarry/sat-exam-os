@@ -19,7 +19,7 @@ import PrintPreview, { type PreviewOption } from "@/components/print/PrintPrevie
 
 export const dynamic = "force-dynamic";
 
-// GET /print/results/<testId>?subs=<submissionId,…>&mode=full|short&expl=1&at=inline|end
+// GET /print/results/<testId>?subs=<submissionId,…>&mode=full|short&expl=1&at=inline|end&duplex=1|0
 // A student's printed result (or several: "Print all", one student per
 // section). Teachers: their classes' students; admins: everyone; students:
 // their own latest attempt. QA isolation and answer visibility are enforced
@@ -30,13 +30,13 @@ export default async function PrintResultsPage({
   searchParams,
 }: {
   params: Promise<{ testId: string }>;
-  searchParams: Promise<{ subs?: string | string[]; mode?: string | string[]; expl?: string | string[]; at?: string | string[]; pt?: string | string[] }>;
+  searchParams: Promise<{ subs?: string | string[]; mode?: string | string[]; expl?: string | string[]; at?: string | string[]; pt?: string | string[]; duplex?: string | string[] }>;
 }) {
   const { testId } = await params;
   const raw = await searchParams;
   // A repeated query param arrives as an array; take the first value.
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-  const sp = { subs: one(raw.subs), mode: one(raw.mode), expl: one(raw.expl), at: one(raw.at), pt: one(raw.pt) };
+  const sp = { subs: one(raw.subs), mode: one(raw.mode), expl: one(raw.expl), at: one(raw.at), pt: one(raw.pt), duplex: one(raw.duplex) };
 
   let viewer: Viewer;
   let opts: PrintOptions;
@@ -79,6 +79,8 @@ export default async function PrintResultsPage({
     }
 
     const single = printouts.length === 1;
+    // Double-sided: on by default for several students (one per sheet side).
+    const duplex = sp.duplex ? sp.duplex === "1" : !single;
     const explAllowed = printouts.some((p) => p.visibility.answers && p.visibility.explanations);
     const options: PreviewOption[] = [
       {
@@ -111,6 +113,15 @@ export default async function PrintResultsPage({
             ],
           }]
         : []),
+      {
+        param: "duplex",
+        label: "Double-sided printing",
+        value: duplex ? "1" : "0",
+        choices: [
+          { value: "1", label: "On (each student starts on a front side)" },
+          { value: "0", label: "Off" },
+        ],
+      },
     ];
     const qs = new URLSearchParams({ sub: printouts[0].submissionId, mode: opts.mode, ...(opts.explanations ? { expl: "1", at: opts.explanationsAt } : {}) });
 
@@ -121,10 +132,11 @@ export default async function PrintResultsPage({
         options={options}
         students={candidates.length > 1 ? candidates.map((c) => ({ id: c.submissionId, name: c.studentName, classNames: c.classNames, checked: printouts.some((p) => p.studentId === c.studentId) })) : undefined}
         pdfUrl={single && !ticketMode ? `/api/print/results/${testId}/pdf?${qs}` : undefined}
+        duplex={duplex && !single}
       >
         <div className="bg-white text-charcoal">
           {printouts.map((p, i) => (
-            <ResultPrintout key={p.submissionId} p={p} opts={opts} first={i === 0} src={src} />
+            <ResultPrintout key={p.submissionId} p={p} opts={opts} first={i === 0} duplex={duplex} src={src} />
           ))}
         </div>
       </PrintPreview>

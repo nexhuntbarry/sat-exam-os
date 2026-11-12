@@ -12,11 +12,14 @@ export default function ResultPrintout({
   p,
   opts,
   first,
+  duplex = false,
   src = imgSrc,
 }: {
   p: StudentResultPrintout;
   opts: PrintOptions;
   first: boolean;
+  /** Double-sided: start on a front side (odd page). */
+  duplex?: boolean;
   src?: (url: string) => string;
 }) {
   const score = p.attempt.score;
@@ -40,8 +43,9 @@ export default function ResultPrintout({
     // Figures are capped for paper (a large crop used to fill half a page);
     // never upscaled. Printout only: the blank test print and the exam UI keep theirs.
     <section
-      className={`result-student${first ? "" : " break-before-page"} [&_.print-figure_img]:max-h-[6.5cm] [&_.print-figure_img]:w-auto [&_.print-figure_img]:h-auto [&_.print-figure_img]:object-contain`}
+      className={`result-student${first ? "" : duplex ? " break-before-recto" : " break-before-page"} [&_.print-figure_img]:max-h-[6.5cm] [&_.print-figure_img]:w-auto [&_.print-figure_img]:h-auto [&_.print-figure_img]:object-contain`}
       data-student={p.studentName}
+      data-sub={p.submissionId}
     >
       {/* ── Summary page ── */}
       <div className="result-summary">

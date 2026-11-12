@@ -4,9 +4,13 @@ import { useEffect, useRef, useState } from "react";
 import { Printer, Download, Loader2 } from "lucide-react";
 import { waitForImages } from "@/lib/print-images";
 import { PrintPendingNotice } from "@/components/analytics/PrintButton";
+import { studentPageLabels } from "@/lib/print-duplex";
 
 // Pages as sheets on screen; on paper, no blank sheet after the last page.
 const PREVIEW_CSS = `
+/* Per-student page numbers (labelStudentPages), on screen and paper. */
+.print-preview-pages .pagedjs_margin-content[data-label]::after { content: attr(data-label) !important; }
+.print-preview-pages .print-blank-note { margin-top: 4.5in; text-align: center; font-size: 10pt; color: #555; }
 @media screen {
   .print-preview-pages { background: #e7e5e4; padding: 24px 0 48px; min-height: 100vh; }
   .print-preview-pages .pagedjs_pages { display: flex; flex-direction: column; align-items: center; gap: 18px; }
@@ -18,6 +22,34 @@ const PREVIEW_CSS = `
   html:not([data-print-ready]) .print-source { display: block !important; }
 }
 `;
+
+// Result printouts (sections with data-sub, one per student): "Page x of y"
+// counts only that student's pages, and a blank page Paged.js added for
+// double-sided printing (break-before: recto) belongs to the student before
+// it, isn't numbered and says it's blank. Returns the number of blank pages.
+function labelStudentPages(root: HTMLElement): number {
+  const pages = Array.from(root.querySelectorAll<HTMLElement>(".pagedjs_page"));
+  if (!root.querySelector(".pagedjs_page [data-sub]")) return 0;
+  let last: string | null = null;
+  const owners = pages.map((pg) => {
+    if (pg.classList.contains("pagedjs_blank_page")) return null;
+    last = pg.querySelector<HTMLElement>("[data-sub]")?.dataset.sub ?? last;
+    return last;
+  });
+  const labels = studentPageLabels(owners);
+  pages.forEach((pg, i) => {
+    const l = labels[i];
+    const foot = pg.querySelector<HTMLElement>(".pagedjs_margin-bottom-right .pagedjs_margin-content");
+    if (foot) foot.dataset.label = l ? `Page ${l.n} of ${l.of}` : "";
+    if (!l) {
+      const note = document.createElement("div");
+      note.className = "print-blank-note";
+      note.textContent = "This page intentionally left blank";
+      pg.querySelector(".pagedjs_page_content")?.appendChild(note);
+    }
+  });
+  return labels.filter((l) => l === null).length;
+}
 
 export interface PreviewOption {
   /** URL search param this option sets. */
@@ -84,6 +116,7 @@ export default function PrintPreview({
   options = [],
   students,
   pdfUrl,
+  duplex = false,
   children,
 }: {
   title: string;
@@ -94,6 +127,8 @@ export default function PrintPreview({
   students?: PreviewStudent[];
   /** Server PDF for "Save as PDF"; without it, Save opens the print dialog. */
   pdfUrl?: string;
+  /** Double-sided printing is on: the status line says how many blank pages were added. */
+  duplex?: boolean;
   children: React.ReactNode;
 }) {
   const sourceRef = useRef<HTMLDivElement>(null);
@@ -103,6 +138,7 @@ export default function PrintPreview({
   const [progress, setProgress] = useState({ loaded: 0, total: 0 });
   const [failed, setFailed] = useState<string[]>([]);
   const [pages, setPages] = useState(0);
+  const [blanks, setBlanks] = useState(0);
   const [saving, setSaving] = useState(false);
   // `rendered` = the students in the document on screen; `picked` = the
   // current choice. Whenever they differ the preview is out of date: it
@@ -156,6 +192,7 @@ export default function PrintPreview({
         if (q && typeof q.tick === "function") q.tick = backgroundSafeTick();
         const flow = await previewer.preview(content, [{ [window.location.href]: pageCss }], targetRef.current!);
         await waitForImages(targetRef.current!);
+        setBlanks(labelStudentPages(targetRef.current!));
         setPages(flow.total);
         setPhase("ready");
         // Read by the server PDF renderer (headless Chromium) and the nightly check.
@@ -239,7 +276,8 @@ export default function PrintPreview({
             <div className="text-xs text-mid-gray" aria-live="polite">
               {phase === "images" && `Loading images… ${progress.loaded}/${progress.total}`}
               {phase === "paging" && "Laying out pages…"}
-              {phase === "ready" && `${pages} page${pages === 1 ? "" : "s"} · US Letter`}
+              {phase === "ready" &&
+                `${pages} page${pages === 1 ? "" : "s"}${duplex ? ` (${blanks} blank page${blanks === 1 ? "" : "s"} added for double-sided printing)` : ""} · US Letter`}
               {phase === "error" && "Preview failed — Print still prints the document."}
             </div>
           </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Printer, Download, FileSpreadsheet, Loader2 } from "lucide-react";
+import { fillersAfter } from "@/lib/print-duplex";
 
 interface Student {
   submissionId: string;
@@ -25,6 +26,9 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
   const [mode, setMode] = useState<"full" | "short">("full");
   const [expl, setExpl] = useState(false);
   const [format, setFormat] = useState<"zip" | "combined">("zip");
+  // Combined PDF only (the ZIP's files never get blank pages).
+  const [duplex, setDuplex] = useState(true);
+  const [blanksAdded, setBlanksAdded] = useState<number | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failed, setFailed] = useState<string[]>([]);
 
@@ -76,6 +80,7 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
   async function download() {
     const list = chosen;
     setFailed([]);
+    setBlanksAdded(null);
     setProgress({ done: 0, total: list.length });
     const results: ({ name: string; bytes: Uint8Array } | null)[] = new Array(list.length).fill(null);
     const bad: string[] = [];
@@ -112,13 +117,24 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
         blob = new Blob([zipSync(files, { level: 0 }) as BlobPart], { type: "application/zip" });
         file = `${base}.zip`;
       } else {
-        // One PDF, each student starting on a new page (every student's PDF starts on its own page).
-        const { PDFDocument } = await import("pdf-lib");
+        // One PDF, each student starting on a new page (every student's PDF
+        // starts on its own page). Double-sided: a blank page after a student
+        // with an odd page count, so the next one starts on a front side.
+        const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
         const out = await PDFDocument.create();
-        for (const r of ok) {
-          const doc = await PDFDocument.load(r.bytes);
+        const docs = await Promise.all(ok.map((r) => PDFDocument.load(r.bytes)));
+        const fill = duplex ? fillersAfter(docs.map((d) => d.getPageCount())) : docs.map(() => false);
+        const font = await out.embedFont(StandardFonts.Helvetica);
+        const note = "This page intentionally left blank";
+        for (const [i, doc] of docs.entries()) {
           for (const p of await out.copyPages(doc, doc.getPageIndices())) out.addPage(p);
+          if (fill[i]) {
+            const { width, height } = out.getPage(out.getPageCount() - 1).getSize();
+            const blank = out.addPage([width, height]);
+            blank.drawText(note, { x: (width - font.widthOfTextAtSize(note, 10)) / 2, y: height / 2, size: 10, font, color: rgb(0.33, 0.33, 0.33) });
+          }
         }
+        if (duplex) setBlanksAdded(fill.filter(Boolean).length);
         blob = new Blob([(await out.save()) as BlobPart], { type: "application/pdf" });
         file = `${base}.pdf`;
       }
@@ -174,6 +190,12 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
               <option value="combined">One combined PDF</option>
             </select>
           </label>
+          {format === "combined" && (
+            <label className="flex items-center gap-2" title="Each student starts on a front side: a blank page follows a student with an odd number of pages">
+              <input type="checkbox" checked={duplex} onChange={(e) => setDuplex(e.target.checked)} />
+              Double-sided printing
+            </label>
+          )}
         </div>
 
         <div>
@@ -229,6 +251,11 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
             <FileSpreadsheet size={15} /> Download score summary (CSV)
           </a>
         </div>
+        {blanksAdded !== null && (
+          <p className="text-xs text-mid-gray">
+            {blanksAdded} blank page{blanksAdded === 1 ? "" : "s"} added for double-sided printing.
+          </p>
+        )}
         {failed.length > 0 && (
           <p role="alert" className="text-xs text-status-error">
             Couldn&apos;t prepare {failed.length} result{failed.length === 1 ? "" : "s"}: {failed.join(", ")}. The rest were downloaded; try these again.

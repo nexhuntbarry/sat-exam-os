@@ -22,6 +22,8 @@ export function printPageCss({
 }
 .print-student-name { string-set: student content(text); }
 .break-before-page { break-before: page; }
+/* Double-sided: the next student starts on a front side (Paged.js adds a blank page). */
+.break-before-recto { break-before: recto; }
 /* Keep together only what must stay together: a figure (with the stem
    just above it) and the choice list. Stems and passages flow. */
 .break-inside-avoid, .print-keep, .print-figure, .print-choices, .mathmd table { break-inside: avoid; }
