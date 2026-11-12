@@ -460,13 +460,13 @@ export async function runPrintChecks({ check, fail, TESTS, ADMIN_CLERK, REAL_ADM
         const want = await page.evaluate(() => new Set([...document.querySelectorAll(".print-source img")].map((i) => i.src)).size);
         await page.emulateMedia({ media: "print" });
         const dom = await figuresOnPage(page);
-        if (dom.total < want) problems.push(`${id.slice(0, 8)}: only ${dom.total} of ${want} figures on the printed pages`);
+        if (dom.total < want) problems.push(`${id}: only ${dom.total} of ${want} figures on the printed pages`);
         const hidden = await page.evaluate(() => [...document.images].filter((i) => i.src.includes("/api/blob-image") && !i.closest(".print-source"))
           .filter((i) => { const r = i.getBoundingClientRect(); return r.width < 20 || r.height < 20; }).map((i) => i.alt));
         await page.emulateMedia({ media: null });
-        if (dom.broken.length) problems.push(`${id.slice(0, 8)}: not loaded ${dom.broken.join(", ")}`);
-        if (hidden.length) problems.push(`${id.slice(0, 8)}: not shown in print ${hidden.join(", ")}`);
-        notes.push(`${id.slice(0, 8)} ${dom.total}/${want} figures`);
+        if (dom.broken.length) problems.push(`${id}: not loaded ${dom.broken.join(", ")}`);
+        if (hidden.length) problems.push(`${id}: not shown in print ${hidden.join(", ")}`);
+        notes.push(`${id} ${dom.total}/${want} figures`);
       }
     } finally {
       await b.close().catch(() => {});
