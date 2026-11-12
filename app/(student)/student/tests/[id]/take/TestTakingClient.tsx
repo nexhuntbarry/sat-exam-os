@@ -1137,10 +1137,11 @@ export default function TestTakingClient({
   //
   // The navigation is remembered: the watchdog must not start it again
   // while the next page is still on its way (see NAVIGATION_RESTART_MS).
-  const navigationRef = useRef<{ url: string; at: number } | null>(null);
+  const navigationRef = useRef<{ url: string; at: number; restarts: number } | null>(null);
   const [leavingUrl, setLeavingUrl] = useState<string | null>(null);
   function navigateAway(url: string) {
-    navigationRef.current = { url, at: performance.now() };
+    const prev = navigationRef.current;
+    navigationRef.current = { url, at: performance.now(), restarts: prev?.url === url ? prev.restarts + 1 : 0 };
     flushSync(() => {
       setActiveAid(null);
       setLeavingUrl(url);
@@ -1205,7 +1206,7 @@ export default function TestTakingClient({
       // never arrived (support 18b434c8). Only restart a navigation that
       // has clearly gone nowhere.
       const nav = navigationRef.current;
-      const action = watchdogAction(nav ? { sinceMs: performance.now() - nav.at } : null);
+      const action = watchdogAction(nav ? { sinceMs: performance.now() - nav.at, restarts: nav.restarts } : null);
       if (action === "wait-for-page") return;
       if (action === "restart-navigation" && nav) {
         navigateAway(nav.url);
@@ -1297,11 +1298,16 @@ export default function TestTakingClient({
     const onOnline = () => {
       if (submitRetryTimerRef.current) retrySubmitNow();
     };
+    // visibilitychange, not focus: focus also fires each time focus leaves
+    // the Desmos iframe, which would skip the backoff over and over.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") onOnline();
+    };
     window.addEventListener("online", onOnline);
-    window.addEventListener("focus", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       window.removeEventListener("online", onOnline);
-      window.removeEventListener("focus", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
       if (submitRetryTimerRef.current) clearTimeout(submitRetryTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1384,7 +1390,7 @@ export default function TestTakingClient({
         // Never navigate away here: a reload would bounce to sign-in and
         // drop anything not yet on the server. Stay, keep the local copy.
         setSessionExpired(true);
-        setSubmitError("Your test has not been submitted yet. Sign in again, then press Submit.");
+        setSubmitError("Your test has not been submitted yet. Sign in again (in another tab if needed). We keep trying in the background, and it will go through once you're signed in.");
         // Often only the short-lived token lapsed (laptop asleep, Clerk
         // briefly unreachable) and Clerk renews it on its own: keep trying
         // in the background too, so the submit goes through once it has.

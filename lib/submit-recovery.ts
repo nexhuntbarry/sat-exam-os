@@ -72,10 +72,14 @@ export function classifySubmitResponse(
  * - otherwise: ask the server whether the submit landed.
  */
 export function watchdogAction(
-  navigation: { sinceMs: number } | null,
+  navigation: { sinceMs: number; restarts?: number } | null,
 ): "wait-for-page" | "restart-navigation" | "check-server" {
   if (!navigation) return "check-server";
-  return navigation.sinceMs >= NAVIGATION_RESTART_MS ? "restart-navigation" : "wait-for-page";
+  // Each restart waits twice as long (45 s, 90 s, 180 s… capped at 6 min), so a
+  // page that is merely very slow (a whole class auto-submitting at 0:00) is
+  // never cancelled over and over at a fixed interval.
+  const wait = Math.min(NAVIGATION_RESTART_MS * 2 ** (navigation.restarts ?? 0), 6 * 60_000);
+  return navigation.sinceMs >= wait ? "restart-navigation" : "wait-for-page";
 }
 
 /**
