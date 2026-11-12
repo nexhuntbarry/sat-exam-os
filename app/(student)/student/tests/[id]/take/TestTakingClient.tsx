@@ -33,6 +33,17 @@ import {
   recordLeave,
 } from "@/lib/question-activity";
 import { KEEPALIVE_INTERVAL_MS } from "@/lib/live-progress-shared";
+import {
+  NAVIGATION_RESTART_MS,
+  SAVE_TIMEOUT_MS,
+  SUBMIT_BACKGROUND_RETRY_WARN_AFTER,
+  SUBMIT_TIMEOUT_MS,
+  TOKEN_REFRESH_TIMEOUT_MS,
+  classifySubmitResponse,
+  submitBackgroundRetryDelayMs,
+  watchdogAction,
+  withTimeout,
+} from "@/lib/submit-recovery";
 
 interface Question {
   id: string;
@@ -91,7 +102,6 @@ interface Props {
 // navigation changes are debounced by this much.
 const AUTO_SAVE_DEBOUNCE_MS = 800;
 const SAVE_RETRY_MAX_MS = 30000;
-const SUBMIT_TIMEOUT_MS = 20000;
 const SUBMIT_MAX_ATTEMPTS = 3;
 // While a submit is pending, ask the server every few seconds whether it
 // already landed; after SUBMIT_STUCK_MS also show a "Continue" escape hatch.
@@ -103,13 +113,6 @@ const KEEPALIVE_MAX_BYTES = 60000;
 // "closed": the server won't take autosaves any more (time is up or the
 // module was already finalized), so only Submit can still deliver answers.
 type SaveStatus = "saved" | "saving" | "error" | "closed";
-
-// Background submit retries after every immediate attempt failed: 5 s,
-// 10 s, 20 s… capped here, until the submit lands or the page closes.
-const SUBMIT_BACKGROUND_RETRY_MAX_MS = 60000;
-// After this many background retries, stop and ask the student to contact
-// their teacher (the answers stay on this device; the button still works).
-const SUBMIT_BACKGROUND_RETRY_LIMIT = 10;
 
 type SubmitPayload = {
   data?: { id?: string; nextSubmissionId?: string | null; handoffFailed?: boolean };
@@ -573,13 +576,15 @@ export default function TestTakingClient({
 
   // On 401, ask Clerk for a fresh session token (the short-lived JWT may
   // just not have been refreshed — laptop sleep, background tab, clock
-  // skew) and retry once with it.
+  // skew) and retry once with it. The token refresh is Clerk's own request
+  // and takes no AbortSignal: bound it, or a hung refresh held a submit (and
+  // the watchdog's status check) far past their timeouts.
   async function fetchWithAuthRetry(url: string, init: RequestInit): Promise<Response> {
     const res = await fetch(url, init);
     if (res.status !== 401) return res;
     let token: string | null = null;
     try {
-      token = await getTokenRef.current({ skipCache: true });
+      token = await withTimeout(getTokenRef.current({ skipCache: true }), TOKEN_REFRESH_TIMEOUT_MS, init.signal);
     } catch {
       token = null;
     }
@@ -612,6 +617,11 @@ export default function TestTakingClient({
     let serverQuestionMeta: unknown = undefined;
     let remainingSeconds: unknown = undefined;
     const { delta: questionMeta, built: metaBuilt } = questionMetaDelta();
+    // A save that never answers used to keep saveInFlight set for good:
+    // no later save went out and the status sat on "Saving…". Cut it (body
+    // read included) and retry like any failed save.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SAVE_TIMEOUT_MS);
     try {
       const res = await fetchWithAuthRetry(saveUrl, {
         method: "PATCH",
@@ -625,6 +635,7 @@ export default function TestTakingClient({
           questionMeta,
           ...nextSaveOrder(),
         }),
+        signal: controller.signal,
       });
       ok = isJsonOk(res);
       if (ok) {
@@ -645,7 +656,9 @@ export default function TestTakingClient({
         if (err?.code === "submission_gone") gone = true;
       }
     } catch {
-      // Network failure — retried below.
+      // Network failure or timeout — retried below.
+    } finally {
+      clearTimeout(timer);
     }
     saveInFlightRef.current = false;
     if (submittedRef.current) return;
@@ -944,16 +957,20 @@ export default function TestTakingClient({
         ) {
           return;
         }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), SAVE_TIMEOUT_MS);
         fetchWithAuthRetry(saveUrl, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ keepalive: true }),
+          signal: controller.signal,
         })
           .then((res) => {
             // Submitted / deleted / time up: nothing left to keep alive.
             if (res.status === 400 || res.status === 404 || res.status === 409) keepaliveStoppedRef.current = true;
           })
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => clearTimeout(timer));
       } catch {
         // Never let the keepalive disturb the exam.
       }
@@ -1117,15 +1134,27 @@ export default function TestTakingClient({
   // showed "Leave site?" and blocked the move to Module 2 / the result page
   // after a submit that had already landed (support b1cf70bf). Unmount the
   // iframe first so nothing can hold the navigation.
+  //
+  // The navigation is remembered: the watchdog must not start it again
+  // while the next page is still on its way (see NAVIGATION_RESTART_MS).
+  const navigationRef = useRef<{ url: string; at: number } | null>(null);
+  const [leavingUrl, setLeavingUrl] = useState<string | null>(null);
   function navigateAway(url: string) {
-    flushSync(() => setActiveAid(null));
+    navigationRef.current = { url, at: performance.now() };
+    flushSync(() => {
+      setActiveAid(null);
+      setLeavingUrl(url);
+    });
     document.querySelectorAll("iframe").forEach((f) => f.remove());
     window.location.assign(url);
   }
 
   // Where to go once this module is submitted: Module 1 → the take page
-  // (it opens Module 2), otherwise the result page.
+  // (it opens Module 2), otherwise the result page. Once: a second call
+  // (late submit reply, watchdog) would cancel the navigation under way;
+  // only the watchdog's slow restart and the student's Continue redo it.
   function leaveAfterSubmit() {
+    if (navigationRef.current) return;
     navigateAway(
       test.moduleLabel === "Module 1"
         ? continueUrl ?? `/student/tests/${testId}/take`
@@ -1171,10 +1200,21 @@ export default function TestTakingClient({
     const tick = async () => {
       if (stopped || checking) return;
       if (performance.now() - startedAt >= SUBMIT_STUCK_MS) setSubmitStuck(true);
+      // Already on the way to the next page: restarting the navigation on
+      // every tick cancelled it each time, so a page slower than the poll
+      // never arrived (support 18b434c8). Only restart a navigation that
+      // has clearly gone nowhere.
+      const nav = navigationRef.current;
+      const action = watchdogAction(nav ? { sinceMs: performance.now() - nav.at } : null);
+      if (action === "wait-for-page") return;
+      if (action === "restart-navigation" && nav) {
+        navigateAway(nav.url);
+        return;
+      }
       checking = true;
       const landed = await checkSubmitLanded();
       checking = false;
-      if (!stopped && landed) {
+      if (!stopped && landed && !navigationRef.current) {
         submittedRef.current = true;
         leaveAfterSubmit();
       }
@@ -1193,6 +1233,12 @@ export default function TestTakingClient({
   // "Continue" on the stuck banner: go on if the submit landed; if the
   // server says it didn't, cut the hung attempt short so a retry goes out.
   async function handleStuckContinue() {
+    // Submitted already and the next page is just slow: the student asked
+    // to go on, so start that navigation again now.
+    if (navigationRef.current) {
+      navigateAway(navigationRef.current.url);
+      return;
+    }
     setStuckNote("Checking…");
     const landed = await checkSubmitLanded();
     if (landed) {
@@ -1224,14 +1270,16 @@ export default function TestTakingClient({
   function scheduleSubmitRetry() {
     if (submittedRef.current) return;
     if (submitRetryTimerRef.current) clearTimeout(submitRetryTimerRef.current);
-    if (submitRetryCountRef.current >= SUBMIT_BACKGROUND_RETRY_LIMIT) {
-      setSubmitRetrying(false);
+    // Never give up: retrying used to stop after 10 tries, so a student
+    // whose Wi-Fi came back later (or whose module the time-up job had
+    // already closed) stayed on the page with no way on. Each retry is one
+    // cheap request; it lands, or gets "already submitted" and moves on.
+    if (submitRetryCountRef.current >= SUBMIT_BACKGROUND_RETRY_WARN_AFTER) {
       setSubmitError(
-        "We still can't submit your test. Your answers are kept on this device — don't close this page, and contact your teacher.",
+        "We still can't submit your test. Your answers are kept on this device and we keep trying — don't close this page, and tell your teacher.",
       );
-      return;
     }
-    const delay = Math.min(SUBMIT_BACKGROUND_RETRY_MAX_MS, 5000 * 2 ** submitRetryCountRef.current);
+    const delay = submitBackgroundRetryDelayMs(submitRetryCountRef.current);
     submitRetryCountRef.current += 1;
     setSubmitRetrying(true);
     submitRetryTimerRef.current = setTimeout(() => {
@@ -1244,12 +1292,16 @@ export default function TestTakingClient({
     handleSubmitRef.current();
   }
   useEffect(() => {
+    // Back online, or back on this tab (e.g. after signing in again in
+    // another tab): retry a pending submit now instead of after the backoff.
     const onOnline = () => {
       if (submitRetryTimerRef.current) retrySubmitNow();
     };
     window.addEventListener("online", onOnline);
+    window.addEventListener("focus", onOnline);
     return () => {
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("focus", onOnline);
       if (submitRetryTimerRef.current) clearTimeout(submitRetryTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1273,6 +1325,9 @@ export default function TestTakingClient({
       let res: Response | null = null;
       let payload: SubmitPayload | null = null;
       for (let attempt = 0; attempt < SUBMIT_MAX_ATTEMPTS; attempt++) {
+        // The watchdog found the submit landed and is already opening the
+        // next page: another attempt would only get "already submitted".
+        if (navigationRef.current) return;
         try {
           ({ res, payload } = await postSubmit());
           if (res.ok || res.status < 500) break;
@@ -1280,95 +1335,87 @@ export default function TestTakingClient({
           res = null; // network error / timeout → retry
           payload = null;
         }
-        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        if (attempt < SUBMIT_MAX_ATTEMPTS - 1) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
       }
-      if (!res) {
-        // Every attempt failed at the network level. Don't auto-reload —
-        // with an expired timer that would loop (load → expire → submit →
-        // fail → reload). Leave the Submit button live; once the connection
-        // is back, a retry either succeeds or gets the 400 below.
-        throw new Error("network");
-      }
-      if (res.status === 401) {
-        // Never navigate away here: a reload would bounce to sign-in and
-        // drop anything not yet on the server. Stay, keep the local copy.
-        submitInFlightRef.current = false;
-        setIsSubmitting(false);
-        setAutoSubmitting(false);
-        setShowSubmitModal(false);
-        setSessionExpired(true);
-        // Submit cleared the pending autosave timer; resume retrying.
-        if (hasUnsavedChanges()) scheduleSave(0);
-        setSubmitError("Your test has not been submitted yet. Sign in again, then press Submit.");
+      if (navigationRef.current) return;
+      const outcome = classifySubmitResponse(res ? { status: res.status, jsonOk: isJsonOk(res) } : null, payload);
+      if (outcome === "done") {
+        // A fresh grade, or 400 "already submitted": an earlier request of
+        // ours landed but its reply never reached us, or the time-up job
+        // graded this module first. Either way the module is done: Module
+        // 1 → the take page, which opens Module 2 (the server already
+        // created it, or the take page creates it); Module 2 → the result.
+        // A HARD navigation (window.location.assign), not router.push: the
+        // same URL didn't reliably remount the take client and Module 1's
+        // answers leaked into Module 2. Module 1 always continues on the
+        // take page, even when the server couldn't create Module 2
+        // (handoffFailed): the take page retries the handoff. Never the
+        // Module 1 result page — that was a dead end mid-test.
+        submittedRef.current = true;
+        clearSubmitRetry();
+        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+        if (res?.ok) {
+          try {
+            localStorage.removeItem(backupKey(submissionId));
+          } catch {
+            // ignore
+          }
+        }
+        leaveAfterSubmit();
         return;
       }
-      if (res.status === 400 && payload) {
-        // "Submission already submitted" — an earlier request of ours
-        // landed but its response never reached us, or the time-up cron
-        // graded this module first. Either way the module is done: carry
-        // on like a successful submit. Module 1 → the take page, which
-        // opens Module 2 (the server already created it, or the take page
-        // creates it); Module 2 → the result page.
+      if (outcome === "transient" && (await checkSubmitLanded())) {
+        // Every reply was lost or failed, but the server has the submit
+        // (e.g. it graded the first attempt and the connection dropped):
+        // go on instead of telling the student it didn't work.
         submittedRef.current = true;
         clearSubmitRetry();
         if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
         leaveAfterSubmit();
         return;
       }
-      if (isJsonOk(res) && payload?.data?.id) {
-        submittedRef.current = true;
-        if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
-        try {
-          localStorage.removeItem(backupKey(submissionId));
-        } catch {
-          // ignore
-        }
-        // Adaptive flow: the submit endpoint creates the Module 2 row
-        // and returns its id. We use a HARD browser navigation
-        // (window.location.assign) instead of router.push because
-        // router.push to the same URL doesn't reliably remount the
-        // take client — Module 1's answer state was leaking into
-        // Module 2 (DB showed Module 2 rows with 44 answers = 22+22).
-        // A real navigation guarantees a fresh React tree, fresh
-        // state, fresh server fetch, and a fresh timer.
-        // Module 1 always continues on the take page, even when the
-        // server couldn't create Module 2 (handoffFailed / no next id):
-        // the take page retries the handoff, and falls back to the test
-        // page's "Continue to Module 2". Never the Module 1 result page —
-        // that was a dead end mid-test.
-        clearSubmitRetry();
-        leaveAfterSubmit();
-      } else {
-        submitInFlightRef.current = false;
-        setIsSubmitting(false);
-        setAutoSubmitting(false);
-        setShowSubmitModal(false);
-        if (hasUnsavedChanges()) scheduleSave(0);
-        // Server error / unexpected reply: retry in the background.
-        // Other 4xx (e.g. 404) won't fix themselves.
-        const transient = res.status >= 500 || (res.ok && !isJsonOk(res));
-        if (res.status === 404 && payload?.code === "submission_gone") {
-          markExamGone();
-          setSubmitError(
-            "Couldn't submit — this exam was removed by your teacher or an admin, so there's nothing left to submit. Go back to the test page to start it again.",
-          );
-        } else if (transient) {
-          setSubmitError(`Not submitted yet — the server had a problem. Retrying automatically… ${savedNote()}`);
-          scheduleSubmitRetry();
-        } else {
-          // Permanent (404 / 422 …): retrying won't help.
-          setSubmitError(
-            `Couldn't submit${payload?.error ? ` (${payload.error})` : ""}. Please contact your teacher. ${savedNote()}`,
-          );
-        }
-      }
-    } catch {
-      // Network failure after all retries.
       submitInFlightRef.current = false;
       setIsSubmitting(false);
       setAutoSubmitting(false);
       setShowSubmitModal(false);
-      setSubmitError(`Not submitted yet — can't reach the server. Retrying automatically; check your Wi-Fi. ${savedNote()}`);
+      // Submit cleared the pending autosave timer; resume saving.
+      if (hasUnsavedChanges()) scheduleSave(0);
+      if (outcome === "auth") {
+        // Never navigate away here: a reload would bounce to sign-in and
+        // drop anything not yet on the server. Stay, keep the local copy.
+        setSessionExpired(true);
+        setSubmitError("Your test has not been submitted yet. Sign in again, then press Submit.");
+        // Often only the short-lived token lapsed (laptop asleep, Clerk
+        // briefly unreachable) and Clerk renews it on its own: keep trying
+        // in the background too, so the submit goes through once it has.
+        scheduleSubmitRetry();
+      } else if (outcome === "gone") {
+        markExamGone();
+        setSubmitError(
+          "Couldn't submit — this exam was removed by your teacher or an admin, so there's nothing left to submit. Go back to the test page to start it again.",
+        );
+      } else if (outcome === "transient") {
+        // No auto-reload — with an expired timer that would loop (load →
+        // expire → submit → fail → reload). Keep retrying in the background.
+        setSubmitError(
+          res
+            ? `Not submitted yet — the server had a problem. Retrying automatically… ${savedNote()}`
+            : `Not submitted yet — can't reach the server. Retrying automatically; check your Wi-Fi. ${savedNote()}`,
+        );
+        scheduleSubmitRetry();
+      } else {
+        // Permanent (404 / 422 …): retrying won't help.
+        setSubmitError(
+          `Couldn't submit${payload?.error ? ` (${payload.error})` : ""}. Please contact your teacher. ${savedNote()}`,
+        );
+      }
+    } catch {
+      // Unexpected error in the code above: never leave "Submitting…" up.
+      submitInFlightRef.current = false;
+      setIsSubmitting(false);
+      setAutoSubmitting(false);
+      setShowSubmitModal(false);
+      setSubmitError(`Not submitted yet — retrying automatically. ${savedNote()}`);
       if (hasUnsavedChanges()) scheduleSave(0);
       scheduleSubmitRetry();
     }
@@ -1513,14 +1560,28 @@ export default function TestTakingClient({
           role="alert"
           className="fixed inset-x-0 top-0 z-[80] bg-warm-coral-dark text-white text-sm px-4 py-3 flex flex-wrap items-center justify-center gap-3 shadow-lg"
         >
-          <span>{stuckNote ?? "Still submitting — this is taking longer than usual."}</span>
-          <button
-            type="button"
-            onClick={handleStuckContinue}
-            className="whitespace-nowrap rounded-md bg-white text-warm-coral-dark px-3 py-1.5 font-semibold hover:bg-white/90"
-          >
-            {test.moduleLabel === "Module 1" ? "Continue to Module 2" : "Continue"}
-          </button>
+          <span>
+            {leavingUrl
+              ? `${test.moduleLabel ?? "Your test"} is submitted. The next page is taking longer than usual to open.`
+              : stuckNote ?? "Still submitting — this is taking longer than usual."}
+          </span>
+          {leavingUrl ? (
+            // A plain link: works even if this page's scripts are stuck.
+            <a
+              href={leavingUrl}
+              className="whitespace-nowrap rounded-md bg-white text-warm-coral-dark px-3 py-1.5 font-semibold hover:bg-white/90"
+            >
+              {test.moduleLabel === "Module 1" ? "Continue to Module 2" : "Continue"}
+            </a>
+          ) : (
+            <button
+              type="button"
+              onClick={handleStuckContinue}
+              className="whitespace-nowrap rounded-md bg-white text-warm-coral-dark px-3 py-1.5 font-semibold hover:bg-white/90"
+            >
+              {test.moduleLabel === "Module 1" ? "Continue to Module 2" : "Continue"}
+            </button>
+          )}
         </div>
       )}
       {tabSwitchBannerVisible && (
