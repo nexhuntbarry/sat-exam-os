@@ -19,6 +19,7 @@ interface Props {
 }
 
 const SAT_URL = (testId: string) => `/student/tests/${testId}/sat`;
+const START_TIMEOUT_MS = 20_000;
 
 function clock(seconds: number) {
   const s = Math.max(0, Math.ceil(seconds));
@@ -59,17 +60,25 @@ export default function BreakScreen({
     async (auto: boolean) => {
       setStarting(true);
       setError(null);
+      // A request that never answers left "Starting Math…" up for good.
+      // Cut it (body included); Resume retries, and start-math is
+      // idempotent (an existing Math Module 1 is returned).
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), START_TIMEOUT_MS);
       try {
         const res = await fetch(`/api/student/full-length/${testId}/start-math`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(auto ? { auto: true } : {}),
           cache: "no-store",
+          signal: controller.signal,
         });
         const json = (await res.json().catch(() => null)) as
           | { data?: unknown; error?: string; breakEndsAt?: string; now?: string }
           | null;
-        if (res.ok && json?.data) {
+        // 2xx = Math started (its body may have stalled): the SAT page
+        // shows whatever the server has now.
+        if (res.ok) {
           window.location.assign(SAT_URL(testId));
           return;
         }
@@ -89,11 +98,15 @@ export default function BreakScreen({
         throw new Error(json?.error ?? `Server error (${res.status})`);
       } catch (e) {
         setError(
-          e instanceof Error && e.message
+          controller.signal.aborted
+            ? "Math is taking too long to start. Check your connection and press Resume testing."
+            : e instanceof Error && e.message
             ? `${e.message} Check your connection and press Resume testing.`
             : "Couldn't start Math. Check your connection and press Resume testing.",
         );
         setStarting(false);
+      } finally {
+        clearTimeout(timer);
       }
     },
     [testId],

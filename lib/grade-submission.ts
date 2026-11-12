@@ -101,6 +101,12 @@ export function answersMatch(
   return false;
 }
 
+/** The same metadata with answers_version + 1 (see finalizeSubmission's rollback). */
+export function bumpAnswersVersion(meta: Record<string, unknown>): Record<string, unknown> {
+  const v = typeof meta.answers_version === "number" ? meta.answers_version : 0;
+  return { ...meta, answers_version: v + 1 };
+}
+
 export interface FinalizeSubmissionInput {
   submissionId: string;
   /** Pre-loaded submission row. */
@@ -323,9 +329,19 @@ export async function finalizeSubmission(
   if (answerRecords.length > 0) {
     const { error: arErr } = await db.from("answer_records").insert(answerRecords);
     if (arErr) {
+      // Back to In Progress so a retry can grade again. The claim may have
+      // written metadata without bumping answers_version: bump it now, or an
+      // autosave / keepalive that read the row before the claim (same
+      // version, status and start) could still land and write its stale
+      // metadata over this one (lib/student-exam stampModule2Start INVARIANT).
+      const writtenMeta = updates.metadata as Record<string, unknown> | undefined;
       await db
         .from("submissions")
-        .update({ status: "In Progress", submitted_at: null })
+        .update({
+          status: "In Progress",
+          submitted_at: null,
+          ...(writtenMeta ? { metadata: bumpAnswersVersion(writtenMeta) } : {}),
+        })
         .eq("id", submissionId);
       throw new Error(`insert answer_records: ${arErr.message}`);
     }
