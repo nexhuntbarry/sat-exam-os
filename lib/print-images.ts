@@ -25,7 +25,12 @@ let refreshing: Promise<void> | null = null;
 export function refreshSession(): Promise<void> {
   if (!refreshing) {
     const clerk = (globalThis as { Clerk?: { session?: { getToken?: (o: { skipCache: boolean }) => Promise<unknown> } | null } }).Clerk;
-    refreshing = Promise.resolve(clerk?.session?.getToken?.({ skipCache: true }))
+    // Capped at 5 s: a hung token refresh on a bad network must not leave
+    // the preview on "Loading images…" forever.
+    refreshing = Promise.race([
+      Promise.resolve(clerk?.session?.getToken?.({ skipCache: true })),
+      new Promise((res) => setTimeout(res, 5000)),
+    ])
       .then(() => undefined, () => undefined)
       .finally(() => setTimeout(() => (refreshing = null), 5000));
   }
