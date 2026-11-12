@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, isQaEmail } from "@/lib/qa";
+import { profileMultiplierError } from "@/lib/full-length-admin";
 import { isValidEmail, normalizeEmail } from "../../_shared";
 
 // PATCH /api/admin/students/[id] — edit student
@@ -20,6 +21,13 @@ export async function PATCH(
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  // Testing time (users.metadata.time_multiplier): admin only (this route
+  // requires the admin role), validated before anything is written.
+  if ("time_multiplier" in body) {
+    const multErr = profileMultiplierError(body.time_multiplier);
+    if (multErr) return NextResponse.json({ error: multErr }, { status: 400 });
   }
 
   const db = getServiceClient();
@@ -84,6 +92,33 @@ export async function PATCH(
         return NextResponse.json({ error: "Another account already uses this email" }, { status: 409 });
       }
       return NextResponse.json({ error: "Failed to update student" }, { status: 500 });
+    }
+  }
+
+  // Testing time: Normal (1) removes the key. Applies to attempts started
+  // afterwards; a per-test accommodation still wins over it.
+  if ("time_multiplier" in body) {
+    const { data: row, error: readErr } = await db
+      .from("users")
+      .select("metadata")
+      .eq("id", id)
+      .eq("role", "student")
+      .maybeSingle();
+    if (readErr) {
+      console.error("[admin/students/PATCH time_multiplier]", readErr);
+      return NextResponse.json({ error: "Failed to update testing time" }, { status: 500 });
+    }
+    if (!row) return NextResponse.json({ error: "Student not found" }, { status: 404 });
+    const { time_multiplier: _old, ...rest } = (row.metadata ?? {}) as Record<string, unknown>;
+    const metadata = body.time_multiplier === 1 ? rest : { ...rest, time_multiplier: body.time_multiplier };
+    const { error } = await db
+      .from("users")
+      .update({ metadata, updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("role", "student");
+    if (error) {
+      console.error("[admin/students/PATCH time_multiplier]", error);
+      return NextResponse.json({ error: "Failed to update testing time" }, { status: 500 });
     }
   }
 

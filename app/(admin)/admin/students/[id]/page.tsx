@@ -12,6 +12,7 @@ import { getTestSections } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { profileTimeMultiplier } from "@/lib/full-length-admin";
 import {
   flBadge,
   flFinished,
@@ -723,6 +724,7 @@ export default async function AdminStudentDetailPage({
             parent_email: profile?.parent_email ?? null,
             parent_phone: profile?.parent_phone ?? null,
             notes: profile?.notes ?? null,
+            time_multiplier: profileTimeMultiplier(student.metadata),
           }}
           classNames={memberships.map((m) => m.name)}
         />

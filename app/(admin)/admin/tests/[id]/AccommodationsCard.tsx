@@ -11,6 +11,8 @@ interface Props {
   initial: Record<string, number>;
   /** "section" on an ordinary section test (default: full-length wording). */
   kind?: "full_length" | "section";
+  /** student id → profile testing time (1.5 / 2), used when there is no per-test row. */
+  profile?: Record<string, number>;
 }
 
 const OPTIONS = [1.25, 1.5, 2] as const;
@@ -18,7 +20,7 @@ const OPTIONS = [1.25, 1.5, 2] as const;
 // Per-student extended time (test_time_accommodations) on a full-length SAT
 // or a section test.
 // Each change saves at once; it applies to attempts started afterwards.
-export default function AccommodationsCard({ testId, students, initial, kind = "full_length" }: Props) {
+export default function AccommodationsCard({ testId, students, initial, kind = "full_length", profile = {} }: Props) {
   const tf = useTranslations("fullLength");
   const [values, setValues] = useState<Record<string, number>>(initial);
   const [saving, setSaving] = useState<string | null>(null);
@@ -88,7 +90,9 @@ export default function AccommodationsCard({ testId, students, initial, kind = "
                 onChange={(e) => save(st.id, e.target.value ? Number(e.target.value) : null)}
                 className="bg-surface border border-divider text-charcoal rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:border-warm-coral/50 disabled:opacity-50"
               >
-                <option value="">{tf("standardTime")}</option>
+                <option value="">
+                  {profile[st.id] ? tf("profileTime", { m: profile[st.id] }) : tf("standardTime")}
+                </option>
                 {OPTIONS.map((m) => (
                   <option key={m} value={String(m)}>
                     ×{m}

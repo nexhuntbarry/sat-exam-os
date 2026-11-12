@@ -181,7 +181,8 @@ export async function POST(req: Request) {
   const adaptiveTrack =
     isAdaptive || isTwoModuleNonAdaptive ? "module_1" : null;
 
-  // Extended time (test_time_accommodations), snapshotted onto the attempt:
+  // Extended time (test_time_accommodations, else the student's profile
+  // testing time in users.metadata), snapshotted onto the attempt:
   // Module 2 inherits it at the handoff, and a later change only affects
   // attempts started afterwards. Server-owned; the client can't set it.
   let timeMultiplier: number;

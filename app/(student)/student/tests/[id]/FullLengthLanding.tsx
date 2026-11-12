@@ -16,6 +16,7 @@ import {
   stateOf,
   type FlChildTest,
 } from "@/lib/full-length-attempt";
+import { loadTimeMultiplier } from "@/lib/full-length-admin";
 import StartFullLengthButton from "./StartFullLengthButton";
 import RefreshAtOpenTime from "./RefreshAtOpenTime";
 
@@ -70,18 +71,11 @@ export default async function FullLengthLanding({
   if (!isAssigned && !open) notFound();
 
   // Extended time: a running attempt keeps its snapshot; a new one gets
-  // the student's current accommodation.
-  let multiplier = 1;
-  if (open && attempt) multiplier = Number(attempt.time_multiplier ?? 1) || 1;
-  else {
-    const { data: acc } = await db
-      .from("test_time_accommodations")
-      .select("time_multiplier")
-      .eq("test_id", testId)
-      .eq("student_id", studentId)
-      .maybeSingle();
-    if (acc?.time_multiplier != null) multiplier = Number(acc.time_multiplier) || 1;
-  }
+  // the student's current accommodation (per test, else profile).
+  const multiplier =
+    open && attempt
+      ? Number(attempt.time_multiplier ?? 1) || 1
+      : await loadTimeMultiplier(db, testId, studentId).catch(() => 1);
 
   const [rw, math, { data: grant }, classReview] = await Promise.all([
     sectionInfo(db, ctx.rw, multiplier),

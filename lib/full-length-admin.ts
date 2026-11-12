@@ -399,20 +399,64 @@ export function accommodationMultiplier(row: { time_multiplier?: unknown } | nul
   return (TIME_MULTIPLIERS as readonly number[]).includes(m) ? m : 1;
 }
 
+/** Student-profile testing time (users.metadata.time_multiplier): Normal, ×1.5 or ×2. */
+export const PROFILE_TIME_MULTIPLIERS = [1, 1.5, 2] as const;
+
+/** A student's profile testing time from users.metadata: 1 unless ×1.5 / ×2. */
+export function profileTimeMultiplier(metadata: unknown): number {
+  const v = (metadata as Record<string, unknown> | null | undefined)?.time_multiplier;
+  const m = typeof v === "number" || typeof v === "string" ? Number(v) : 1;
+  return (PROFILE_TIME_MULTIPLIERS as readonly number[]).includes(m) ? m : 1;
+}
+
+/** 1 (Normal), 1.5 or 2; anything else is refused. */
+export function profileMultiplierError(v: unknown): string | null {
+  if (typeof v !== "number" || !(PROFILE_TIME_MULTIPLIERS as readonly number[]).includes(v)) {
+    return "Testing time must be Normal, ×1.5 or ×2";
+  }
+  return null;
+}
+
+export type TimeMultiplierSource = "test" | "profile" | "default";
+
 /**
- * The student's extended time on a section test, for stamping onto a new
- * attempt (submissions.metadata.time_multiplier). Throws on a lookup error:
+ * Effective extended time: a per-test accommodation row for the student
+ * wins; otherwise the student's profile testing time; otherwise 1.
+ */
+export function resolveTimeMultiplier(
+  accommodation: { time_multiplier?: unknown } | null,
+  userMetadata: unknown,
+): { multiplier: number; source: TimeMultiplierSource } {
+  const acc = accommodationMultiplier(accommodation);
+  if (acc !== 1) return { multiplier: acc, source: "test" };
+  const profile = profileTimeMultiplier(userMetadata);
+  if (profile !== 1) return { multiplier: profile, source: "profile" };
+  return { multiplier: 1, source: "default" };
+}
+
+/**
+ * The student's extended time on a test (section or full-length), for
+ * stamping onto a new attempt (submissions.metadata.time_multiplier /
+ * full_length_attempts.time_multiplier): the per-test accommodation, else
+ * the student's profile testing time, else 1. Throws on a lookup error:
  * never start an attempt without the student's extended time because of a blip.
  */
 export async function loadTimeMultiplier(db: SupabaseClient, testId: string, studentId: string): Promise<number> {
-  const { data, error } = await db
-    .from("test_time_accommodations")
-    .select("time_multiplier")
-    .eq("test_id", testId)
-    .eq("student_id", studentId)
-    .maybeSingle();
+  const [{ data, error }, { data: user, error: userError }] = await Promise.all([
+    db
+      .from("test_time_accommodations")
+      .select("time_multiplier")
+      .eq("test_id", testId)
+      .eq("student_id", studentId)
+      .maybeSingle(),
+    db.from("users").select("metadata").eq("id", studentId).maybeSingle(),
+  ]);
   if (error) throw new Error(`accommodation lookup: ${error.message}`);
-  return accommodationMultiplier(data as { time_multiplier?: unknown } | null);
+  if (userError) throw new Error(`accommodation lookup (profile): ${userError.message}`);
+  return resolveTimeMultiplier(
+    data as { time_multiplier?: unknown } | null,
+    (user as { metadata?: unknown } | null)?.metadata,
+  ).multiplier;
 }
 
 /** null clears the accommodation; otherwise one of ×1.25 / ×1.5 / ×2. */

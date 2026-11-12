@@ -26,6 +26,7 @@ import {
   fullLengthEnabledFor,
   listAccommodations,
   loadChildTests,
+  profileTimeMultiplier,
   type ChildTest,
 } from "@/lib/full-length-admin";
 import { getFullLengthSources } from "../full-length-sources";
@@ -292,6 +293,19 @@ export default async function TestDetailPage({
     !fl && !test.is_untimed && accommodationKind(test) === "section"
       ? Object.fromEntries((await listAccommodations(db, test.id)).data.map((a) => [a.student_id, a.time_multiplier]))
       : null;
+  // Student-profile testing time (users.metadata.time_multiplier), shown
+  // on the card where a student has no per-test row.
+  const profileTimes: Record<string, number> = {};
+  if ((fl?.canManage || sectionAccommodations) && test.assignment.students.length > 0) {
+    const { data: metaRows } = await db
+      .from("users")
+      .select("id, metadata")
+      .in("id", test.assignment.students.map((st) => st.id));
+    for (const r of (metaRows ?? []) as { id: string; metadata: unknown }[]) {
+      const m = profileTimeMultiplier(r.metadata);
+      if (m !== 1) profileTimes[r.id] = m;
+    }
+  }
 
   // Effective answer visibility for every student in the Students table
   // (individual + class-assigned + unassigned-with-work) — the same decision
@@ -721,6 +735,7 @@ export default async function TestDetailPage({
               testId={test.id}
               students={assignment.students.map((st) => ({ id: st.id, name: st.name, email: st.email }))}
               initial={fl.accommodations}
+              profile={profileTimes}
             />
           )}
         </>
@@ -730,6 +745,7 @@ export default async function TestDetailPage({
           testId={test.id}
           students={assignment.students.map((st) => ({ id: st.id, name: st.name, email: st.email }))}
           initial={sectionAccommodations}
+          profile={profileTimes}
           kind="section"
         />
       )}

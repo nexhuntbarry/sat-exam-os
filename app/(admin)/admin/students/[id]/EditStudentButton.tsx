@@ -19,7 +19,11 @@ interface StudentEditable {
   parent_email: string | null;
   parent_phone: string | null;
   notes: string | null;
+  /** Testing time on every test: 1 (Normal), 1.5 or 2. Admin only. */
+  time_multiplier: number;
 }
+
+const timeLabel = (m: number) => (m === 1 ? "Normal" : `${m}×`);
 
 interface Props {
   student: StudentEditable;
@@ -56,6 +60,7 @@ export default function EditStudentButton({ student, classNames }: Props) {
   diff("Parent email", student.parent_email, form.parent_email);
   diff("Parent phone", student.parent_phone, form.parent_phone);
   diff("Notes", student.notes, form.notes);
+  diff("Testing time", timeLabel(student.time_multiplier), timeLabel(form.time_multiplier));
 
   async function save() {
     setSaving(true);
@@ -76,6 +81,7 @@ export default function EditStudentButton({ student, classNames }: Props) {
           parent_email: form.parent_email,
           parent_phone: form.parent_phone,
           notes: form.notes,
+          ...(form.time_multiplier !== student.time_multiplier ? { time_multiplier: form.time_multiplier } : {}),
         }),
       });
       if (!res.ok) {
@@ -203,6 +209,19 @@ export default function EditStudentButton({ student, classNames }: Props) {
                     <option value="Intermediate">Intermediate</option>
                     <option value="Advanced">Advanced</option>
                   </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-soft-mute mb-1">Testing time</label>
+                  <select
+                    className={inputCls}
+                    value={String(form.time_multiplier)}
+                    onChange={(e) => setForm({ ...form, time_multiplier: Number(e.target.value) })}
+                  >
+                    <option value="1">Normal</option>
+                    <option value="1.5">1.5×</option>
+                    <option value="2">2×</option>
+                  </select>
+                  <p className="text-xs text-soft-mute">Every test started from now on; a per-test extended time wins</p>
                 </div>
                 <div>
                   <label className="block text-xs text-soft-mute mb-1">Parent name</label>

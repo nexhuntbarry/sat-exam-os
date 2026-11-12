@@ -33,6 +33,7 @@ import {
   type HandoffTest,
   type Module2Block,
 } from "@/lib/module2-handoff";
+import { loadTimeMultiplier } from "@/lib/full-length-admin";
 
 // ------------------------------------------------------------ constants
 
@@ -564,15 +565,9 @@ export async function startFlAttempt(
     if (!parent.allow_retake && !grantId) return { ok: false, status: 403, error: "Retake not allowed" };
   }
 
-  const { data: acc, error: accError } = await db
-    .from("test_time_accommodations")
-    .select("time_multiplier")
-    .eq("test_id", parent.id)
-    .eq("student_id", studentId)
-    .maybeSingle();
-  // Never start without the student's extended time because of a blip.
-  if (accError) throw new Error(`accommodation lookup: ${accError.message}`);
-  const multiplier = acc?.time_multiplier != null ? Number(acc.time_multiplier) : 1;
+  // Per-test accommodation, else the student's profile testing time.
+  // Throws on a lookup error: never start without the extended time.
+  const multiplier = await loadTimeMultiplier(db, parent.id, studentId);
 
   const attemptNumber = prior + 1;
   let attempt: FlAttempt | null = null;
