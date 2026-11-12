@@ -254,6 +254,14 @@ mark.satos-highlight {
   details > *:not(summary) {
     display: block !important;
   }
+  /* A closed <details> keeps its body out of layout whatever the rule above
+     says; PrintOpenDetails opens the question rows on beforeprint, but only
+     once the page's script is running. Ctrl/Cmd+P before that (slow load)
+     printed every question collapsed, without a single figure. Browsers
+     with ::details-content (Chrome 131+, Safari 18.4+) show them anyway. */
+  details[data-print-open]::details-content {
+    content-visibility: visible !important;
+  }
   details summary {
     list-style: none;
   }

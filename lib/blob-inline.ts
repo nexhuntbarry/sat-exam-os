@@ -14,7 +14,11 @@ export async function inlineBlobImages(urls: string[]): Promise<Map<string, stri
       const target = parseBlobUrl(url);
       if (!target) return;
       for (const token of tokens.length > 0 ? tokens : [undefined]) {
-        const r = await fetch(target, { headers: token ? { Authorization: `Bearer ${token}` } : {} }).catch(() => null);
+        const get = () => fetch(target, { headers: token ? { Authorization: `Bearer ${token}` } : {} }).catch(() => null);
+        let r = await get();
+        // One retry on a network error / 5xx: a figure missing here fails the
+        // whole student's PDF (the headless browser can't use the proxy).
+        if (!r || r.status >= 500) r = await get();
         if (r?.ok) {
           const type = r.headers.get("content-type") ?? "image/png";
           if (!type.startsWith("image/")) return;

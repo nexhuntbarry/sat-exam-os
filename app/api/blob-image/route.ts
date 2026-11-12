@@ -47,9 +47,10 @@ export async function GET(req: Request) {
     if (r.status !== 401 && r.status !== 403) break;
   }
   if (!upstream || !upstream.ok || !upstream.body) {
+    // no-store: a retried <img> (lib/print-images) must not get this failure back from a cache.
     return NextResponse.json(
       { error: `Upstream ${upstream?.status ?? "no-response"}` },
-      { status: upstream?.status === 404 ? 404 : 502 },
+      { status: upstream?.status === 404 ? 404 : 502, headers: { "Cache-Control": "no-store" } },
     );
   }
   return new Response(upstream.body, {
