@@ -12,6 +12,7 @@ import {
   isModule2Track,
   isTestAssignedToStudent,
   scopeToStudentQuestionSet,
+  timeMultiplier,
 } from "@/lib/student-exam";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
 import { module2RecoveryBlock } from "@/lib/module2-handoff";
@@ -105,7 +106,7 @@ async function getTestInfo(testId: string, studentId: string) {
   const { data: subs } = await db
     .from("submissions")
     .select(
-      "id, status, score, percentage, correct_count, total_questions, submitted_at, attempt_number, session_id, adaptive_track, started_at",
+      "id, status, score, percentage, correct_count, total_questions, submitted_at, attempt_number, session_id, adaptive_track, started_at, metadata",
     )
     .eq("test_id", testId)
     .eq("student_id", studentId)
@@ -125,6 +126,9 @@ async function getTestInfo(testId: string, studentId: string) {
   // student crashed before it was created): the attempt is NOT finished.
   let needsModule2 = false;
   let module1SubmittedAt: string | null = null;
+  // An open attempt (in progress, or Module 2 still to come) keeps the
+  // extended time stamped when it started, whatever the settings say now.
+  let attemptMultiplier: number | null = null;
   if (subs && subs.length > 0) {
     const latestAttempt = subs[0].attempt_number;
     const sessionRows = subs.filter((s) => s.attempt_number === latestAttempt);
@@ -154,6 +158,8 @@ async function getTestInfo(testId: string, studentId: string) {
       return 0;
     });
     const headline = inProgress ?? sorted[0];
+    const open = inProgress ?? (needsModule2 ? sessionRows.find((s) => s.adaptive_track === "module_1") : undefined);
+    if (open) attemptMultiplier = timeMultiplier(open.metadata);
     submission = {
       id: headline.id,
       status: headline.status,
@@ -194,6 +200,7 @@ async function getTestInfo(testId: string, studentId: string) {
     // say so instead of offering a Continue button that would 403.
     module2Closed: needsModule2 ? module2RecoveryBlock(test, module1SubmittedAt) : null,
     hasRetakeGrant: Boolean(grant),
+    attemptMultiplier,
   };
 }
 
@@ -218,13 +225,15 @@ export default async function StudentTestLandingPage({
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
 
-  const { test, isAssigned, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, module2Closed, hasRetakeGrant } = data;
+  const { test, isAssigned, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, module2Closed, hasRetakeGrant, attemptMultiplier } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
   // The student's extended time (test_time_accommodations), shown on the
   // limits. Display only: the attempt is stamped at start by the server.
-  const mult = test.is_untimed ? 1 : await loadTimeMultiplier(linksDb, id, user.userId).catch(() => 1);
+  const mult = test.is_untimed
+    ? 1
+    : attemptMultiplier ?? (await loadTimeMultiplier(linksDb, id, user.userId).catch(() => 1));
   const withMult = (m: number | null) => (m == null ? m : Math.round(m * mult * 10) / 10);
   const m1Limit = withMult(test.time_limit_minutes);
   const m2Limit = withMult(test.time_limit_minutes_module_2 ?? test.time_limit_minutes);
