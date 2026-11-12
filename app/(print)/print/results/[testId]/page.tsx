@@ -80,7 +80,8 @@ export default async function PrintResultsPage({
 
     const single = printouts.length === 1;
     // Double-sided: on by default for several students (one per sheet side).
-    const duplex = sp.duplex ? sp.duplex === "1" : !single;
+    // Only an explicit "0" turns it off, so a typo fails safe (privacy).
+    const duplex = sp.duplex === "0" ? false : sp.duplex ? true : !single;
     const explAllowed = printouts.some((p) => p.visibility.answers && p.visibility.explanations);
     const options: PreviewOption[] = [
       {
