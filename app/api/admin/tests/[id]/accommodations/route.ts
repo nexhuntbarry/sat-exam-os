@@ -31,7 +31,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return NextResponse.json({ data });
 }
 
-// PUT /api/admin/tests/[id]/accommodations  { studentId, multiplier: 1.25 | 1.5 | 2 | null }
+// PUT /api/admin/tests/[id]/accommodations  { studentId, multiplier: 1.5 | 2 | null }
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;

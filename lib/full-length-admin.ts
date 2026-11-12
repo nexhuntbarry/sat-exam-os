@@ -379,7 +379,7 @@ export async function fullLengthStarted(
 // ordinary section test (single module, two-module, adaptive). Never on a
 // full-length child section: its parent's row covers it.
 
-export const TIME_MULTIPLIERS = [1.25, 1.5, 2] as const;
+export const TIME_MULTIPLIERS = [1.5, 2] as const;
 
 export type AccommodationKind = "full_length" | "section";
 
@@ -393,7 +393,7 @@ export function accommodationKind(
   return null;
 }
 
-/** A stored accommodation as a multiplier to stamp: 1 unless ×1.25 / ×1.5 / ×2. */
+/** A stored accommodation as a multiplier to stamp: 1 unless ×1.5 / ×2. */
 export function accommodationMultiplier(row: { time_multiplier?: unknown } | null): number {
   const m = row?.time_multiplier != null ? Number(row.time_multiplier) : 1;
   return (TIME_MULTIPLIERS as readonly number[]).includes(m) ? m : 1;
@@ -459,11 +459,11 @@ export async function loadTimeMultiplier(db: SupabaseClient, testId: string, stu
   ).multiplier;
 }
 
-/** null clears the accommodation; otherwise one of ×1.25 / ×1.5 / ×2. */
+/** null clears the accommodation; otherwise ×1.5 or ×2. */
 export function multiplierError(v: unknown): string | null {
   if (v === null) return null;
   if (typeof v !== "number" || !(TIME_MULTIPLIERS as readonly number[]).includes(v)) {
-    return "Extended time must be ×1.25, ×1.5 or ×2 (or none)";
+    return "Extended time must be ×1.5 or ×2 (or none)";
   }
   return null;
 }

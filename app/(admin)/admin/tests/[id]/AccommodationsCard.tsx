@@ -7,7 +7,7 @@ import { Clock } from "lucide-react";
 interface Props {
   testId: string;
   students: { id: string; name: string; email: string }[];
-  /** student id → current multiplier (1.25 / 1.5 / 2). */
+  /** student id → current multiplier (1.5 / 2). */
   initial: Record<string, number>;
   /** "section" on an ordinary section test (default: full-length wording). */
   kind?: "full_length" | "section";
@@ -15,7 +15,7 @@ interface Props {
   profile?: Record<string, number>;
 }
 
-const OPTIONS = [1.25, 1.5, 2] as const;
+const OPTIONS = [1.5, 2] as const;
 
 // Per-student extended time (test_time_accommodations) on a full-length SAT
 // or a section test.

@@ -119,7 +119,7 @@ export interface ModuleTiming {
  * (lib/full-length.ts). Section tests only ever carry time_multiplier
  * (stamped by POST /api/student/submissions). Module 2 inherits all of them
  * (carriedModule1Metadata) and an admin reset keeps them.
- *   time_multiplier — extended time (1.25 / 1.5 / 2), applied to every module
+ *   time_multiplier — extended time (1.5 / 2), applied to every module
  *   fl_attempt_id   — full_length_attempts.id
  *   fl_started_at   — when the whole full-length attempt started (Late rule)
  */
