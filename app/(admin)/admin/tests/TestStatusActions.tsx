@@ -7,7 +7,8 @@
 // as the test detail page, which enforce the rules server-side
 // (lib/test-readiness); this file only shows them.
 
-import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { ChevronDown, Lock, RotateCcw, Send, Undo2, AlertTriangle, Loader2 } from "lucide-react";
@@ -52,7 +53,7 @@ export async function runStatusAction(testId: string, action: StatusAction): Pro
   }
 }
 
-function IssueList({ issues, tone, inMenu = false }: { issues: ReadinessIssue[]; tone: "error" | "warning"; inMenu?: boolean }) {
+function IssueList({ issues, tone }: { issues: ReadinessIssue[]; tone: "error" | "warning" }) {
   if (issues.length === 0) return null;
   return (
     <ul className={cn("space-y-1 text-xs", tone === "error" ? "text-status-error" : "text-status-warning")}>
@@ -66,8 +67,6 @@ function IssueList({ issues, tone, inMenu = false }: { issues: ReadinessIssue[];
                 {" "}
                 <Link
                   href={i.href}
-                  role={inMenu ? "menuitem" : undefined}
-                  tabIndex={inMenu ? -1 : undefined}
                   className="underline hover:text-charcoal focus:outline-none focus-visible:ring-2 focus-visible:ring-warm-coral/40 rounded"
                 >
                   {i.code === "questions_pending" ? "Review" : "Open module"}
@@ -99,7 +98,12 @@ function AccessSummary({ r }: { r: TestReadiness }) {
   );
 }
 
-/** Modal shell: role=dialog, Escape closes, portalled (table-standard rule 6). */
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Modal shell: role=dialog, portalled (table-standard rule 6). Focus goes
+ *  to the element marked `data-autofocus` (Cancel on destructive confirms),
+ *  Tab stays inside, Escape closes, and focus returns to whatever had it
+ *  before (the status badge or the bulk button). */
 export function Dialog({
   title,
   icon,
@@ -114,15 +118,54 @@ export function Dialog({
   footer: ReactNode;
 }) {
   const titleId = useId();
+  const [node, setNode] = useState<HTMLDivElement | null>(null);
+  const onCloseRef = useRef(onClose);
   useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => e.key === "Escape" && onClose();
+    onCloseRef.current = onClose;
+  });
+
+  // Remember the trigger; give it focus back when the dialog goes away.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
+
+  // The portal mounts a render later: focus once the dialog node exists.
+  useEffect(() => {
+    if (!node) return;
+    (node.querySelector<HTMLElement>("[data-autofocus]:not([disabled])") ?? node.querySelector<HTMLElement>(FOCUSABLE))?.focus();
+  }, [node]);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCloseRef.current();
+      } else if (e.key === "Tab" && node) {
+        const list = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE));
+        if (list.length === 0) return;
+        const first = list[0];
+        const last = list[list.length - 1];
+        const inside = node.contains(document.activeElement);
+        if (e.shiftKey && (document.activeElement === first || !inside)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [node]);
+
   return (
     <Portal>
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm px-4">
-        <div role="dialog" aria-modal="true" aria-labelledby={titleId} className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl max-h-[85vh] flex flex-col">
+        <div ref={setNode} role="dialog" aria-modal="true" aria-labelledby={titleId} className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl max-h-[85vh] flex flex-col">
           <div className="p-5 border-b border-divider flex items-start gap-3">
             <span className="shrink-0 mt-0.5">{icon}</span>
             <h3 id={titleId} className="font-bold text-charcoal text-base">{title}</h3>
@@ -155,6 +198,7 @@ export function TestStatusMenu({
   status: TestStatus;
   onChanged: (testId: string, status: TestStatus) => void;
 }) {
+  const router = useRouter();
   const { open, setOpen, close, anchorRef, popRef, style } = usePopover();
   const menuId = useId();
   const reasonsId = useId();
@@ -205,7 +249,10 @@ export function TestStatusMenu({
       e.preventDefault();
       list[list.length - 1]?.focus();
     } else if (e.key === "Tab") {
-      close();
+      // The reason links are reachable with Tab; close once focus leaves.
+      setTimeout(() => {
+        if (!popRef.current?.contains(document.activeElement)) close();
+      }, 0);
     }
   }
 
@@ -248,6 +295,8 @@ export function TestStatusMenu({
     setBusy(false);
     if (err) {
       setActionError(err);
+      // The status may have changed elsewhere (409): show the current one.
+      router.refresh();
       return;
     }
     const next = NEXT_STATUS[confirm];
@@ -320,8 +369,8 @@ export function TestStatusMenu({
               {loadError && <p className="text-xs text-status-error">Couldn&apos;t check this test: {loadError}</p>}
               {readiness && publishLike && (
                 <div className="space-y-1 border-t border-divider pt-2">
-                  <IssueList issues={readiness.blockers} tone="error" inMenu />
-                  <IssueList issues={readiness.warnings} tone="warning" inMenu />
+                  <IssueList issues={readiness.blockers} tone="error" />
+                  <IssueList issues={readiness.warnings} tone="warning" />
                   {readiness.canPublish && readiness.warnings.length === 0 && (
                     <p className="text-xs text-soft-mute">Ready to {publishLike}: {readiness.audience}</p>
                   )}
@@ -343,12 +392,18 @@ export function TestStatusMenu({
           onClose={() => !busy && setConfirm(null)}
           footer={
             <>
-              <button type="button" onClick={() => setConfirm(null)} disabled={busy} className={cancelBtn}>
+              <button
+                type="button"
+                onClick={() => setConfirm(null)}
+                disabled={busy}
+                data-autofocus={confirm === "close" || confirm === "draft" ? true : undefined}
+                className={cancelBtn}
+              >
                 Cancel
               </button>
               <button
                 type="button"
-                autoFocus
+                data-autofocus={confirm === "close" || confirm === "draft" ? undefined : true}
                 onClick={run}
                 disabled={busy || (needsOverride && !override)}
                 className={confirm === "close" ? dangerBtn : primaryBtn}
@@ -426,15 +481,23 @@ export function BulkStatusBar({
   const [includeUnassigned, setIncludeUnassigned] = useState(false);
   const [running, setRunning] = useState<{ done: number; total: number } | null>(null);
   const [finished, setFinished] = useState(false);
+  const router = useRouter();
+  // Bumped on every start and close: a check loop from an earlier opening
+  // of the dialog drops its results instead of overwriting the current ones.
+  const generation = useRef(0);
 
   async function start(a: "publish" | "close") {
+    const gen = ++generation.current;
     setAction(a);
     setFinished(false);
     setIncludeUnassigned(false);
     const from: TestStatus = a === "publish" ? "Draft" : "Published";
     const base: BulkLine[] = rows.map((r) => (r.status === from ? { ...r } : { ...r, skip: `Already ${r.status}` }));
     setLines(base);
-    if (a === "close") return;
+    if (a === "close") {
+      setLoading(false);
+      return;
+    }
     // Publish: check each Draft first (4 at a time).
     setLoading(true);
     const out = [...base];
@@ -450,13 +513,19 @@ export function BulkStatusBar({
           }
         }),
       );
+      if (gen !== generation.current) return;
       setLines([...out]);
     }
     setLoading(false);
   }
 
   const isUnassigned = (l: BulkLine) => l.readiness?.warnings.some((w) => w.code === "unassigned") ?? false;
-  const runnable = lines.filter((l) => !l.skip && (action !== "publish" || includeUnassigned || !isUnassigned(l)));
+  // Publish needs each test's readiness: a row still being checked (or an
+  // unassigned one without the confirm) is not runnable.
+  const runnable = lines.filter(
+    (l) => !l.skip && (action !== "publish" || (l.readiness && (includeUnassigned || !isUnassigned(l)))),
+  );
+  const checking = action === "publish" && lines.some((l) => !l.skip && !l.readiness);
   const unassignedCount = lines.filter((l) => !l.skip && isUnassigned(l)).length;
 
   async function run() {
@@ -478,11 +547,15 @@ export function BulkStatusBar({
     );
     setRunning(null);
     setFinished(true);
+    // Refresh even when some (or all) failed: their status may have moved.
     if (changes.length) onChanged(changes);
+    else router.refresh();
   }
 
   function closeDialog() {
     if (running) return;
+    generation.current++;
+    setLoading(false);
     setAction(null);
     if (finished) onClear();
   }
@@ -529,19 +602,25 @@ export function BulkStatusBar({
           onClose={closeDialog}
           footer={
             finished ? (
-              <button type="button" autoFocus onClick={closeDialog} className={primaryBtn}>
+              <button type="button" data-autofocus onClick={closeDialog} className={primaryBtn}>
                 Done
               </button>
             ) : (
               <>
-                <button type="button" onClick={closeDialog} disabled={!!running} className={cancelBtn}>
+                <button
+                  type="button"
+                  onClick={closeDialog}
+                  disabled={!!running}
+                  data-autofocus={action === "close" ? true : undefined}
+                  className={cancelBtn}
+                >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  autoFocus
+                  data-autofocus={action === "close" ? undefined : true}
                   onClick={run}
-                  disabled={loading || !!running || runnable.length === 0}
+                  disabled={loading || checking || !!running || runnable.length === 0}
                   className={action === "close" ? dangerBtn : primaryBtn}
                 >
                   {running ? `${verb} ${running.done}/${running.total}…` : `${ACTION_LABEL[action]} ${runnable.length}`}

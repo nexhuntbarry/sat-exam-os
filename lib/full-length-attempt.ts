@@ -34,6 +34,7 @@ import {
   type Module2Block,
 } from "@/lib/module2-handoff";
 import { loadTimeMultiplier } from "@/lib/full-length-admin";
+import { dropUnansweredSubmission, testIsDraftNow } from "@/lib/draft-race";
 
 // ------------------------------------------------------------ constants
 
@@ -607,6 +608,19 @@ export async function startFlAttempt(
   }
 
   const m1 = await ensureRwModule1(db, ctx, attempt, opts.device);
+
+  // The test went back to Draft while we were starting (lib/draft-race):
+  // undo this request's own rows while still untouched, refuse like Draft.
+  if (created && (await testIsDraftNow(db, parent.id))) {
+    if (m1.created) await dropUnansweredSubmission(db, m1.id);
+    const { data: left, error: leftErr } = await db.from("submissions").select("id").eq("id", m1.id).maybeSingle();
+    if (!leftErr && !left) {
+      const { error: delErr } = await db.from("full_length_attempts").delete().eq("id", attempt.id);
+      if (delErr) console.error("[full-length/start] draft race: attempt delete", attempt.id, delErr.message);
+      else if (grantId) await db.from("test_retake_grants").update({ consumed_at: null }).eq("id", grantId);
+    }
+    return { ok: false, status: 403, error: "Test is not available" };
+  }
   console.log("[full-length/start]", parent.id, studentId, attempt.attempt_number, created ? "created" : "adopted");
   return { ok: true, attempt, resumed: !created, submissionId: m1.id };
 }

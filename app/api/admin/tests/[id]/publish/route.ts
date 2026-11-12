@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
-import { blockersMessage, loadTestReadiness } from "@/lib/test-readiness";
+import { blockersMessage, loadPublishCheck } from "@/lib/test-readiness";
 
 // POST /api/admin/tests/[id]/publish — Draft → Published
 export async function POST(
@@ -21,23 +21,23 @@ export async function POST(
   // every module fully approved (students only see Approved questions), a
   // full-length test both two-module sections. Being unassigned is only a
   // warning there, never a refusal here.
-  let readiness;
+  let check;
   try {
-    readiness = await loadTestReadiness(db, id);
+    check = await loadPublishCheck(db, id);
   } catch (err) {
-    console.error("[admin/tests/publish] readiness", err);
+    console.error("[admin/tests/publish] publish check", err);
     return NextResponse.json({ error: "Could not verify the test" }, { status: 500 });
   }
-  if (!readiness) return NextResponse.json({ error: "Test not found" }, { status: 404 });
+  if (!check) return NextResponse.json({ error: "Test not found" }, { status: 404 });
   // A full-length SAT section follows its parent (sync trigger).
-  if (readiness.blockers.some((b) => b.code === "fl_section")) {
+  if (check.blockers.some((b) => b.code === "fl_section")) {
     return NextResponse.json(
       { error: "This is a section of a full-length SAT — publish the full-length test instead." },
       { status: 409 },
     );
   }
-  if (!readiness.canPublish) {
-    return NextResponse.json({ error: blockersMessage(readiness.blockers), blockers: readiness.blockers }, { status: 409 });
+  if (!check.canPublish) {
+    return NextResponse.json({ error: blockersMessage(check.blockers), blockers: check.blockers }, { status: 409 });
   }
 
   const { data, error } = await db

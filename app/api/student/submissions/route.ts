@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { deviceInfoFromHeaders } from "@/lib/student-exam";
 import { recoverModule2 } from "@/lib/module2-handoff";
 import { studentTestAccess } from "@/lib/module2-access";
+import { dropUnansweredSubmission, testIsDraftNow } from "@/lib/draft-race";
 import { loadTimeMultiplier } from "@/lib/full-length-admin";
 
 export const maxDuration = 60;
@@ -216,6 +217,12 @@ export async function POST(req: Request) {
   if (subError || !submission) {
     console.error("[student/submissions/post]", subError);
     return NextResponse.json({ error: "Failed to create submission" }, { status: 500 });
+  }
+
+  // The test went back to Draft while we were starting (lib/draft-race).
+  if (await testIsDraftNow(db, body.testId)) {
+    await dropUnansweredSubmission(db, submission.id);
+    return NextResponse.json({ error: "Test is not available" }, { status: 403 });
   }
 
   // Mark the grant consumed once the new attempt is safely on disk so a

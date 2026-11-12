@@ -112,7 +112,9 @@ export function module2RecoveryBlock(
   module1SubmittedAt: string | null,
   now = Date.now(),
 ): Module2Block | null {
-  if (test.status !== "Published") return "not_published";
+  // Closed only stops new attempts: an attempt whose Module 1 is graded may
+  // still get its Module 2 (same as full-length attempts on a Closed test).
+  if (test.status !== "Published" && test.status !== "Closed") return "not_published";
   if (test.due_date && new Date(test.due_date).getTime() < now) {
     const graded = module1SubmittedAt ? new Date(module1SubmittedAt).getTime() : NaN;
     if (!(now - graded <= MODULE_2_LATE_RECOVERY_HOURS * 3_600_000)) return "past_due";

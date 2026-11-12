@@ -94,7 +94,14 @@ export async function studentTestAccess(
   const crossSide = await forbidCrossSide(user, { testIds: [test.id] });
   if (crossSide) return { error: { status: 403, error: "Cannot link QA and real accounts/data" }, assigned: false };
   if (test.status !== "Published") {
-    if (test.status === "Closed" && (await hasOpenFullLengthAttempt(db, test.id, user.userId))) {
+    // Closed stops new attempts only: an attempt already under way (in
+    // progress, or Module 1 graded and Module 2 still to come) may finish.
+    if (
+      test.status === "Closed" &&
+      ((await hasOpenFullLengthAttempt(db, test.id, user.userId)) ||
+        (await latestSessionHasAnyInProgress(db, test.id, user.userId)) ||
+        (await latestSessionHasGradedModule1(db, test.id, user.userId)))
+    ) {
       return { error: null, assigned: false };
     }
     return { error: { status: 403, error: "Test is not available" }, assigned: false };

@@ -22,7 +22,7 @@ import {
   thresholdError,
   timeLimitError,
 } from "../../_shared";
-import { testHasSubmissions } from "@/lib/test-readiness";
+import { moveTestToDraft } from "@/lib/test-readiness";
 
 // GET /api/admin/tests/[id]
 export async function GET(
@@ -220,26 +220,17 @@ export async function PATCH(
   }
   if (body.showAnswersAfterSubmission !== undefined) updates.show_answers_after_submission = body.showAnswersAfterSubmission;
   if (body.allowRetake !== undefined) updates.allow_retake = body.allowRetake;
+  let toDraft = false;
   if (body.status !== undefined) {
     if (!TEST_STATUSES.includes(body.status as (typeof TEST_STATUSES)[number])) {
       return bad(`Status must be one of ${TEST_STATUSES.join(", ")}`);
     }
     updates.status = body.status;
-    // Same rule as POST …/draft: back to Draft only while nobody started.
+    // Back to Draft goes through moveTestToDraft below (same guard as
+    // POST …/draft), not through the plain update.
     if (body.status === "Draft" && current.status !== "Draft") {
-      let started: boolean;
-      try {
-        let flChildIds: string[] | null = null;
-        if (isFullLength) {
-          const { children, error: loadErr } = await loadChildTests(db, id);
-          if (loadErr) throw new Error(loadErr);
-          flChildIds = Object.values(children).flatMap((c) => (c ? [c.id] : []));
-        }
-        started = await testHasSubmissions(db, id, flChildIds);
-      } catch {
-        return bad("Could not check for submissions", 500);
-      }
-      if (started) return bad("Students have already started this test, so it can't go back to Draft. Close it instead.", 409);
+      delete updates.status;
+      toDraft = true;
     }
   }
   // Full-length only: break and pause. Attempts already running keep the
@@ -375,6 +366,12 @@ export async function PATCH(
     (await roleError(db, Array.isArray(body.teacherIds) ? (body.teacherIds as string[]) : undefined, "teacher")) ??
     (await roleError(db, Array.isArray(body.studentIds) ? (body.studentIds as string[]) : undefined, "student"));
   if (roleErr) return bad(roleErr);
+
+  // Before any write: a refused back-to-Draft leaves the test untouched.
+  if (toDraft) {
+    const r = await moveTestToDraft(db, id);
+    if (!r.ok) return NextResponse.json({ error: r.error, testStatus: r.testStatus }, { status: r.httpStatus });
+  }
 
   // Sections first (time limits, names); the parent update below then
   // syncs their status, dates and answer settings (trigger).
