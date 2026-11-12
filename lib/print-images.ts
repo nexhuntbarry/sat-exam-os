@@ -46,6 +46,10 @@ function loadOnce(img: HTMLImageElement, timeoutMs: number): Promise<boolean> {
   ]).catch(() => false);
 }
 
+// A retry follows a fresh session; if it still hangs, give up sooner so a
+// stuck proxy can't push the server PDF past its render limit.
+const RETRY_TIMEOUT_MS = 6000;
+
 export async function waitForImages(
   root: ParentNode = document,
   { timeoutMs = 20000, onProgress, retries = IMAGE_RETRIES }: { timeoutMs?: number; onProgress?: (loaded: number, total: number) => void; retries?: number } = {},
@@ -62,7 +66,7 @@ export async function waitForImages(
       for (let attempt = 1; !ok && attempt <= retries && /^(?!data:|blob:)./.test(img.getAttribute("src") ?? ""); attempt++) {
         await refreshSession();
         img.src = retrySrc(img.getAttribute("src")!, attempt);
-        ok = await loadOnce(img, timeoutMs);
+        ok = await loadOnce(img, Math.min(timeoutMs, RETRY_TIMEOUT_MS));
       }
       // Count every settled image (loaded or failed) so the progress
       // reaches total before printing; failures are reported separately.

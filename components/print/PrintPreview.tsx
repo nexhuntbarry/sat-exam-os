@@ -5,7 +5,7 @@ import { Printer, Download, Loader2 } from "lucide-react";
 import { confirmPrintWithMissing, waitForImages } from "@/lib/print-images";
 import { PrintPendingNotice } from "@/components/analytics/PrintButton";
 import { studentPageLabels } from "@/lib/print-duplex";
-import { documentTitleForm } from "@/lib/print-title";
+import { makeTitleKeeper } from "@/lib/print-title";
 
 // Pages as sheets on screen; on paper, no blank sheet after the last page.
 const PREVIEW_CSS = `
@@ -155,11 +155,9 @@ export default function PrintPreview({
 
   // Tab title = the browser's default file name for "Save as PDF".
   useEffect(() => {
-    const set = () => {
-      // Compare in the form document.title reads back (whitespace collapsed),
-      // or a name like "Math  Test" rewrites the title in an endless loop.
-      if (document.title !== documentTitleForm(title)) document.title = title;
-    };
+    // Compares with what the title read back as after our own write, so a
+    // name the browser normalises ("Math  Test") can't loop forever.
+    const set = makeTitleKeeper(document, title);
     set();
     const head = document.querySelector("head");
     const mo = head ? new MutationObserver(set) : null;
@@ -199,7 +197,9 @@ export default function PrintPreview({
         // The pages hold copies of the source's images, and they are what
         // prints: judge the document by them (a copy can still load, with a
         // retry, where the source's image failed).
-        const paged = await waitForImages(targetRef.current!);
+        // Short and one retry: the copies are cached by now, and the server
+        // PDF render gives up at 50 s (source pass ≤ 32 s + this ≤ 14 s).
+        const paged = await waitForImages(targetRef.current!, { timeoutMs: 8000, retries: 1 });
         const allFailed = paged.failed;
         setFailed(allFailed);
         setBlanks(labelStudentPages(targetRef.current!));
@@ -254,7 +254,10 @@ export default function PrintPreview({
   })();
 
   async function saveAsPdf() {
-    if (!pdfUrl) return window.print();
+    if (!pdfUrl) {
+      if (confirmPrintWithMissing(failed)) window.print();
+      return;
+    }
     setSaving(true);
     try {
       const r = await fetch(pdfUrl);

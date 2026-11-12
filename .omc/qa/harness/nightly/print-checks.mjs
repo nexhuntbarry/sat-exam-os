@@ -410,10 +410,12 @@ export async function runPrintChecks({ check, fail, TESTS, ADMIN_CLERK, REAL_ADM
     const expected = await figuresInAttempt(sub.id);
     const origS1Id = C.students[0].id;
     const { borrowLogin } = await import("../lib.mjs");
-    await borrowLogin(sub.student_id, STUDENT1_CLERK);
-    const b = await chromium.launch();
     const problems = [], notes = [];
+    let b = null;
     try {
+      // Inside try: if either throws, finally still gives student 001 its login back.
+      await borrowLogin(sub.student_id, STUDENT1_CLERK);
+      b = await chromium.launch();
       const { page } = await login(b, STUDENT1_CLERK);
       await page.goto(`${BASE}/student/tests/${T}/result`, { waitUntil: "networkidle" });
       // Answers not released to students on this test: nothing of the review prints (by design).
@@ -432,7 +434,7 @@ export async function runPrintChecks({ check, fail, TESTS, ADMIN_CLERK, REAL_ADM
       notes.push(`before-load print ${pdf.images}/${expected} figures ${pdf.pages}p`);
       await raw.close();
     } finally {
-      await b.close().catch(() => {});
+      await b?.close().catch(() => {});
       await borrowLogin(origS1Id, STUDENT1_CLERK).catch(() => {});
     }
     if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
