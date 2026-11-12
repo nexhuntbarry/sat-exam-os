@@ -1664,7 +1664,7 @@ await runDailyChecks({
 });
 
 // ── Z. PRINT — every figure is in the printed PDF ──────────
-await runPrintChecks({ check, fail, TESTS, ADMIN_CLERK });
+await runPrintChecks({ check, fail, TESTS, ADMIN_CLERK, REAL_ADMIN_CLERK, STUDENT1_CLERK, C });
 
 // ── Z3. FULL-LENGTH SAT — R&W → break → Math, one result (students 082–099).
 // FL-SMOKE also runs alone after every deploy: ONLY=FL-SMOKE node nightly/run.mjs

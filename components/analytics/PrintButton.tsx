@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Download, Loader2 } from "lucide-react";
-import { waitForImages } from "@/lib/print-images";
+import { confirmPrintWithMissing, waitForImages } from "@/lib/print-images";
 
 // Opens the browser print dialog → "Save as PDF". The page's @media print CSS
 // strips the app chrome and lays the report out for paper. Waits for every
@@ -17,7 +17,9 @@ export default function PrintButton({ label = "Download PDF" }: { label?: string
     const res = await waitForImages(document, { onProgress: (loaded, total) => setProgress({ loaded, total }) });
     setProgress(null);
     setFailed(res.failed);
-    window.print();
+    // Failed images were already retried with a fresh session; never print
+    // a copy missing a figure without the person choosing to.
+    if (confirmPrintWithMissing(res.failed)) window.print();
   }
 
   return (

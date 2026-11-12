@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Printer, Download, Loader2 } from "lucide-react";
-import { waitForImages } from "@/lib/print-images";
+import { confirmPrintWithMissing, waitForImages } from "@/lib/print-images";
 import { PrintPendingNotice } from "@/components/analytics/PrintButton";
 import { studentPageLabels } from "@/lib/print-duplex";
+import { makeTitleKeeper } from "@/lib/print-title";
 
 // Pages as sheets on screen; on paper, no blank sheet after the last page.
 const PREVIEW_CSS = `
@@ -154,9 +155,9 @@ export default function PrintPreview({
 
   // Tab title = the browser's default file name for "Save as PDF".
   useEffect(() => {
-    const set = () => {
-      if (document.title !== title) document.title = title;
-    };
+    // Compares with what the title read back as after our own write, so a
+    // name the browser normalises ("Math  Test") can't loop forever.
+    const set = makeTitleKeeper(document, title);
     set();
     const head = document.querySelector("head");
     const mo = head ? new MutationObserver(set) : null;
@@ -193,13 +194,20 @@ export default function PrintPreview({
         const q = (previewer as unknown as { chunker?: { q?: { tick?: unknown } } }).chunker?.q;
         if (q && typeof q.tick === "function") q.tick = backgroundSafeTick();
         const flow = await previewer.preview(content, [{ [window.location.href]: pageCss }], targetRef.current!);
-        await waitForImages(targetRef.current!);
+        // The pages hold copies of the source's images, and they are what
+        // prints: judge the document by them (a copy can still load, with a
+        // retry, where the source's image failed).
+        // Short and one retry: the copies are cached by now, and the server
+        // PDF render gives up at 50 s (source pass ≤ 32 s + this ≤ 14 s).
+        const paged = await waitForImages(targetRef.current!, { timeoutMs: 8000, retries: 1 });
+        const allFailed = paged.failed;
+        setFailed(allFailed);
         setBlanks(labelStudentPages(targetRef.current!));
         setPages(flow.total);
         setPhase("ready");
         // Read by the server PDF renderer (headless Chromium) and the nightly check.
+        if (allFailed.length) document.documentElement.dataset.printFailed = allFailed.join("|");
         document.documentElement.dataset.printReady = String(flow.total);
-        if (res.failed.length) document.documentElement.dataset.printFailed = res.failed.join("|");
       } catch (e) {
         console.error("[print preview]", e);
         // Tell the server renderer right away instead of letting it wait out its timeout.
@@ -246,7 +254,10 @@ export default function PrintPreview({
   })();
 
   async function saveAsPdf() {
-    if (!pdfUrl) return window.print();
+    if (!pdfUrl) {
+      if (confirmPrintWithMissing(failed)) window.print();
+      return;
+    }
     setSaving(true);
     try {
       const r = await fetch(pdfUrl);
@@ -302,7 +313,9 @@ export default function PrintPreview({
             </label>
           ))}
           <button
-            onClick={() => window.print()}
+            onClick={() => {
+              if (confirmPrintWithMissing(failed)) window.print();
+            }}
             disabled={blocked}
             title={blockedLabel ?? undefined}
             className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-warm-coral text-white text-sm font-semibold hover:bg-warm-coral-dark disabled:opacity-60 disabled:cursor-wait"

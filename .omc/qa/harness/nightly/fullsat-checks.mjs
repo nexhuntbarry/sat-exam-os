@@ -25,6 +25,7 @@
 import { chromium } from "playwright";
 import { execFileSync } from "node:child_process";
 import { login, db, BASE, borrowLogin } from "../lib.mjs";
+import { pagedFigures, pagedProblems, pdfImageStats, waitPreview } from "./print-checks.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const APP_ROOT = new URL("../../../../", import.meta.url).pathname;
@@ -923,9 +924,19 @@ async function runAll(h, state) {
     const keyText = new Map(allQs.map((q, i) => [q.id, keyOut[i]]));
     return asUser(ADMIN_CLERK, async ({ page }) => {
       const problems = [];
+      const figs = [];
       const read = async (url) => {
         await page.goto(BASE + url, { waitUntil: "domcontentloaded" });
-        await page.waitForFunction(() => document.documentElement.dataset.printReady, null, { timeout: 120000 });
+        const stuck = await waitPreview(page, 120000);
+        if (stuck) fail(`${url}: ${stuck}`);
+        // Figures of both sections (R&W + Math) are on the paper, none cut at a page edge.
+        const f = await pagedFigures(page);
+        problems.push(...pagedProblems(url, f));
+        await page.emulateMedia({ media: "print" });
+        const pdf = await pdfImageStats(await page.pdf({ preferCSSPageSize: true }));
+        await page.emulateMedia({ media: null });
+        if (pdf.images < f.srcDistinct) problems.push(`${url}: ${f.srcDistinct - pdf.images} of ${f.srcDistinct} figures missing from the PDF`);
+        figs.push(`${pdf.images}/${f.srcDistinct} figures`);
         return page.evaluate(() => [...document.querySelectorAll(".print-source section")].map((sec) => {
           if (sec.hasAttribute("data-print-divider")) return { divider: sec.querySelector("h1")?.textContent?.trim() };
           const head = sec.querySelector("p")?.textContent ?? "";
@@ -954,7 +965,7 @@ async function runAll(h, state) {
       const sec = await read(`/print/tests/${TESTS.adaptive}`);
       if (sec.some((x) => x.divider) || sec.length !== 3 || !/^Math · Module 1|^Module 1/.test(sec[0]?.head ?? "")) problems.push(`section test print changed: ${sec.map((x) => x.divider ?? x.head?.slice(0, 30)).join(" | ")}`);
       if (problems.length) fail(problems.slice(0, 8).join("; "));
-      return `blank + key: ${expected.map((e) => e.divider ?? `${e.label} (${e.qs.length})`).join(" → ")}; section test print unchanged`;
+      return `blank + key: ${expected.map((e) => e.divider ?? `${e.label} (${e.qs.length})`).join(" → ")}; ${figs.join(", ")}; section test print unchanged`;
     });
   }, 6 * 60 * 1000);
 
