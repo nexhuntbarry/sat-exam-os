@@ -3,6 +3,7 @@
 // admin) or null, so callers can do `if (err) return 400`.
 import { getServiceClient } from "@/lib/supabase";
 import { getQaClassGroupIds, scopeIds } from "@/lib/qa";
+import { moduleApprovals } from "@/lib/test-readiness";
 
 type Db = ReturnType<typeof getServiceClient>;
 
@@ -91,25 +92,15 @@ export async function moduleSetError(db: Db, ids: string[]): Promise<string | nu
 export async function moduleApprovalError(db: Db, ids: string[]): Promise<string | null> {
   const unique = Array.from(new Set(ids.filter(Boolean)));
   if (unique.length === 0) return null;
-  const [{ data: pending, error: pendingErr }, { data: approved, error: approvedErr }, { data: mods }] =
-    await Promise.all([
-      db.from("questions")
-        .select("module_id")
-        .in("module_id", unique)
-        .not("parsing_status", "in", "(Approved,Rejected)"),
-      db.from("questions")
-        .select("module_id")
-        .in("module_id", unique)
-        .eq("parsing_status", "Approved"),
-      db.from("modules").select("id, module_name").in("id", unique),
-    ]);
-  if (pendingErr || approvedErr) return "Could not verify module question status";
-  const pendingIds = new Set((pending ?? []).map((q) => q.module_id as string));
-  const approvedIds = new Set((approved ?? []).map((q) => q.module_id as string));
-  const bad = unique.filter((id) => pendingIds.has(id) || !approvedIds.has(id));
+  let approvals;
+  try {
+    approvals = await moduleApprovals(db, unique.map((id) => ({ id, label: id })));
+  } catch {
+    return "Could not verify module question status";
+  }
+  const bad = approvals.filter((m) => m.pending > 0 || m.approved === 0);
   if (bad.length === 0) return null;
-  const names = bad.map((id) => (mods ?? []).find((m) => m.id === id)?.module_name ?? id);
-  return `These modules still have questions that are not Approved: ${names.join(", ")}. Approve or reject every question first.`;
+  return `These modules still have questions that are not Approved: ${bad.map((m) => m.name).join(", ")}. Approve or reject every question first.`;
 }
 
 /** Every id must be a user with the given role. */

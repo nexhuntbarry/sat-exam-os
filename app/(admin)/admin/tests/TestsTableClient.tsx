@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -23,7 +23,8 @@ import {
   type Priority,
   type Kind,
 } from "@/components/ui/data-table";
-import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
+import { SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
+import { BulkStatusBar, TestStatusMenu } from "./TestStatusActions";
 
 interface AssignOptions {
   allTeachers: { id: string; display_name: string | null; email: string }[];
@@ -143,9 +144,11 @@ type SortThProps = {
   priority?: Priority;
   sticky?: "left" | "right";
   className?: string;
+  /** Rendered before the sort button (e.g. the select-all checkbox). */
+  leading?: ReactNode;
 } & Omit<ThHTMLAttributes<HTMLTableCellElement>, "onClick">;
 
-function SortTh({ label, sortKey, active, dir, onSort, kind, priority, sticky, className, ...thProps }: SortThProps) {
+function SortTh({ label, sortKey, active, dir, onSort, kind, priority, sticky, className, leading, ...thProps }: SortThProps) {
   const ariaSort: React.AriaAttributes["aria-sort"] = !active
     ? "none"
     : dir === "asc"
@@ -154,6 +157,7 @@ function SortTh({ label, sortKey, active, dir, onSort, kind, priority, sticky, c
 
   return (
     <Th kind={kind} priority={priority} sticky={sticky} className={className} aria-sort={ariaSort} {...thProps}>
+      {leading}
       <button
         onClick={() => onSort(sortKey)}
         className={clsx(
@@ -184,12 +188,18 @@ function TestsTable({
   sortDir,
   onSort,
   assignOptions,
+  selected,
+  onSelect,
+  onStatusChanged,
 }: {
   rows: TestRow[];
   sortKey: SortKey | null;
   sortDir: SortDir;
   onSort: (key: SortKey) => void;
   assignOptions: AssignOptions;
+  selected: Set<string>;
+  onSelect: (ids: string[], on: boolean) => void;
+  onStatusChanged: (testId: string, status: TestStatus) => void;
 }) {
   const tf = useTranslations("fullLength");
   const sorted = useMemo(() => {
@@ -199,12 +209,31 @@ function TestsTable({
 
   // 8 columns total
   const COL_SPAN = 8;
+  const allSelected = rows.length > 0 && rows.every((r) => selected.has(r.id));
 
   return (
     <DataTable>
       <thead>
         <HeadRow>
-          <SortTh kind="main" sticky="left" className="w-[18%]" label="Test Name" sortKey="name" active={sortKey === "name"} dir={sortDir} onSort={onSort} />
+          <SortTh
+            kind="main"
+            sticky="left"
+            className="w-[18%]"
+            label="Test Name"
+            sortKey="name"
+            active={sortKey === "name"}
+            dir={sortDir}
+            onSort={onSort}
+            leading={
+              <input
+                type="checkbox"
+                className="mr-2 h-4 w-4 align-middle accent-warm-coral"
+                checked={allSelected}
+                onChange={() => onSelect(rows.map((r) => r.id), !allSelected)}
+                aria-label="Select all tests in this table"
+              />
+            }
+          />
           <SortTh kind="long" priority="md" className="w-[36%] xl:min-w-[19.5rem]" label="Module" sortKey="module" active={sortKey === "module"} dir={sortDir} onSort={onSort} />
           <SortTh label="Status" sortKey="status" active={sortKey === "status"} dir={sortDir} onSort={onSort} />
           <Th priority="lg" className="xl:min-w-[9.5rem]">Assignments</Th>
@@ -265,29 +294,43 @@ function TestsTable({
               }
             >
               <Td kind="main" sticky="left">
-                <Link href={`/admin/tests/${test.id}`} className="block text-charcoal hover:text-warm-coral-text transition-colors">
-                  <TwoLineCell
-                    main={test.test_name}
-                    wrapMain
-                    mainClassName="font-medium text-inherit"
-                    detail={
-                      test.fullLength ? (
-                        <SubjectTag section={tf("tag")} />
-                      ) : mod?.section || test.is_adaptive ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <SubjectTag section={mod?.section} />
-                          {test.is_adaptive && <span>Adaptive</span>}
-                        </span>
-                      ) : undefined
-                    }
+                <span className="flex min-w-0 items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 shrink-0 accent-warm-coral"
+                    checked={selected.has(test.id)}
+                    onChange={() => onSelect([test.id], !selected.has(test.id))}
+                    aria-label={`Select ${test.test_name}`}
                   />
-                </Link>
+                  <Link href={`/admin/tests/${test.id}`} className="block min-w-0 flex-1 text-charcoal hover:text-warm-coral-text transition-colors">
+                    <TwoLineCell
+                      main={test.test_name}
+                      wrapMain
+                      mainClassName="font-medium text-inherit"
+                      detail={
+                        test.fullLength ? (
+                          <SubjectTag section={tf("tag")} />
+                        ) : mod?.section || test.is_adaptive ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <SubjectTag section={mod?.section} />
+                            {test.is_adaptive && <span>Adaptive</span>}
+                          </span>
+                        ) : undefined
+                      }
+                    />
+                  </Link>
+                </span>
               </Td>
               <Td priority="md" className="w-[36%] max-w-0 whitespace-normal">
                 {moduleList}
               </Td>
               <Td>
-                <StatusBadge kind="test" status={test.status as TestStatus} />
+                <TestStatusMenu
+                  testId={test.id}
+                  testName={test.test_name}
+                  status={test.status as TestStatus}
+                  onChanged={onStatusChanged}
+                />
               </Td>
               <Td priority="lg" className="text-mid-gray whitespace-normal" title={assignmentNames}>
                 {assignments}
@@ -329,7 +372,7 @@ const VALID_KEYS: SortKey[] = ["name", "module", "status", "finished", "due_date
 const LS_KEY = "admin_tests_sort";
 
 export default function TestsTableClient({
-  tests,
+  tests: serverTests,
   assignOptions,
 }: {
   tests: TestRow[];
@@ -384,6 +427,40 @@ export default function TestsTableClient({
     [sortKey, sortDir, searchParams, router, pathname],
   );
 
+  // A status change shows at once (no reload, scroll kept); router.refresh()
+  // then brings the server's rows, which replace these overrides.
+  const [overrides, setOverrides] = useState<Record<string, TestStatus>>({});
+  useEffect(() => setOverrides({}), [serverTests]);
+  const tests = useMemo(
+    () => serverTests.map((t) => (overrides[t.id] ? { ...t, status: overrides[t.id] } : t)),
+    [serverTests, overrides],
+  );
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const onSelect = useCallback((ids: string[], on: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+  const onStatusChanged = useCallback(
+    (changes: { id: string; status: TestStatus }[]) => {
+      setOverrides((prev) => ({ ...prev, ...Object.fromEntries(changes.map((c) => [c.id, c.status])) }));
+      router.refresh();
+    },
+    [router],
+  );
+  const onOneChanged = useCallback(
+    (id: string, status: TestStatus) => onStatusChanged([{ id, status }]),
+    [onStatusChanged],
+  );
+  const selectedRows = tests
+    .filter((t) => selected.has(t.id))
+    .map((t) => ({ id: t.id, name: t.test_name, status: t.status as TestStatus }));
+
   const activeTests = tests.filter((t) => t.status !== "Closed");
   const closedTests = tests.filter((t) => t.status === "Closed");
 
@@ -391,6 +468,9 @@ export default function TestsTableClient({
 
   return (
     <>
+      {selectedRows.length > 0 && (
+        <BulkStatusBar rows={selectedRows} onClear={() => setSelected(new Set())} onChanged={onStatusChanged} />
+      )}
       {activeTests.length > 0 && (
         <TestsTable
           rows={activeTests}
@@ -398,6 +478,9 @@ export default function TestsTableClient({
           sortDir={sortDir}
           onSort={handleSort}
           assignOptions={assignOptions}
+          selected={selected}
+          onSelect={onSelect}
+          onStatusChanged={onOneChanged}
         />
       )}
       {closedTests.length > 0 && (
@@ -411,6 +494,9 @@ export default function TestsTableClient({
             sortDir={sortDir}
             onSort={handleSort}
             assignOptions={assignOptions}
+            selected={selected}
+            onSelect={onSelect}
+            onStatusChanged={onOneChanged}
           />
         </details>
       )}

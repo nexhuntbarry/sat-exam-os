@@ -22,6 +22,7 @@ import {
   thresholdError,
   timeLimitError,
 } from "../../_shared";
+import { testHasSubmissions } from "@/lib/test-readiness";
 
 // GET /api/admin/tests/[id]
 export async function GET(
@@ -224,6 +225,22 @@ export async function PATCH(
       return bad(`Status must be one of ${TEST_STATUSES.join(", ")}`);
     }
     updates.status = body.status;
+    // Same rule as POST …/draft: back to Draft only while nobody started.
+    if (body.status === "Draft" && current.status !== "Draft") {
+      let started: boolean;
+      try {
+        let flChildIds: string[] | null = null;
+        if (isFullLength) {
+          const { children, error: loadErr } = await loadChildTests(db, id);
+          if (loadErr) throw new Error(loadErr);
+          flChildIds = Object.values(children).flatMap((c) => (c ? [c.id] : []));
+        }
+        started = await testHasSubmissions(db, id, flChildIds);
+      } catch {
+        return bad("Could not check for submissions", 500);
+      }
+      if (started) return bad("Students have already started this test, so it can't go back to Draft. Close it instead.", 409);
+    }
   }
   // Full-length only: break and pause. Attempts already running keep the
   // values they started with (snapshotted on full_length_attempts).

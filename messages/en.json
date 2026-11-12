@@ -525,7 +525,7 @@
       },
       "tests": {
         "title": "Tests",
-        "body": "Create, publish, and close student tests, and track who is assigned and who has submitted. Each test is bound to a single approved module."
+        "body": "Create, publish, and close student tests, and track who is assigned and who has submitted. A test uses Module 1 and Module 2 from one section (fixed or adaptive), or both sections as a full-length SAT; it can be published once every module is fully approved."
       },
       "students": {
         "title": "Students",
