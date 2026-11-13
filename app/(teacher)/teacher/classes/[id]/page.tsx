@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { ArrowLeft, MapPin, GraduationCap, Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
-import { getTeacherTestScope, getTestSections, inSubjects } from "@/lib/teacher-access";
+import { getTestSections, inSubjects, reachableTestIds } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { formatShortDateTime } from "@/lib/datetime";
 import { averageSat } from "@/lib/score-display";
@@ -16,9 +16,7 @@ import { emptyLiveSnapshot } from "@/lib/live-progress-shared";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import ClassGradebook from "@/components/analytics/ClassGradebook";
 import AssignedTestsTable from "@/components/analytics/AssignedTestsTable";
-import { assignedTestRows, classReviewHref, type TestMeta } from "@/lib/assigned-tests-view";
-import type { Gradebook } from "@/lib/class-gradebook-view";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { assignedTestRows, classReviewHref } from "@/lib/assigned-tests-view";
 import { getTranslations } from "next-intl/server";
 import {
   DataRow,
@@ -214,21 +212,6 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
   return { group, students, perStudent, subjects };
 }
 
-// Status and open date of the gradebook's columns (parents only: the
-// gradebook never lists a full-length section child).
-async function loadTestMeta(db: SupabaseClient, gradebook: Gradebook): Promise<Map<string, TestMeta>> {
-  const ids = gradebook.columns.map((c) => c.id);
-  if (ids.length === 0) return new Map();
-  const { data, error } = await db.from("tests").select("id, status, open_date, due_date").in("id", ids);
-  if (error) throw new Error(`tests lookup failed: ${error.message}`);
-  return new Map(
-    (data ?? []).map((t) => [
-      t.id as string,
-      { status: (t.status as string | null) ?? null, openDate: (t.open_date as string | null) ?? null, dueDate: (t.due_date as string | null) ?? null },
-    ]),
-  );
-}
-
 export default async function TeacherClassDetailPage({
   params,
 }: {
@@ -263,11 +246,12 @@ export default async function TeacherClassDetailPage({
       })
     : emptyLiveSnapshot();
   // Assigned Tests: the gradebook's columns (this class's assignments in the
-  // teacher's subject), kept only when getTeacherTestScope reaches them too.
-  // Any failed read shows "couldn't load" (never an unscoped list).
+  // teacher's subject), kept only when getTeacherTestAccess would grant them
+  // too (reachableTestIds checks just these ids). Any failed read shows
+  // "couldn't load" (never an unscoped list).
   const assigned = gradebook
-    ? await Promise.all([getTeacherTestScope(getServiceClient(), me), loadTestMeta(getServiceClient(), gradebook)])
-        .then(([scope, meta]) => assignedTestRows(gradebook, meta, scope.testIds, new Date()))
+    ? await reachableTestIds(getServiceClient(), me, gradebook.columns.map((c) => c.id))
+        .then((reach) => assignedTestRows(gradebook, reach, new Date()))
         .catch((e) => {
           console.error("[teacher/classes/assigned-tests] load failed:", e);
           return null;

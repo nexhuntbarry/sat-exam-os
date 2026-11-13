@@ -49,3 +49,29 @@ export function reachesClassTeacher(i: ClassReachInput): boolean {
   }
   return false;
 }
+
+/**
+ * Batch form for a class teacher: which of `testIds` they reach — the
+ * getTeacherTestAccess rule per test: the subject gate (a test whose own
+ * section the teacher teaches in none of their classes is refused; a NULL
+ * subject lifts it), then reachesClassTeacher over the assignments /
+ * submissions of the test's `related` ids (itself, its full-length parent,
+ * the parent's sections).
+ */
+export function reachableAmong(i: ClassReachInput & { testIds: string[]; related: Map<string, string[]> }): Set<string> {
+  const subjects = Array.from(i.groupSubject.values());
+  const allowAll = subjects.some((s) => !s);
+  const out = new Set<string>();
+  for (const id of i.testIds) {
+    const sec = i.sections.get(id) ?? null;
+    if (!allowAll && sec && !subjects.includes(sec)) continue;
+    const rel = i.related.get(id) ?? [id];
+    const hit = reachesClassTeacher({
+      ...i,
+      assignments: i.assignments.filter((a) => rel.includes(a.test_id)),
+      takenBy: i.takenBy.filter((s) => rel.includes(s.test_id)),
+    });
+    if (hit) out.add(id);
+  }
+  return out;
+}

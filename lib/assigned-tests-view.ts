@@ -59,13 +59,6 @@ export interface AssignedTestRow {
   students: AssignedTestStudent[];
 }
 
-/** Test status / dates the gradebook doesn't carry. */
-export interface TestMeta {
-  status: string | null;
-  openDate: string | null;
-  dueDate: string | null;
-}
-
 /** Teacher's Class Review (projector) page: "Questions & answers". */
 export function classReviewHref(testId: string): string {
   return `/teacher/tests/${testId}/review`;
@@ -86,8 +79,31 @@ const BUCKET: Record<CellState, StudentTestState> = {
   missing: "not-started",
 };
 
-/** One bucket per student, so the three counts add up to the class size. */
-export function cellBucket(cell: Pick<GradebookCell, "state">): StudentTestState {
+const SECTION_WORDS: Record<"math" | "rw", string[]> = { math: ["Math"], rw: ["R&W", "Reading & Writing", "Reading and Writing"] };
+
+/**
+ * A full-length attempt closed with the viewer's own section never taken
+ * ("Closed — Math not taken" for a Math-only teacher): for them the student
+ * hasn't taken the test.
+ */
+function closedOwnSectionNotTaken(cell: Pick<GradebookCell, "state" | "statusLabel">, kind: GradebookKind, scope: Gradebook["scope"]): boolean {
+  if (cell.state !== "closed") return false;
+  const sec = flSection(kind, scope);
+  const missed = cell.statusLabel?.match(/^Closed — (.+) not taken$/)?.[1];
+  return !!sec && !!missed && SECTION_WORDS[sec].includes(missed);
+}
+
+/**
+ * One bucket per student, so the three counts add up to the class size.
+ * Pass the column kind and viewer scope so a closed full-length attempt
+ * without the viewer's section counts as not started.
+ */
+export function cellBucket(
+  cell: Pick<GradebookCell, "state" | "statusLabel">,
+  kind: GradebookKind = "other",
+  scope: Gradebook["scope"] = { rw: true, math: true },
+): StudentTestState {
+  if (closedOwnSectionNotTaken(cell, kind, scope)) return "not-started";
   return BUCKET[cell.state];
 }
 
@@ -129,13 +145,12 @@ const ORDER: Record<StudentTestState, number> = { "in-progress": 0, "not-started
 
 /**
  * Rows for the class's Assigned Tests: one per gradebook column the viewer
- * reaches (`reach`, from getTeacherTestScope; null = no extra filter), today's
+ * reaches (`reach`, from reachableTestIds; null = no extra filter), today's
  * tests first, then the gradebook's order (newest first). Students: in
  * progress, then not started, then submitted; by name within each.
  */
 export function assignedTestRows(
   gradebook: Pick<Gradebook, "columns" | "rows" | "scope">,
-  meta: Map<string, TestMeta>,
   reach: Set<string> | null,
   now: Date,
 ): AssignedTestRow[] {
@@ -143,15 +158,14 @@ export function assignedTestRows(
   const rows = gradebook.columns
     .filter((c) => !reach || reach.has(c.id))
     .map((c): AssignedTestRow => {
-      const m = meta.get(c.id);
-      const openDate = m?.openDate ?? null;
-      const dueDate = m?.dueDate ?? c.dueDate;
+      const openDate = c.openDate ?? null;
+      const dueDate = c.dueDate;
       const counts: CompletionCounts = { submitted: 0, inProgress: 0, notStarted: 0, total: 0 };
       const students: AssignedTestStudent[] = [];
       for (const r of gradebook.rows) {
         const cell = r.cells[c.id];
         if (!cell) continue;
-        const state = cellBucket(cell);
+        const state = cellBucket(cell, c.kind, gradebook.scope);
         counts.total++;
         if (state === "submitted") counts.submitted++;
         else if (state === "in-progress") counts.inProgress++;
@@ -166,7 +180,7 @@ export function assignedTestRows(
             state === "submitted"
               ? { sat: visibleSat(cell, c.kind, gradebook.scope), modules: cell.detail ?? "", pct: cell.pct, notes: cell.notes }
               : null,
-          note: cell.state === "closed" ? cell.statusLabel ?? "Closed" : retake ?? (cell.late ? "Late" : NOTE[cell.state] ?? null),
+          note: cell.state === "closed" ? (state === "not-started" ? "Closed" : cell.statusLabel ?? "Closed") : retake ?? (cell.late ? "Late" : NOTE[cell.state] ?? null),
           live: cell.state === "in-progress" || cell.state === "late" || cell.retake?.state === "in-progress",
           href: cell.href,
         });
@@ -177,7 +191,7 @@ export function assignedTestRows(
         id: c.id,
         name: c.name,
         kind: c.kind,
-        status: m?.status ?? null,
+        status: c.status ?? null,
         openDate,
         dueDate,
         today: isTodayTest({ openDate, dueDate }, today),
@@ -195,10 +209,11 @@ export function assignedTestRows(
 /**
  * Dashboard "Today's tests": tests in the teacher's reach (getTeacherTestScope
  * testIds) that are assigned to one of their classes or students (or to
- * them directly on teacher_ids) and open or are due today. Sorted by the
+ * them directly on teacher_ids) and open or are due today: Published, or
+ * Closed when due today (never Draft / Archived). Sorted by the
  * day's time (open, else due), then name.
  */
-export function todaysTests<T extends { id: string; name: string; openDate: string | null; dueDate: string | null }>(
+export function todaysTests<T extends { id: string; name: string; status: string | null; openDate: string | null; dueDate: string | null }>(
   tests: T[],
   assignments: { test_id: string; teacher_ids?: unknown; class_group_ids?: unknown; student_ids?: unknown }[],
   scope: { userId: string; testIds: Set<string>; myGroupIds: Set<string>; myStudentIds: Set<string>; isAdmin: boolean },
@@ -219,6 +234,41 @@ export function todaysTests<T extends { id: string; name: string; openDate: stri
   const today = nyDay(now.toISOString());
   const at = (t: T) => (t.openDate && nyDay(t.openDate) === today ? t.openDate : t.dueDate) ?? "";
   return tests
-    .filter((t) => scope.testIds.has(t.id) && assigned.has(t.id) && isTodayTest(t, today))
+    .filter(
+      (t) =>
+        scope.testIds.has(t.id) &&
+        assigned.has(t.id) &&
+        isTodayTest(t, today) &&
+        (t.status === "Published" || (t.status === "Closed" && t.dueDate != null && nyDay(t.dueDate) === today)),
+    )
     .sort((a, b) => at(a).localeCompare(at(b)) || a.name.localeCompare(b.name));
+}
+
+/**
+ * SQL pre-filter for today's tests: a window wide enough to hold every
+ * instant of today's New York day (±36 h of now covers any UTC offset and
+ * DST change); the exact day is then checked with isTodayTest.
+ */
+export function todayWindow(now: Date): { from: string; to: string } {
+  const h = 36 * 3600_000;
+  return { from: new Date(now.getTime() - h).toISOString(), to: new Date(now.getTime() + h).toISOString() };
+}
+
+/**
+ * Dashboard "x / y submitted": distinct students with a finished attempt
+ * per test, counting only students on that test's roster (`roster`, the
+ * assigned students the viewer sees). A retake doesn't count twice.
+ */
+export function submittedStudentsByTest(
+  attempts: { testId: string; studentId: string; done: boolean }[],
+  roster: Map<string, Set<string>>,
+): Record<string, number> {
+  const seen = new Map<string, Set<string>>();
+  for (const a of attempts) {
+    if (!a.done || !roster.get(a.testId)?.has(a.studentId)) continue;
+    let s = seen.get(a.testId);
+    if (!s) seen.set(a.testId, (s = new Set()));
+    s.add(a.studentId);
+  }
+  return Object.fromEntries(Array.from(seen, ([id, s]) => [id, s.size]));
 }

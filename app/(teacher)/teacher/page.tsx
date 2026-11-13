@@ -1,7 +1,8 @@
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
-import { getAssignedStudentIds, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
+import { getAssignedStudentIds, getTeacherTestScope, getTestSections, seesAllStudents } from "@/lib/teacher-access";
+import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -10,7 +11,7 @@ import { ClipboardList, Users, BarChart2, AlertTriangle, CalendarClock, Eye, Pre
 import { getTranslations } from "next-intl/server";
 import { DataRow, DataTable, EmptyRow, HeadRow, RowActions, RowButton, Td, Th, TwoLineCell } from "@/components/ui/data-table";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
-import { classReviewHref, teacherResultsHref, todaysTests } from "@/lib/assigned-tests-view";
+import { classReviewHref, submittedStudentsByTest, teacherResultsHref, todayWindow, todaysTests } from "@/lib/assigned-tests-view";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime, formatShortDateTime } from "@/lib/datetime";
 import { expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
@@ -32,6 +33,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
   const flLinks = await fullLengthLinksOrNone(db);
   const flMeta = await loadFlAttemptMeta(db, testIds.filter((id) => flLinks.childrenOf.has(id)));
 
+  const win = todayWindow(new Date());
   const [{ data: tests, error: testsError }, { data: assignments, error: assignError }, { data: allSubs, error: subError }, { data: datedTests, error: datedError }] = await Promise.all([
     db
       .from("tests")
@@ -41,20 +43,27 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
       .order("due_date", { ascending: true })
       .limit(10),
     db.from("test_assignments").select("test_id, teacher_ids, student_ids, class_group_ids").in("test_id", testIds),
-    scopeIds(db
-      .from("submissions")
-      .select("id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, users!inner(display_name, email)")
-      .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa),
-    // Today's tests: every test in scope with an open or due date (filtered to today below).
+    // Paged: PostgREST caps a response at 1000 rows.
+    fetchAllRows((from, to) =>
+      scopeIds(db
+        .from("submissions")
+        .select("id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, users!inner(display_name, email)")
+        .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa)
+        .order("id")
+        .range(from, to),
+    ),
+    // Today's tests: Published / Closed tests in scope opening or due within
+    // ±36 h (the exact New York day is checked in todaysTests).
     db
       .from("tests")
-      .select("id, test_name, status, open_date, due_date, modules!module_id(section)")
+      .select("id, test_name, status, open_date, due_date")
       .in("id", testIds)
-      .or("open_date.not.is.null,due_date.not.is.null"),
+      .in("status", ["Published", "Closed"])
+      .or(`and(open_date.gte.${win.from},open_date.lte.${win.to}),and(due_date.gte.${win.from},due_date.lte.${win.to})`),
   ]);
   if (testsError) throw new Error(`tests lookup failed: ${testsError.message}`);
   if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
-  if (subError) throw new Error(`submissions lookup failed: ${subError.message}`);
+  if (subError) throw new Error(`submissions lookup failed: ${(subError as { message?: string }).message ?? String(subError)}`);
   if (datedError) throw new Error(`tests lookup failed: ${datedError.message}`);
 
   // Assigned roster per test (student_ids ∪ class members), limited to my
@@ -153,24 +162,28 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
   }));
 
   // Open or due today, and assigned to my classes / students (or to me).
-  const todayTests = todaysTests(
-    (datedTests ?? []).map((t) => {
-      const mod = (Array.isArray(t.modules) ? t.modules[0] : t.modules) as { section?: string | null } | null;
-      return {
-        id: t.id as string,
-        name: (t.test_name as string | null) ?? "Untitled test",
-        status: (t.status as string | null) ?? null,
-        openDate: (t.open_date as string | null) ?? null,
-        dueDate: (t.due_date as string | null) ?? null,
-        section: flLinks.childrenOf.has(t.id as string) ? "Full-length SAT" : mod?.section ?? null,
-        studentCount: rosterByTest.get(t.id as string)?.size ?? 0,
-        submittedCount: submittedByTest[t.id as string] ?? 0,
-      };
-    }),
+  // Submitted = distinct students on the roster I see with a finished attempt.
+  const submittedStudents = submittedStudentsByTest(attempts, rosterByTest);
+  const todayPicked = todaysTests(
+    (datedTests ?? []).map((t) => ({
+      id: t.id as string,
+      name: (t.test_name as string | null) ?? "Untitled test",
+      status: (t.status as string | null) ?? null,
+      openDate: (t.open_date as string | null) ?? null,
+      dueDate: (t.due_date as string | null) ?? null,
+    })),
     (assignments ?? []) as { test_id: string }[],
     { userId: user.userId, testIds: scope.testIds, myGroupIds: scope.myGroupIds, myStudentIds: scope.myStudentIds, isAdmin: scope.isAdmin },
     new Date(),
   );
+  // Subject from the test's module (module_1_id for adaptive tests); display only.
+  const todaySections = await getTestSections(db, todayPicked.filter((t) => !flLinks.childrenOf.has(t.id)).map((t) => t.id));
+  const todayTests = todayPicked.map((t) => ({
+    ...t,
+    section: flLinks.childrenOf.has(t.id) ? "Full-length SAT" : todaySections.get(t.id) ?? null,
+    studentCount: rosterByTest.get(t.id)?.size ?? 0,
+    submittedCount: submittedStudents[t.id] ?? 0,
+  }));
 
   return {
     tests: enrichedTests,

@@ -64,8 +64,8 @@ type MemberRow = {
 type AssignmentRow = {
   test_id: string;
   tests:
-    | { id: string; test_name: string | null; open_date: string | null; due_date: string | null; created_at: string | null }
-    | { id: string; test_name: string | null; open_date: string | null; due_date: string | null; created_at: string | null }[]
+    | { id: string; test_name: string | null; open_date: string | null; due_date: string | null; created_at: string | null; status?: string | null }
+    | { id: string; test_name: string | null; open_date: string | null; due_date: string | null; created_at: string | null; status?: string | null }[]
     | null;
 };
 
@@ -96,7 +96,7 @@ export async function loadClassGradebookFrame(
       ),
       db
         .from("test_assignments")
-        .select("test_id, tests(id, test_name, open_date, due_date, created_at)")
+        .select("test_id, tests(id, test_name, open_date, due_date, created_at, status)")
         .contains("class_group_ids", JSON.stringify([opts.classGroupId])),
       getQaTestIds(),
       getQaUserIds(),
@@ -137,6 +137,7 @@ export async function loadClassGradebookFrame(
       dueDate: a.t!.due_date,
       openDate: a.t!.open_date,
       createdAt: a.t!.created_at,
+      status: a.t!.status ?? null,
     }));
   return { students, tests, scope, links };
 }

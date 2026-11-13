@@ -18,7 +18,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getQaTestIds, getQaUserIds, onSide } from "./qa";
 import { childrenOf, parentOf, resolveParentTestId } from "./full-length";
 import { fetchAllRows } from "./fetch-all-rows";
-import { reachesClassTeacher } from "./teacher-test-reach";
+import { reachableAmong, reachesClassTeacher } from "./teacher-test-reach";
 
 // A test's subject is the section ("Math" | "Reading & Writing") of its
 // module (module_1_id for adaptive tests). Used to scope class teachers to
@@ -174,6 +174,108 @@ export async function getTeacherTestAccess(
     return { mode: "direct", studentAllowlist: null };
   }
   return { mode: null, studentAllowlist: null };
+}
+
+/**
+ * Which of `testIds` getTeacherTestAccess would grant (mode not null), in a
+ * fixed number of batched reads: for a page that lists a few known tests
+ * (the class page's Assigned Tests) instead of getTeacherTestScope over
+ * every assignment. Same rules: QA side, admin = all, class teacher =
+ * subject gate + reachesClassTeacher (assignments of the test, its
+ * full-length parent and the parent's sections, else taken by one of their
+ * students), pure reviewer = on teacher_ids of the (parent) test.
+ * Throws on a lookup error (callers fail closed).
+ */
+export async function reachableTestIds(
+  db: SupabaseClient,
+  user: { userId: string; role: string | null | undefined; isQa: boolean },
+  testIds: string[],
+): Promise<Set<string>> {
+  const qaTests = await getQaTestIds();
+  const ids = Array.from(new Set(testIds)).filter((id) => onSide(id, qaTests, user.isQa));
+  if (ids.length === 0 || user.role === "admin") return new Set(ids);
+
+  const { data: myGroups, error: groupError } = await db
+    .from("class_group_teachers")
+    .select("class_group_id, subject")
+    .eq("teacher_id", user.userId);
+  if (groupError) throw new Error(`class_group_teachers lookup failed: ${groupError.message}`);
+  const rows = myGroups ?? [];
+
+  // Each test's related ids: itself, its full-length parent, the parent's sections.
+  const parents = await parentOf(db, ids);
+  const parentIds = ids.map((id) => parents.get(id) ?? id);
+  const kids = await childrenOf(db, parentIds);
+  const related = new Map<string, string[]>();
+  for (const id of ids) {
+    const p = parents.get(id) ?? id;
+    const k = kids.get(p);
+    related.set(id, Array.from(new Set([id, p, k?.rw, k?.math].filter((x): x is string => !!x))));
+  }
+  const allIds = Array.from(new Set(Array.from(related.values()).flat()));
+  const { data: assignments, error: assignError } = await db
+    .from("test_assignments")
+    .select("test_id, teacher_ids, class_group_ids, student_ids")
+    .in("test_id", allIds);
+  if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
+
+  if (rows.length === 0) {
+    // Pure reviewer: direct assignment on the (parent) test only.
+    return new Set(
+      ids.filter((id) => {
+        const a = (assignments ?? []).find((x) => x.test_id === (parents.get(id) ?? id));
+        return ((a?.teacher_ids as string[] | null) ?? []).includes(user.userId);
+      }),
+    );
+  }
+
+  const groupSubject = new Map<string, string | null>();
+  for (const r of rows) groupSubject.set(r.class_group_id as string, (r.subject as string | null) ?? null);
+  const { data: members, error: memberError } = await db
+    .from("class_group_members")
+    .select("class_group_id, student_id")
+    .in("class_group_id", Array.from(groupSubject.keys()));
+  if (memberError) throw new Error(`class_group_members lookup failed: ${memberError.message}`);
+  const qaUsers = await getQaUserIds();
+  const studentSubjects = new Map<string, (string | null)[]>();
+  for (const m of members ?? []) {
+    const sid = m.student_id as string;
+    if (!onSide(sid, qaUsers, user.isQa)) continue;
+    const list = studentSubjects.get(sid) ?? [];
+    list.push(groupSubject.get(m.class_group_id as string) ?? null);
+    studentSubjects.set(sid, list);
+  }
+  if (studentSubjects.size === 0) return new Set();
+
+  const sections = await getTestSections(db, allIds, { strict: true });
+  const input = {
+    testIds: ids,
+    related,
+    teacherId: user.userId,
+    groupSubject,
+    studentSubjects,
+    assignments: (assignments ?? []) as { test_id: string }[],
+    takenBy: [] as { test_id: string; student_id: string }[],
+    sections,
+  };
+  const out = reachableAmong(input);
+  const rest = ids.filter((id) => !out.has(id));
+  if (rest.length > 0) {
+    // Not assigned to them: taken by one of their students (legacy).
+    const restIds = Array.from(new Set(rest.flatMap((id) => related.get(id)!)));
+    const { data: subs, error: subError } = await fetchAllRows<{ id: string; test_id: string; student_id: string }>((from, to) =>
+      db
+        .from("submissions")
+        .select("id, test_id, student_id")
+        .in("test_id", restIds)
+        .in("student_id", Array.from(studentSubjects.keys()))
+        .order("id")
+        .range(from, to),
+    );
+    if (subError) throw new Error(`submissions lookup failed: ${(subError as { message?: string }).message ?? String(subError)}`);
+    for (const id of reachableAmong({ ...input, testIds: rest, assignments: [], takenBy: subs })) out.add(id);
+  }
+  return out;
 }
 
 // Reach results memoized per Supabase client (one per request in practice:

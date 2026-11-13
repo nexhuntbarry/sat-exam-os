@@ -24,6 +24,9 @@ export interface GradebookColumn {
   /** Date the column sorts and filters by: due date, else open date, else created. */
   date: string | null;
   dueDate: string | null;
+  /** Open date and tests.status (the teacher's Assigned Tests rows); absent in older fixtures. */
+  openDate?: string | null;
+  status?: string | null;
   /** The test's results page. */
   href: string;
   /** Questions & answers (Class Review) page, linked next to the name; absent/null = none (admin grid, print). */

@@ -55,6 +55,8 @@ export interface GradebookTestInput {
   dueDate: string | null;
   openDate: string | null;
   createdAt: string | null;
+  /** tests.status (Draft / Published / Closed), carried to the column. */
+  status?: string | null;
 }
 
 export interface ShapeGradebookInput {
@@ -308,6 +310,8 @@ export function shapeGradebook(input: ShapeGradebookInput): Gradebook {
       kind,
       date,
       dueDate: t.dueDate,
+      openDate: t.openDate,
+      status: t.status ?? null,
       href: input.testHref(t.id),
       reviewHref: input.reviewHref?.(t.id) ?? null,
       avg: averageSat(done.map((c) => c.sat)),
