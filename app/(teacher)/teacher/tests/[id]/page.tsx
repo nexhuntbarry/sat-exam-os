@@ -4,6 +4,8 @@ import { canManageTestSettings, getTeacherTestAccess, getTestSections } from "@/
 import { scopeUsers } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
+import ClassReviewButton from "@/components/tests/ClassReviewButton";
 import { formatDate, formatDateTime, formatShortDate } from "@/lib/datetime";
 import { averageSat, type AttemptScore } from "@/lib/score-display";
 import { expandFullLength, fullLengthLinksOrNone, type FullLengthLinks } from "@/lib/full-length";
@@ -221,6 +223,7 @@ export default async function TeacherTestDetailPage({
   const { id } = await params;
   const data = await getTeacherTest(id, user);
   if (!data) notFound();
+  const tReview = await getTranslations("teacher.classReview");
 
   const { test, section, submissions, canManageSettings, isFullLength, flLinks, flMeta, flScope, liveSnapshot } = data;
   const notStarted = liveSnapshot.notStarted;
@@ -306,12 +309,7 @@ export default async function TeacherTestDetailPage({
 
       {/* Action links */}
       <div className="flex flex-wrap gap-3">
-        <Link
-          href={`/teacher/tests/${id}/review`}
-          className="px-4 py-2 rounded-xl bg-warm-coral text-white text-sm font-semibold hover:bg-warm-coral-dark transition-colors"
-        >
-          Class Review (projector)
-        </Link>
+        <ClassReviewButton testId={id} label={tReview("button")} />
         <Link
           href={`/teacher/tests/${id}/results`}
           className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral-text text-sm font-medium hover:bg-warm-coral/20 transition-colors"

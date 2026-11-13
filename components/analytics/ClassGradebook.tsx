@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Download, Printer, Table2 } from "lucide-react";
 import GradebookTable, { GradebookLegend } from "@/components/analytics/GradebookTable";
 import { LiveIndicator, LiveProgressProvider } from "@/components/analytics/LiveProgressCell";
@@ -34,14 +34,23 @@ const SUBJECTS: { value: SubjectFilter; label: string }[] = [
 // still works). `live`: the grid's live progress (lib/live-progress
 // loadClassLiveSnapshot) and its polling endpoint; unfinished cells show
 // where the student is, refreshed every 20 s while one is on screen.
+//
+// `above` (teacher class page: Assigned Tests) renders before Scores inside
+// the same live provider, so both share one poll; while it's shown, polling
+// also runs for live cells the grid's filters hide.
 export default function ClassGradebook(props: {
   classId: string;
   className: string;
   gradebook: Gradebook | null;
   live: ClassLive;
+  above?: ReactNode;
+  /** Text of the Questions & answers (Class Review) link next to each test name. */
+  reviewLabel?: { short: string; full: string };
 }) {
   if (!props.gradebook) {
     return (
+      <>
+      {props.above}
       <section aria-labelledby="class-scores-heading">
         <div className="flex items-center gap-2 mb-3">
           <Table2 size={14} className="text-warm-coral-text" aria-hidden />
@@ -51,6 +60,7 @@ export default function ClassGradebook(props: {
           Scores couldn&rsquo;t load. Refresh to try again.
         </p>
       </section>
+      </>
     );
   }
   return <GradebookView {...props} gradebook={props.gradebook} />;
@@ -67,11 +77,15 @@ function GradebookView({
   className,
   gradebook,
   live,
+  above,
+  reviewLabel,
 }: {
   classId: string;
   className: string;
   gradebook: Gradebook;
   live: ClassLive;
+  above?: ReactNode;
+  reviewLabel?: { short: string; full: string };
 }) {
   const [filter, setFilter] = useState<GradebookFilter>(NO_FILTER);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "name", dir: "asc" });
@@ -108,13 +122,15 @@ function GradebookView({
   // Poll only while an unfinished cell is on screen (after filters), and
   // stop once nobody live has been heard from in an hour (Paused · Refresh).
   const liveOnScreen = useMemo(() => anyLiveCell(columns, rows), [columns, rows]);
+  const liveAnywhere = useMemo(() => anyLiveCell(gradebook.columns, gradebook.rows), [gradebook.columns, gradebook.rows]);
 
   const qs = viewQuery(filter, sort.key, sort.dir);
   const filtered = filter.subject !== "all" || filter.from || filter.to;
   const input = "rounded-lg border border-divider bg-surface px-2 py-1 text-xs text-charcoal";
 
   return (
-    <LiveProgressProvider endpoint={live.endpoint} initial={live.initial} active={liveOnScreen} pauseWhenIdle>
+    <LiveProgressProvider endpoint={live.endpoint} initial={live.initial} active={liveOnScreen || (above != null && liveAnywhere)} pauseWhenIdle>
+      {above}
       <section aria-labelledby="class-scores-heading">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
@@ -193,7 +209,7 @@ function GradebookView({
         ) : (
           <>
             <div className="overflow-x-auto rounded-2xl border border-divider bg-surface">
-              <GradebookTable gradebook={gradebook} columns={columns} rows={rows} sort={sort} onSort={onSort} />
+              <GradebookTable gradebook={gradebook} columns={columns} rows={rows} sort={sort} onSort={onSort} reviewLabel={reviewLabel} />
             </div>
             <div className="mt-2">
               <GradebookLegend />

@@ -69,6 +69,8 @@ export interface ShapeGradebookInput {
   now: Date;
   /** The test's results page (column header link). */
   testHref: (testId: string) => string;
+  /** The test's Questions & answers (Class Review) page, next to the name (teacher grid). */
+  reviewHref?: (testId: string) => string;
 }
 
 const isGraded = (s: string) => s === "Submitted" || s === "Late";
@@ -307,6 +309,7 @@ export function shapeGradebook(input: ShapeGradebookInput): Gradebook {
       date,
       dueDate: t.dueDate,
       href: input.testHref(t.id),
+      reviewHref: input.reviewHref?.(t.id) ?? null,
       avg: averageSat(done.map((c) => c.sat)),
       avgRw: kind === "fl" && scope.rw ? averageSat(done.map((c) => c.rw)) : null,
       avgMath: kind === "fl" && scope.math ? averageSat(done.map((c) => c.math)) : null,

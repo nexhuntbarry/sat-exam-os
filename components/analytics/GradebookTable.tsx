@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Ban, Circle, Clock, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Ban, Circle, Clock, Presentation, XCircle } from "lucide-react";
 import { formatShortDate } from "@/lib/datetime";
 import {
   KIND_LABEL,
@@ -128,6 +128,7 @@ export default function GradebookTable({
   onSort,
   compact = false,
   summary = true,
+  reviewLabel,
 }: {
   gradebook: Pick<Gradebook, "scope" | "averages">;
   /** Show the summary columns (a printed grid split into several tables shows them once). */
@@ -140,7 +141,10 @@ export default function GradebookTable({
   onSort?: (k: SortKey) => void;
   /** Printout: smaller type, no links. */
   compact?: boolean;
+  /** Text of each column's Questions & answers (Class Review) link (columns with a reviewHref). */
+  reviewLabel?: { short: string; full: string };
 }) {
+  const review = reviewLabel ?? { short: "Q&A", full: "Questions & answers (Class Review)" };
   const { scope, averages } = gradebook;
   const showMath = summary && scope.math;
   const showRw = summary && scope.rw;
@@ -183,6 +187,17 @@ export default function GradebookTable({
                 {KIND_LABEL[c.kind]}
                 {c.dueDate ? ` · Due ${formatShortDate(c.dueDate)}` : ""}
               </div>
+              {!compact && c.reviewHref && (
+                <Link
+                  href={c.reviewHref}
+                  title={`${review.full}: ${c.name}`}
+                  aria-label={`${review.full}: ${c.name}`}
+                  className="mt-0.5 inline-flex items-center gap-1 rounded border border-warm-coral/30 bg-warm-coral/5 px-1.5 text-[11px] font-medium leading-5 text-warm-coral-text hover:bg-warm-coral/15"
+                >
+                  <Presentation size={11} aria-hidden />
+                  {review.short}
+                </Link>
+              )}
             </th>
           ))}
           {showMath && sum("latestMath", "Latest Math", "Latest finished Math score: a Math test or the Math section of a full-length SAT.")}

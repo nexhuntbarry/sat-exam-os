@@ -6,9 +6,13 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
-import { ClipboardList, Users, BarChart2, AlertTriangle } from "lucide-react";
+import { ClipboardList, Users, BarChart2, AlertTriangle, CalendarClock, Eye, Presentation } from "lucide-react";
+import { getTranslations } from "next-intl/server";
+import { DataRow, DataTable, EmptyRow, HeadRow, RowActions, RowButton, Td, Th, TwoLineCell } from "@/components/ui/data-table";
+import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
+import { classReviewHref, teacherResultsHref, todaysTests } from "@/lib/assigned-tests-view";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatDate, formatDateTime } from "@/lib/datetime";
+import { formatDate, formatDateTime, formatShortDateTime } from "@/lib/datetime";
 import { expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
 
@@ -19,7 +23,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
   // subject-scoped, QA-isolated.
   const scope = await getTeacherTestScope(db, user);
   if (scope.testIds.size === 0) {
-    return { tests: [], recentSubmissions: [], attentionStudents: [], stats: { assignedTests: 0, studentsCount: 0, weekSubmissions: 0 } };
+    return { tests: [], todayTests: [], recentSubmissions: [], attentionStudents: [], stats: { assignedTests: 0, studentsCount: 0, weekSubmissions: 0 } };
   }
   const testIds = Array.from(scope.testIds);
   const qaUsers = await getQaUserIds();
@@ -28,7 +32,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
   const flLinks = await fullLengthLinksOrNone(db);
   const flMeta = await loadFlAttemptMeta(db, testIds.filter((id) => flLinks.childrenOf.has(id)));
 
-  const [{ data: tests, error: testsError }, { data: assignments, error: assignError }, { data: allSubs, error: subError }] = await Promise.all([
+  const [{ data: tests, error: testsError }, { data: assignments, error: assignError }, { data: allSubs, error: subError }, { data: datedTests, error: datedError }] = await Promise.all([
     db
       .from("tests")
       .select("id, test_name, status, due_date, modules!module_id(module_name, section)")
@@ -36,15 +40,22 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
       .eq("status", "Published")
       .order("due_date", { ascending: true })
       .limit(10),
-    db.from("test_assignments").select("test_id, student_ids, class_group_ids").in("test_id", testIds),
+    db.from("test_assignments").select("test_id, teacher_ids, student_ids, class_group_ids").in("test_id", testIds),
     scopeIds(db
       .from("submissions")
       .select("id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, users!inner(display_name, email)")
       .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa),
+    // Today's tests: every test in scope with an open or due date (filtered to today below).
+    db
+      .from("tests")
+      .select("id, test_name, status, open_date, due_date, modules!module_id(section)")
+      .in("id", testIds)
+      .or("open_date.not.is.null,due_date.not.is.null"),
   ]);
   if (testsError) throw new Error(`tests lookup failed: ${testsError.message}`);
   if (assignError) throw new Error(`test_assignments lookup failed: ${assignError.message}`);
   if (subError) throw new Error(`submissions lookup failed: ${subError.message}`);
+  if (datedError) throw new Error(`tests lookup failed: ${datedError.message}`);
 
   // Assigned roster per test (student_ids ∪ class members), limited to my
   // students unless I see the whole test.
@@ -141,8 +152,29 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     submittedCount: submittedByTest[t.id] ?? 0,
   }));
 
+  // Open or due today, and assigned to my classes / students (or to me).
+  const todayTests = todaysTests(
+    (datedTests ?? []).map((t) => {
+      const mod = (Array.isArray(t.modules) ? t.modules[0] : t.modules) as { section?: string | null } | null;
+      return {
+        id: t.id as string,
+        name: (t.test_name as string | null) ?? "Untitled test",
+        status: (t.status as string | null) ?? null,
+        openDate: (t.open_date as string | null) ?? null,
+        dueDate: (t.due_date as string | null) ?? null,
+        section: flLinks.childrenOf.has(t.id as string) ? "Full-length SAT" : mod?.section ?? null,
+        studentCount: rosterByTest.get(t.id as string)?.size ?? 0,
+        submittedCount: submittedByTest[t.id as string] ?? 0,
+      };
+    }),
+    (assignments ?? []) as { test_id: string }[],
+    { userId: user.userId, testIds: scope.testIds, myGroupIds: scope.myGroupIds, myStudentIds: scope.myStudentIds, isAdmin: scope.isAdmin },
+    new Date(),
+  );
+
   return {
     tests: enrichedTests,
+    todayTests,
     recentSubmissions: weekAttempts.slice(0, 10),
     attentionStudents: attentionWithScores,
     stats: {
@@ -163,7 +195,10 @@ export default async function TeacherDashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const { tests, recentSubmissions, attentionStudents, stats } = await getTeacherDashboardData(user);
+  const [{ tests, todayTests, recentSubmissions, attentionStudents, stats }, tReview] = await Promise.all([
+    getTeacherDashboardData(user),
+    getTranslations("teacher.classReview"),
+  ]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
@@ -206,6 +241,52 @@ export default async function TeacherDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Today's tests: open or due today, assigned to my classes or students */}
+      <section aria-labelledby="today-tests-heading">
+        <div className="flex items-center gap-2 mb-3">
+          <CalendarClock size={14} className="text-warm-coral-text" aria-hidden />
+          <h2 id="today-tests-heading" className="font-semibold text-charcoal">Today&rsquo;s tests</h2>
+          <span className="text-soft-mute font-normal text-sm">({todayTests.length})</span>
+        </div>
+        <DataTable>
+          <thead>
+            <HeadRow>
+              <Th kind="main" sticky="left">Test</Th>
+              <Th>Status</Th>
+              <Th>Subject</Th>
+              <Th>Completion</Th>
+              <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
+            </HeadRow>
+          </thead>
+          <tbody>
+            {todayTests.length === 0 && (
+              <EmptyRow colSpan={5}>No tests open or due today for your classes. Upcoming tests are under My Tests.</EmptyRow>
+            )}
+            {todayTests.map((t) => (
+              <DataRow key={t.id}>
+                <Td kind="main" sticky="left">
+                  <TwoLineCell
+                    main={t.name}
+                    detail={[t.openDate ? `Opens ${formatShortDateTime(t.openDate)}` : null, t.dueDate ? `Due ${formatShortDateTime(t.dueDate)}` : null].filter(Boolean).join(" · ") || undefined}
+                    wrapMain
+                    mainClassName="font-medium text-charcoal"
+                  />
+                </Td>
+                <Td>{t.status ? <StatusBadge kind="test" status={t.status as TestStatus} /> : <span className="text-soft-mute">—</span>}</Td>
+                <Td className="text-mid-gray">{t.section === "Math" || t.section === "Reading & Writing" ? <SubjectTag section={t.section} /> : t.section ?? "—"}</Td>
+                <Td className="text-mid-gray">{t.submittedCount} / {t.studentCount} submitted</Td>
+                <Td kind="actions" sticky="right">
+                  <RowActions>
+                    <RowButton label={tReview("button")} tone="primary" icon={<Presentation size={13} />} href={classReviewHref(t.id)} />
+                    <RowButton label="Results" icon={<Eye size={13} />} href={teacherResultsHref(t.id)} />
+                  </RowActions>
+                </Td>
+              </DataRow>
+            ))}
+          </tbody>
+        </DataTable>
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Published tests */}

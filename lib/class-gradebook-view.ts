@@ -26,6 +26,8 @@ export interface GradebookColumn {
   dueDate: string | null;
   /** The test's results page. */
   href: string;
+  /** Questions & answers (Class Review) page, linked next to the name; absent/null = none (admin grid, print). */
+  reviewHref?: string | null;
   /** Class average of finished scores (section 200–800, full-length total 400–1600). */
   avg: number | null;
   /** Full-length only: section averages (null when hidden from this viewer). */

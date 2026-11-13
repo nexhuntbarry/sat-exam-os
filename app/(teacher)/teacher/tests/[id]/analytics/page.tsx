@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
+import ClassReviewButton from "@/components/tests/ClassReviewButton";
 import { clsx } from "clsx";
 import { ChevronDown, ChevronRight, BookOpen } from "lucide-react";
 import MathMarkdown from "@/components/MathMarkdown";
@@ -43,6 +45,7 @@ function missedColor(pct: number) {
 export default function QuestionAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const pageTestId = params.id;
+  const tReview = useTranslations("teacher.classReview");
 
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -152,7 +155,10 @@ export default function QuestionAnalyticsPage() {
       </div>
 
       <div>
-        <h1 className="text-2xl font-bold text-charcoal">Question Analytics</h1>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <h1 className="text-2xl font-bold text-charcoal">Question Analytics</h1>
+          <ClassReviewButton testId={pageTestId} label={tReview("button")} />
+        </div>
         <p className="text-soft-mute text-sm mt-1">
           {`${data.submittedAttempts} student${data.submittedAttempts === 1 ? "" : "s"} submitted. `}
           Missed = answered wrong or left blank. Avg time and changed answer are recorded for tests taken from

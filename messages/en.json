@@ -459,6 +459,10 @@
     }
   },
   "teacher": {
+    "classReview": {
+      "button": "Questions & answers (Class Review)",
+      "short": "Q&A"
+    },
     "tests": {
       "title": "My Tests",
       "noTests": "No tests assigned to you yet.",

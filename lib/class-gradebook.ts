@@ -150,6 +150,8 @@ export async function loadClassGradebook(
     subjects: string[] | null;
     /** Column header link: the test's results page. */
     testHref: (testId: string) => string;
+    /** Questions & answers (Class Review) link next to each test name. */
+    reviewHref?: (testId: string) => string;
     now?: Date;
   },
 ): Promise<Gradebook> {
@@ -184,5 +186,6 @@ export async function loadClassGradebook(
     scope,
     now: opts.now ?? new Date(),
     testHref: opts.testHref,
+    reviewHref: opts.reviewHref,
   });
 }

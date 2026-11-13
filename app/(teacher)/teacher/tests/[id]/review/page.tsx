@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import { Presentation } from "lucide-react";
 import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/ReviewQuestionCard";
 
@@ -101,6 +102,7 @@ export default async function TeacherTestReviewPage({
   const data = await getTeacherReview(id, user);
   if (!data) notFound();
   const { test, sections } = data;
+  const reviewLabel = (await getTranslations("teacher.classReview"))("button");
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -109,13 +111,13 @@ export default async function TeacherTestReviewPage({
         <span>/</span>
         <Link href={`/teacher/tests/${test.id}`} className="hover:text-charcoal transition-colors">{test.test_name}</Link>
         <span>/</span>
-        <span className="text-charcoal">Class review</span>
+        <span className="text-charcoal">{reviewLabel}</span>
       </div>
 
       <div className="rounded-2xl border border-warm-coral/20 bg-warm-coral/5 px-4 py-3 flex items-start gap-3">
         <Presentation size={18} className="text-warm-coral-text mt-0.5 shrink-0" />
         <div>
-          <h1 className="text-charcoal font-bold text-base">{test.test_name} — class review</h1>
+          <h1 className="text-charcoal font-bold text-base">{test.test_name} — {reviewLabel}</h1>
           <p className="text-soft-mute text-xs mt-0.5">
             Projector walkthrough: every question with choices, figures, the correct answer,
             and the explanation. To see which students missed each question, use{" "}

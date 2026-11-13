@@ -459,6 +459,10 @@
     }
   },
   "teacher": {
+    "classReview": {
+      "button": "題目與答案（課堂講解）",
+      "short": "題目與答案"
+    },
     "tests": {
       "title": "我的測驗",
       "noTests": "尚未分配測驗給您。",
