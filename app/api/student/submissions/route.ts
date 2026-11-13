@@ -145,7 +145,7 @@ export async function POST(req: Request) {
 
   let grantId: string | null = null;
   if (priorMax !== null) {
-    const { data: grant } = await db
+    const { data: grant, error: grantError } = await db
       .from("test_retake_grants")
       .select("id")
       .eq("test_id", body.testId)
@@ -154,12 +154,22 @@ export async function POST(req: Request) {
       .order("granted_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (grantError) {
+      console.error("[student/submissions/post] grant lookup", grantError.message);
+      return NextResponse.json({ error: "Couldn't start the test — please try again." }, { status: 503 });
+    }
     grantId = grant?.id ?? null;
 
     if (!test.allow_retake && !grantId) {
       // A concurrent Start may have just created the attempt and used the
       // grant (it consumes only after its insert): resume that one.
-      const raced = await concurrentStartId(db, body.testId, user.userId).catch(() => null);
+      let raced: string | null;
+      try {
+        raced = await concurrentStartId(db, body.testId, user.userId);
+      } catch (e) {
+        console.error("[student/submissions/post] race re-read", e);
+        return NextResponse.json({ error: "Couldn't start the test — please try again." }, { status: 503 });
+      }
       if (raced) return NextResponse.json({ data: { id: raced, resumed: true } });
       return NextResponse.json({ error: "Retake not allowed" }, { status: 403 });
     }
@@ -214,13 +224,16 @@ export async function POST(req: Request) {
 
   if (subError?.code === "23505") {
     // A concurrent Start read the same rows and inserted this attempt
-    // number first (uniq_submissions_attempt_legacy / _adaptive): resume it.
-    const raced = await concurrentStartId(db, body.testId, user.userId).catch(() => null);
-    if (raced) return NextResponse.json({ data: { id: raced, resumed: true } });
-    // The winner's row is gone already (it hit the Draft race below).
+    // number first (uniq_submissions_attempt_legacy / _adaptive): resume it,
+    // unless the test went back to Draft (the winner drops its row below).
     if (await testIsDraftNow(db, body.testId)) {
       return NextResponse.json({ error: "Test is not available" }, { status: 403 });
     }
+    const raced = await concurrentStartId(db, body.testId, user.userId).catch((e) => {
+      console.error("[student/submissions/post] race re-read", e);
+      return null;
+    });
+    if (raced) return NextResponse.json({ data: { id: raced, resumed: true } });
     return NextResponse.json({ error: "Couldn't start the test — please try again." }, { status: 503 });
   }
 
