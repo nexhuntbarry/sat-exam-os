@@ -563,8 +563,17 @@ export async function startFlAttempt(
       .maybeSingle();
     if (grantError) throw new Error(`retake grant lookup: ${grantError.message}`);
     grantId = (grant?.id as string | undefined) ?? null;
-    if (!parent.allow_retake && !grantId) return { ok: false, status: 403, error: "Retake not allowed" };
   }
+
+  // A concurrent start (Start pressed twice, two devices) may have created
+  // its attempt after `latest` was read: its R&W Module 1 then counts in
+  // `prior` (→ attempt max+2, or "Retake not allowed"), or it has already
+  // used the grant. It inserts the attempt row before both, so re-reading
+  // it here catches every such case: resume that attempt instead.
+  const again = await latestFlAttempt(db, parent.id, studentId);
+  if (again && again.attempt_number > (latest?.attempt_number ?? 0)) return startFlAttempt(db, ctx, studentId, opts);
+
+  if (prior > 0 && !parent.allow_retake && !grantId) return { ok: false, status: 403, error: "Retake not allowed" };
 
   // Per-test accommodation, else the student's profile testing time.
   // Throws on a lookup error: never start without the extended time.

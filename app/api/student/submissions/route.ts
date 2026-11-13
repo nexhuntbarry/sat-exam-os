@@ -6,6 +6,7 @@ import { recoverModule2 } from "@/lib/module2-handoff";
 import { studentTestAccess } from "@/lib/module2-access";
 import { dropUnansweredSubmission, testIsDraftNow } from "@/lib/draft-race";
 import { loadTimeMultiplier } from "@/lib/full-length-admin";
+import { concurrentStartId, startPlan, studentStartRows } from "@/lib/start-race";
 
 export const maxDuration = 60;
 
@@ -118,39 +119,32 @@ export async function POST(req: Request) {
 
   // Resume any in-progress row first — for an adaptive test that's
   // either Module 1 (still being taken) or Module 2 (Module 1 already
-  // graded and the route picker handed off).
-  const { data: inProgress } = await db
-    .from("submissions")
-    .select("id")
-    .eq("test_id", body.testId)
-    .eq("student_id", user.userId)
-    .eq("status", "In Progress")
-    .order("started_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // graded and the route picker handed off). The same read gives the
+  // highest prior attempt, so a concurrent Start's brand-new row is
+  // resumed, never counted as a finished attempt (lib/start-race).
+  let plan: ReturnType<typeof startPlan>;
+  try {
+    plan = startPlan(await studentStartRows(db, body.testId, user.userId));
+  } catch (e) {
+    console.error("[student/submissions/post]", e);
+    return NextResponse.json({ error: "Couldn't start the test — please try again." }, { status: 503 });
+  }
 
-  if (inProgress) {
-    return NextResponse.json({ data: { id: inProgress.id, resumed: true } });
+  if ("resumeId" in plan) {
+    return NextResponse.json({ data: { id: plan.resumeId, resumed: true } });
   }
 
   if (!access.assigned) {
     return NextResponse.json({ error: "Test is not assigned to you" }, { status: 403 });
   }
 
-  // No in-progress row → look at the highest prior attempt to gate
-  // retake. For adaptive attempts both Module 1 and Module 2 share an
-  // attempt_number, so max(attempt_number) is the right "prior count".
-  const { data: priorMax } = await db
-    .from("submissions")
-    .select("attempt_number")
-    .eq("test_id", body.testId)
-    .eq("student_id", user.userId)
-    .order("attempt_number", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  // No in-progress row → the highest prior attempt gates retake. For
+  // adaptive attempts both Module 1 and Module 2 share an attempt_number,
+  // so max(attempt_number) is the right "prior count".
+  const priorMax = plan.priorMax;
 
   let grantId: string | null = null;
-  if (priorMax) {
+  if (priorMax !== null) {
     const { data: grant } = await db
       .from("test_retake_grants")
       .select("id")
@@ -163,11 +157,15 @@ export async function POST(req: Request) {
     grantId = grant?.id ?? null;
 
     if (!test.allow_retake && !grantId) {
+      // A concurrent Start may have just created the attempt and used the
+      // grant (it consumes only after its insert): resume that one.
+      const raced = await concurrentStartId(db, body.testId, user.userId).catch(() => null);
+      if (raced) return NextResponse.json({ data: { id: raced, resumed: true } });
       return NextResponse.json({ error: "Retake not allowed" }, { status: 403 });
     }
   }
 
-  const attemptNumber = priorMax ? priorMax.attempt_number + 1 : 1;
+  const attemptNumber = priorMax !== null ? priorMax + 1 : 1;
 
   // Three start paths:
   //  1. Adaptive: session_id, Module 1 first, route picker on submit.
@@ -214,6 +212,18 @@ export async function POST(req: Request) {
     .select("id")
     .single();
 
+  if (subError?.code === "23505") {
+    // A concurrent Start read the same rows and inserted this attempt
+    // number first (uniq_submissions_attempt_legacy / _adaptive): resume it.
+    const raced = await concurrentStartId(db, body.testId, user.userId).catch(() => null);
+    if (raced) return NextResponse.json({ data: { id: raced, resumed: true } });
+    // The winner's row is gone already (it hit the Draft race below).
+    if (await testIsDraftNow(db, body.testId)) {
+      return NextResponse.json({ error: "Test is not available" }, { status: 403 });
+    }
+    return NextResponse.json({ error: "Couldn't start the test — please try again." }, { status: 503 });
+  }
+
   if (subError || !submission) {
     console.error("[student/submissions/post]", subError);
     return NextResponse.json({ error: "Failed to create submission" }, { status: 500 });
@@ -227,11 +237,14 @@ export async function POST(req: Request) {
 
   // Mark the grant consumed once the new attempt is safely on disk so a
   // network blip during create doesn't burn the grant.
+  // Only the request whose insert won gets here, so the grant is used once.
   if (grantId) {
-    await db
+    const { error: grantUseError } = await db
       .from("test_retake_grants")
       .update({ consumed_at: new Date().toISOString() })
-      .eq("id", grantId);
+      .eq("id", grantId)
+      .is("consumed_at", null);
+    if (grantUseError) console.error("[student/submissions/post] consume grant", grantId, grantUseError.message);
   }
 
   return NextResponse.json({ data: { id: submission.id, resumed: false } }, { status: 201 });
