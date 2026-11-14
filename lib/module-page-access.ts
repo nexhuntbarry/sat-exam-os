@@ -5,7 +5,8 @@
 //   - question reviewers (admins, review-flag teachers): any page;
 //   - approved teachers: a page showing questions of a test they can open
 //     (getTeacherTestAccess on the tests showing it, picked from ?test= or
-//     getTeacherTestScope);
+//     getTeacherTestScope) whose "Teachers can view & print questions/
+//     answers" switch is on (lib/teacher-qa; a section follows its parent);
 //   - approved students: a page showing questions of a module they were
 //     served — while that attempt is in progress, or afterwards when the
 //     answer-visibility rule lets them see the test's answers;
@@ -18,6 +19,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CurrentUser } from "@/lib/auth";
 import { childrenOf, expandFullLength } from "@/lib/full-length";
 import { getTeacherTestAccess, getTeacherTestScope } from "@/lib/teacher-access";
+import { readTeacherQaEnabled } from "@/lib/teacher-qa";
 import { decideAnswerVisibility, loadAnswerVisibilityInputs, visibilityKey } from "@/lib/answer-visibility";
 import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import {
@@ -79,7 +81,10 @@ export async function canViewModulePage(
     const showing = [...(await loadTests(db, candidateIds)).values()].filter((t) =>
       testShowsModulePage(t, moduleId, pageIds),
     );
+    // Switch read throws on a lookup error (the route fails closed).
+    const qaEnabled = await readTeacherQaEnabled(db, showing.map((t) => t.id));
     for (const t of showing) {
+      if (qaEnabled.get(t.id) === false) continue;
       if ((await getTeacherTestAccess(db, user, t.id)).mode !== null) return true;
     }
     return false;

@@ -5,6 +5,7 @@ import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getTeacherBankSubjects, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { teacherQaOffQuestions } from "@/lib/teacher-qa";
 
 // GET /api/teacher/teaching-mode/skill-questions?skill=Linear+equations&limit=10
 // Returns candidate practice questions for that skill, sorted by class error
@@ -43,8 +44,20 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
   }
   const qaUploaders = user.isQa ? new Set<string>() : await getQaUserIds();
+  // Teachers never get questions of a test whose questions & answers the
+  // admin turned off (lib/teacher-qa); a failed lookup refuses.
+  let offQuestions: Awaited<ReturnType<typeof teacherQaOffQuestions>> | null = null;
+  if (user.role === "teacher") {
+    try {
+      offQuestions = await teacherQaOffQuestions(db);
+    } catch (e) {
+      console.error("[teaching-mode/skill-questions] teacher_qa_enabled", e);
+      return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
+    }
+  }
   const candidates = (rawCandidates ?? []).filter((q) => {
     const by = (q.modules as unknown as { uploaded_by: string | null } | null)?.uploaded_by;
+    if (offQuestions?.covers({ id: q.id as string, module_id: q.module_id as string | null })) return false;
     return !by || !qaUploaders.has(by);
   });
 

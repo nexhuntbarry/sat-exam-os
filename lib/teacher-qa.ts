@@ -12,7 +12,7 @@
 // can answer 503 "database update pending".
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { parentOf } from "@/lib/full-length";
+import { childrenOf, parentOf } from "@/lib/full-length";
 
 type DbError = { code?: string; message?: string; status?: number } | null | undefined;
 
@@ -115,6 +115,79 @@ export async function teacherQaContentHidden(
 ): Promise<boolean> {
   if (user.role !== "teacher") return false;
   return (await readTeacherQaEnabled(db, [testId])).get(testId) === false;
+}
+
+/** Every column of `tests` that points at questions (directly or through a module). */
+const QUESTION_REF_COLUMNS =
+  "id, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id, question_ids, is_adaptive";
+
+type QuestionRefRow = {
+  id: string;
+  module_id: string | null;
+  module_2_id: string | null;
+  module_1_id: string | null;
+  module_2_easy_id: string | null;
+  module_2_hard_id: string | null;
+  question_ids: unknown;
+  is_adaptive: boolean | null;
+};
+
+/** Questions of tests whose switch is off: `covers(q)` is true for any question such a test shows. */
+export interface TeacherQaOffQuestions {
+  /** Modules a switched-off test shows in full. */
+  moduleIds: Set<string>;
+  /** Questions a switched-off quiz (question_ids) picks from its modules. */
+  questionIds: Set<string>;
+  covers(q: { id: string; module_id: string | null }): boolean;
+}
+
+/**
+ * Pure: what a set of switched-off tests shows, by the student question-set
+ * rule (lib/student-exam scopeToStudentQuestionSet): a non-adaptive test with
+ * question_ids shows only those questions; any other test its modules in full.
+ */
+export function teacherQaOffQuestionsFrom(rows: QuestionRefRow[]): TeacherQaOffQuestions {
+  const moduleIds = new Set<string>();
+  const questionIds = new Set<string>();
+  for (const t of rows) {
+    const picked = Array.isArray(t.question_ids) ? (t.question_ids as unknown[]).filter((x): x is string => typeof x === "string") : [];
+    if (!t.is_adaptive && picked.length > 0) {
+      for (const id of picked) questionIds.add(id);
+      continue;
+    }
+    for (const m of [t.module_id, t.module_2_id, t.module_1_id, t.module_2_easy_id, t.module_2_hard_id]) if (m) moduleIds.add(m);
+  }
+  return {
+    moduleIds,
+    questionIds,
+    covers: (q) => questionIds.has(q.id) || (q.module_id != null && moduleIds.has(q.module_id)),
+  };
+}
+
+/**
+ * The questions a teacher must not get through other doors (Teaching Mode
+ * question picker / quick test) because a test showing them has the switch
+ * off. A full-length parent's switch covers its two sections. Two selects
+ * (switched-off tests, then the sections of switched-off full-length
+ * parents) plus the memoized full-length links. A missing column → nothing
+ * is off; any other error throws (callers fail closed).
+ */
+export async function teacherQaOffQuestions(db: SupabaseClient): Promise<TeacherQaOffQuestions> {
+  const { data, error } = await db.from("tests").select(QUESTION_REF_COLUMNS).eq("teacher_qa_enabled", false);
+  if (error) {
+    if (isTeacherQaColumnMissing(error)) return teacherQaOffQuestionsFrom([]);
+    throw new Error(`teacher_qa_enabled lookup failed: ${error.message}`);
+  }
+  const off = (data ?? []) as unknown as QuestionRefRow[];
+  const kids = await childrenOf(db, off.map((t) => t.id));
+  const kidIds = [...kids.values()].flatMap((k) => [k.rw, k.math]).filter((x): x is string => Boolean(x));
+  let sections: QuestionRefRow[] = [];
+  if (kidIds.length > 0) {
+    const { data: rows, error: kidError } = await db.from("tests").select(QUESTION_REF_COLUMNS).in("id", kidIds);
+    if (kidError) throw new Error(`teacher_qa_enabled sections lookup failed: ${kidError.message}`);
+    sections = (rows ?? []) as unknown as QuestionRefRow[];
+  }
+  return teacherQaOffQuestionsFrom([...off, ...sections]);
 }
 
 /** Set the switch on one test (a full-length parent, never a section). Throws on errors other than the missing column. */

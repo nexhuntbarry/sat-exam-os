@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide, getQaUserIds } from "@/lib/qa";
 import { getTeacherBankSubjects } from "@/lib/teacher-access";
 import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
+import { teacherQaOffQuestions } from "@/lib/teacher-qa";
 
 // POST /api/teacher/teaching-mode/quick-test
 // Body: { name: string, questionIds: string[], cohortId?: string }
@@ -80,6 +81,25 @@ export async function POST(req: Request) {
 
   if (qrows.length === 0) {
     return NextResponse.json({ error: "no valid questions" }, { status: 400 });
+  }
+
+  // A teacher can't copy questions out of a test whose questions & answers
+  // the admin turned off (lib/teacher-qa). Admins are unaffected.
+  if (teacher.role === "teacher") {
+    let blocked: boolean;
+    try {
+      const off = await teacherQaOffQuestions(db);
+      blocked = qrows.some((q) => off.covers({ id: q.id as string, module_id: q.module_id as string | null }));
+    } catch (e) {
+      console.error("[teaching-mode/quick-test] teacher_qa_enabled", e);
+      return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
+    }
+    if (blocked) {
+      return NextResponse.json(
+        { error: "Some questions belong to a test whose questions & answers the admin has turned off" },
+        { status: 403 },
+      );
+    }
   }
 
   // One subject per test: the test is scored and analysed under its

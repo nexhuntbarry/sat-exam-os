@@ -139,7 +139,13 @@ export async function GET(req: Request) {
 
   const metaMap = new Map((qmeta ?? []).map((q) => [q.id, q]));
   // Admin turned off "Teachers can view & print questions/answers": no question text.
-  const textHidden = await teacherQaContentHidden(db, user, selected.id);
+  let textHidden: boolean;
+  try {
+    textHidden = await teacherQaContentHidden(db, user, selected.id);
+  } catch (e) {
+    console.error("[teaching-mode/test-review] teacher_qa_enabled lookup failed", e);
+    return NextResponse.json({ error: "Couldn't load this test. Please try again." }, { status: 500 });
+  }
 
   const hardestQuestions = ranked.map((r) => {
     const m = metaMap.get(r.questionId);

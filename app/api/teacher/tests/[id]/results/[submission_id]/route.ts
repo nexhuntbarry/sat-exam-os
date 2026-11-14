@@ -253,7 +253,6 @@ export async function GET(
         activity: summarizeActivity(activityBySubmission.get(ar.submission_id)?.[q.id]),
         wasFlagged,
         explanation: null,
-        moduleId: q.module_id,
         hasImage: false,
         hasTable: false,
         imageUrls: [],
