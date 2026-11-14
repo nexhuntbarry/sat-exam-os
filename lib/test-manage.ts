@@ -28,8 +28,7 @@ export interface ManageTest {
 
 export type ManageResult = { ok: true } | { ok: false; status: 403 | 404 | 409 | 500; error: string };
 
-export const NOT_MANAGER_MESSAGE =
-  "Only the test's owner (its creator or a teacher listed on it) or an admin can change its status.";
+export const NOT_MANAGER_MESSAGE = "You don't manage this test";
 export const FL_SECTION_MESSAGE = "This is a section of a full-length SAT — change the full-length test instead.";
 
 /** Pure rule (unit-tested). `teacherIds` is the union over the test's assignment rows. */
@@ -45,15 +44,19 @@ export function manageDecision(input: {
     return { ok: false, status: 403, error: "Account not active" };
   }
   if (!test) return { ok: false, status: 404, error: "Test not found" };
-  if (input.qaTestIds.has(test.id) !== user.isQa) {
-    return { ok: false, status: 403, error: "Cannot link QA and real accounts/data" };
+  const crossSide = input.qaTestIds.has(test.id) !== user.isQa;
+  const isFlSection = Boolean(test.parent_test_id) || test.test_kind === "fl_section";
+  if (user.role === "teacher") {
+    // A teacher who doesn't manage the test (or is on the other QA side)
+    // gets one plain 403, so its QA side / section status can't be probed.
+    const manages = input.teacherIds.includes(user.userId) || test.created_by === user.userId;
+    if (!manages || crossSide) return { ok: false, status: 403, error: NOT_MANAGER_MESSAGE };
+    if (isFlSection) return { ok: false, status: 409, error: FL_SECTION_MESSAGE };
+    return { ok: true };
   }
-  if (test.parent_test_id || test.test_kind === "fl_section") {
-    return { ok: false, status: 409, error: FL_SECTION_MESSAGE };
-  }
-  if (user.role === "admin") return { ok: true };
-  if (input.teacherIds.includes(user.userId) || test.created_by === user.userId) return { ok: true };
-  return { ok: false, status: 403, error: NOT_MANAGER_MESSAGE };
+  if (crossSide) return { ok: false, status: 403, error: "Cannot link QA and real accounts/data" };
+  if (isFlSection) return { ok: false, status: 409, error: FL_SECTION_MESSAGE };
+  return { ok: true };
 }
 
 /** Loads the test and its teacher_ids, then applies manageDecision. Fails closed on a lookup error. */

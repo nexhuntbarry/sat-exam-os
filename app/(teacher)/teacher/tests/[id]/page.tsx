@@ -1,6 +1,6 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import { canManageTestSettings, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
+import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { getQaTestIds, scopeUsers } from "@/lib/qa";
 import { loadManageDecision, type ManageUser } from "@/lib/test-manage";
 import TeacherTestStatus from "./TeacherTestStatus";
@@ -119,10 +119,9 @@ async function getTeacherTest(
     section: (await getTestSections(db, [testId])).get(testId) ?? null,
     studentIds,
     submissions: submissions ?? [],
-    canManageSettings: await canManageTestSettings(db, user, testId),
-    // Status menu (Publish / Close / Reopen / Back to draft): same rule as
-    // /api/teacher/tests/[id]/{publish,…}.
-    managesStatus: (await loadManageDecision(db, user, testId, await getQaTestIds())).ok,
+    // Owner of the test (lib/test-manage, also canManageTestSettings): the
+    // test-wide settings and the status menu (Publish / Close / …).
+    manages: (await loadManageDecision(db, user, testId, await getQaTestIds())).ok,
   };
 }
 
@@ -231,7 +230,7 @@ export default async function TeacherTestDetailPage({
   if (!data) notFound();
   const tReview = await getTranslations("teacher.classReview");
 
-  const { test, section, submissions, canManageSettings, managesStatus, isFullLength, flLinks, flMeta, flScope, liveSnapshot } = data;
+  const { test, section, submissions, manages, isFullLength, flLinks, flMeta, flScope, liveSnapshot } = data;
   const notStarted = liveSnapshot.notStarted;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
@@ -266,7 +265,7 @@ export default async function TeacherTestDetailPage({
             testId={test.id}
             testName={test.test_name}
             status={test.status as TestStatus}
-            manages={managesStatus}
+            manages={manages}
           />
         </div>
         <p className="text-soft-mute text-sm mt-1">
@@ -278,7 +277,7 @@ export default async function TeacherTestDetailPage({
         </p>
       </div>
 
-      {canManageSettings ? (
+      {manages ? (
         <>
           <ReviewModeToggle
             testId={test.id}

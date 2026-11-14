@@ -19,6 +19,7 @@ import { getQaTestIds, getQaUserIds, onSide } from "./qa";
 import { childrenOf, parentOf, resolveParentTestId } from "./full-length";
 import { fetchAllRows } from "./fetch-all-rows";
 import { reachableAmong, reachesClassTeacher } from "./teacher-test-reach";
+import { loadManageDecision, type ManageUser } from "./test-manage";
 
 // A test's subject is the section ("Math" | "Reading & Writing") of its
 // module (module_1_id for adaptive tests). Used to scope class teachers to
@@ -557,21 +558,15 @@ export async function getAssignedStudentIds(
  * tests row and affect every class the test is assigned to, so only an
  * admin or the test's owner — on test_assignments.teacher_ids, or its
  * creator — may change them. A class teacher who merely teaches one of the
- * assigned classes may not.
+ * assigned classes may not. Same rule as the status routes (lib/test-manage);
+ * a full-length section child is refused (its settings live on the parent).
  */
 export async function canManageTestSettings(
   db: SupabaseClient,
-  user: { userId: string; role: string | null | undefined; isQa: boolean },
+  user: ManageUser,
   testId: string,
 ): Promise<boolean> {
-  if (!onSide(testId, await getQaTestIds(), user.isQa)) return false;
-  if (user.role === "admin") return true;
-  const [{ data: assignment }, { data: test }] = await Promise.all([
-    db.from("test_assignments").select("teacher_ids").eq("test_id", testId).maybeSingle(),
-    db.from("tests").select("created_by").eq("id", testId).maybeSingle(),
-  ]);
-  const teacherIds = (assignment?.teacher_ids as string[] | null) ?? [];
-  return teacherIds.includes(user.userId) || test?.created_by === user.userId;
+  return (await loadManageDecision(db, user, testId, await getQaTestIds())).ok;
 }
 
 /**

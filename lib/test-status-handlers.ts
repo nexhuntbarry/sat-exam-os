@@ -107,7 +107,11 @@ export async function closeTest(id: string, authorize: TestAuthorizer, tag: stri
   const db = getServiceClient();
 
   // A full-length SAT section follows its parent (sync trigger).
-  const { data: row } = await db.from("tests").select("test_kind, parent_test_id").eq("id", id).maybeSingle();
+  const { data: row, error: rowErr } = await db.from("tests").select("test_kind, parent_test_id").eq("id", id).maybeSingle();
+  if (rowErr) {
+    console.error(`[${tag}/close] test lookup`, id, rowErr.message);
+    return NextResponse.json({ error: "Could not load the test" }, { status: 500 });
+  }
   if (!row) return NextResponse.json({ error: "Test not found" }, { status: 404 });
   if (row.parent_test_id || row.test_kind === "fl_section") {
     return NextResponse.json(
