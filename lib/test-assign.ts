@@ -462,8 +462,9 @@ export async function bulkAssign(db: SupabaseClient, input: BulkAssignInput, now
     out.forEach((r, k) => (results[i + k] = r));
   }
 
-  // Take back notices for pairs that weren't written (a failed write, or a
-  // pair someone else added meanwhile still counts as reached — harmless).
+  // Take back notices for pairs this request didn't write: a failed write, or
+  // a pair someone else added meanwhile (not in the CAS's added ids) — both
+  // are dropped from the notice.
   const notified = await reconcileNotices(db, noticeRows, planned, addedIds, membersOf, names, now);
 
   const assigned = results.filter((r) => r.outcome === "assigned");
@@ -514,11 +515,17 @@ async function reconcileNotices(
     const after = want.get(row.user_id) ?? [];
     try {
       if (after.length === 0) {
-        await db.from("notifications").delete().eq("id", row.id);
+        let { error } = await db.from("notifications").delete().eq("id", row.id);
+        if (error) ({ error } = await db.from("notifications").delete().eq("id", row.id)); // one retry
+        if (error) {
+          console.error("[bulk-assign] notice delete failed:", row.id, error.message);
+          kept++; // still there
+        }
       } else {
         kept++;
         if (after.length !== before.length) {
-          await db.from("notifications").update({ payload: noticePayload(after, names, now) }).eq("id", row.id);
+          const { error } = await db.from("notifications").update({ payload: noticePayload(after, names, now) }).eq("id", row.id);
+          if (error) console.error("[bulk-assign] notice update failed:", row.id, error.message);
         }
       }
     } catch (e) {
