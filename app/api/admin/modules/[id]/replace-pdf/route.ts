@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { replaceModulePdf, ReplacePdfError } from "@/lib/pdf-replace";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 60;
 
@@ -12,7 +13,7 @@ export const maxDuration = 60;
 // old PDF, repoints modules.pdf_url + questions.source_pdf_url and tags each
 // question "[pdf-pending]". Questions, answers, keys and scores are kept.
 // The client then drives POST ./compare-pdf until nothing is pending.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -44,3 +45,6 @@ export async function POST(
     return NextResponse.json({ error: "Replace failed" }, { status: 500 });
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

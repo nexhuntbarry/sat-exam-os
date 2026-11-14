@@ -111,3 +111,25 @@ export interface GroupSummary {
   /** Other reasons the waiting questions also have: label → count. */
   alsoBlocked: { label: string; count: number }[];
 }
+
+/** One response of GET /api/admin/review-queue (and the page's first render). */
+export interface QueuePageData {
+  /** The group shown (the asked one, or the first with questions waiting). */
+  group: GroupId;
+  /** Every group, counted under the current filters. */
+  summary: GroupSummary[];
+  totals: { waiting: number; liveFixes: number; fixed: number };
+  /** One page of cards of `group` (fresh rows; decided ones dropped). */
+  items: QueueItem[];
+  /** Pass back as ?cursor= for the next page (null: no more). */
+  nextCursor: string | null;
+  /** Module id → strong suggestions that differ from the key, in `group` ("Accept all"). */
+  strongByModule: Record<string, number>;
+  /** Module id → questions of `group` in that module (the module block's count). */
+  byModule: Record<string, number>;
+  filterOptions: { modules: { id: string; name: string }[]; tests: number[]; subjects: string[] };
+  lookupErrors: string[];
+  spotCheck: { line: string; paused: boolean; system: number; person: number };
+  /** When the cached grouping was built. */
+  builtAt: string;
+}

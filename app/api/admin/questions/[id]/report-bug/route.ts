@@ -13,6 +13,7 @@ import { stemFigureMissing } from "@/lib/parse-guards";
 import { notifyBugReportResolved } from "@/lib/notifications";
 import { bugReportSupportBody, createSupportRequest, findSupportForBugReport, resolveBugReportThread } from "@/lib/support";
 import { uploadScreenshots } from "@/app/api/admin/support/upload";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 const AUDIT_COLS =
   "id, parsing_status, parsing_notes, section, question_type, correct_answer, has_image, has_table, image_urls, question_text, choices, explanation";
@@ -30,7 +31,7 @@ export const maxDuration = 60;
 // (/admin/support: status, dev replies, bell, follow-ups) and fires a
 // best-effort Telegram ping to the dev chat. Side effects are isolated so a
 // failed thread / Telegram ping doesn't block the DB row.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -387,3 +388,6 @@ async function notifyDevViaTelegram(input: {
     console.error("[report-bug] telegram notify failed:", e);
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

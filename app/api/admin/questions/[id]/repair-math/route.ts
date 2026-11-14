@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { forbidQa } from "@/lib/qa";
 import { repairMathForQuestion } from "@/lib/repair-ops";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // Up to two sequential Claude calls (Sonnet → Opus) on a
 // PDF page can take 60+ seconds combined. The default 10s ceiling
@@ -14,7 +15,7 @@ export const maxDuration = 60;
 // Re-extract this single question's text / choices / explanation
 // via Claude with the consolidated formatting rules. Mirrors what
 // scripts/repair-math-render-failed.ts does for one row.
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -34,3 +35,6 @@ export async function POST(
     );
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

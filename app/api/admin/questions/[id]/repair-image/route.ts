@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { forbidQa } from "@/lib/qa";
 import { repairImageForQuestion } from "@/lib/repair-ops";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // PDF fetch + Claude vision bbox + sharp crop + Vercel Blob upload
 // can take 20-50 seconds on a large module's source PDF. Vercel's
@@ -14,7 +15,7 @@ export const maxDuration = 60;
 // Re-ask Claude vision for a bounding box for the figure on this
 // question's page, then crop + upload the new region. If Claude
 // decides there's no figure to extract we clear has_image instead.
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -34,3 +35,6 @@ export async function POST(
     );
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

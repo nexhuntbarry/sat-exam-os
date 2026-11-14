@@ -24,6 +24,7 @@ import { autoPromoteModule } from "@/lib/auto-promote";
 import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-questions";
 import { KEY_ROW_SELECT } from "@/lib/key-change";
 import { markNotRescored, rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 800;
 
@@ -39,7 +40,7 @@ export const maxDuration = 800;
 // Gated by CRON_SECRET (Authorization: Bearer <CRON_SECRET>) rather than Clerk
 // so it can be driven from a script. Meant for repairing the handful of modules
 // that were badly parsed before the current pipeline existed.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -294,3 +295,6 @@ export async function POST(
     promote,
   });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

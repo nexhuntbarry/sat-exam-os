@@ -5,11 +5,12 @@ import { forbidQa } from "@/lib/qa";
 import { BULK_APPROVE_STATUSES, planBulkApprove, type BulkApproveRow } from "@/lib/bulk-approve";
 import { liveQuestionIds } from "@/lib/live-questions";
 import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // POST /api/admin/questions/bulk-approve
 // Body: { question_ids: string[] } OR { filter: { moduleId?, minConfidence? } }
 // Only Draft / Needs Review rows are approved; anything else is left alone.
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
   const qaBlock = forbidQa(authResult);
@@ -137,3 +138,6 @@ export async function POST(req: Request) {
     { status: 400 }
   );
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

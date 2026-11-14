@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { forbidQa } from "@/lib/qa";
 import { clearTableFlag } from "@/lib/repair-ops";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // POST /api/admin/questions/[id]/clear-table-flag
 //
 // Used when the audit flagged has_table=true but the reviewer
 // verified the question doesn't actually need a table — flip the
 // flag so the row stops failing.
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -20,3 +21,6 @@ export async function POST(
   const res = await clearTableFlag(id);
   return NextResponse.json(res, { status: res.ok ? 200 : 400 });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

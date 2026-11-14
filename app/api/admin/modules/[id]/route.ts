@@ -3,6 +3,7 @@ import { del } from "@vercel/blob";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // GET /api/admin/modules/[id]
 export async function GET(
@@ -31,7 +32,7 @@ export async function GET(
 // PATCH /api/admin/modules/[id] — edit metadata fields (name, section,
 // module_number, difficulty, source, version). Does NOT touch the PDF
 // or parsed questions; safe to call after parse.
-export async function PATCH(
+async function handlePATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -94,7 +95,7 @@ export async function PATCH(
 }
 
 // DELETE /api/admin/modules/[id] — remove module + cascade questions + delete blob
-export async function DELETE(
+async function handleDELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -210,3 +211,7 @@ export async function DELETE(
 
   return NextResponse.json({ ok: true });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const PATCH = withQueueInvalidation(handlePATCH);
+export const DELETE = withQueueInvalidation(handleDELETE);

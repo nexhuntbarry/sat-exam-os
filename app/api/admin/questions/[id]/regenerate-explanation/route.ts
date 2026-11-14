@@ -3,6 +3,7 @@ import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { choicesWithStoredImages, regenerateExplanation } from "@/lib/ai/solve-question";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // AI calls: an independent solve, then the explanation (one retry when it
 // looks cut off); figure questions add a high-resolution re-read of the
@@ -16,7 +17,7 @@ export const maxDuration = 300;
 // Read-only: returns a preview explanation plus the answer the AI gets on
 // its own. Nothing is written; the reviewer clicks Use (fills the field)
 // and then Save.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -75,3 +76,6 @@ export async function POST(
   }
   return NextResponse.json({ ok: true, explanation: res.explanation, ai_answer: res.aiAnswer, agrees: res.agrees });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

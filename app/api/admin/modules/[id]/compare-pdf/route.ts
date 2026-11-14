@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { comparePendingQuestions, pdfCheckCounts, ReplacePdfError } from "@/lib/pdf-replace";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 300;
 
@@ -22,7 +23,7 @@ export async function GET(
 // PDF for up to ~200s (headroom under maxDuration), tagging each
 // "[pdf-match]" or "[pdf-diff] …". Returns { checked, matched, differs,
 // remaining }; the caller repeats while remaining > 0. Never approves.
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -44,3 +45,6 @@ export async function POST(
     return NextResponse.json({ error: err instanceof Error ? err.message : "Compare failed" }, { status: 500 });
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

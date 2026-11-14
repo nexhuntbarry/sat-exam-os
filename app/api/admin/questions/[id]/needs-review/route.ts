@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // POST /api/admin/questions/[id]/needs-review
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -37,3 +38,6 @@ export async function POST(
 
   return NextResponse.json({ data });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

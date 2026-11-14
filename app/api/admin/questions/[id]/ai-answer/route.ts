@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { choicesWithStoredImages, independentAnswer } from "@/lib/ai/solve-question";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // One Claude call (plus figure fetches).
 export const maxDuration = 60;
@@ -15,7 +16,7 @@ export const maxDuration = 60;
 // key) and returns its answer. A fill-in answer is the AI's computation
 // evaluated in code with the stem's rounding applied; disagreements come
 // back as warnings. Nothing is written; the reviewer clicks Use, then Save.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -45,3 +46,6 @@ export async function POST(
   if (!res.ok) return NextResponse.json(res, { status: 422 });
   return NextResponse.json(res);
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

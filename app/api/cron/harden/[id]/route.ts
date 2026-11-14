@@ -5,6 +5,7 @@ import { autoFixModuleExplanations } from "@/lib/explanation-autofix";
 import { recoverMissingFigures, recoverBrokenChoices } from "@/lib/repair-ops";
 import { enforceCompleteness, checkNumberContiguity } from "@/lib/parse-guards";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 800;
 
@@ -12,7 +13,7 @@ export const maxDuration = 800;
 // Applies the parsing guards to an EXISTING module without a full re-parse:
 // regenerate truncated explanations, recover stem-referenced/blind figures,
 // recover broken choices, re-audit, auto-fix explanation-only problems, enforce completeness, check contiguity.
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const secret = process.env.CRON_SECRET;
   if (!secret || (req.headers.get("authorization") || "") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -30,3 +31,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   try { out.contiguity = await checkNumberContiguity(id, db); } catch (e) { out.contiguity = { error: String(e) }; }
   return NextResponse.json({ ok: true, module_id: id, elapsed_s: Math.round((Date.now() - t0) / 1000), ...out });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

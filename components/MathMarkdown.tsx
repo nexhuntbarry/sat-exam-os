@@ -19,9 +19,12 @@ export { normalizeMath };
 export default function MathMarkdown({
   children,
   className,
+  lazyImages,
 }: {
   children: string;
   className?: string;
+  /** Images load when scrolled near (no SSR preload): long admin lists. */
+  lazyImages?: boolean;
 }) {
   const normalized = normalizeMath(children);
   return (
@@ -57,6 +60,12 @@ export default function MathMarkdown({
               <table>{children}</table>
             </div>
           ),
+          ...(lazyImages
+            ? {
+                // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
+                img: ({ node: _node, ...props }) => <img {...props} loading="lazy" decoding="async" />,
+              }
+            : {}),
         }}
       >
         {normalized}

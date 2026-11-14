@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { extractAnswerKey, fetchPdfAsBase64 } from "@/lib/ai/parse-pdf";
 import { keyModuleMismatchNote } from "@/lib/parse-guards";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // Vercel Hobby caps Serverless Functions at 300s; this probe usually
 // finishes in <30s but headroom matters when PDFs are large.
@@ -18,7 +19,7 @@ export const maxDuration = 60;
 //
 // Response shape:
 //   { found: boolean, count: number, answers: { [num]: string }, notes?: string }
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -79,3 +80,6 @@ export async function POST(
     );
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

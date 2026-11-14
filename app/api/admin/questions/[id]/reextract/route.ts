@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { reextractQuestionFromPdf } from "@/lib/repair-ops";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // Up to two Claude calls (Sonnet → Opus) on two PDF pages.
 export const maxDuration = 60;
@@ -10,7 +11,7 @@ export const maxDuration = 60;
 // Read this question again from its source PDF and return the result.
 // Read-only: nothing is written; the review page shows it next to the
 // stored copy and the reviewer applies what they want, then saves.
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -28,3 +29,6 @@ export async function POST(
     );
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

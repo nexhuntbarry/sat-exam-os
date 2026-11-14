@@ -29,6 +29,10 @@ export interface DecideResponse {
   explanation?: string;
   error?: string;
   warning?: string;
+  /** In a live test (a content change kept it Approved with a [live-fix] note). */
+  live?: boolean;
+  /** Key change details (lib/key-change.ts KeyCorrectionResult). */
+  key?: { live?: boolean; keyChanged?: boolean; oldKey?: string | null; newKey?: string | null };
 }
 
 /** POST one review-queue decision. */
@@ -62,7 +66,7 @@ function Side({ title, v }: { title: string; v: FigureDiffProposal["stored"] }) 
       <p className="text-xs font-semibold uppercase tracking-wide text-soft-mute">{title}</p>
       {v.imageUrls?.map((u) => (
         // eslint-disable-next-line @next/next/no-img-element
-        <img key={u} src={img(u)} alt={`${title} figure`} className="max-h-72 w-auto max-w-full rounded border border-divider bg-white" />
+        <img key={u} src={img(u)} alt={`${title} figure`} loading="lazy" className="max-h-72 w-auto max-w-full rounded border border-divider bg-white" />
       ))}
       {v.table && <MathMarkdown className="overflow-x-auto text-sm">{v.table}</MathMarkdown>}
       {v.choices && (
@@ -72,7 +76,7 @@ function Side({ title, v }: { title: string; v: FigureDiffProposal["stored"] }) 
               <span className="font-semibold text-charcoal">{c.label}</span>
               {c.image_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={img(c.image_url)} alt={`Choice ${c.label}`} className="max-h-32 rounded border border-divider" />
+                <img src={img(c.image_url)} alt={`Choice ${c.label}`} loading="lazy" className="max-h-32 rounded border border-divider" />
               ) : (
                 <MathMarkdown className="min-w-0 flex-1">{c.text || "(empty)"}</MathMarkdown>
               )}
@@ -96,6 +100,7 @@ export default function FigureDiff({
   onDone,
   reloadOnDone,
   liveNote,
+  onDecision,
 }: {
   questionId: string;
   updatedAt: string | null;
@@ -106,6 +111,8 @@ export default function FigureDiff({
   reloadOnDone?: boolean;
   /** The question is in a live test: a change keeps it Approved with a [live-fix] note. */
   liveNote?: boolean;
+  /** The caller tracks the decision itself (no page refresh). */
+  onDecision?: (action: "use_pdf" | "keep_figure", ok: boolean, json: DecideResponse) => void;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState<"use_pdf" | "keep_figure" | null>(null);
@@ -124,7 +131,8 @@ export default function FigureDiff({
     setBusy(null);
     if (onDone) onDone(text, ok);
     else setMsg({ text, ok });
-    if (ok && reloadOnDone) window.setTimeout(() => window.location.reload(), 1200);
+    if (onDecision) onDecision(action, ok, json);
+    else if (ok && reloadOnDone) window.setTimeout(() => window.location.reload(), 1200);
     else if (ok) router.refresh();
   }
 

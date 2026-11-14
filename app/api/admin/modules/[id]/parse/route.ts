@@ -50,6 +50,7 @@ import {
 import { autoPromoteModule } from "@/lib/auto-promote";
 import { parsePrintoutPdf } from "@/lib/printout-parser";
 import type { ParsedQuestion } from "@/lib/ai/parse-pdf";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 const SAT_CONFIDENCE_THRESHOLD = 0.6;
 
@@ -114,7 +115,7 @@ export const maxDuration = 800;
 // parsing_notes appended with "AI: X, official: Y") and correct_answer
 // is overwritten to match the official answer — official is the source
 // of truth for what students see.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -1145,3 +1146,6 @@ function parseAnswerAsNumber(v: string): number | null {
   const n = parseFloat(cleaned);
   return Number.isFinite(n) ? n : null;
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

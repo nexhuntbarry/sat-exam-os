@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { runSemanticAudit } from "@/lib/ai/semantic-audit";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 300;
 
@@ -11,7 +12,7 @@ export const maxDuration = 300;
 // without re-parsing. Used to sweep modules that were parsed before the audit
 // pass existed — flags corrupted math, missing figures, and answer/explanation
 // mismatches, demoting them to Needs Review so an admin can fix them.
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -33,3 +34,6 @@ export async function POST(
     ...summary,
   });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

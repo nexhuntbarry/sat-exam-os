@@ -3,6 +3,7 @@ import { put } from "@vercel/blob";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { forbidQa } from "@/lib/qa";
 import { getServiceClient } from "@/lib/supabase";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 
@@ -13,7 +14,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
 //   action=replace, index, url, file(PNG) → swap in a cropped version
 // `url` must still be the image at `index`, so two reviewers editing the
 // same question can't remove or overwrite the wrong one.
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await requireQuestionReviewer();
   if (user instanceof NextResponse) return user;
   const qaBlock = forbidQa(user);
@@ -70,3 +71,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   console.log(`[question-images] ${user.email} ${action} q=${id} i=${index} old=${url}`);
   return NextResponse.json({ ok: true, image_urls: urls, image_alts: alts, ...(patch.has_image === false ? { has_image: false } : {}) });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

@@ -11,6 +11,7 @@ import { dropStaleKeyNotes } from "@/lib/review-queue";
 import { isLiveQuestion, KEY_ROW_SELECT, keyExplanationWarning, prepareKeyChange, type PreparedKeyChange } from "@/lib/key-change";
 import type { AutoFixRow } from "@/lib/explanation-autofix";
 import { editedExplanationProblem, staleSave } from "@/lib/question-save-guard";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // An answer-key edit writes + checks a new explanation (independent solve,
 // then the explanation, one retry) — allow headroom.
@@ -41,7 +42,7 @@ export async function GET(
 }
 
 // PATCH /api/admin/questions/[id]
-export async function PATCH(
+async function handlePATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -245,3 +246,6 @@ export async function PATCH(
 
   return NextResponse.json({ data: result });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const PATCH = withQueueInvalidation(handlePATCH);

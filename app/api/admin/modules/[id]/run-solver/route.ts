@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { solveQuestionsAndPersist } from "@/lib/ai/solve-question";
 import type { ParsedQuestion } from "@/lib/ai/parse-pdf";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 300;
 
@@ -11,7 +12,7 @@ export const maxDuration = 300;
 // Re-runs the solver pass on every question in a module that's missing an
 // explanation. Used to backfill modules that were parsed before the inline
 // solver fix landed (or any module where solver crashed).
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -81,3 +82,6 @@ export async function POST(
     ...stats,
   });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

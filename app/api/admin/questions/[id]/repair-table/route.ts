@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { forbidQa } from "@/lib/qa";
 import { repairTableForQuestion } from "@/lib/repair-ops";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // Re-reads the source PDF (Sonnet → Opus) to rebuild a flattened data
 // table as a Markdown table — same 60s ceiling as the other repair ops.
@@ -12,7 +13,7 @@ export const maxDuration = 60;
 // Rebuild this question's flattened data table as a GFM Markdown table
 // inside question_text (the renderer already supports remark-gfm) and
 // clear has_table. Mirrors repairMathForQuestion for one row.
-export async function POST(
+async function handlePOST(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -32,3 +33,6 @@ export async function POST(
     );
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

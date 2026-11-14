@@ -3,6 +3,7 @@ import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { settleQueue } from "@/lib/review-auto";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // Each key change writes one checked explanation (an AI call).
 export const maxDuration = 300;
@@ -15,7 +16,7 @@ export const maxDuration = 300;
 // answer key (no real student answers), move ownerless Drafts into the queue.
 // Without apply it only counts (with the same cap, so the preview matches a
 // run). At most 6 key changes per call (time budget).
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const auth = await requireQuestionReviewer();
   if (auth instanceof NextResponse) return auth;
   const qaBlock = forbidQa(auth);
@@ -39,3 +40,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Something went wrong. Try again." }, { status: 500 });
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { applyKeyCorrection, keyExplanationWarning } from "@/lib/key-change";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // A new key is saved with an explanation written from an independent solve
 // and checked: per attempt (at most two) an independent solve + the
@@ -20,7 +21,7 @@ export const maxDuration = 300;
 // question in a live test (Published + assigned) stays Approved and gets a
 // [live-fix] note; any other question keeps its status. Notes about the old
 // key are dropped (lib/key-change.ts).
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const auth = await requireRole("admin");
   if (auth instanceof NextResponse) return auth;
   const qaBlock = forbidQa(auth);
@@ -52,3 +53,6 @@ export async function POST(req: Request) {
   }
   return NextResponse.json({ ok: true, live: res.live, ...ex, rescore: res.rescore });
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

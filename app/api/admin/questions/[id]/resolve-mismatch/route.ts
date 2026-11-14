@@ -10,6 +10,7 @@ import { dropStaleKeyNotes } from "@/lib/review-queue";
 import { isLiveQuestion, KEY_ROW_SELECT, keyExplanationWarning, prepareKeyChange } from "@/lib/key-change";
 import type { AutoFixRow } from "@/lib/explanation-autofix";
 import { moduleKeyFacts, officialKeyProblem } from "@/lib/key-source";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // Writes + checks the explanation for the settled key (AI) — allow headroom.
 export const maxDuration = 300;
@@ -31,7 +32,7 @@ export const maxDuration = 300;
 //                 mismatch flag and approve.
 //
 // Returns the updated question row so the client can refresh in place.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -219,3 +220,6 @@ function parseAiAnswerFromNotes(notes: string | null): string | null {
   const m = notes.match(/Mismatch:\s*AI answered\s+([^,;]+?)\s*,\s*official/i);
   return m ? m[1].trim() : null;
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);

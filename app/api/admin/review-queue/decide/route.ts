@@ -3,6 +3,7 @@ import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { decide, type DecideAction } from "@/lib/review-decide";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // One AI explanation call (with a retry), plus rescoring on a key change.
 export const maxDuration = 300;
@@ -16,7 +17,7 @@ export const maxDuration = 300;
 //   confirm_live_fix | undo_live_fix (restore_key + rescore after the preview)
 // then regenerates the explanation when needed, clears the settled notes and
 // approves the question when nothing else blocks. Never lowers a status.
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const auth = await requireQuestionReviewer();
   if (auth instanceof NextResponse) return auth;
   const qaBlock = forbidQa(auth);
@@ -71,3 +72,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Something went wrong. Try again or open the question." }, { status: 500 });
   }
 }
+
+// The review queue's cached grouping is revalidated after a successful change.
+export const POST = withQueueInvalidation(handlePOST);
