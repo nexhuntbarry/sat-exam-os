@@ -50,7 +50,10 @@ export interface TickEvidence {
 
 const MC = "Multiple Choice";
 const LETTER = /^[A-D]$/;
-const same = (a: string, b: string) => a.trim().toUpperCase() === b.trim().toUpperCase();
+const same = (a: string, b: string) => a.replace(/\s+/g, "").toUpperCase() === b.replace(/\s+/g, "").toUpperCase();
+/** A stored key may list accepted answers ("5 or -13", "A, C"): agreeing with any one of them counts. */
+const alternatives = (k: string) => k.split(/\s*(?:\bor\b|[,;|])\s*/i).map((x) => x.replace(/\s+/g, "").toUpperCase()).filter(Boolean);
+const agrees = (a: string, b: string) => same(a, b) || alternatives(a).some((x) => alternatives(b).includes(x));
 
 export const PROBE_OVERRIDE_PREFIX = "Answer key: probe said";
 export const uploadConflictNote = (key: string, tick: string) =>
@@ -61,6 +64,10 @@ export const probeConflictNote = (key: string, tick: string, why?: string) =>
   `Needs review: probe said ${key}, PDF ticks ${tick} — confirm which is right${why ? ` (${why})` : ""}`;
 export const storedConflictNote = (stored: string, tick: string) =>
   `Needs review: the stored key says ${stored} but the source PDF ticks ${tick} — confirm which is right`;
+export const storedOfficialConflictNote = (stored: string, official: string) =>
+  `Needs review: the stored key is ${stored} but the stored official answer says ${official} — confirm which is right`;
+export const solverConflictNote = (solver: string, stored: string) =>
+  `Needs review: solver says ${solver}, stored key ${stored} — confirm which is right`;
 export const storedProbeConflictNote = (stored: string, probe: string) =>
   `Needs review: the stored key says ${stored} but the answer key read from the PDF says ${probe} — confirm which is right`;
 
@@ -150,31 +157,47 @@ export interface ReparseKeyDecision {
   review: string[];
   /** Informational note (the probe's answer was replaced by a strong ✓). */
   note: string | null;
+  /** The row already had a key: it is put back after the solver (storedKeyAfterSolve). */
+  storedKey: boolean;
 }
 
 /**
  * Re-parse in place, one question. A key already stored on the row
- * (official_answer, else correct_answer) is never changed: a ✓ or this run's
- * probe that disagrees only sends the row to Needs Review. A row with no
- * stored key takes this run's probe under probe rules (mergeTicksIntoKey).
+ * (correct_answer — what students are graded on — else official_answer) is
+ * never changed: a ✓, this run's probe or a differing stored official answer
+ * only sends the row to Needs Review. A row with no stored key takes this
+ * run's probe under probe rules (mergeTicksIntoKey).
  */
 export function reparseKeyDecision(
   row: { storedOfficial: string | null; storedCorrect: string | null; probe: string | null; type: string | null },
   ev: TickEvidence | undefined,
 ): ReparseKeyDecision {
-  const stored = row.storedOfficial?.trim() || row.storedCorrect?.trim() || null;
+  const storedOfficial = row.storedOfficial?.trim() || null;
+  const stored = row.storedCorrect?.trim() || storedOfficial;
   const probe = row.probe?.trim() || null;
   const tick = ev && tickApplies(ev.tick.trim(), row.type) ? ev.tick.trim() : null;
   if (stored) {
     const review: string[] = [];
-    if (tick && !same(stored, tick)) review.push(storedConflictNote(stored, tick.toUpperCase()));
-    if (probe && !same(stored, probe)) review.push(storedProbeConflictNote(stored, probe));
-    const confirmed = (probe && same(probe, stored)) || (tick && same(tick, stored));
-    return { official: row.storedOfficial?.trim() || (confirmed ? stored : null), seed: stored, review, note: null };
+    if (storedOfficial && !agrees(stored, storedOfficial)) review.push(storedOfficialConflictNote(stored, storedOfficial));
+    if (tick && !agrees(stored, tick)) review.push(storedConflictNote(stored, tick.toUpperCase()));
+    if (probe && !agrees(stored, probe)) review.push(storedProbeConflictNote(stored, probe));
+    const confirmed = (probe && agrees(probe, stored)) || (tick && agrees(tick, stored));
+    return { official: storedOfficial || (confirmed ? stored : null), seed: stored, review, note: null, storedKey: true };
   }
   const d = ev ? decide(probe ?? undefined, ev, "probe", row.type) : null;
   const key = d?.key ?? probe;
-  return { official: key, seed: key, review: d?.conflict ? [d.conflict] : [], note: d?.note ?? null };
+  return { official: key, seed: key, review: d?.conflict ? [d.conflict] : [], note: d?.note ?? null, storedKey: false };
+}
+
+/**
+ * Re-parse in place, after the solver ran: a row's stored key always goes
+ * back as correct_answer. A solver answer that disagrees with it sends the
+ * row to Needs Review (and it is not rescored); one that agrees, or no
+ * answer, changes nothing.
+ */
+export function storedKeyAfterSolve(stored: string, solver: string | null): { correct: string; review: string | null } {
+  const s = solver?.trim() || null;
+  return { correct: stored, review: s && !agrees(s, stored) ? solverConflictNote(s, stored) : null };
 }
 
 export interface TickQuestion {

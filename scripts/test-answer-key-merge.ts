@@ -17,7 +17,9 @@ import {
   probeConflictNote,
   probeOverrideNote,
   reparseKeyDecision,
+  solverConflictNote,
   storedConflictNote,
+  storedKeyAfterSolve,
   uploadConflictNote,
   type TickEvidence,
 } from "../lib/answer-key-merge";
@@ -147,7 +149,7 @@ for (const source of ["probe", "upload"] as const) {
   assert.match(p.review[0], /^Needs review: the stored key says C but the answer key read from the PDF says A/);
   // ✓ and probe confirm the stored key → no review; an empty official is filled with it.
   const ok = reparseKeyDecision({ storedOfficial: null, storedCorrect: "D", probe: "D", type: MC }, strong("D"));
-  assert.deepEqual(ok, { official: "D", seed: "D", review: [], note: null });
+  assert.deepEqual(ok, { official: "D", seed: "D", review: [], note: null, storedKey: true });
   // No stored key: this run's probe under probe rules.
   const fresh = reparseKeyDecision({ storedOfficial: null, storedCorrect: null, probe: "A", type: MC }, strong("D"));
   assert.equal(fresh.official, "D");
@@ -155,10 +157,37 @@ for (const source of ["probe", "upload"] as const) {
   const freshWeak = reparseKeyDecision({ storedOfficial: null, storedCorrect: null, probe: "A", type: MC }, weak("D"));
   assert.equal(freshWeak.official, "A");
   assert.equal(freshWeak.review.length, 1);
+  // correct_answer (the graded key) is the stored key; a differing stored
+  // official answer only flags the row.
+  const offDiff = reparseKeyDecision({ storedOfficial: "B", storedCorrect: "A", probe: null, type: MC }, undefined);
+  assert.equal(offDiff.seed, "A");
+  assert.equal(offDiff.official, "B");
+  assert.match(offDiff.review[0], /^Needs review: the stored key is A but the stored official answer says B/);
+  assert.equal(fresh.storedKey, false);
   // A letter ✓ on an SPR row with a stored number key: ignored.
   const spr = reparseKeyDecision({ storedOfficial: "12", storedCorrect: "12", probe: null, type: SPR }, strong("B"));
   assert.deepEqual(spr.review, []);
   assert.equal(spr.seed, "12");
+}
+
+// ── Re-parse in place, after the solver: the stored key always goes back.
+{
+  // Solver disagrees (no official answer, no ✓ conflict) → stored key kept, Needs Review.
+  assert.deepEqual(storedKeyAfterSolve("B", "C"), { correct: "B", review: solverConflictNote("C", "B") });
+  assert.equal(solverConflictNote("C", "B"), "Needs review: solver says C, stored key B — confirm which is right");
+  // Agrees (case / spacing aside), or no solver answer → kept, no review.
+  assert.deepEqual(storedKeyAfterSolve("B", "b"), { correct: "B", review: null });
+  assert.deepEqual(storedKeyAfterSolve("3/4", " 3 / 4 "), { correct: "3/4", review: null });
+  assert.deepEqual(storedKeyAfterSolve("12", null), { correct: "12", review: null });
+  // A multi-answer stored key: the solver matching one accepted answer agrees.
+  assert.deepEqual(storedKeyAfterSolve("5 or -13", "-13"), { correct: "5 or -13", review: null });
+  assert.equal(storedKeyAfterSolve("A, C", "B").review, solverConflictNote("B", "A, C"));
+  // …and so does an official answer that is one of them ([Test #2] Math M1 Q21 shape).
+  assert.deepEqual(reparseKeyDecision({ storedOfficial: "5", storedCorrect: "5 or -13", probe: null, type: "Student Produced Response" }, undefined).review, []);
+  assert.deepEqual(reparseKeyDecision({ storedOfficial: null, storedCorrect: "A or C", probe: null, type: MC }, strong("C")).review, []);
+  // A row without a stored key is not a stored-key row: today's solver flow.
+  const none = reparseKeyDecision({ storedOfficial: null, storedCorrect: null, probe: null, type: MC }, undefined);
+  assert.deepEqual(none, { official: null, seed: null, review: [], note: null, storedKey: false });
 }
 
 // ── deterministicTicks

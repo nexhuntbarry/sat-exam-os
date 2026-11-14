@@ -26,7 +26,13 @@ import { KEY_ROW_SELECT } from "@/lib/key-change";
 import { markNotRescored, rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
 import { extractChoicesFromPdfText, readLabelTicks } from "@/lib/pdf-text-choices";
-import { deterministicTicks, reparseKeyDecision, type ReparseKeyDecision, type TickEvidence } from "@/lib/answer-key-merge";
+import {
+  deterministicTicks,
+  reparseKeyDecision,
+  storedKeyAfterSolve,
+  type ReparseKeyDecision,
+  type TickEvidence,
+} from "@/lib/answer-key-merge";
 
 export const maxDuration = 800;
 
@@ -172,6 +178,8 @@ async function handlePOST(
   const keyEntries = [...keyByNum.values()].filter((d) => d.official).length;
   /** Rows a person must decide (stored key vs the PDF): kept in review, never promoted or rescored. */
   const keyReviewIds = new Map<string, ReparseKeyDecision>();
+  /** Written rows that already had a key: it goes back after the solver. */
+  const storedKeyIds = new Map<string, ReparseKeyDecision>();
   console.log(
     `[reparse-inplace] ${ticks.size} ✓ read from the PDF, ${[...keyByNum.values()].filter((d) => d.note).length} replaced the probe's answer, ${[...keyByNum.values()].filter((d) => d.review.length).length} sent to review`,
   );
@@ -222,6 +230,7 @@ async function handlePOST(
     } else if (existingId) {
       await db.from("questions").update(fields).eq("id", existingId);
       if (review.length && decision) keyReviewIds.set(existingId, decision);
+      if (decision?.storedKey) storedKeyIds.set(existingId, decision);
       updated++;
     } else {
       const { data: ins } = await db
@@ -247,6 +256,31 @@ async function handlePOST(
 
   // Solve, then reconcile the official key over the solver's guesses.
   const solverStats = await solveQuestionsAndPersist(parsed, new Map(), id, db);
+  // A stored key is never overwritten by the solver: put it back on every row
+  // that had one. A solver answer that disagrees → Needs Review ("solver says
+  // X, stored key Y"), and the row is never rescored. Rows with no stored key
+  // keep the solver / official-key flow below.
+  const solverById = new Map<string, string | null>();
+  for (const [qid, d] of storedKeyIds) {
+    const { data: row } = await db.from("questions").select("correct_answer, parsing_notes, parsing_status").eq("id", qid).maybeSingle();
+    if (!row || !d.seed) continue;
+    const solver = (row.correct_answer as string | null) ?? null;
+    solverById.set(qid, solver);
+    const after = storedKeyAfterSolve(d.seed, solver);
+    const review = [...d.review, ...(after.review ? [after.review] : [])];
+    const notes = ((row.parsing_notes as string | null) ?? "").split(";").map((x) => x.trim()).filter(Boolean);
+    for (const r of review) if (!notes.includes(r)) notes.push(r);
+    const update: Record<string, unknown> = { correct_answer: after.correct, updated_at: new Date().toISOString() };
+    if (review.length) {
+      update.parsing_status = "Needs Review";
+      update.parsing_notes = notes.join("; ");
+      keyReviewIds.set(qid, d);
+    }
+    // The solver's explanation argues its own answer, not the stored key.
+    if (after.review) update.explanation = null;
+    await db.from("questions").update(update).eq("id", qid);
+  }
+
   let reconciled = 0;
   const { data: rows } = await db
     .from("questions")
@@ -259,7 +293,8 @@ async function handlePOST(
   const keyChangedIds: string[] = [];
   for (const r of rows ?? []) {
     const off = r.official_answer as string;
-    const ai = r.correct_answer as string | null;
+    const storedRow = storedKeyIds.has(r.id as string);
+    const ai = storedRow ? (solverById.get(r.id as string) ?? null) : (r.correct_answer as string | null);
     const agree =
       !!ai && !!off &&
       (ai.trim().length === 1 && off.trim().length === 1
@@ -267,6 +302,9 @@ async function handlePOST(
         : ai.trim().replace(/\s+/g, "") === off.trim().replace(/\s+/g, ""));
     const isMc = r.question_type === "Multiple Choice";
     if (isMc && ai) keyCompared++;
+    if (!agree && isMc && ai && storedRow) keyDisagreeNums.push(r.original_question_number as number);
+    // Stored-key rows were settled above: their key is not replaced here.
+    if (storedRow) continue;
     if (!agree) {
       if (isMc && ai) keyDisagreeNums.push(r.original_question_number as number);
       reconciled++;
@@ -294,6 +332,7 @@ async function handlePOST(
   // overwritten it), keep the row in Needs Review with its notes, and leave it
   // out of rescoring — a person decides.
   for (const [qid, d] of keyReviewIds) {
+    if (storedKeyIds.has(qid)) continue;
     const { data: row } = await db.from("questions").select("parsing_notes").eq("id", qid).maybeSingle();
     const notes = ((row?.parsing_notes as string | null) ?? "").split(";").map((x) => x.trim()).filter(Boolean);
     for (const r of d.review) if (!notes.includes(r)) notes.push(r);
