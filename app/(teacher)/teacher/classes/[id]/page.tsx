@@ -295,7 +295,7 @@ export default async function TeacherClassDetailPage({
         gradebook={gradebook}
         live={{ endpoint: `/api/teacher/classes/${group.id}/live-progress`, initial: liveInitial }}
         reviewLabel={reviewLabel}
-        above={<AssignedTestsTable tests={assigned ?? []} failed={!assigned} reviewLabel={reviewLabel.full} />}
+        above={<AssignedTestsTable tests={assigned ?? []} failed={!assigned} reviewLabel={reviewLabel.short} />}
       />
 
       <section>

@@ -135,9 +135,18 @@ export function isTodayTest(t: { openDate: string | null; dueDate: string | null
   return (t.openDate != null && nyDay(t.openDate) === today) || (t.dueDate != null && nyDay(t.dueDate) === today);
 }
 
-/** "3 / 4 submitted · 1 in progress · 0 not started". */
+/**
+ * "3/4 done · 1 not started": submitted out of the class, then only the
+ * buckets that aren't empty ("· 1 in progress", "· 2 not started").
+ */
 export function completionText(c: CompletionCounts): string {
-  return `${c.submitted} / ${c.total} submitted · ${c.inProgress} in progress · ${c.notStarted} not started`;
+  return [
+    `${c.submitted}/${c.total} done`,
+    c.inProgress > 0 ? `${c.inProgress} in progress` : null,
+    c.notStarted > 0 ? `${c.notStarted} not started` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 const NOTE: Partial<Record<CellState, string>> = { late: "Late", missing: "Missing" };

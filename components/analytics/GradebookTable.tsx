@@ -144,7 +144,7 @@ export default function GradebookTable({
   /** Text of each column's Questions & answers (Class Review) link (columns with a reviewHref). */
   reviewLabel?: { short: string; full: string };
 }) {
-  const review = reviewLabel ?? { short: "Q&A", full: "Questions & answers (Class Review)" };
+  const review = reviewLabel ?? { short: "Questions & answers", full: "Questions & answers (Class Review)" };
   const { scope, averages } = gradebook;
   const showMath = summary && scope.math;
   const showRw = summary && scope.rw;

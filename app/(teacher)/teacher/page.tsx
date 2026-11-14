@@ -9,7 +9,7 @@ import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import { ClipboardList, Users, BarChart2, AlertTriangle, CalendarClock, Eye, Presentation } from "lucide-react";
 import { getTranslations } from "next-intl/server";
-import { DataRow, DataTable, EmptyRow, HeadRow, RowActions, RowButton, Td, Th, TwoLineCell } from "@/components/ui/data-table";
+import { DataRow, DataTable, EmptyRow, HeadRow, RowButton, Td, Th } from "@/components/ui/data-table";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import { classReviewHref, submittedStudentsByTest, teacherResultsHref, todayWindow, todaysTests } from "@/lib/assigned-tests-view";
 import PageIntro from "@/components/shared/PageIntro";
@@ -265,9 +265,9 @@ export default async function TeacherDashboardPage() {
         <DataTable>
           <thead>
             <HeadRow>
-              <Th kind="main" sticky="left">Test</Th>
-              <Th>Status</Th>
-              <Th>Subject</Th>
+              <Th kind="main" sticky="left" className="w-[40%] min-w-[10rem]">Test</Th>
+              <Th priority="lg">Status</Th>
+              <Th priority="lg">Subject</Th>
               <Th>Completion</Th>
               <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
             </HeadRow>
@@ -278,22 +278,28 @@ export default async function TeacherDashboardPage() {
             )}
             {todayTests.map((t) => (
               <DataRow key={t.id}>
-                <Td kind="main" sticky="left">
-                  <TwoLineCell
-                    main={t.name}
-                    detail={[t.openDate ? `Opens ${formatShortDateTime(t.openDate)}` : null, t.dueDate ? `Due ${formatShortDateTime(t.dueDate)}` : null].filter(Boolean).join(" · ") || undefined}
-                    wrapMain
-                    mainClassName="font-medium text-charcoal"
-                  />
+                <Td kind="main" sticky="left" className="w-[40%] min-w-[10rem]">
+                  <span className="block whitespace-normal break-words font-medium leading-snug text-charcoal">{t.name}</span>
+                  {/* Status / Subject columns are hidden below lg: fold them under the name. */}
+                  <span className="mt-1 flex flex-wrap items-center gap-1.5 lg:hidden">
+                    {t.status && <StatusBadge kind="test" status={t.status as TestStatus} />}
+                    {t.section === "Math" || t.section === "Reading & Writing" ? <SubjectTag section={t.section} /> : null}
+                  </span>
+                  {(t.openDate || t.dueDate) && (
+                    <span className="mt-0.5 block whitespace-normal text-xs text-soft-mute">
+                      {[t.openDate ? `Opens ${formatShortDateTime(t.openDate)}` : null, t.dueDate ? `Due ${formatShortDateTime(t.dueDate)}` : null].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
                 </Td>
-                <Td>{t.status ? <StatusBadge kind="test" status={t.status as TestStatus} /> : <span className="text-soft-mute">—</span>}</Td>
-                <Td className="text-mid-gray">{t.section === "Math" || t.section === "Reading & Writing" ? <SubjectTag section={t.section} /> : t.section ?? "—"}</Td>
+                <Td priority="lg">{t.status ? <StatusBadge kind="test" status={t.status as TestStatus} /> : <span className="text-soft-mute">—</span>}</Td>
+                <Td priority="lg" className="text-mid-gray">{t.section === "Math" || t.section === "Reading & Writing" ? <SubjectTag section={t.section} /> : t.section ?? "—"}</Td>
                 <Td className="text-mid-gray">{t.submittedCount} / {t.studentCount} submitted</Td>
                 <Td kind="actions" sticky="right">
-                  <RowActions>
-                    <RowButton label={tReview("button")} tone="primary" icon={<Presentation size={13} />} href={classReviewHref(t.id)} />
+                  {/* Two outline buttons (no red primary in a list); stacked below xl. */}
+                  <span className="inline-flex flex-col items-stretch gap-1.5 whitespace-nowrap align-middle xl:flex-row xl:items-center">
+                    <RowButton label={tReview("short")} icon={<Presentation size={13} />} href={classReviewHref(t.id)} />
                     <RowButton label="Results" icon={<Eye size={13} />} href={teacherResultsHref(t.id)} />
-                  </RowActions>
+                  </span>
                 </Td>
               </DataRow>
             ))}
