@@ -41,6 +41,7 @@ import { keyDoubtNote } from "@/lib/key-doubt";
 import { parseBlobUrl } from "@/lib/blob-url";
 import { highResFigure } from "@/lib/figure-hires";
 import { keyLetters } from "@/lib/explanation-consistency";
+import { PROBE_OVERRIDE_PREFIX } from "@/lib/answer-key-merge";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -941,6 +942,8 @@ export async function explainOfficialAndPersist(
   moduleId: string,
   db: DbClient,
   callerUserId?: string,
+  /** Re-parse in place: question id → the key already stored on it. Explained against that key; correct_answer is never written for these rows. */
+  storedKeys: Map<string, string> = new Map(),
 ): Promise<{ rewrote: number; approved: number; keptReview: number; skipped: number }> {
   const { data } = await db
     .from("questions")
@@ -960,7 +963,8 @@ export async function explainOfficialAndPersist(
     const chunk = rows.slice(i, i + CHUNK);
     await Promise.all(
       chunk.map(async (q) => {
-        const ans = q.official_answer || q.correct_answer;
+        const storedKey = storedKeys.get(q.id);
+        const ans = storedKey ?? (q.official_answer || q.correct_answer);
         if (!ans) { skipped++; return; }
         try {
           // Solve independently FIRST (independent_answer), then explain the
@@ -1000,7 +1004,11 @@ export async function explainOfficialAndPersist(
           if (truncatedOfficial) console.warn(`[explain-official] q${q.original_question_number}: explanation still cut off after retry`);
           const blindFigure = stemFigureMissing(q);
           const placeholder = findParsePlaceholder(q.question_text, q.choices);
+          // Re-parse in place: the row isn't on its stored key (the put-back
+          // after the solver failed, or someone changed it) → never approve.
+          const offStoredKey = !!storedKey && q.correct_answer !== storedKey;
           const keep =
+            offStoredKey ||
             EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") ||
             blindFigure ||
             placeholder !== null ||
@@ -1021,15 +1029,20 @@ export async function explainOfficialAndPersist(
             addNote(keyDoubtNote(ans, conflict, "solving it independently before writing the explanation gave a different answer, so the explanation was not rewritten"));
           }
           if (keyProblem) addNote(keyFormNote(keyProblem));
+          if (offStoredKey) addNote(`Needs review: the key on this row (${q.correct_answer ?? "none"}) isn't its stored key ${storedKey} — confirm which is right`);
           if (draftProblem) addNote(`${OFFICIAL_EXPLANATION_FAILED_PREFIX} (${draftProblem.replace(/[;()]/g, ",").slice(0, 160)}) — write and check it by hand`);
           const update: Record<string, unknown> = {
-            correct_answer: ans,
+            ...(storedKey ? {} : { correct_answer: ans }),
             parsing_status: keep ? "Needs Review" : "Approved",
             // Keep the original defect note on rows staying in review — it
             // names WHAT to fix (e.g. the PDF's real choices).
             parsing_notes: keep
               ? [...parts, ...(conflict || keyProblem || draftProblem ? [] : ["Explanation matches official answer; still needs review (figure/choices)"])].join("; ")
-              : "Answer = official key; explanation matches (verified)",
+              : [
+                  // Where the key came from (the PDF ✓ over the AI probe) outlives approval.
+                  ...(q.parsing_notes ?? "").split(";").map((x) => x.trim()).filter((x) => x.startsWith(PROBE_OVERRIDE_PREFIX)),
+                  "Answer = official key; explanation matches (verified)",
+                ].join("; "),
             updated_at: new Date().toISOString(),
           };
           if (res.ok && !conflict && !draftProblem) {
@@ -1115,6 +1128,8 @@ export async function regenerateTruncatedExplanations(
   moduleId: string,
   db: DbClient,
   callerUserId?: string,
+  /** Re-parse in place: question id → stored key (see explainOfficialAndPersist). */
+  storedKeys: Map<string, string> = new Map(),
 ): Promise<{ checked: number; regenerated: number }> {
   const { data } = await db
     .from("questions")
@@ -1140,7 +1155,8 @@ export async function regenerateTruncatedExplanations(
     const chunk = targets.slice(i, i + CHUNK);
     await Promise.all(
       chunk.map(async (q) => {
-        const ans = q.official_answer || q.correct_answer;
+        const storedKey = storedKeys.get(q.id);
+        const ans = storedKey ?? (q.official_answer || q.correct_answer);
         if (!ans) return;
         const ch = Array.isArray(q.choices)
           ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`)).join("\n")
@@ -1159,7 +1175,7 @@ export async function regenerateTruncatedExplanations(
             regenerated++;
             const { update } = applyLiveHold(
               q,
-              { correct_answer: ans, explanation: expl, updated_at: new Date().toISOString() },
+              { ...(storedKey ? {} : { correct_answer: ans }), explanation: expl, updated_at: new Date().toISOString() },
               "Cut-off explanation regenerated",
               live,
             );
