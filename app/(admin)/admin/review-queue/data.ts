@@ -240,13 +240,20 @@ export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): 
 // stored or the newest one is over STALE_MAX_MS old (a day: never on a normal
 // first open of the day).
 
-// A .env.local from `vercel env pull` copies VERCEL="1" and VERCEL_ENV="production"
-// (with the git / deployment vars empty), so only a filled deployment id or
-// commit SHA means a real deployment; anything else stores under "local".
-const DEPLOY = process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_DEPLOYMENT_ID || "";
-const STORE_KEY = `review_queue_index:${REVIEW_QUEUE_INDEX_VERSION}:${DEPLOY ? process.env.VERCEL_ENV || "unknown" : "local"}`;
-/** The deploy that built an index: an index from another deploy is rebuilt (served meanwhile). */
-const BUILD_ID = DEPLOY || "local";
+// A .env.local from `vercel env pull` copies VERCEL="1" and VERCEL_ENV="production",
+// so those can't tell a deployment from a laptop. VERCEL_REGION is set by the
+// platform at runtime only (never pulled); `next dev` is always local.
+const ON_DEPLOYMENT = !!process.env.VERCEL_REGION && process.env.NODE_ENV !== "development";
+const STORE_KEY = `review_queue_index:${REVIEW_QUEUE_INDEX_VERSION}:${ON_DEPLOYMENT ? process.env.VERCEL_ENV || "unknown" : "local"}`;
+/**
+ * The deploy that built an index: an index from another deploy is rebuilt (served
+ * meanwhile). CLI deploys may have no git SHA: the deployment id, then the
+ * deployment's own URL (unique per deploy) stand in.
+ */
+const BUILD_ID = ON_DEPLOYMENT
+  ? process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_DEPLOYMENT_ID || process.env.VERCEL_URL || "deploy-unknown"
+  : "local";
+let keyLogged = false;
 const BUILD_TIMEOUT_MS = 30_000;
 const STALE_WARN_MS = 5 * 60_000;
 const STALE_MAX_MS = 24 * 60 * 60_000;
@@ -300,6 +307,10 @@ function rebuild(): Promise<QueueIndex> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const work = (async () => {
     const t0 = Date.now();
+    if (!keyLogged) {
+      keyLogged = true;
+      console.log(`[review-queue] index store key ${STORE_KEY}, build ${BUILD_ID}`);
+    }
     const index = await buildQueueIndex();
     const bytes = JSON.stringify(index).length;
     const errors = index.lookupErrors.length ? `, lookup errors: ${index.lookupErrors.join("; ")}` : "";
