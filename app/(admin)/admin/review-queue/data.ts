@@ -3,14 +3,16 @@
 //
 // 1. The INDEX: every waiting question's group, live / students counts and
 //    filter fields, plus the per-group counts. Building it reads every Needs
-//    Review row and runs the grouping rules (seconds), so it is cached
-//    (unstable_cache, tag REVIEW_QUEUE_TAG, 60 s revalidate) and invalidated
-//    stale-while-revalidate by every writer (lib/review-queue-cache.ts).
+//    Review row and runs the grouping rules (3-6 s on Vercel), so it is
+//    stored and served stale-while-revalidate by getQueueIndex() below: no
+//    open waits for a build unless no index was ever stored (a new
+//    REVIEW_QUEUE_INDEX_VERSION).
 // 2. The CARDS: one page of the index (15 by default) built from fresh rows,
 //    so a decision made since the index was built is never shown as waiting:
 //    a row that left Needs Review or moved to another group is dropped.
 
 import { unstable_cache } from "next/cache";
+import { after } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseBlobUrl } from "@/lib/blob-url";
 import { getServiceClient } from "@/lib/supabase";
@@ -46,6 +48,8 @@ const CARD_SELECT = `${DECIDE_SELECT}, page_number, reviewed_by, reviewed_at`;
 
 export interface QueueIndex {
   version: string;
+  /** When the build started reading rows: an index started before the last change is stale. */
+  startedAt: string;
   builtAt: string;
   entries: QueueIndexEntry[];
   autoFixed: Partial<Record<ReviewGroupId, number>>;
@@ -116,6 +120,7 @@ async function loadKeyFacts(db: SupabaseClient, moduleIds: string[]): Promise<Ma
 
 /** Build the index from the database (seconds). Read-only. */
 export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): Promise<QueueIndex> {
+  const startedAt = new Date().toISOString();
   const lookupErrors: string[] = [];
   const page = <T,>(q: (from: number, to: number) => unknown) => fetchAllRows<T>(q as (from: number, to: number) => PromiseLike<{ data: T[] | null; error: unknown }>);
   const [nr, lf, fixed, mods] = await Promise.all([
@@ -203,6 +208,7 @@ export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): 
 
   return {
     version: REVIEW_QUEUE_INDEX_VERSION,
+    startedAt,
     builtAt: new Date().toISOString(),
     entries,
     autoFixed,
@@ -212,39 +218,82 @@ export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): 
   };
 }
 
-/** Thrown inside the cache so an index with failed lookups is never stored. */
-class PartialIndex extends Error {
-  constructor(readonly index: QueueIndex) {
-    super("review queue index has failed lookups");
+// Why not unstable_cache for the index itself: on Vercel its data cache
+// doesn't serve stale. Once the tag is revalidated (even with "max") or the
+// revalidate time has passed, the next request rebuilds the index while the
+// admin waits (3-6 s, measured on prod); `next start` serves stale, so this
+// only shows on Vercel. The page and the API are also bundled separately, and
+// unstable_cache keys on the function's source text, so each kept its own
+// copy and built it again.
+//
+// So the index is stored in app_settings (one row, the key/value table that
+// already holds spot-check results and live-fix snapshots; no schema change),
+// shared by every instance and deploy, plus this instance's copy in memory.
+// A reader always gets the newest one it has at once. If it was built before
+// the last change, or is older than REVIEW_QUEUE_REVALIDATE_S, it is rebuilt
+// in after() and stored for the next request. Only an open with no stored
+// index at all (a new REVIEW_QUEUE_INDEX_VERSION) waits for a build.
+
+const STORE_KEY = `review_queue_index:${REVIEW_QUEUE_INDEX_VERSION}`;
+
+/** When the queue last changed: recomputed (Date.now()) on the first read after a writer revalidates REVIEW_QUEUE_TAG. */
+const changedAt = unstable_cache(async () => Date.now(), ["review-queue-changed-at"], { tags: [REVIEW_QUEUE_TAG] });
+
+let memo: QueueIndex | null = null;
+let rebuilding: Promise<QueueIndex> | null = null;
+
+const newer = (a: QueueIndex | null, b: QueueIndex) => (a && Date.parse(a.startedAt) >= Date.parse(b.startedAt) ? a : b);
+const isFresh = (index: QueueIndex, changed: number) => {
+  const started = Date.parse(index.startedAt);
+  return started >= changed && Date.now() - started < REVIEW_QUEUE_REVALIDATE_S * 1000;
+};
+
+async function readStored(): Promise<QueueIndex | null> {
+  const { data, error } = await getServiceClient().from("app_settings").select("value").eq("key", STORE_KEY).maybeSingle();
+  if (error) {
+    console.error("[review-queue] stored index read failed:", error.message);
+    return null;
   }
+  const index = (data?.value ?? null) as QueueIndex | null;
+  return index?.version === REVIEW_QUEUE_INDEX_VERSION && typeof index.startedAt === "string" ? index : null;
 }
 
-/** Vercel's data cache refuses entries over 2 MB: warn well before that. */
-const INDEX_WARN_BYTES = 1.5 * 1024 * 1024;
-
-const cachedIndex = unstable_cache(
-  async () => {
+/** Build now (one build per instance at a time). An index with failed lookups is returned but never stored. */
+function rebuild(): Promise<QueueIndex> {
+  rebuilding ??= (async () => {
     const t0 = Date.now();
     const index = await buildQueueIndex();
     const bytes = JSON.stringify(index).length;
-    const line = `[review-queue] index built: ${index.entries.length} questions, ${(bytes / 1024).toFixed(0)} KB, ${Date.now() - t0} ms`;
-    if (bytes > INDEX_WARN_BYTES) console.warn(`${line} — over 1.5 MB, near the 2 MB cache limit: slim QueueIndexEntry`);
-    else console.log(line);
-    if (index.lookupErrors.length) throw new PartialIndex(index);
+    console.log(`[review-queue] index built: ${index.entries.length} questions, ${(bytes / 1024).toFixed(0)} KB, ${Date.now() - t0} ms`);
+    if (index.lookupErrors.length === 0) {
+      memo = newer(memo, index);
+      const { error } = await getServiceClient().from("app_settings").upsert({ key: STORE_KEY, value: index, updated_at: index.builtAt });
+      if (error) console.error("[review-queue] storing the index failed:", error.message);
+    }
     return index;
-  },
-  ["review-queue-index", REVIEW_QUEUE_INDEX_VERSION],
-  { tags: [REVIEW_QUEUE_TAG], revalidate: REVIEW_QUEUE_REVALIDATE_S },
-);
+  })().finally(() => {
+    rebuilding = null;
+  });
+  return rebuilding;
+}
 
-/** The cached index (an index whose lookups failed is served once, uncached, with its errors). */
+/** Background refresh: adopt a fresh index another instance stored, else build one. */
+async function refresh(changed: number): Promise<void> {
+  const stored = await readStored();
+  if (stored) memo = newer(memo, stored);
+  if (memo && isFresh(memo, changed)) return;
+  await rebuild();
+}
+
+/** The newest index at once (stale-while-revalidate); waits for a build only when none was ever stored. */
 export async function getQueueIndex(): Promise<QueueIndex> {
-  try {
-    return await cachedIndex();
-  } catch (e) {
-    if (e instanceof PartialIndex) return e.index;
-    throw e;
+  const [changed, current] = await Promise.all([changedAt().catch(() => Date.now()), memo ?? readStored()]);
+  if (!current) return rebuild();
+  memo = newer(memo, current);
+  if (!isFresh(memo, changed)) {
+    after(() => refresh(changed).catch((e) => console.error("[review-queue] background rebuild failed:", e)));
   }
+  return memo;
 }
 
 // ── 2. Cards ─────────────────────────────────────────────────────────

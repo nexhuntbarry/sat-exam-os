@@ -8,11 +8,11 @@
 
 import type { ReviewGroupId } from "@/lib/review-queue";
 
-/** Cache tag of the queue index; every question / key / decision writer revalidates it. */
+/** Cache tag of the queue's "changed at" stamp; every question / key / decision writer revalidates it. */
 export const REVIEW_QUEUE_TAG = "review-queue";
-/** Bumped when the cached index shape changes (old entries are then ignored). */
-export const REVIEW_QUEUE_INDEX_VERSION = "v1";
-/** Safety net for writers that can't revalidate the tag (scripts, cron SQL): seconds. */
+/** Bumped when the stored index shape changes (old stored indexes are then ignored). */
+export const REVIEW_QUEUE_INDEX_VERSION = "v2";
+/** Safety net for writers that can't revalidate the tag (scripts, cron SQL): an index older than this is rebuilt in the background. Seconds. */
 export const REVIEW_QUEUE_REVALIDATE_S = 60;
 
 export const DEFAULT_LIMIT = 15;
