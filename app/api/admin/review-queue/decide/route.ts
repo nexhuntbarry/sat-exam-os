@@ -14,7 +14,8 @@ export const maxDuration = 300;
 // Applies the one decision the review queue asked for (lib/review-decide.ts):
 //   keep_key | set_key (after the rescore preview) | use_pdf | keep_figure |
 //   use_pdf_text | regen_explanation | approve |
-//   confirm_live_fix | undo_live_fix (restore_key + rescore after the preview)
+//   confirm_live_fix | undo_live_fix (restore_key + rescore after the preview;
+//   expected_key / updated_at: refused with 409 when the row moved since)
 // then regenerates the explanation when needed, clears the settled notes and
 // approves the question when nothing else blocks. Never lowers a status.
 async function handlePOST(req: Request) {
@@ -42,6 +43,7 @@ async function handlePOST(req: Request) {
         action: "undo_live_fix",
         restoreKey: typeof body.restore_key === "string" ? body.restore_key : null,
         rescore: body.rescore === true,
+        ...("expected_key" in body ? { expectedKey: typeof body.expected_key === "string" ? body.expected_key : null } : {}),
       };
       break;
     case "set_key": {
@@ -66,7 +68,11 @@ async function handlePOST(req: Request) {
       expectedUpdatedAt: typeof body.updated_at === "string" ? body.updated_at : null,
     });
     if (!res.ok) return NextResponse.json({ error: res.error }, { status: res.status ?? 400 });
-    return NextResponse.json(res);
+    // The row as the decision left it (after rescoring too): the page's Undo
+    // refuses when it moved since.
+    const db = getServiceClient();
+    const { data: after } = await db.from("questions").select("updated_at").eq("id", id).maybeSingle();
+    return NextResponse.json({ ...res, updated_at: (after?.updated_at as string | null | undefined) ?? null });
   } catch (e) {
     console.error("[review-queue/decide] error:", e);
     return NextResponse.json({ error: "Something went wrong. Try again or open the question." }, { status: 500 });

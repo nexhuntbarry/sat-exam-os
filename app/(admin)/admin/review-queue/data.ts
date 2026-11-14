@@ -219,9 +219,17 @@ class PartialIndex extends Error {
   }
 }
 
+/** Vercel's data cache refuses entries over 2 MB: warn well before that. */
+const INDEX_WARN_BYTES = 1.5 * 1024 * 1024;
+
 const cachedIndex = unstable_cache(
   async () => {
+    const t0 = Date.now();
     const index = await buildQueueIndex();
+    const bytes = JSON.stringify(index).length;
+    const line = `[review-queue] index built: ${index.entries.length} questions, ${(bytes / 1024).toFixed(0)} KB, ${Date.now() - t0} ms`;
+    if (bytes > INDEX_WARN_BYTES) console.warn(`${line} — over 1.5 MB, near the 2 MB cache limit: slim QueueIndexEntry`);
+    else console.log(line);
     if (index.lookupErrors.length) throw new PartialIndex(index);
     return index;
   },
@@ -279,7 +287,8 @@ export async function buildCards(
     .map((x) => ({ id: x.r.id, url: x.g.primary === "figure" ? figureProposalUrl(x.r.parsing_notes) : null }))
     .filter((x): x is { id: string; url: string } => !!x.url);
   const lookupErrors: string[] = [];
-  const [keyFacts, reviewers, snapshots, proposals] = await Promise.all([
+  const pageIds = rows.map((x) => x.r.id);
+  const [keyFacts, reviewers, snapshots, proposals, liveNow, studentsNow] = await Promise.all([
     keyMods.length ? loadKeyFacts(db, keyMods) : Promise.resolve(new Map<string, ModuleKeyFacts>()),
     reviewerIds.length
       ? db
@@ -294,7 +303,19 @@ export async function buildCards(
           return new Map();
         })
       : Promise.resolve(new Map()),
-    Promise.all(proposalUrls.map(async ({ id, url }) => [id, await loadProposal(url).catch(() => null)] as const)).then((x) => new Map<string, FigureProposal | null>(x)),
+    // Figure-check proposals (Vercel Blob), at most 6 loads at a time.
+    (async () => {
+      const out = new Map<string, FigureProposal | null>();
+      for (let i = 0; i < proposalUrls.length; i += 6) {
+        await Promise.all(proposalUrls.slice(i, i + 6).map(async ({ id, url }) => out.set(id, await loadProposal(url).catch(() => null))));
+      }
+      return out;
+    })(),
+    // Live / students answered as of now, not as of the cached index (a test
+    // published or a student answering since): the labels a key decision
+    // leans on. A failed lookup falls back to the index's values.
+    pageIds.length ? liveQuestionIds(db, pageIds).catch(() => null) : Promise.resolve(new Set<string>()),
+    pageIds.length ? realStudentsAnswered(db, pageIds).catch(() => null) : Promise.resolve(new Map<string, number>()),
   ]);
 
   return rows.map(({ r, e, g }) => {
@@ -340,8 +361,8 @@ export async function buildCards(
       evidence: isKey ? card.evidence : [],
       suggestion: isKey ? card.suggestion : null,
       plainReasons: [...new Set(g.reasons.map((x) => plainReason(x.text)))],
-      studentsAnswered: e.students,
-      live: e.live,
+      studentsAnswered: studentsNow ? studentsNow.get(r.id) ?? 0 : e.students,
+      live: liveNow ? liveNow.has(r.id) : e.live,
       keySource: { label: src.label, detail: src.detail, kind: src.kind },
       liveFix,
       status: r.parsing_status ?? "Needs Review",

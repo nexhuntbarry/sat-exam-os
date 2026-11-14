@@ -17,6 +17,8 @@ export const REVIEW_QUEUE_REVALIDATE_S = 60;
 
 export const DEFAULT_LIMIT = 15;
 export const MAX_LIMIT = 200;
+/** Cap of GET /api/admin/review-queue?limit= (Accept all pages through a module with the cursor). */
+export const API_MAX_LIMIT = 30;
 
 /** One question in the cached index: what grouping, ordering and filters need, no content. */
 export interface QueueIndexEntry {
@@ -126,6 +128,12 @@ export function compareKeys(a: SortKey, b: SortKey): number {
  * Entries of one group in display order, each with its sort key. Key
  * decisions are shown one block per module ("Accept all suggestions"): the
  * module's best entry places the block, the block keeps the base order.
+ *
+ * Known, accepted limit (review of 9d728a8, L3): a module block's key comes
+ * from its best entry, so deciding that entry can move the block between two
+ * page loads; a page boundary falling inside a moved block may then repeat
+ * or skip a card of that module. The page de-duplicates by id, the counts
+ * are unaffected, and switching / reloading the group lists everything.
  */
 export function orderEntries(entries: QueueIndexEntry[], perModule: boolean): { entry: QueueIndexEntry; key: SortKey }[] {
   const mod = new Map<string, SortKey>();
@@ -236,6 +244,50 @@ export interface DecisionRecord {
   keyChanged?: boolean;
   oldKey?: string | null;
   newKey?: string | null;
+  /** The key the decision left (the new key, or the unchanged one). */
+  keyAfter: string | null;
+  /** The row's updated_at right after the decision (decide response); null = unknown. */
+  updatedAt: string | null;
+}
+
+/**
+ * Why an Undo must be refused now (null = it may go ahead): `card` is the
+ * question re-read just before undoing. Undo only puts back what this page
+ * changed, so the row must be exactly as the decision left it: same key,
+ * same updated_at (any other edit, rescore or decision since moves it).
+ */
+export function undoBlocked(r: Pick<DecisionRecord, "keyAfter" | "updatedAt">, card: { key: string | null; updatedAt: string | null } | null): string | null {
+  if (!card) return "The question couldn't be read again. Reload and check it before undoing.";
+  if ((card.key ?? null) !== (r.keyAfter ?? null)) return `The key is now ${card.key ?? "∅"}, not ${r.keyAfter ?? "∅"} as your decision left it: someone changed it since. Reload and check it before undoing.`;
+  if (!r.updatedAt) return "This decision's saved version is unknown, so it can't be undone safely. Reload and check the question.";
+  if (card.updatedAt !== r.updatedAt) return "The question changed since your decision. Reload and check it before undoing.";
+  return null;
+}
+
+// ── Focus mode: which card comes next ────────────────────────────────
+
+/** The next card after `from` nobody decided (`done`) or just decided; stays at the end when none is left. */
+export function nextOpenIndex(ids: string[], from: number, done: Set<string>, justDone: string | null = null): number {
+  for (let i = from + 1; i < ids.length; i++) if (!done.has(ids[i]) && ids[i] !== justDone) return i;
+  return Math.min(from + 1, Math.max(ids.length - 1, 0));
+}
+
+/**
+ * After a decision on `decidedId`: the card to show, or null to stay put.
+ * Only when that card is still the focused one (the person may have moved on
+ * while the request ran, or this is a list-mode decision).
+ */
+export function advanceAfterDecision(ids: string[], focused: number, decidedId: string, done: Set<string>): number | null {
+  if (ids[focused] !== decidedId) return null;
+  return nextOpenIndex(ids, focused, done, decidedId);
+}
+
+/** Decision keys (1 / 2 / E / S) are ignored this long after the focused card changes. */
+export const KEY_GUARD_MS = 400;
+
+/** May a decision key act now? Not on auto-repeat, and not right after the card changed under the finger. */
+export function decisionKeyAllowed(e: { repeat: boolean }, now: number, focusChangedAt: number): boolean {
+  return !e.repeat && now - focusChangedAt >= KEY_GUARD_MS;
 }
 
 export type UndoPlan =

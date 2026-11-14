@@ -31,6 +31,8 @@ export interface DecideResponse {
   warning?: string;
   /** In a live test (a content change kept it Approved with a [live-fix] note). */
   live?: boolean;
+  /** The row's updated_at after the decision (an Undo checks it didn't move). */
+  updated_at?: string | null;
   /** Key change details (lib/key-change.ts KeyCorrectionResult). */
   key?: { live?: boolean; keyChanged?: boolean; oldKey?: string | null; newKey?: string | null };
 }

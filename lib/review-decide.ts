@@ -72,10 +72,18 @@ export type DecideAction =
   | { action: "approve" }
   | { action: "confirm_live_fix" }
   /** `restoreKey`: the key before the live fix, after the rescore preview (rescore must be true). */
-  | { action: "undo_live_fix"; restoreKey?: string | null; rescore?: boolean };
+  | {
+      action: "undo_live_fix";
+      restoreKey?: string | null;
+      rescore?: boolean;
+      /** The key the person saw before undoing (409 when it changed since). Omitted = not checked. */
+      expectedKey?: string | null;
+    };
 
 export interface DecideResult {
   ok: boolean;
+  /** The row's updated_at after the decision (the decide route reads it back): an Undo checks it didn't move. */
+  updated_at?: string | null;
   status?: number;
   error?: string;
   approved?: boolean;
@@ -408,6 +416,10 @@ export async function decide(
 
     case "undo_live_fix": {
       if (!(row.parsing_notes ?? "").startsWith(LIVE_FIX_TAG)) return { ok: false, status: 400, error: "This question has no live-test change to undo." };
+      // An Undo is made against what the person saw (updated_at is checked above).
+      if (act.expectedKey !== undefined && (row.correct_answer ?? null) !== act.expectedKey) {
+        return { ok: false, status: 409, error: "The key changed since you looked at it. Reload before undoing." };
+      }
       const snap = (await loadLiveFixSnapshots(db, [id])).get(id) ?? null;
       // Only the version recorded for THIS live-fix change can be put back.
       if (!snapshotValid(snap, row.parsing_notes)) return { ok: false, status: 400, error: "No earlier version was recorded for this change. Edit it by hand." };

@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireQuestionReviewer } from "@/lib/rbac";
 import { forbidQa } from "@/lib/qa";
-import { parseFilters, parseLimit } from "@/lib/review-queue-view";
+import { API_MAX_LIMIT, parseFilters, parseLimit } from "@/lib/review-queue-view";
 import { loadQueuePage } from "@/app/(admin)/admin/review-queue/data";
 
 export const dynamic = "force-dynamic";
 // A cold index build (first request after a deploy) reads the whole queue.
 export const maxDuration = 60;
 
-// GET /api/admin/review-queue?group=&cursor=&limit=15&module=&test=&subject=&live=1
+// GET /api/admin/review-queue?group=&cursor=&limit=15 (max 30)&module=&test=&subject=&live=1
 // GET /api/admin/review-queue?id=<question id>        (one card, any group)
 //
 // The review queue page's data: counts per group (under the filters) and one
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
       group: p.get("group"),
       filters: parseFilters(p),
       cursor: p.get("cursor"),
-      limit: parseLimit(p.get("limit")),
+      limit: parseLimit(p.get("limit"), API_MAX_LIMIT),
       id,
     });
     return NextResponse.json({ ...data, canWrite: forbidQa(auth) === null }, { headers: { "Cache-Control": "private, no-store" } });

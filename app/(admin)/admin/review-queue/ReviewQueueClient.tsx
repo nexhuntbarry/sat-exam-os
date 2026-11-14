@@ -9,7 +9,19 @@ import { StatusBadge, SubjectTag } from "@/components/ui/StatusBadge";
 import MathMarkdown from "@/components/MathMarkdown";
 import FigureDiff, { describeDecision, postDecision, type DecideResponse } from "@/components/questions/FigureDiff";
 import type { KeyChangePreview } from "@/lib/key-check";
-import { filterParams, progressStorageKey, undoPlan, type DecisionRecord, type QueueFilters, type UndoPlan } from "@/lib/review-queue-view";
+import {
+  advanceAfterDecision,
+  API_MAX_LIMIT,
+  decisionKeyAllowed,
+  filterParams,
+  nextOpenIndex,
+  progressStorageKey,
+  undoBlocked,
+  undoPlan,
+  type DecisionRecord,
+  type QueueFilters,
+  type UndoPlan,
+} from "@/lib/review-queue-view";
 import type { GroupId, GroupSummary, QueueItem, QueuePageData } from "./types";
 
 type Preview = KeyChangePreview & { keyChanged: boolean; stillMismatched: string | null; live: boolean };
@@ -36,6 +48,8 @@ interface CardActions {
   one?: () => void;
   two?: () => void;
   edit?: () => void;
+  /** Stem group: save the re-read PDF text (U, never 1: 1 is "re-read"). */
+  usePdfText?: () => void;
 }
 
 async function fetchQueue(params: Record<string, string>, signal?: AbortSignal): Promise<QueuePageData & { canWrite?: boolean }> {
@@ -82,6 +96,16 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
   const [undoState, setUndoState] = useState<{ busy: boolean; msg: { text: string; ok: boolean } | null; dialog: { item: QueueItem; key: string; preview: Preview; body: Record<string, unknown> } | null }>({ busy: false, msg: null, dialog: null });
   const abortRef = useRef<AbortController | null>(null);
   const actionsRef = useRef<CardActions | null>(null);
+  // Latest values for callbacks that finish later (a decision request, a key press).
+  const itemsRef = useRef(items);
+  const modeRef = useRef(mode);
+  const focusIdxRef = useRef(focusIdx);
+  const groupRef = useRef(group);
+  const decidedRef = useRef<Map<string, Made>>(new Map());
+  /** Every load gets a number; only the latest one's answer is used. */
+  const loadSeqRef = useRef(0);
+  /** When the focused card last changed (decision keys wait KEY_GUARD_MS). */
+  const focusChangedAtRef = useRef(0);
 
   useEffect(() => setProgress(readProgress()), []);
 
@@ -93,6 +117,15 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
     (g: GroupSummary) => Math.max(0, g.waiting - made.filter((m) => !m.undone && m.group === g.id && m.at > Date.parse(meta.builtAt)).length),
     [made, meta.builtAt],
   );
+  itemsRef.current = items;
+  modeRef.current = mode;
+  focusIdxRef.current = focusIdx;
+  groupRef.current = group;
+  decidedRef.current = decided;
+  const focusedId = mode === "focus" ? items[Math.min(focusIdx, items.length - 1)]?.id ?? null : null;
+  useEffect(() => {
+    focusChangedAtRef.current = Date.now();
+  }, [focusedId]);
 
   const load = useCallback(
     async (next: { group?: GroupId | null; filters?: QueueFilters; append?: boolean }) => {
@@ -101,13 +134,17 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
+      const seq = ++loadSeqRef.current;
       setLoading(next.append ? "more" : "switch");
       setError(null);
       try {
         const params: Record<string, string> = { ...filterParams(f), ...(g ? { group: g } : {}) };
         if (next.append && nextCursor) params.cursor = nextCursor;
         const data = await fetchQueue(params, ac.signal);
-        if (ac.signal.aborted) return;
+        // A late answer (an older load, or a page of a group left meanwhile) is dropped.
+        if (ac.signal.aborted || seq !== loadSeqRef.current) return;
+        if (g && data.group !== g) return;
+        if (next.append && data.group !== groupRef.current) return;
         const { items: got, nextCursor: nc, ...m } = data;
         setMeta(m);
         setGroup(m.group);
@@ -121,7 +158,7 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
       } catch (e) {
         if ((e as Error).name !== "AbortError") setError((e as Error).message || "Couldn't load the queue.");
       } finally {
-        if (abortRef.current === ac) setLoading(null);
+        if (abortRef.current === ac && seq === loadSeqRef.current) setLoading(null);
       }
     },
     [group, filters, nextCursor],
@@ -150,6 +187,8 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
         keyChanged: json.key?.keyChanged,
         oldKey: json.key?.oldKey ?? null,
         newKey: json.key?.newKey ?? null,
+        keyAfter: json.key?.keyChanged ? json.key.newKey ?? null : item.key,
+        updatedAt: json.updated_at ?? null,
       };
       setMade((m) => [...m, { id: item.id, group: item.primary, at: Date.now(), record, item }]);
       setProgress((p) => {
@@ -158,9 +197,19 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
         return n;
       });
       setUndoState({ busy: false, msg: null, dialog: null });
-      if (mode === "focus") setFocusIdx((i) => nextOpen(items, i, decided, item.id));
+      // Move on only if that card is still the one on screen (the request may
+      // have finished after the person went elsewhere).
+      if (modeRef.current === "focus") {
+        const next = advanceAfterDecision(
+          itemsRef.current.map((i) => i.id),
+          focusIdxRef.current,
+          item.id,
+          new Set(decidedRef.current.keys()),
+        );
+        if (next !== null) setFocusIdx(next);
+      }
     },
-    [mode, items, decided],
+    [],
   );
 
   const last = [...made].reverse().find((m) => !m.undone) ?? null;
@@ -171,13 +220,28 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
     if (plan.kind === "unskip") return;
     if (plan.kind === "none") return;
     setUndoState({ busy: true, msg: null, dialog: null });
+    // Undo only what this page changed: the question must still be exactly as
+    // the decision left it (same key, same updated_at). The server checks the
+    // same two values again when the Undo is sent.
+    let card: QueueItem | null = null;
+    try {
+      card = (await fetchQueue({ id: last.id })).items[0] ?? null;
+    } catch {
+      card = null;
+    }
+    const blocked = undoBlocked(last.record, card);
+    if (blocked || !card) {
+      setUndoState({ busy: false, msg: { text: blocked ?? "Couldn't read the question again.", ok: false }, dialog: null });
+      return;
+    }
+    const guard = { updated_at: card.updatedAt, expected_key: card.key };
     const restoreKey = plan.kind === "set_key" ? plan.key : plan.restoreKey;
     const body: Record<string, unknown> =
       plan.kind === "set_key"
-        ? { id: last.id, action: "set_key", key: plan.key, expected_key: plan.expectedKey, rescore: true }
+        ? { id: last.id, action: "set_key", key: plan.key, rescore: true, ...guard }
         : restoreKey !== null
-          ? { id: last.id, action: "undo_live_fix", restore_key: restoreKey, rescore: true }
-          : { id: last.id, action: "undo_live_fix" };
+          ? { id: last.id, action: "undo_live_fix", restore_key: restoreKey, rescore: true, ...guard }
+          : { id: last.id, action: "undo_live_fix", ...guard };
     if (restoreKey !== null) {
       // A key goes back only after the same rescoring preview as any key change.
       try {
@@ -191,7 +255,7 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
           setUndoState({ busy: false, msg: { text: json.error ?? "Couldn't load the preview.", ok: false }, dialog: null });
           return;
         }
-        setUndoState({ busy: false, msg: null, dialog: { item: { ...last.item, key: last.record.newKey ?? last.item.key }, key: restoreKey, preview: json as Preview, body } });
+        setUndoState({ busy: false, msg: null, dialog: { item: card, key: restoreKey, preview: json as Preview, body } });
       } catch {
         setUndoState({ busy: false, msg: { text: "Couldn't load the preview.", ok: false }, dialog: null });
       }
@@ -230,27 +294,34 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
     setUndoState({ busy: false, msg: { text: `Undone. ${describeDecision(json)}`, ok: true }, dialog: null });
   }
 
-  const skip = useCallback(
-    (id: string) => {
-      setSkipped((s) => new Set(s).add(id));
-      setFocusIdx((i) => nextOpen(items, i, decided, id));
-    },
-    [items, decided],
-  );
+  const skip = useCallback((id: string) => {
+    setSkipped((s) => new Set(s).add(id));
+    const ids = itemsRef.current.map((i) => i.id);
+    if (ids[focusIdxRef.current] === id) setFocusIdx(nextOpenIndex(ids, focusIdxRef.current, new Set(decidedRef.current.keys()), id));
+  }, []);
 
-  // Focus mode keys: 1 / 2 / E / S / ← / →. Never while typing or in a dialog.
+  // Focus mode keys: 1 / 2 / U / E / S / ← / →. Never while typing or in a
+  // dialog, never on auto-repeat; decision keys wait KEY_GUARD_MS after the
+  // card changed (a key meant for the previous card doesn't land on this one).
   useEffect(() => {
     if (mode !== "focus") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.repeat) return;
       if (isTyping(e.target) || document.querySelector('[role="dialog"]')) return;
       const k = e.key.toLowerCase();
       const a = actionsRef.current;
-      if (k === "arrowright") setFocusIdx((i) => Math.min(i + 1, Math.max(items.length - 1, 0)));
+      const list = itemsRef.current;
+      const decisionKey = ["1", "2", "u", "e", "s"].includes(k);
+      if (decisionKey && !decisionKeyAllowed(e, Date.now(), focusChangedAtRef.current)) {
+        e.preventDefault();
+        return;
+      }
+      if (k === "arrowright") setFocusIdx((i) => Math.min(i + 1, Math.max(list.length - 1, 0)));
       else if (k === "arrowleft") setFocusIdx((i) => Math.max(i - 1, 0));
-      else if (k === "s" && items[focusIdx]) skip(items[focusIdx].id);
+      else if (k === "s" && list[focusIdxRef.current]) skip(list[focusIdxRef.current].id);
       else if (k === "1" && a?.one) a.one();
       else if (k === "2" && a?.two) a.two();
+      else if (k === "u" && a?.usePdfText) a.usePdfText();
       else if (k === "e" && a?.edit) a.edit();
       else if (k === "escape") setMode("list");
       else return;
@@ -258,7 +329,7 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [mode, items, focusIdx, skip]);
+  }, [mode, skip]);
 
   // Focus mode: the card fills the screen.
   useEffect(() => {
@@ -436,12 +507,6 @@ export default function ReviewQueueClient({ initial, filters: initialFilters, ca
       </section>
     </div>
   );
-}
-
-/** Index of the next card nobody decided or skipped after `from` (stays put at the end). */
-function nextOpen(items: QueueItem[], from: number, decided: Map<string, unknown>, justDone: string): number {
-  for (let i = from + 1; i < items.length; i++) if (!decided.has(items[i].id) && items[i].id !== justDone) return i;
-  return Math.min(from + 1, Math.max(items.length - 1, 0));
 }
 
 function whyText(g: GroupSummary): string {
@@ -681,7 +746,7 @@ function FocusView({
         {skipped.has(cur.id) && <span className="text-xs text-soft-mute">skipped before</span>}
         {loadingMore && <span className="text-xs text-soft-mute">loading more…</span>}
         <span className="ml-auto text-xs text-soft-mute">
-          Keys: <span className={kbd}>1</span> use suggestion · <span className={kbd}>2</span> keep current · <span className={kbd}>E</span> edit · <span className={kbd}>S</span> skip ·{" "}
+          Keys: <span className={kbd}>1</span> use suggestion · <span className={kbd}>2</span> keep current · <span className={kbd}>U</span> use PDF text · <span className={kbd}>E</span> edit · <span className={kbd}>S</span> skip ·{" "}
           <span className={kbd}>←</span>/<span className={kbd}>→</span> prev/next · <span className={kbd}>Esc</span> list
         </span>
       </div>
@@ -809,8 +874,14 @@ function AcceptAll({
     setLoadError(null);
     let list: QueueItem[] = [];
     try {
-      const data = await fetchQueue({ ...filterParams(filters), group, module: moduleId, limit: "200" });
-      list = data.items.filter((i) => i.suggestion?.strong && i.suggestion.answer !== i.key);
+      // The API serves at most API_MAX_LIMIT cards per call: page through the module.
+      let cursor: string | null = null;
+      for (let guard = 0; guard < 20; guard++) {
+        const data = await fetchQueue({ ...filterParams(filters), group, module: moduleId, limit: String(API_MAX_LIMIT), ...(cursor ? { cursor } : {}) });
+        list.push(...data.items.filter((i) => i.suggestion?.strong && i.suggestion.answer !== i.key && !list.some((x) => x.id === i.id)));
+        cursor = data.nextCursor;
+        if (!cursor) break;
+      }
     } catch (e) {
       setLoadError((e as Error).message);
     }
@@ -1057,8 +1128,10 @@ function QueueCard({
       if (item.proposal && !pdfBlocked) actions.one = () => void run({ action: "use_pdf" }, "use_pdf");
       actions.two = () => void run({ action: "keep_figure" }, "keep_figure");
     } else if (decision === "stem") {
-      if (reread !== null) actions.one = () => void run({ action: "use_pdf_text", question_text: reread }, "use_pdf_text");
-      else if (item.hasPdf) actions.one = () => void reextract();
+      // 1 only re-reads the PDF; saving the re-read text is a separate key (U),
+      // so pressing 1 twice can't replace the question text unseen.
+      if (reread === null && item.hasPdf) actions.one = () => void reextract();
+      if (reread !== null) actions.usePdfText = () => void run({ action: "use_pdf_text", question_text: reread }, "use_pdf_text");
     } else if (decision === "explanation") actions.one = () => void run({ action: "regen_explanation" }, "regen");
     else if (decision === "approve") actions.two = () => void run({ action: "approve" }, "approve");
   }
@@ -1268,7 +1341,7 @@ function QueueCard({
           <div className="flex gap-2">
             <button type="button" className={btnPrimary} disabled={disabled} onClick={() => void run({ action: "use_pdf_text", question_text: reread }, "use_pdf_text")}>
               {busy === "use_pdf_text" ? "Saving…" : "Use PDF text"}
-              {hint("1")}
+              {hint("U")}
             </button>
             <button type="button" className={btn} onClick={() => setReread(null)}>
               Discard
