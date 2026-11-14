@@ -10,7 +10,8 @@ import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLeng
 import TestsTableClient, { type TestRow } from "./TestsTableClient";
 import { readPublishSchedules, type PublishSchedule } from "@/lib/test-assign";
 
-async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
+// scheduleReadFailed: the scheduled-publish read failed (no schedules shown).
+async function getTests(viewerIsQa: boolean): Promise<{ rows: TestRow[]; scheduleReadFailed: boolean }> {
   const db = getServiceClient();
   const flLinks = await fullLengthLinksOrNone(db);
   const { data: tests } = await hideChildTests(scopeIds(db
@@ -23,7 +24,7 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     `), "id", await getQaTestIds(), viewerIsQa), new Set(flLinks.parentOf.keys()))
     .order("created_at", { ascending: false });
 
-  if (!tests || tests.length === 0) return [];
+  if (!tests || tests.length === 0) return { rows: [], scheduleReadFailed: false };
 
   const testIds = tests.map((t) => t.id);
 
@@ -75,12 +76,14 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
 
   const flSections = await fullLengthSourceNames(db, testIds.filter((id) => flLinks.childrenOf.has(id)));
   // Scheduled publishes (migration 0034; nothing before it's applied).
+  let scheduleReadFailed = false;
   const schedules = await readPublishSchedules(db, tests.filter((t) => t.status === "Draft").map((t) => t.id)).catch((e) => {
     console.error("[admin/tests] publish_at read", e);
+    scheduleReadFailed = true;
     return new Map<string, PublishSchedule>();
   });
 
-  return tests.map((t) => ({
+  const rows = tests.map((t) => ({
     id: t.id,
     test_name: t.test_name,
     status: t.status,
@@ -97,6 +100,7 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
       return s?.publishAt ? { publishAt: s.publishAt, error: s.error } : null;
     })(),
   }));
+  return { rows, scheduleReadFailed };
 }
 
 // Full-length SAT parents: the source test each section was built from
@@ -142,7 +146,7 @@ async function getAssignOptions(viewerIsQa: boolean) {
 
 export default async function TestsPage() {
   const viewerIsQa = (await getCurrentUser())?.isQa ?? false;
-  const [tests, assignOptions] = await Promise.all([getTests(viewerIsQa), getAssignOptions(viewerIsQa)]);
+  const [{ rows: tests, scheduleReadFailed }, assignOptions] = await Promise.all([getTests(viewerIsQa), getAssignOptions(viewerIsQa)]);
 
   return (
     <div className="space-y-6">
@@ -157,6 +161,12 @@ export default async function TestsPage() {
           Create Test
         </Link>
       </div>
+
+      {scheduleReadFailed && (
+        <div role="status" className="rounded-xl border border-status-warning/30 bg-status-warning/10 px-4 py-2 text-sm text-charcoal">
+          Couldn&rsquo;t load scheduled publish times, so they aren&rsquo;t shown below. Scheduled tests still publish on time; refresh to try again.
+        </div>
+      )}
 
       {tests.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-divider py-16 text-center space-y-3">

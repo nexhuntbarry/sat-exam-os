@@ -16,6 +16,8 @@ import PrintTestMenu from "./PrintTestMenu";
 import EditTestButton from "./EditTestButton";
 import RemoveStudentButton from "./RemoveStudentButton";
 import AssignDialog from "./AssignDialog";
+import ScheduleNote from "../ScheduleNote";
+import { readPublishSchedules } from "@/lib/test-assign";
 import { approvalCounts, isFullyApproved } from "../module-approval";
 import FullLengthSourcesCard from "./FullLengthSourcesCard";
 import AccommodationsCard from "./AccommodationsCard";
@@ -470,6 +472,17 @@ export default async function TestDetailPage({
       : []),
   ];
 
+  // A Draft's scheduled publish (migration 0034; none before it's applied).
+  const schedule =
+    test.status === "Draft"
+      ? await readPublishSchedules(getServiceClient(), [test.id])
+          .then((m) => m.get(test.id) ?? null)
+          .catch((e) => {
+            console.error("[admin/tests/detail] publish_at read", e);
+            return null;
+          })
+      : null;
+
   return (
     <div className="space-y-6">
       {/* 1. Header: name, one summary line, Assign (main) · Edit · More */}
@@ -499,6 +512,12 @@ export default async function TestDetailPage({
               <>
                 <span aria-hidden>·</span>
                 <span title={formatDateTime(test.due_date)}>Due {formatShortDateTime(test.due_date)}</span>
+              </>
+            )}
+            {schedule?.publishAt && (
+              <>
+                <span aria-hidden>·</span>
+                <ScheduleNote testId={test.id} publishAt={schedule.publishAt} error={schedule.error} className="text-xs" />
               </>
             )}
           </span>

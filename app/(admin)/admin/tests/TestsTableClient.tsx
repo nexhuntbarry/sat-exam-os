@@ -7,7 +7,7 @@ import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
 import type { ThHTMLAttributes } from "react";
 import { ChevronUp, ChevronDown, ChevronsUpDown, UserPlus } from "lucide-react";
-import { formatShortDate, formatShortDateTime } from "@/lib/datetime";
+import { formatShortDate } from "@/lib/datetime";
 import AssignDialog from "./[id]/AssignDialog";
 import {
   DataTable,
@@ -26,6 +26,7 @@ import {
 import { SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import { BulkStatusBar, TestStatusMenu } from "./TestStatusActions";
 import BulkAssignDialog from "./BulkAssignDialog";
+import ScheduleNote from "./ScheduleNote";
 
 interface AssignOptions {
   allTeachers: { id: string; display_name: string | null; email: string }[];
@@ -335,12 +336,7 @@ function TestsTable({
                   onChanged={onStatusChanged}
                 />
                 {test.status === "Draft" && test.schedule && (
-                  <div
-                    className={clsx("mt-1 text-[11px] whitespace-nowrap", test.schedule.error ? "text-status-error" : "text-soft-mute")}
-                    title={test.schedule.error ?? "Publishes automatically if it passes the publish check"}
-                  >
-                    {test.schedule.error ? "Scheduled publish failed" : `Publishes ${formatShortDateTime(test.schedule.publishAt)}`}
-                  </div>
+                  <ScheduleNote testId={test.id} publishAt={test.schedule.publishAt} error={test.schedule.error} className="mt-1" />
                 )}
               </Td>
               <Td priority="lg" className="text-mid-gray whitespace-normal" title={assignmentNames}>
