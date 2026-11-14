@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Printer, Download, FileSpreadsheet, Loader2 } from "lucide-react";
 import { fillersAfter } from "@/lib/print-duplex";
+import { BADGE_PATH, BADGE_VIEWBOX } from "@/lib/brand";
+import { WATERMARK_FILL, WATERMARK_OPACITY, WATERMARK_WIDTH } from "@/lib/print-watermark";
 
 interface Student {
   submissionId: string;
@@ -16,8 +18,10 @@ interface Student {
 // student per function call, 3 at a time) and the ZIP or combined PDF is
 // assembled here in the browser — so a big class shows progress and never
 // hits a single long-request timeout. Every PDF holds only what that
-// student may see (enforced server-side).
-export default function ResultsDownloadPanel({ testId }: { testId: string }) {
+// student may see (enforced server-side). Every page carries the Premier
+// watermark; admins can turn it off (wm=0 — the server ignores it from
+// anyone else).
+export default function ResultsDownloadPanel({ testId, canToggleWatermark = false }: { testId: string; canToggleWatermark?: boolean }) {
   const [testName, setTestName] = useState("results");
   const [students, setStudents] = useState<Student[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,6 +33,8 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
   // Combined PDF only (the ZIP's files never get blank pages).
   const [duplex, setDuplex] = useState(true);
   const [blanksAdded, setBlanksAdded] = useState<number | null>(null);
+  const [watermark, setWatermark] = useState(true);
+  const wmOff = canToggleWatermark && !watermark;
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failed, setFailed] = useState<string[]>([]);
 
@@ -50,7 +56,7 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
   const visible = (students ?? []).filter((s) => !cls || (s.className ?? "").split(", ").includes(cls));
   const chosen = visible.filter((s) => picked.has(s.submissionId));
   const query = (extra: Record<string, string>) =>
-    new URLSearchParams({ mode, ...(expl ? { expl: "1" } : {}), ...extra }).toString();
+    new URLSearchParams({ mode, ...(expl ? { expl: "1" } : {}), ...(wmOff ? { wm: "0" } : {}), ...extra }).toString();
 
   function toggleAll(on: boolean) {
     const next = new Set(picked);
@@ -131,6 +137,20 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
           if (fill[i]) {
             const { width, height } = out.getPage(out.getPageCount() - 1).getSize();
             const blank = out.addPage([width, height]);
+            // Same mark as the server-rendered pages (lib/print-watermark), drawn first so it sits behind the note.
+            if (!wmOff) {
+              const w = width * WATERMARK_WIDTH;
+              const scale = w / BADGE_VIEWBOX.width;
+              const gray = parseInt(WATERMARK_FILL.slice(1, 3), 16) / 255;
+              blank.drawSvgPath(BADGE_PATH, {
+                x: (width - w) / 2,
+                y: (height + BADGE_VIEWBOX.height * scale) / 2,
+                scale,
+                color: rgb(gray, gray, gray),
+                opacity: WATERMARK_OPACITY,
+                borderWidth: 0,
+              });
+            }
             blank.drawText(note, { x: (width - font.widthOfTextAtSize(note, 10)) / 2, y: height / 2, size: 10, font, color: rgb(0.33, 0.33, 0.33) });
           }
         }
@@ -194,6 +214,12 @@ export default function ResultsDownloadPanel({ testId }: { testId: string }) {
             <label className="flex items-center gap-2" title="Each student starts on a front side: a blank page follows a student with an odd number of pages">
               <input type="checkbox" checked={duplex} onChange={(e) => setDuplex(e.target.checked)} />
               Double-sided printing
+            </label>
+          )}
+          {canToggleWatermark && (
+            <label className="flex items-center gap-2" title="The Premier badge behind every page (teachers' printouts always have it)">
+              <input type="checkbox" checked={watermark} onChange={(e) => setWatermark(e.target.checked)} />
+              Watermark
             </label>
           )}
         </div>

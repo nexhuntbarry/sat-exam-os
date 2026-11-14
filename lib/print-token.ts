@@ -11,6 +11,8 @@ export interface PrintTicket {
   testId: string;
   subs: string[];
   opts: PrintOptions;
+  /** false = no watermark (an admin turned it off); absent = on. */
+  wm?: boolean;
   exp: number;
 }
 

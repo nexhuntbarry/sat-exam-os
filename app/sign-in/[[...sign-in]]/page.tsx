@@ -1,7 +1,7 @@
 'use client';
 
 import { SignIn } from "@clerk/nextjs";
-import Logo from "@/components/Logo";
+import { PremierLockup } from "@/components/brand/Premier";
 
 export default function SignInPage() {
   return (
@@ -10,8 +10,7 @@ export default function SignInPage() {
 
       <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-md">
         <div className="flex flex-col items-center gap-3">
-          <Logo size={48} />
-          <h1 className="text-xl font-semibold text-charcoal">SAT Exam OS</h1>
+          <PremierLockup heading />
         </div>
 
         <SignIn

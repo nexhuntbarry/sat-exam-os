@@ -6,6 +6,7 @@ import { confirmPrintWithMissing, waitForImages } from "@/lib/print-images";
 import { PrintPendingNotice } from "@/components/analytics/PrintButton";
 import { studentPageLabels } from "@/lib/print-duplex";
 import { makeTitleKeeper } from "@/lib/print-title";
+import { WATERMARK_CSS, watermarkSvg } from "@/lib/print-watermark";
 
 // Pages as sheets on screen; on paper, no blank sheet after the last page.
 const PREVIEW_CSS = `
@@ -52,6 +53,22 @@ function labelStudentPages(root: HTMLElement): number {
     }
   });
   return labels.filter((l) => l === null).length;
+}
+
+// The Premier watermark (lib/print-watermark) on every laid-out page,
+// blank filler pages included. Absolutely positioned inside each page's
+// sheet after layout, so page breaks and the page count can't change.
+function stampWatermarks(root: HTMLElement): void {
+  const svg = watermarkSvg();
+  const sheets = Array.from(root.querySelectorAll<HTMLElement>(".pagedjs_page > .pagedjs_sheet"));
+  for (const sheet of sheets) {
+    if (sheet.querySelector(":scope > .print-watermark")) continue;
+    const mark = document.createElement("div");
+    mark.className = "print-watermark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.innerHTML = svg;
+    sheet.prepend(mark);
+  }
 }
 
 export interface PreviewOption {
@@ -120,6 +137,7 @@ export default function PrintPreview({
   students,
   pdfUrl,
   duplex = false,
+  watermark = true,
   children,
 }: {
   title: string;
@@ -132,6 +150,8 @@ export default function PrintPreview({
   pdfUrl?: string;
   /** Double-sided printing is on: the status line says how many blank pages were added. */
   duplex?: boolean;
+  /** The Premier watermark on every page (only admins can turn it off; decided server-side). */
+  watermark?: boolean;
   children: React.ReactNode;
 }) {
   const sourceRef = useRef<HTMLDivElement>(null);
@@ -203,6 +223,8 @@ export default function PrintPreview({
         const allFailed = paged.failed;
         setFailed(allFailed);
         setBlanks(labelStudentPages(targetRef.current!));
+        if (watermark) stampWatermarks(targetRef.current!);
+        document.documentElement.dataset.printWatermark = watermark ? "on" : "off";
         setPages(flow.total);
         setPhase("ready");
         // Read by the server PDF renderer (headless Chromium) and the nightly check.
@@ -218,7 +240,7 @@ export default function PrintPreview({
         setPhase("error");
       }
     })();
-  }, [pageCss]);
+  }, [pageCss, watermark]);
 
   function setParam(param: string, value: string | null) {
     const url = new URL(window.location.href);
@@ -408,6 +430,13 @@ export default function PrintPreview({
 
       {/* Preview chrome, not part of the paginated document. */}
       <style>{PREVIEW_CSS}</style>
+      {watermark && (
+        <>
+          <style>{WATERMARK_CSS}</style>
+          {/* Only for printing the plain document (see WATERMARK_CSS). */}
+          <div className="print-watermark-fallback" aria-hidden="true" dangerouslySetInnerHTML={{ __html: watermarkSvg() }} />
+        </>
+      )}
       {/* Source: hidden; its figures load here first. */}
       <div ref={sourceRef} className="print-source" hidden>
         <PrintPendingNotice />

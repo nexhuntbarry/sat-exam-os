@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { getServiceClient } from "@/lib/supabase";
-import Logo from "@/components/Logo";
+import { PremierLockup } from "@/components/brand/Premier";
 import ProfileForm from "./ProfileForm";
 
 export default async function RegisterProfilePage() {
@@ -52,8 +52,7 @@ export default async function RegisterProfilePage() {
 
       <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-md">
         <div className="flex flex-col items-center gap-3">
-          <Logo size={48} />
-          <h1 className="text-xl font-semibold text-charcoal">SAT Exam OS</h1>
+          <PremierLockup heading />
           <p className="text-mid-gray text-sm">Student Self-Registration</p>
         </div>
 

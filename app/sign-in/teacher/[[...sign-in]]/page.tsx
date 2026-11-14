@@ -2,7 +2,7 @@
 
 import { SignIn } from "@clerk/nextjs";
 import Link from "next/link";
-import Logo from "@/components/Logo";
+import { PremierLockup } from "@/components/brand/Premier";
 
 const NEXT = "/register/role?as=teacher";
 
@@ -20,9 +20,8 @@ export default function TeacherSignInPage() {
 
       <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-md">
         <div className="flex flex-col items-center gap-3">
-          <Logo size={48} />
+          <PremierLockup />
           <h1 className="text-xl font-semibold text-charcoal">Teacher Sign In</h1>
-          <p className="text-mid-gray text-sm">SAT Exam OS</p>
           <p className="text-mid-gray text-sm text-center">
             New teacher?{" "}
             <Link href="/register/teacher" className="text-warm-coral-text hover:text-warm-coral-dark font-semibold underline">

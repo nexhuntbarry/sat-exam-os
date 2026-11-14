@@ -326,7 +326,7 @@ async function FullLengthResultsPage({
         </div>
       </div>
 
-      <ResultsDownloadPanel testId={id} />
+      <ResultsDownloadPanel testId={id} canToggleWatermark={user.role === "admin"} />
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard label="Total Assigned" value={stats.totalAssigned} color="default" />
@@ -427,7 +427,7 @@ export default async function TestResultsPage({
         </div>
       </div>
 
-      <ResultsDownloadPanel testId={id} />
+      <ResultsDownloadPanel testId={id} canToggleWatermark={user.role === "admin"} />
 
       {/* Summary stat cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">

@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
-import Logo from "@/components/Logo";
+import { PremierLockup } from "@/components/brand/Premier";
 import RoleConfirmCard from "./RoleConfirmCard";
 
 type Row = { role: string | null; accountStatus: string };
@@ -91,8 +91,7 @@ export default async function RegisterRolePage({
       <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 rounded-full opacity-15 blur-3xl bg-warm-coral pointer-events-none" />
       <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-md">
         <div className="flex flex-col items-center gap-3">
-          <Logo size={48} />
-          <h1 className="text-xl font-semibold text-charcoal">SAT Exam OS</h1>
+          <PremierLockup heading />
         </div>
         {row ? (
           <RoleConfirmCard />

@@ -313,7 +313,7 @@ export default async function TestSubmissionsPage({
         )}
       </div>
 
-      {attempts.length > 0 && <ResultsDownloadPanel testId={test.id} />}
+      {attempts.length > 0 && <ResultsDownloadPanel testId={test.id} canToggleWatermark />}
 
       <LiveProgressProvider endpoint={liveEndpoint} initial={liveSnapshot}>
       <LiveStatusBar />
