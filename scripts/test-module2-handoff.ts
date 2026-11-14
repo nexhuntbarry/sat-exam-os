@@ -184,7 +184,21 @@ async function main() {
     check("recovery creates the missing Module 2", !!rec && "id" in rec && rec.created && m2s.length === 1 && m2s[0].id === rec.id);
     check(`recovery routes by the Module 1 score (${gd.percentage}% → ${wantTrack})`, m2s[0]?.adaptive_track === wantTrack, m2s[0]?.adaptive_track);
     const rec2 = await recoverModule2(db, adaptive.id, S2, handoffTest);
-    check("recovery again → nothing to do", rec2 === null && (await module2Rows(m1d.session_id!)).length === 1);
+    check("recovery again → hands back the open Module 2, no insert",
+      !!rec && "id" in rec && !!rec2 && "id" in rec2 && rec2.id === rec.id && rec2.created === false &&
+      (await module2Rows(m1d.session_id!)).length === 1, rec2);
+    // An existing open Module 2 is handed back even > 24 h past due (the
+    // block only gates creating one).
+    await db.from("submissions").update({ submitted_at: new Date(Date.now() - 30 * 3_600_000).toISOString() }).eq("id", m1d.id);
+    const recLate = await recoverModule2(db, adaptive.id, S2, { ...handoffTest, due_date: new Date(Date.now() - 48 * 3_600_000).toISOString() });
+    check("recovery > 24 h past due with Module 2 open → hands it back, not blocked",
+      !!rec && "id" in rec && !!recLate && "id" in recLate && recLate.id === rec.id && recLate.created === false &&
+      (await module2Rows(m1d.session_id!)).length === 1, recLate);
+    // A finished Module 2: nothing to recover.
+    if (rec && "id" in rec) await db.from("submissions").update({ status: "Submitted" }).eq("id", rec.id);
+    const recDone = await recoverModule2(db, adaptive.id, S2, handoffTest);
+    check("recovery after Module 2 is Submitted → nothing, no insert",
+      recDone === null && (await module2Rows(m1d.session_id!)).length === 1, recDone);
 
     // 6. the per-track unique index the handoff relies on
     const { error: dupErr } = await db.from("submissions").insert({

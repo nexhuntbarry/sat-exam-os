@@ -257,10 +257,13 @@ export async function recoverModule2(
   if (m2.length > 0) {
     // Already there: usually a concurrent handoff/recovery (another tab's
     // "Continue to Module 2") created it after the caller looked for an
-    // open row. Hand that one back while it is still open (the oldest, as
-    // module2Rows picks); a finished Module 2 means nothing to recover.
-    const open = [...m2].reverse().find((r) => r.status === "In Progress");
-    return open ? { id: open.id as string, created: false } : null;
+    // open row. Hand back the session's Module 2 — the oldest by
+    // started_at, then id, as module2Rows picks — only while it is still
+    // open; a finished one means nothing to recover.
+    const oldest = [...m2].sort((a, b) =>
+      String(a.started_at).localeCompare(String(b.started_at)) || String(a.id).localeCompare(String(b.id)),
+    )[0];
+    return oldest.status === "In Progress" ? { id: oldest.id as string, created: false } : null;
   }
   const blocked = module2RecoveryBlock(test, (m1.submitted_at as string | null) ?? null);
   if (blocked) return { blocked };

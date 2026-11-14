@@ -68,7 +68,7 @@ async function getActiveSubmission(
           // "Continue to Module 2") may have opened Module 2 since the read
           // above: look again before bouncing. The signal skips the memoized
           // first result of this identical query.
-          ({ data: submission } = await db
+          const reread = await db
             .from("submissions")
             .select(
               "id, test_id, answers, status, started_at, metadata, module_id, adaptive_track, session_id",
@@ -79,7 +79,9 @@ async function getActiveSubmission(
             .order("started_at", { ascending: false })
             .limit(1)
             .abortSignal(new AbortController().signal)
-            .maybeSingle());
+            .maybeSingle();
+          if (reread.error) console.error("[take] re-read", reread.error.message);
+          submission = reread.data;
         }
       } catch (e) {
         // The test page shows "Continue to Module 2", which retries.
