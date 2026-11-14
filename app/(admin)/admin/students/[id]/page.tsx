@@ -24,6 +24,7 @@ import {
 import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 import EditStudentButton from "./EditStudentButton";
 import StudentActionsMenu from "./StudentActionsMenu";
+import StudentTestsActions, { type ClassChoice } from "./StudentTestsActions";
 import CheckProfileBadge from "./CheckProfileBadge";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
@@ -388,6 +389,34 @@ export default async function AdminStudentDetailPage({
       alreadyIn: assignments.has(t.id as string),
     };
   });
+  // Tests card "Add to class": how many of each class's tests (not Closed,
+  // on this side) the student would newly get.
+  const openPickerIds = (pickerTests ?? []).filter((t) => t.status !== "Closed").map((t) => t.id as string);
+  const { data: pickerAssignments } = openPickerIds.length > 0
+    ? await db.from("test_assignments").select("test_id, class_group_ids").in("test_id", openPickerIds)
+    : { data: [] as { test_id: string; class_group_ids: string[] | null }[] };
+  const newTestsByClass = new Map<string, number>();
+  for (const a of pickerAssignments ?? []) {
+    if (assignments.has(a.test_id as string)) continue;
+    for (const cg of ((a.class_group_ids ?? []) as string[])) newTestsByClass.set(cg, (newTestsByClass.get(cg) ?? 0) + 1);
+  }
+  const classChoices: ClassChoice[] = classPickerItems.map((c) => ({
+    id: c.id,
+    name: c.label,
+    meta: c.meta,
+    alreadyIn: Boolean(c.alreadyIn),
+    newTests: newTestsByClass.get(c.id) ?? 0,
+  }));
+  const testsActions = (compact: boolean) => (
+    <StudentTestsActions
+      studentId={student.id}
+      studentName={student.display_name ?? student.email}
+      alreadyAssigned={Array.from(assignments.keys())}
+      classes={classChoices}
+      suspended={student.account_status === "suspended"}
+      compact={compact}
+    />
+  );
   // Full module names for the Test column ("M1: [Test #25] … Module 1").
   const moduleSlots = (t: TestMeta | undefined): { label: string; id: string | null }[] =>
     !t
@@ -826,13 +855,15 @@ export default async function AdminStudentDetailPage({
 
       {/* Submissions table */}
       <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-divider">
+        <div className="px-5 py-4 border-b border-divider flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-charcoal font-semibold">Tests</h2>
+          {testRows.length > 0 && testsActions(true)}
         </div>
         <TestsTable
           rows={testRows}
           studentId={id}
           studentName={student.display_name ?? student.email}
+          emptyActions={testsActions(false)}
         />
       </div>
 

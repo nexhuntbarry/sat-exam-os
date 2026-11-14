@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useTransition } from "react";
+import { Fragment, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, Eye, FileText, UserMinus, X } from "lucide-react";
 import Link from "next/link";
@@ -246,10 +246,13 @@ export default function TestsTable({
   rows,
   studentId,
   studentName,
+  emptyActions,
 }: {
   rows: TestRow[];
   studentId: string;
   studentName: string;
+  /** Buttons under the empty state (Assign test / Add to class). */
+  emptyActions?: ReactNode;
 }) {
   const t = useTranslations("studentDetail");
   const tv = useTranslations("answerVisibility");
@@ -267,9 +270,10 @@ export default function TestsTable({
 
   if (rows.length === 0) {
     return (
-      <p className="py-12 text-center text-soft-mute text-sm">
-        {t("noTests")}
-      </p>
+      <div className="py-12 text-center space-y-3">
+        <p className="text-soft-mute text-sm">{t("noTests")}</p>
+        {emptyActions}
+      </div>
     );
   }
 

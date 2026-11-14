@@ -482,12 +482,15 @@ export function BulkStatusBar({
   onClear,
   onChanged,
   apiBase = ADMIN_TESTS_API,
+  extraActions,
 }: {
   rows: BulkRow[];
   onClear: () => void;
   onChanged: (changes: { id: string; status: TestStatus }[]) => void;
   /** Where the status routes live: /api/admin/tests or /api/teacher/tests. */
   apiBase?: string;
+  /** More bulk buttons after Publish… / Close… (admin list: Assign…). */
+  extraActions?: ReactNode;
 }) {
   const [action, setAction] = useState<"publish" | "close" | null>(null);
   const [lines, setLines] = useState<BulkLine[]>([]);
@@ -600,6 +603,7 @@ export function BulkStatusBar({
         >
           <Lock size={13} /> Close…
         </button>
+        {extraActions}
         <button type="button" onClick={onClear} className="ml-auto text-xs text-soft-mute hover:text-charcoal">
           Clear selection
         </button>

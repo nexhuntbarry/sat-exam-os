@@ -6,8 +6,8 @@ import Link from "next/link";
 import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
 import type { ThHTMLAttributes } from "react";
-import { ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
-import { formatShortDate } from "@/lib/datetime";
+import { ChevronUp, ChevronDown, ChevronsUpDown, UserPlus } from "lucide-react";
+import { formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import AssignDialog from "./[id]/AssignDialog";
 import {
   DataTable,
@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/data-table";
 import { SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import { BulkStatusBar, TestStatusMenu } from "./TestStatusActions";
+import BulkAssignDialog from "./BulkAssignDialog";
 
 interface AssignOptions {
   allTeachers: { id: string; display_name: string | null; email: string }[];
@@ -76,6 +77,8 @@ export interface TestRow {
   submissions: { done: number; total: number };
   /** Full-length SAT parent: source test name per section (null = deleted). */
   fullLength?: { rw: string | null; math: string | null } | null;
+  /** Draft with a scheduled publish (tests.publish_at); error = it was refused. */
+  schedule?: { publishAt: string; error: string | null } | null;
 }
 
 type SortKey = "name" | "module" | "status" | "finished" | "due_date" | "created_at";
@@ -331,6 +334,14 @@ function TestsTable({
                   status={test.status as TestStatus}
                   onChanged={onStatusChanged}
                 />
+                {test.status === "Draft" && test.schedule && (
+                  <div
+                    className={clsx("mt-1 text-[11px] whitespace-nowrap", test.schedule.error ? "text-status-error" : "text-soft-mute")}
+                    title={test.schedule.error ?? "Publishes automatically if it passes the publish check"}
+                  >
+                    {test.schedule.error ? "Scheduled publish failed" : `Publishes ${formatShortDateTime(test.schedule.publishAt)}`}
+                  </div>
+                )}
               </Td>
               <Td priority="lg" className="text-mid-gray whitespace-normal" title={assignmentNames}>
                 {assignments}
@@ -436,6 +447,7 @@ export default function TestsTableClient({
     [serverTests, overrides],
   );
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkAssigning, setBulkAssigning] = useState(false);
   const onSelect = useCallback((ids: string[], on: boolean) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -469,7 +481,33 @@ export default function TestsTableClient({
   return (
     <>
       {selectedRows.length > 0 && (
-        <BulkStatusBar rows={selectedRows} onClear={() => setSelected(new Set())} onChanged={onStatusChanged} />
+        <BulkStatusBar
+          rows={selectedRows}
+          onClear={() => setSelected(new Set())}
+          onChanged={onStatusChanged}
+          extraActions={
+            <button
+              type="button"
+              onClick={() => setBulkAssigning(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-divider px-2.5 py-1 text-xs font-medium text-charcoal hover:bg-light-bg"
+            >
+              <UserPlus size={13} /> Assign…
+            </button>
+          }
+        />
+      )}
+      {bulkAssigning && selectedRows.length > 0 && (
+        <BulkAssignDialog
+          rows={selectedRows}
+          allClassGroups={assignOptions.allClassGroups}
+          allTeachers={assignOptions.allTeachers}
+          onClose={() => setBulkAssigning(false)}
+          onDone={() => {
+            setBulkAssigning(false);
+            setSelected(new Set());
+            router.refresh();
+          }}
+        />
       )}
       {activeTests.length > 0 && (
         <TestsTable

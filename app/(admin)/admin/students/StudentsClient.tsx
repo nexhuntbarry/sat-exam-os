@@ -9,6 +9,7 @@ import { StatusBadge, studentStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate, formatShortDateTime } from "@/lib/datetime";
 import { changeStudentStatus } from "./[id]/StudentStatusButton";
 import DeleteStudentButton from "./[id]/DeleteStudentButton";
+import AssignTestsDialog from "./AssignTestsDialog";
 import {
   ColumnsPicker,
   DataRow,
@@ -390,149 +391,6 @@ function AddToClassModal({
               className="px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-50 transition-colors"
             >
               {loading ? "Adding…" : "Add"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-    </Portal>
-  );
-}
-
-function AssignTestModal({
-  studentIds,
-  studentNames,
-  onClose,
-  onDone,
-}: {
-  studentIds: string[];
-  studentNames: string[];
-  onClose: () => void;
-  onDone: () => void;
-}) {
-  const [search, setSearch] = useState("");
-  const [tests, setTests] = useState<{ id: string; name: string; status: string | null; section: string | null }[] | null>(null);
-  const [fetchError, setFetchError] = useState<string | null>(null);
-  const [selectedTestId, setSelectedTestId] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    fetch("/api/admin/tests?list=1")
-      .then((r) => r.json())
-      .then((j) => {
-        const list = Array.isArray(j.data) ? j.data : [];
-        setTests(
-          list.map((t: { id: string; test_name: string; status: string | null; modules?: { section?: string } | { section?: string }[] | null }) => ({
-            id: t.id,
-            name: t.test_name,
-            status: t.status,
-            section: Array.isArray(t.modules) ? t.modules[0]?.section ?? null : (t.modules as { section?: string } | null)?.section ?? null,
-          }))
-        );
-      })
-      .catch(() => setFetchError("Failed to load tests"));
-  }, []);
-
-  const q = search.toLowerCase();
-  const filtered = (tests ?? []).filter(
-    (t) => !q || t.name.toLowerCase().includes(q),
-  );
-
-  async function handleAssign() {
-    if (!selectedTestId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/admin/tests/${selectedTestId}/add-students`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ studentIds }),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setResult(`Assigned to ${studentIds.length} student${studentIds.length !== 1 ? "s" : ""}`);
-        setTimeout(onDone, 900);
-      } else {
-        setError((j as { error?: string }).error ?? "Failed");
-      }
-    } catch {
-      setError("Network error");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  return (
-    <Portal>
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
-      <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl flex flex-col max-h-[80vh]">
-        <div className="flex items-center justify-between p-5 border-b border-divider">
-          <div>
-            <h2 className="font-bold text-charcoal text-lg flex items-center gap-2">
-              <ClipboardList size={16} />
-              Assign test
-            </h2>
-            <p className="text-soft-mute text-xs mt-0.5">
-              {studentIds.length === 1 ? studentNames[0] : `${studentIds.length} students`}
-            </p>
-          </div>
-          <button onClick={onClose} className="text-soft-mute hover:text-charcoal"><X size={20} /></button>
-        </div>
-        <div className="p-3 border-b border-divider">
-          <div className="relative">
-            <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-soft-mute" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search tests…"
-              autoFocus
-              className="w-full pl-9 pr-3 py-2 bg-light-bg border border-divider rounded-xl text-sm text-charcoal placeholder:text-soft-mute focus:outline-none focus:border-warm-coral/50"
-            />
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
-          {tests === null && !fetchError && (
-            <p className="text-center text-soft-mute text-sm py-6">Loading…</p>
-          )}
-          {fetchError && (
-            <p className="text-center text-status-error text-sm py-6">{fetchError}</p>
-          )}
-          {tests !== null && filtered.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setSelectedTestId(t.id)}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
-                selectedTestId === t.id ? "bg-warm-coral/15 text-charcoal" : "hover:bg-light-bg text-charcoal"
-              }`}
-            >
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate">{t.name}</div>
-                {(t.status || t.section) && (
-                  <div className="text-xs text-soft-mute">{[t.section, t.status].filter(Boolean).join(" · ")}</div>
-                )}
-              </div>
-              {selectedTestId === t.id && <Check size={14} className="text-warm-coral shrink-0" />}
-            </button>
-          ))}
-          {tests !== null && filtered.length === 0 && (
-            <p className="text-center text-soft-mute text-sm py-6">{tests.length === 0 ? "No tests." : "No tests match."}</p>
-          )}
-        </div>
-        <div className="p-5 border-t border-divider flex items-center justify-between gap-3">
-          <span className="text-xs">
-            {error && <span className="text-status-error">{error}</span>}
-            {result && <span className="text-status-success">{result}</span>}
-          </span>
-          <div className="flex gap-2">
-            <button onClick={onClose} className="px-4 py-2 rounded-xl border border-divider text-mid-gray text-sm transition-colors hover:text-charcoal">Cancel</button>
-            <button
-              onClick={handleAssign}
-              disabled={!selectedTestId || loading}
-              className="px-4 py-2 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm disabled:opacity-50 transition-colors"
-            >
-              {loading ? "Assigning…" : "Assign"}
             </button>
           </div>
         </div>
@@ -954,7 +812,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
       )}
 
       {bulkModal === "assignTest" && (
-        <AssignTestModal
+        <AssignTestsDialog
           studentIds={modalStudentIds}
           studentNames={modalStudentNames}
           onClose={closeBulkModal}
@@ -1040,7 +898,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-divider text-mid-gray hover:text-charcoal text-xs font-medium transition-colors"
           >
             <ClipboardList size={12} />
-            Assign test
+            Assign tests
           </button>
           <button
             onClick={() => openBulkModal("removeFromClass")}
@@ -1170,7 +1028,7 @@ export default function StudentsClient({ students, classGroups }: Props) {
                 onSelect: () => openBulkModal("addToClass", student),
               },
               {
-                label: "Assign test…",
+                label: "Assign tests…",
                 icon: ClipboardList,
                 onSelect: () => openBulkModal("assignTest", student),
               },

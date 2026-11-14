@@ -9,6 +9,7 @@ import { Portal } from "@/components/ui/Portal";
 import SearchablePicker, { type PickerItem } from "@/components/ui/SearchablePicker";
 import ChangeRoleDialog from "@/components/account/ChangeRoleDialog";
 import DeleteStudentButton from "./DeleteStudentButton";
+import AssignTestsDialog from "../AssignTestsDialog";
 import { changeStudentStatus } from "./StudentStatusButton";
 
 interface Props {
@@ -18,7 +19,7 @@ interface Props {
   status: string;
   /** Classes on the viewer's side; alreadyIn = current class_group_members. */
   classItems: PickerItem[];
-  /** Tests on the viewer's side; alreadyIn = already assigned to the student. */
+  /** Tests on the viewer's side; alreadyIn = already assigned (greyed in the Assign tests dialog). */
   testItems: PickerItem[];
   /** Viewer is a super admin → "Change role" also offers Admin. */
   isSuperAdmin: boolean;
@@ -85,18 +86,6 @@ export default function StudentActionsMenu({ studentId, studentName, email, stat
     return result;
   }
 
-  async function assignTests(ids: string[]) {
-    const result = await postEach(ids, testItems, (testId) =>
-      fetch(`/api/admin/tests/${testId}/add-students`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ studentIds: [studentId] }),
-      }),
-    );
-    startTransition(() => router.refresh());
-    if (result.ok) setPicker(null);
-    return result;
-  }
 
   return (
     <span className="inline-flex items-center gap-1">
@@ -135,14 +124,26 @@ export default function StudentActionsMenu({ studentId, studentName, email, stat
           onClose={() => setChangingRole(false)}
         />
       )}
-      {picker && (
+      {picker === "test" && (
+        <AssignTestsDialog
+          studentIds={[studentId]}
+          studentNames={[studentName]}
+          alreadyAssigned={testItems.filter((i) => i.alreadyIn).map((i) => i.id)}
+          onClose={() => setPicker(null)}
+          onDone={() => {
+            setPicker(null);
+            startTransition(() => router.refresh());
+          }}
+        />
+      )}
+      {picker === "class" && (
         <Portal>
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
             <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
               <div className="flex items-center justify-between p-5 border-b border-divider">
                 <div>
                   <h2 className="font-bold text-charcoal text-lg">
-                    {(picker === "class" ? t("addToClass") : t("assignTest")).replace(/…$/, "")}
+                    {t("addToClass").replace(/…$/, "")}
                   </h2>
                   <p className="text-soft-mute text-xs mt-0.5">{studentName}</p>
                 </div>
@@ -151,22 +152,13 @@ export default function StudentActionsMenu({ studentId, studentName, email, stat
                 </button>
               </div>
               <div className="p-5 min-h-[18rem]">
-                {picker === "class" ? (
-                  <SearchablePicker
-                    items={classItems}
-                    noun="class"
-                    nounPlural="classes"
-                    alreadyInLabel="already a member"
-                    onAdd={addToClasses}
-                  />
-                ) : (
-                  <SearchablePicker
-                    items={testItems}
-                    noun="test"
-                    alreadyInLabel="already assigned"
-                    onAdd={assignTests}
-                  />
-                )}
+                <SearchablePicker
+                  items={classItems}
+                  noun="class"
+                  nounPlural="classes"
+                  alreadyInLabel="already a member"
+                  onAdd={addToClasses}
+                />
               </div>
             </div>
           </div>

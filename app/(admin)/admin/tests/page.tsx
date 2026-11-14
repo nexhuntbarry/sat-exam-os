@@ -8,6 +8,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, scopeIds, scopeUsers } from "@/lib/qa";
 import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinksOrNone, hideChildTests } from "@/lib/full-length";
 import TestsTableClient, { type TestRow } from "./TestsTableClient";
+import { readPublishSchedules, type PublishSchedule } from "@/lib/test-assign";
 
 async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
   const db = getServiceClient();
@@ -73,6 +74,11 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
   }
 
   const flSections = await fullLengthSourceNames(db, testIds.filter((id) => flLinks.childrenOf.has(id)));
+  // Scheduled publishes (migration 0034; nothing before it's applied).
+  const schedules = await readPublishSchedules(db, tests.filter((t) => t.status === "Draft").map((t) => t.id)).catch((e) => {
+    console.error("[admin/tests] publish_at read", e);
+    return new Map<string, PublishSchedule>();
+  });
 
   return tests.map((t) => ({
     id: t.id,
@@ -86,6 +92,10 @@ async function getTests(viewerIsQa: boolean): Promise<TestRow[]> {
     assignment: assignMap[t.id] ?? { teacherIds: [], studentIds: [], classGroupIds: [], studentNames: [] },
     submissions: subMap[t.id] ?? { done: 0, total: 0 },
     fullLength: flLinks.childrenOf.has(t.id) ? flSections.get(t.id) ?? { rw: null, math: null } : null,
+    schedule: (() => {
+      const s = schedules.get(t.id);
+      return s?.publishAt ? { publishAt: s.publishAt, error: s.error } : null;
+    })(),
   }));
 }
 
