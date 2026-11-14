@@ -41,6 +41,7 @@ import { keyDoubtNote } from "@/lib/key-doubt";
 import { parseBlobUrl } from "@/lib/blob-url";
 import { highResFigure } from "@/lib/figure-hires";
 import { keyLetters } from "@/lib/explanation-consistency";
+import { PROBE_OVERRIDE_PREFIX } from "@/lib/answer-key-merge";
 
 type DbClient = ReturnType<typeof getServiceClient>;
 
@@ -1029,7 +1030,11 @@ export async function explainOfficialAndPersist(
             // names WHAT to fix (e.g. the PDF's real choices).
             parsing_notes: keep
               ? [...parts, ...(conflict || keyProblem || draftProblem ? [] : ["Explanation matches official answer; still needs review (figure/choices)"])].join("; ")
-              : "Answer = official key; explanation matches (verified)",
+              : [
+                  // Where the key came from (the PDF ✓ over the AI probe) outlives approval.
+                  ...(q.parsing_notes ?? "").split(";").map((x) => x.trim()).filter((x) => x.startsWith(PROBE_OVERRIDE_PREFIX)),
+                  "Answer = official key; explanation matches (verified)",
+                ].join("; "),
             updated_at: new Date().toISOString(),
           };
           if (res.ok && !conflict && !draftProblem) {

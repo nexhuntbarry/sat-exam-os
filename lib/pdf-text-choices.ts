@@ -23,8 +23,10 @@ export type ChoiceLabel = "A" | "B" | "C" | "D";
 export interface PdfTextQuestion {
   number: number;
   choices: { label: ChoiceLabel; text: string }[];
-  /** Label of the choice marked with a checkmark glyph, if any. */
+  /** Label of the choice marked with a checkmark glyph; null when none or more than one is. */
   checked: ChoiceLabel | null;
+  /** More than one choice carries a checkmark (then `checked` is null). */
+  multi?: boolean;
   /** 1-indexed page where the stem ("N. …") starts. */
   stemPage: number;
   /** 1-indexed page where choice D ends (differs from stemPage on a page break). */
@@ -54,7 +56,8 @@ const HEADER_FOOTER = [
   /^\d+\s*\/\s*\d+$/,
 ];
 
-interface Line {
+/** One visual line of the text layer (header/footer rows already dropped). */
+export interface PdfLine {
   page: number;
   text: string;
   checked: boolean;
@@ -88,10 +91,10 @@ export async function loadPdfDocument(pdfBase64: string): Promise<{ doc: any; pd
   return { doc, pdfjs };
 }
 
-async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasTextLayer: boolean }> {
+async function loadPdfLines(pdfBase64: string): Promise<{ lines: PdfLine[]; hasTextLayer: boolean }> {
   const { doc } = await loadPdfDocument(pdfBase64);
 
-  const lines: Line[] = [];
+  const lines: PdfLine[] = [];
   let textChars = 0;
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
@@ -131,15 +134,21 @@ async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasText
 /** Walk the text layer and bind each numbered stem to the A–D choices that follow it. */
 export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfTextChoices> {
   const { lines, hasTextLayer } = await loadPdfLines(pdfBase64);
+  if (!hasTextLayer) return { byNumber: new Map(), questionsSeen: 0, hasTextLayer };
+  return { ...bindChoiceLines(lines), hasTextLayer };
+}
+
+/** The walk behind extractChoicesFromPdfText, on lines already read (pure; unit-tested). */
+export function bindChoiceLines(lines: PdfLine[]): { byNumber: Map<number, PdfTextQuestion>; questionsSeen: number } {
   const byNumber = new Map<number, PdfTextQuestion>();
-  if (!hasTextLayer) return { byNumber, questionsSeen: 0, hasTextLayer };
 
   interface Cur {
     number: number;
     stemPage: number;
     choicesPage: number;
     choices: { label: ChoiceLabel; text: string }[];
-    checked: ChoiceLabel | null;
+    /** Every label a checkmark landed on (more than one → no answer). */
+    ticks: Set<ChoiceLabel>;
     broken: boolean;
     /** Started from a bare number box; the "N." stem line is still to come. */
     awaitingStem: boolean;
@@ -158,7 +167,8 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
       byNumber.set(cur.number, {
         number: cur.number,
         choices: cur.choices.map((c) => ({ label: c.label, text: c.text.trim() })),
-        checked: cur.checked,
+        checked: cur.ticks.size === 1 ? [...cur.ticks][0] : null,
+        multi: cur.ticks.size > 1,
         stemPage: cur.stemPage,
         choicesPage: cur.choicesPage,
       });
@@ -182,7 +192,7 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
       const n = Number(qm[1]);
       if (lastNum === 0 ? n >= 1 : n > lastNum && n <= lastNum + 2) {
         flush();
-        cur = { number: n, stemPage: line.page, choicesPage: line.page, choices: [], checked: null, broken: false, awaitingStem: false };
+        cur = { number: n, stemPage: line.page, choicesPage: line.page, choices: [], ticks: new Set(), broken: false, awaitingStem: false };
         lastNum = n;
         questionsSeen++;
         continue;
@@ -195,10 +205,10 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
     if (/^\d{1,3}$/.test(t) && Number(t) === lastNum + 1) {
       const done = !cur || (cur.choices.length === 4 && !!cur.choices[3].text);
       if (done) {
-        if (line.checked && cur && cur.choices.length > 0) cur.checked = cur.choices[cur.choices.length - 1].label;
+        if (line.checked && cur && cur.choices.length > 0) cur.ticks.add(cur.choices[cur.choices.length - 1].label);
         flush();
         const n = Number(t);
-        cur = { number: n, stemPage: line.page, choicesPage: line.page, choices: [], checked: null, broken: false, awaitingStem: true };
+        cur = { number: n, stemPage: line.page, choicesPage: line.page, choices: [], ticks: new Set(), broken: false, awaitingStem: true };
         lastNum = n;
         questionsSeen++;
         continue;
@@ -215,13 +225,13 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
     if (solo && expected && solo[1] === expected) {
       c.choices.push({ label: expected, text: "" });
       c.choicesPage = line.page;
-      if (line.checked) c.checked = expected;
+      if (line.checked) c.ticks.add(expected);
       continue;
     }
     if (inline && expected && inline[1] === expected) {
       c.choices.push({ label: expected, text: inline[2] });
       c.choicesPage = line.page;
-      if (line.checked) c.checked = expected;
+      if (line.checked) c.ticks.add(expected);
       continue;
     }
     if (solo && c.choices.length > 0 && solo[1] !== expected) {
@@ -240,10 +250,10 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
       last.text = last.text ? `${last.text} ${t}` : t;
       c.choicesPage = line.page;
     }
-    if (line.checked) c.checked = last.label;
+    if (line.checked) c.ticks.add(last.label);
   }
   flush();
-  return { byNumber, questionsSeen, hasTextLayer };
+  return { byNumber, questionsSeen };
 }
 
 /**
@@ -281,7 +291,11 @@ export interface LabelTick {
  * questions both bound (2026-11-14 key-shift scan).
  */
 export async function readLabelTicks(pdfBase64: string): Promise<{ byNumber: Map<number, LabelTick> }> {
-  const { lines } = await loadPdfLines(pdfBase64);
+  return bindLabelTickLines((await loadPdfLines(pdfBase64)).lines);
+}
+
+/** The walk behind readLabelTicks, on lines already read (pure; unit-tested). */
+export function bindLabelTickLines(lines: PdfLine[]): { byNumber: Map<number, LabelTick> } {
   const byNumber = new Map<number, LabelTick>();
   let cur: { number: number; labels: number; ticks: Set<ChoiceLabel>; stemPage: number; choicesPage: number } | null = null;
   let lastNum = 0;

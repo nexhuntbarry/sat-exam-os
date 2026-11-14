@@ -47,7 +47,7 @@ import {
   type LabelTick,
   type PdfTextChoices,
 } from "@/lib/pdf-text-choices";
-import { answerKeySourceOf, deterministicTicks, mergeTicksIntoKey } from "@/lib/answer-key-merge";
+import { answerKeySourceOf, deterministicTicks, mergeTicksIntoKey, type TickEvidence } from "@/lib/answer-key-merge";
 import { autoPromoteModule } from "@/lib/auto-promote";
 import { parsePrintoutPdf } from "@/lib/printout-parser";
 import type { ParsedQuestion } from "@/lib/ai/parse-pdf";
@@ -171,15 +171,19 @@ async function handlePOST(
 
   // The key as sent (or as the parse-time probe reads it) and the answers read
   // deterministically off the PDF (printout ✓ / answer boxes, text-layer ✓).
-  // answerKey is always mergeTicksIntoKey(sentKey, ticks, keySource): a
+  // answerKey is always mergeTicksIntoKey(sentKey, ticks, keySource, types): a
   // person's upload beats the ✓ (disagreement → Needs Review); the AI probe
-  // loses to an A–D ✓ (disagreement → a note).
+  // loses only to a ✓ with strong evidence for that question (note), any
+  // other disagreement → Needs Review with both values.
   let sentKey: Record<number, string> | null = answerKey ? { ...answerKey } : null;
-  const ticks = new Map<number, string>();
+  const ticks = new Map<number, TickEvidence>();
+  const types = new Map<number, string | null>();
   let keyConflicts = new Map<number, string>();
   let keyNotes = new Map<number, string>();
+  // Printout parser vs text-layer ✓ disagreements (Needs Review).
+  const readerConflicts = new Map<number, string>();
   const mergeKey = () => {
-    const m = mergeTicksIntoKey(sentKey, ticks, keySource);
+    const m = mergeTicksIntoKey(sentKey, ticks, keySource, types);
     keyConflicts = m.conflicts;
     keyNotes = m.notes;
     return { key: Object.keys(m.key).length > 0 ? m.key : null, overrides: m.overrides };
@@ -318,7 +322,10 @@ async function handlePOST(
         // The checked answers ARE the official key for these printouts —
         // except where a person uploaded a key (that wins; disagreement → review).
         for (const q of printout.questions) {
-          if (q.correct_answer) ticks.set(q.original_question_number, q.correct_answer);
+          types.set(q.original_question_number, q.question_type ?? null);
+          // Weak until a text-layer reader confirms it (Step B2): the printout
+          // walker has no single-✓ guard.
+          if (q.correct_answer) ticks.set(q.original_question_number, { tick: q.correct_answer, strong: false, why: "only the printout parser read it" });
         }
         answerKey = mergeKey().key;
         if (keySource === "upload" && sentKey) {
@@ -355,10 +362,12 @@ async function handlePOST(
     const noMarks = marks ? noAnswerMarksReason(marks) : null;
     if (noMarks) {
       console.log(`[modules/parse] no answer marks in PDF: ${noMarks}`);
-      // The only key a request carries is the probe's reading of this same
-      // PDF, so it can't be real either.
-      if (answerKey) console.warn("[modules/parse] dropping the request's answer key — the PDF has no answer marks");
-      sentKey = null;
+      // A probe key is a reading of this same PDF, so it can't be real either.
+      // A person's upload is kept.
+      if (keySource !== "upload") {
+        if (sentKey) console.warn("[modules/parse] dropping the request's answer key — the PDF has no answer marks");
+        sentKey = null;
+      }
       ticks.clear();
       answerKey = mergeKey().key;
     }
@@ -428,12 +437,15 @@ async function handlePOST(
     // should read 1..N on its own. If the lowest number isn't 1, shift every
     // question — AND the answer key, so the two stay aligned — down by the same
     // offset. The parser preserves order, so a simple offset keeps them 1..N.
+    // Printed number = stored number + numberOffset (the ✓ readers use it).
+    let numberOffset = 0;
     {
       const minNum = Math.min(
         ...parsedQuestions.map((q) => q.original_question_number),
       );
       const offset = minNum - 1;
       if (offset > 0) {
+        numberOffset = offset;
         for (const q of parsedQuestions) {
           q.original_question_number -= offset;
         }
@@ -443,9 +455,9 @@ async function handlePOST(
           return shifted;
         };
         if (sentKey) sentKey = shift(sentKey);
-        const shiftedTicks = shift(Object.fromEntries(ticks));
+        const shiftedTicks = [...ticks].map(([n, v]) => [n - offset, v] as const);
         ticks.clear();
-        for (const [n, v] of Object.entries(shiftedTicks)) ticks.set(Number(n), v);
+        for (const [n, v] of shiftedTicks) ticks.set(n, v);
         answerKey = mergeKey().key;
         console.log(
           `[modules/parse] normalized question numbers: shifted by -${offset} → 1..${parsedQuestions.length}`,
@@ -453,13 +465,24 @@ async function handlePOST(
       }
     }
 
-    // A key that gives a choice letter to a fill-in question is not a real
-    // key (J Test Math M1: "B" on four fill-ins) — throw the whole key out.
+    types.clear();
+    for (const q of parsedQuestions) types.set(q.original_question_number, q.question_type ?? null);
+    answerKey = mergeKey().key;
+    // A key read from the PDF that gives a choice letter to a fill-in question
+    // is not a real key (J Test Math M1: "B" on four fill-ins) — throw the
+    // whole key out, and don't let the text-layer ✓ refill it below: every
+    // question is AI-solved and goes to Needs Review (keyModuleNote). A
+    // person's upload is kept; its letters on fill-ins are flagged per
+    // question by the key-form check.
+    let keyRejected = false;
     {
-      const sprLetters = sprLetterKeyQuestions(answerKey, parsedQuestions);
-      if (sprLetters) {
+      const sprLetters = sprLetterKeyQuestions(sentKey, parsedQuestions);
+      if (sprLetters && keySource === "upload") {
+        console.warn(`[modules/parse] uploaded key has letters on fill-in Q${sprLetters.join(", Q")} — kept; the key-form check flags them`);
+      } else if (sprLetters) {
         keyModuleNote = keyRejectedNote(sprLetterKeyReason(sprLetters));
         console.warn(`[modules/parse] answer key rejected: ${keyModuleNote}`);
+        keyRejected = true;
         sentKey = null;
         ticks.clear();
         answerKey = mergeKey().key;
@@ -508,17 +531,29 @@ async function handlePOST(
         console.error("[modules/parse] label-only ✓ pass failed (non-fatal):", err);
       }
     }
-    const textTicks = deterministicTicks(
-      parsedQuestions.map((q) => q.original_question_number),
+    const { ticks: textTicks, notes: tickReaderNotes } = deterministicTicks(
+      parsedQuestions.map((q) => ({ n: q.original_question_number, question_type: q.question_type ?? null, choices: q.choices })),
       pdfText,
       labelTicks,
+      numberOffset,
     );
-    if (textTicks.size > 0) {
-      for (const [n, c] of textTicks) ticks.set(n, c);
+    for (const note of tickReaderNotes) console.warn(`[modules/parse] ${note}`);
+    if (keyRejected) {
+      if (textTicks.size > 0) console.warn(`[modules/parse] ${textTicks.size} PDF ✓ not applied — the PDF's answer key was rejected`);
+    } else if (textTicks.size > 0) {
+      for (const [n, ev] of textTicks) {
+        const printed = ticks.get(n);
+        if (printed && printed.tick.trim().toUpperCase() !== ev.tick) {
+          readerConflicts.set(n, `Needs review: the printout parser read answer ${printed.tick} but the PDF text ticks ${ev.tick} — confirm which is right`);
+          ticks.set(n, { tick: ev.tick, strong: false, why: "the PDF's two ✓ readers disagree" });
+        } else {
+          ticks.set(n, ev);
+        }
+      }
       const merged = mergeKey();
       answerKey = merged.key;
       console.log(
-        `[modules/parse] checkmark answers from PDF text: ${textTicks.size} ticks, ${merged.overrides} replaced the AI key probe's answer, ${keyConflicts.size} disagree with an uploaded key (key source: ${keySource})`,
+        `[modules/parse] checkmark answers from PDF text: ${textTicks.size} ticks, ${merged.overrides} replaced the AI key probe's answer, ${keyConflicts.size} sent to review (key source: ${keySource})`,
       );
     }
     let misaligned: ReturnType<typeof checkChoiceAlignment> = new Map();
@@ -653,8 +688,8 @@ async function handlePOST(
         parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + figureNotes.join("; ");
       }
 
-      const conflict = keyConflicts.get(q.original_question_number);
-      if (conflict) {
+      for (const conflict of [keyConflicts.get(q.original_question_number), readerConflicts.get(q.original_question_number)]) {
+        if (!conflict) continue;
         parsingStatus = "Needs Review";
         parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + conflict;
       }
@@ -1110,6 +1145,8 @@ async function handlePOST(
       solved: solverStats.solved,
       solverFailed: solverStats.failed,
       answerKeyUsed: answerKey ? Object.keys(answerKey).length : 0,
+      // Why a ✓ reader was not used (its numbering didn't fit the module).
+      ...(tickReaderNotes.length ? { tickReaderNotes } : {}),
       mismatches: mismatchCount,
       cleanup,
       explainedOfficial: explained,

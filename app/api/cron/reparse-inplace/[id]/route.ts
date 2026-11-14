@@ -26,7 +26,7 @@ import { KEY_ROW_SELECT } from "@/lib/key-change";
 import { markNotRescored, rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
 import { extractChoicesFromPdfText, readLabelTicks } from "@/lib/pdf-text-choices";
-import { deterministicTicks, mergeTicksIntoKey } from "@/lib/answer-key-merge";
+import { deterministicTicks, reparseKeyDecision, type ReparseKeyDecision, type TickEvidence } from "@/lib/answer-key-merge";
 
 export const maxDuration = 800;
 
@@ -63,16 +63,21 @@ async function handlePOST(
     .single();
   if (!mod) return NextResponse.json({ error: "Module not found" }, { status: 404 });
 
-  // Existing rows (preserve ids) + any official answers already on file.
+  // Existing rows (preserve ids) + the keys already on file. A stored key is
+  // never changed here: a disagreeing ✓ or probe only sends the row to Needs
+  // Review (lib/answer-key-merge.ts reparseKeyDecision).
   const { data: existing } = await db
     .from("questions")
     .select("id, original_question_number, official_answer, parsing_status, parsing_notes, correct_answer")
     .eq("module_id", id);
   const idByNum = new Map<number, string>();
-  const officialByNum = new Map<number, string>();
+  const storedByNum = new Map<number, { official: string | null; correct: string | null }>();
   for (const r of existing ?? []) {
     idByNum.set(r.original_question_number, r.id);
-    if (r.official_answer) officialByNum.set(r.original_question_number, r.official_answer as string);
+    storedByNum.set(r.original_question_number, {
+      official: (r.official_answer as string | null) ?? null,
+      correct: (r.correct_answer as string | null) ?? null,
+    });
   }
   // Approved rows in a live test are not overwritten (that would clear their
   // figures and answer mid-exam) — they're only tagged for re-check.
@@ -82,8 +87,9 @@ async function handlePOST(
     (existing ?? []).filter((r) => r.parsing_status === "Approved").map((r) => r.id as string),
   );
 
-  // Fill any missing official answers by extracting the key from the PDF.
-  let keyEntries = officialByNum.size;
+  // This run's reading of the PDF's answer key (printed numbering until the
+  // questions are renumbered below).
+  let probeKey: Record<number, string> = {};
   // Key page titled for a different module than the questions → not applied.
   let keyModuleNote: string | null = null;
   let b64: string | null = null;
@@ -96,10 +102,7 @@ async function handlePOST(
     if (keyModuleNote) {
       console.warn(`[reparse-inplace] answer key NOT applied — key page "${key.keyTitle}" vs questions "${key.questionHeader ?? mod.module_name}"`);
     } else if (key.found) {
-      for (const [num, ans] of Object.entries(key.answers)) {
-        officialByNum.set(Number(num), ans as string);
-      }
-      keyEntries = officialByNum.size;
+      probeKey = { ...key.answers };
     }
   } catch (err) {
     console.error("[reparse-inplace] answer-key extract failed (using stored):", err);
@@ -125,43 +128,67 @@ async function handlePOST(
 
   // Normalize to 1..N so a booklet-slice numbered e.g. 137–163 maps onto the
   // existing 1..27 rows (mapping below is by original_question_number).
+  // The probe's key is renumbered the same way (as in the parse route).
+  let numberOffset = 0;
   {
     const minNum = Math.min(...parsed.map((q) => q.original_question_number));
     const offset = minNum - 1;
-    if (offset > 0) for (const q of parsed) q.original_question_number -= offset;
+    if (offset > 0) {
+      numberOffset = offset;
+      for (const q of parsed) q.original_question_number -= offset;
+      probeKey = Object.fromEntries(Object.entries(probeKey).map(([n, v]) => [Number(n) - offset, v]));
+    }
   }
 
-  // Same rule as the parse route (lib/answer-key-merge.ts): this key is the AI
-  // probe's reading (or a stored copy of one), so a ✓ read off the PDF's text
-  // layer wins over it; the disagreement is noted on the row.
-  let tickNotes = new Map<number, string>();
+  // The PDF's own ✓ (no AI), then one key decision per question: the stored
+  // key stays (disagreement → Needs Review); a row without one takes this
+  // run's probe under the parse route's probe rules.
+  let ticks = new Map<number, TickEvidence>();
+  let tickReaderNotes: string[] = [];
   if (b64) {
     try {
       const pdfText = await extractChoicesFromPdfText(b64);
       const labelTicks = pdfText.hasTextLayer ? await readLabelTicks(b64) : null;
-      const ticks = deterministicTicks(parsed.map((q) => q.original_question_number), pdfText, labelTicks);
-      const merged = mergeTicksIntoKey(Object.fromEntries(officialByNum), ticks, "probe");
-      officialByNum.clear();
-      for (const [n, v] of Object.entries(merged.key)) officialByNum.set(Number(n), v);
-      keyEntries = officialByNum.size;
-      tickNotes = merged.notes;
-      if (ticks.size > 0) console.log(`[reparse-inplace] ${ticks.size} ✓ read from the PDF text, ${merged.overrides} replaced the probe's answer`);
+      ({ ticks, notes: tickReaderNotes } = deterministicTicks(
+        parsed.map((q) => ({ n: q.original_question_number, question_type: q.question_type ?? null, choices: q.choices })),
+        pdfText,
+        labelTicks,
+        numberOffset,
+      ));
+      for (const note of tickReaderNotes) console.warn(`[reparse-inplace] ${note}`);
     } catch (err) {
       console.error("[reparse-inplace] PDF ✓ pass failed (non-fatal):", err);
     }
   }
+  const keyByNum = new Map<number, ReparseKeyDecision>();
+  for (const q of parsed) {
+    const n = q.original_question_number;
+    const stored = storedByNum.get(n);
+    keyByNum.set(n, reparseKeyDecision(
+      { storedOfficial: stored?.official ?? null, storedCorrect: stored?.correct ?? null, probe: probeKey[n] ?? null, type: q.question_type ?? null },
+      ticks.get(n),
+    ));
+  }
+  const keyEntries = [...keyByNum.values()].filter((d) => d.official).length;
+  /** Rows a person must decide (stored key vs the PDF): kept in review, never promoted or rescored. */
+  const keyReviewIds = new Map<string, ReparseKeyDecision>();
+  console.log(
+    `[reparse-inplace] ${ticks.size} ✓ read from the PDF, ${[...keyByNum.values()].filter((d) => d.note).length} replaced the probe's answer, ${[...keyByNum.values()].filter((d) => d.review.length).length} sent to review`,
+  );
 
   // Overwrite rows in place by question number.
   let updated = 0, inserted = 0;
   const seen = new Set<number>();
   for (const q of parsed) {
     seen.add(q.original_question_number);
-    const official = officialByNum.get(q.original_question_number) ?? null;
+    const decision = keyByNum.get(q.original_question_number);
+    const official = decision?.official ?? null;
+    const review = decision?.review ?? [];
     const fields: Record<string, unknown> = {
       section: mod.section,
       question_text: q.question_text,
       choices: q.choices,
-      correct_answer: official ?? null,
+      correct_answer: decision?.seed ?? null,
       explanation: null,
       difficulty: q.difficulty,
       domain: q.domain,
@@ -173,8 +200,8 @@ async function handlePOST(
       has_formula: q.has_formula,
       source_pdf_url: mod.pdf_url,
       page_number: q.page_number,
-      parsing_status: "Draft",
-      parsing_notes: ["Re-parsed in place", tickNotes.get(q.original_question_number)].filter(Boolean).join("; "),
+      parsing_status: review.length ? "Needs Review" : "Draft",
+      parsing_notes: ["Re-parsed in place", decision?.note, ...review].filter(Boolean).join("; "),
       ai_confidence_score: q.ai_confidence_score,
       question_text_embedding: simpleEmbedding(q.question_text),
       official_answer: official,
@@ -194,9 +221,15 @@ async function handlePOST(
       await db.from("questions").update(update).eq("id", existingId);
     } else if (existingId) {
       await db.from("questions").update(fields).eq("id", existingId);
+      if (review.length && decision) keyReviewIds.set(existingId, decision);
       updated++;
     } else {
-      await db.from("questions").insert({ module_id: id, original_question_number: q.original_question_number, ...fields });
+      const { data: ins } = await db
+        .from("questions")
+        .insert({ module_id: id, original_question_number: q.original_question_number, ...fields })
+        .select("id")
+        .maybeSingle();
+      if (review.length && decision && ins?.id) keyReviewIds.set(ins.id as string, decision);
       inserted++;
     }
   }
@@ -257,6 +290,23 @@ async function handlePOST(
       await db.from("questions").update(update).eq("id", r.id);
     }
   }
+  // Stored key vs the PDF: put the stored key back (the solver may have
+  // overwritten it), keep the row in Needs Review with its notes, and leave it
+  // out of rescoring — a person decides.
+  for (const [qid, d] of keyReviewIds) {
+    const { data: row } = await db.from("questions").select("parsing_notes").eq("id", qid).maybeSingle();
+    const notes = ((row?.parsing_notes as string | null) ?? "").split(";").map((x) => x.trim()).filter(Boolean);
+    for (const r of d.review) if (!notes.includes(r)) notes.push(r);
+    await db
+      .from("questions")
+      .update({ correct_answer: d.seed, parsing_status: "Needs Review", parsing_notes: notes.join("; "), updated_at: new Date().toISOString() })
+      .eq("id", qid);
+  }
+  const heldForPerson = keyChangedIds.filter((x) => keyReviewIds.has(x));
+  if (heldForPerson.length) {
+    keyChangedIds.splice(0, keyChangedIds.length, ...keyChangedIds.filter((x) => !keyReviewIds.has(x)));
+    await markNotRescored(db, heldForPerson, "the stored key disagrees with the PDF — a person decides");
+  }
 
   let cleanup, explained, audit, figures, choicesRecovery, promote;
   let rescored: { rescored: number; held: number } | undefined;
@@ -303,6 +353,8 @@ async function handlePOST(
     module: mod.module_name,
     elapsed_s: Math.round((Date.now() - t0) / 1000),
     keyEntries,
+    keyReview: keyReviewIds.size,
+    ...(tickReaderNotes.length ? { tickReaderNotes } : {}),
     reExtracted: parsed.length,
     updated,
     inserted,
