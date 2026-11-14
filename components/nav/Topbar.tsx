@@ -1,7 +1,7 @@
 "use client";
 
 import { UserButton } from "@clerk/nextjs";
-import Logo from "@/components/Logo";
+import { PremierHeaderMark } from "@/components/brand/Premier";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import NotificationBell from "@/components/nav/NotificationBell";
 import { SIDEBAR_TOGGLE_EVENT } from "@/components/nav/SidebarShell";
@@ -14,7 +14,7 @@ interface TopbarProps {
 export default function Topbar({ title }: TopbarProps) {
   return (
     <header className="h-16 border-b border-divider flex items-center px-4 md:px-6 gap-3 md:gap-4 bg-surface/90 backdrop-blur-md sticky top-0 z-40">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(SIDEBAR_TOGGLE_EVENT))}
@@ -23,17 +23,12 @@ export default function Topbar({ title }: TopbarProps) {
         >
           <Menu size={20} />
         </button>
-        <Logo size={28} />
-        {title && (
-          <span className="text-soft-mute text-sm font-medium hidden md:block">
-            {title}
-          </span>
-        )}
+        <PremierHeaderMark role={title} />
       </div>
 
       <div className="flex-1" />
 
-      <div className="flex items-center gap-2 md:gap-3">
+      <div className="flex shrink-0 items-center gap-2 md:gap-3">
         <LanguageSwitcher />
 
         <NotificationBell />

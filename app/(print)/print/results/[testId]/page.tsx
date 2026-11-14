@@ -13,13 +13,14 @@ import {
 import { readPrintTicket } from "@/lib/print-token";
 import { inlineBlobImages } from "@/lib/blob-inline";
 import { printPageCss } from "@/lib/print-page-css";
+import { watermarkOn, watermarkOption } from "@/lib/print-watermark";
 import { imgSrc } from "@/components/tests/PrintableTest";
 import ResultPrintout from "@/components/print/ResultPrintout";
 import PrintPreview, { type PreviewOption } from "@/components/print/PrintPreview";
 
 export const dynamic = "force-dynamic";
 
-// GET /print/results/<testId>?subs=<submissionId,…>&mode=full|short&expl=1&at=inline|end&duplex=1|0
+// GET /print/results/<testId>?subs=<submissionId,…>&mode=full|short&expl=1&at=inline|end&duplex=1|0&wm=0
 // A student's printed result (or several: "Print all", one student per
 // section). Teachers: their classes' students; admins: everyone; students:
 // their own latest attempt. QA isolation and answer visibility are enforced
@@ -30,16 +31,18 @@ export default async function PrintResultsPage({
   searchParams,
 }: {
   params: Promise<{ testId: string }>;
-  searchParams: Promise<{ subs?: string | string[]; mode?: string | string[]; expl?: string | string[]; at?: string | string[]; pt?: string | string[]; duplex?: string | string[] }>;
+  searchParams: Promise<{ subs?: string | string[]; mode?: string | string[]; expl?: string | string[]; at?: string | string[]; pt?: string | string[]; duplex?: string | string[]; wm?: string | string[] }>;
 }) {
   const { testId } = await params;
   const raw = await searchParams;
   // A repeated query param arrives as an array; take the first value.
   const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-  const sp = { subs: one(raw.subs), mode: one(raw.mode), expl: one(raw.expl), at: one(raw.at), pt: one(raw.pt), duplex: one(raw.duplex) };
+  const sp = { subs: one(raw.subs), mode: one(raw.mode), expl: one(raw.expl), at: one(raw.at), pt: one(raw.pt), duplex: one(raw.duplex), wm: one(raw.wm) };
 
   let viewer: Viewer;
   let opts: PrintOptions;
+  // The Premier watermark: only admins can turn it off (wm=0).
+  let watermark: boolean;
   // Cap one render at 100 attempts (bulk downloads go one student per request).
   let subs = (sp.subs ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 100);
   const ticketMode = Boolean(sp.pt);
@@ -49,12 +52,15 @@ export default async function PrintResultsPage({
     viewer = ticket.viewer;
     opts = ticket.opts;
     subs = ticket.subs;
+    // Decided (and role-checked) by the PDF route that minted the ticket.
+    watermark = watermarkOn(viewer.role, ticket.wm === false ? "0" : null);
   } else {
     const user = await getCurrentUser();
     if (!user) redirect("/sign-in");
     if (user.role === "teacher" && user.accountStatus !== "approved") redirect("/teacher");
     viewer = { userId: user.userId, role: user.role, isQa: user.isQa };
     opts = parsePrintOptions(sp);
+    watermark = watermarkOn(viewer.role, sp.wm);
   }
 
   const db = getServiceClient();
@@ -123,8 +129,9 @@ export default async function PrintResultsPage({
           { value: "0", label: "Off" },
         ],
       },
+      ...(viewer.role === "admin" ? [watermarkOption(watermark)] : []),
     ];
-    const qs = new URLSearchParams({ sub: printouts[0].submissionId, mode: opts.mode, ...(opts.explanations ? { expl: "1", at: opts.explanationsAt } : {}) });
+    const qs = new URLSearchParams({ sub: printouts[0].submissionId, mode: opts.mode, ...(opts.explanations ? { expl: "1", at: opts.explanationsAt } : {}), ...(watermark ? {} : { wm: "0" }) });
 
     return (
       <PrintPreview
@@ -134,6 +141,7 @@ export default async function PrintResultsPage({
         students={candidates.length > 1 ? candidates.map((c) => ({ id: c.submissionId, name: c.studentName, classNames: c.classNames, checked: printouts.some((p) => p.studentId === c.studentId) })) : undefined}
         pdfUrl={single && !ticketMode ? `/api/print/results/${testId}/pdf?${qs}` : undefined}
         duplex={duplex && !single}
+        watermark={watermark}
       >
         <div className="bg-white text-charcoal">
           {printouts.map((p, i) => (

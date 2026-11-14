@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaClassGroupIds, onSide } from "@/lib/qa";
 import { formatDate } from "@/lib/datetime";
 import { printPageCss } from "@/lib/print-page-css";
+import { watermarkOn, watermarkOption } from "@/lib/print-watermark";
 import { gradebookSubjects, loadClassGradebook } from "@/lib/class-gradebook";
 import { KIND_LABEL, effectiveSort, filterColumns, parseViewQuery, printGroups, sortRows } from "@/lib/class-gradebook-view";
 import GradebookTable, { GradebookLegend } from "@/components/analytics/GradebookTable";
@@ -11,7 +12,7 @@ import PrintPreview from "@/components/print/PrintPreview";
 
 export const dynamic = "force-dynamic";
 
-// GET /print/classes/<classId>/scores?subject=&from=&to=&sort=&dir=
+// GET /print/classes/<classId>/scores?subject=&from=&to=&sort=&dir=&wm=0
 // The class gradebook as a compact printout (same page frame as the result
 // printout: Paged.js Letter pages, running header, page numbers),
 // landscape when the grid is wide. Admins: any class on their QA side;
@@ -58,9 +59,16 @@ export default async function PrintClassScoresPage({
     view.filter.from || view.filter.to ? `${view.filter.from || "…"} to ${view.filter.to || "…"}` : null,
   ].filter(Boolean);
   const title = `${group.name as string} – Scores`;
+  // Only admins can turn the watermark off.
+  const watermark = watermarkOn(user.role, one(raw.wm));
 
   return (
-    <PrintPreview title={title} pageCss={printPageCss({ header: { text: title }, landscape: wide })}>
+    <PrintPreview
+      title={title}
+      pageCss={printPageCss({ header: { text: title }, landscape: wide })}
+      options={user.role === "admin" ? [watermarkOption(watermark)] : []}
+      watermark={watermark}
+    >
       <div className="bg-white text-charcoal">
         <div className="border-b-2 border-charcoal pb-2 mb-3">
           <h1 className="text-xl font-bold">{group.name as string} · Scores</h1>

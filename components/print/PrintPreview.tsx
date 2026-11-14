@@ -6,6 +6,7 @@ import { confirmPrintWithMissing, waitForImages } from "@/lib/print-images";
 import { PrintPendingNotice } from "@/components/analytics/PrintButton";
 import { studentPageLabels } from "@/lib/print-duplex";
 import { makeTitleKeeper } from "@/lib/print-title";
+import { WATERMARK_CSS, watermarkSvg, watermarkSymbol } from "@/lib/print-watermark";
 
 // Pages as sheets on screen; on paper, no blank sheet after the last page.
 const PREVIEW_CSS = `
@@ -21,6 +22,8 @@ const PREVIEW_CSS = `
   .print-preview-pages .pagedjs_page:last-child { break-after: auto !important; page-break-after: auto !important; }
   /* Ctrl/Cmd+P before the pages are laid out: print the plain document. */
   html:not([data-print-ready]) .print-source { display: block !important; }
+  /* …and not the pages Paged.js has laid out so far (that would print the content twice). */
+  html:not([data-print-ready]) .print-preview-pages { display: none !important; }
   /* break-before: recto exists only inside Paged.js; the plain document still starts each student on a new page. */
   .print-source .break-before-recto { break-before: page; }
 }
@@ -52,6 +55,22 @@ function labelStudentPages(root: HTMLElement): number {
     }
   });
   return labels.filter((l) => l === null).length;
+}
+
+// The Premier watermark (lib/print-watermark) on every laid-out page,
+// blank filler pages included. Absolutely positioned inside each page's
+// sheet after layout, so page breaks and the page count can't change.
+function stampWatermarks(root: HTMLElement): void {
+  const svg = watermarkSvg();
+  const sheets = Array.from(root.querySelectorAll<HTMLElement>(".pagedjs_page > .pagedjs_sheet"));
+  for (const sheet of sheets) {
+    if (sheet.querySelector(":scope > .print-watermark")) continue;
+    const mark = document.createElement("div");
+    mark.className = "print-watermark";
+    mark.setAttribute("aria-hidden", "true");
+    mark.innerHTML = svg;
+    sheet.prepend(mark);
+  }
 }
 
 export interface PreviewOption {
@@ -120,6 +139,7 @@ export default function PrintPreview({
   students,
   pdfUrl,
   duplex = false,
+  watermark = true,
   children,
 }: {
   title: string;
@@ -132,6 +152,8 @@ export default function PrintPreview({
   pdfUrl?: string;
   /** Double-sided printing is on: the status line says how many blank pages were added. */
   duplex?: boolean;
+  /** The Premier watermark on every page (only admins can turn it off; decided server-side). */
+  watermark?: boolean;
   children: React.ReactNode;
 }) {
   const sourceRef = useRef<HTMLDivElement>(null);
@@ -203,6 +225,8 @@ export default function PrintPreview({
         const allFailed = paged.failed;
         setFailed(allFailed);
         setBlanks(labelStudentPages(targetRef.current!));
+        if (watermark) stampWatermarks(targetRef.current!);
+        document.documentElement.dataset.printWatermark = watermark ? "on" : "off";
         setPages(flow.total);
         setPhase("ready");
         // Read by the server PDF renderer (headless Chromium) and the nightly check.
@@ -214,11 +238,11 @@ export default function PrintPreview({
         document.documentElement.dataset.printFailed = "layout";
         // Fall back to the plain document so Print still prints everything.
         targetRef.current!.replaceChildren();
-        src.hidden = false;
+        src.style.display = "";
         setPhase("error");
       }
     })();
-  }, [pageCss]);
+  }, [pageCss, watermark]);
 
   function setParam(param: string, value: string | null) {
     const url = new URL(window.location.href);
@@ -408,8 +432,21 @@ export default function PrintPreview({
 
       {/* Preview chrome, not part of the paginated document. */}
       <style>{PREVIEW_CSS}</style>
+      {watermark && (
+        <>
+          <style>{WATERMARK_CSS}</style>
+          {/* The mark's one definition (outside the source, so Paged.js never copies the id). */}
+          <div aria-hidden="true" dangerouslySetInnerHTML={{ __html: watermarkSymbol() }} />
+          {/* Only for printing the plain document (see WATERMARK_CSS). */}
+          <div className="print-watermark-fallback" aria-hidden="true" dangerouslySetInnerHTML={{ __html: watermarkSvg() }} />
+        </>
+      )}
       {/* Source: hidden; its figures load here first. */}
-      <div ref={sourceRef} className="print-source" hidden>
+      {/* Hidden with an inline style, not the `hidden` attribute: Tailwind's
+          preflight hides [hidden] with !important inside @layer base, which
+          beats the unlayered print rule that shows the plain document when
+          Ctrl/Cmd+P comes before the layout (it printed a blank page). */}
+      <div ref={sourceRef} className="print-source" style={phase === "error" ? undefined : { display: "none" }}>
         <PrintPendingNotice />
         {children}
       </div>

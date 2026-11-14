@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { loadResultPrintouts, parsePrintOptions, printoutFileName, PrintAccessError } from "@/lib/result-printout";
 import { mintPrintTicket } from "@/lib/print-token";
+import { watermarkOn } from "@/lib/print-watermark";
 import { PdfBusyError, PdfRenderError, renderPrintPdf } from "@/lib/render-pdf";
 
 export const runtime = "nodejs";
@@ -10,7 +11,7 @@ export const runtime = "nodejs";
 // with progress), so a class never runs into a single long request.
 export const maxDuration = 60;
 
-// GET /api/print/results/<testId>/pdf?sub=<submissionId>&mode=full|short&expl=1&at=inline|end
+// GET /api/print/results/<testId>/pdf?sub=<submissionId>&mode=full|short&expl=1&at=inline|end&wm=0
 // The student's printed result as a PDF file — the same paginated document
 // as the /print/results preview, rendered by headless Chromium.
 export async function GET(req: Request, { params }: { params: Promise<{ testId: string }> }) {
@@ -23,6 +24,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ testId: 
   if (!sub) return NextResponse.json({ error: "Missing sub" }, { status: 400 });
   const opts = parsePrintOptions({ mode: sp.get("mode") ?? undefined, expl: sp.get("expl") ?? undefined, at: sp.get("at") ?? undefined });
   const viewer = { userId: user.userId, role: user.role, isQa: user.isQa };
+  // Premier watermark: wm=0 is honoured for admins only; teachers always get it.
+  const wm = watermarkOn(user.role, sp.get("wm"));
 
   // Access check up front (the print page checks again with the ticket).
   let name: string;
@@ -36,7 +39,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ testId: 
   }
 
   try {
-    const ticket = mintPrintTicket({ viewer, testId, subs: [sub], opts });
+    const ticket = mintPrintTicket({ viewer, testId, subs: [sub], opts, wm });
     const url = `${new URL(req.url).origin}/print/results/${testId}?pt=${encodeURIComponent(ticket)}`;
     const { pdf, pages } = await renderPrintPdf(url);
     return new Response(Buffer.from(pdf), {

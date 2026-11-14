@@ -2,7 +2,7 @@
 
 import { SignUp } from "@clerk/nextjs";
 import Link from "next/link";
-import Logo from "@/components/Logo";
+import { PremierLockup } from "@/components/brand/Premier";
 
 // Teacher self sign-up. unsafeMetadata.signupRole=teacher makes the Clerk
 // webhook create a PENDING teacher (+ teacher_profiles) instead of a
@@ -15,9 +15,8 @@ export default function TeacherRegisterPage() {
 
       <div className="relative z-10 flex flex-col items-center gap-8 w-full max-w-md">
         <div className="flex flex-col items-center gap-3">
-          <Logo size={48} />
+          <PremierLockup />
           <h1 className="text-xl font-semibold text-charcoal">Teacher Sign-up</h1>
-          <p className="text-mid-gray text-sm">SAT Exam OS</p>
           <p className="text-mid-gray text-sm text-center">
             Students: use{" "}
             <Link href="/register" className="text-warm-coral-text hover:text-warm-coral-dark font-semibold underline">

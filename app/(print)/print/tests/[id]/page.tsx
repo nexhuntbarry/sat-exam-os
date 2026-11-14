@@ -9,6 +9,7 @@ import { formatDate } from "@/lib/datetime";
 import PrintableTest, { type PrintModule, type PrintQuestion } from "@/components/tests/PrintableTest";
 import PrintPreview from "@/components/print/PrintPreview";
 import { printPageCss } from "@/lib/print-page-css";
+import { watermarkOn, watermarkOption } from "@/lib/print-watermark";
 import { teacherQaGate } from "@/lib/teacher-qa";
 import { FL_ALL_SECTIONS, flSectionScope } from "@/lib/full-length-score";
 
@@ -18,6 +19,7 @@ export const dynamic = "force-dynamic";
 // GET /print/tests/<id>?key=1      → same copy with the answer key
 //   &explain=inline | end           → plus explanations under each question / all at the end
 //                                     (explanations give the answers away, so they turn the key on)
+//   &wm=0                           → no watermark (admins only; teachers always get it)
 // Admins; and teachers who can open the test (getTeacherTestAccess, the
 // Questions & answers page's rule) while the admin's "Teachers can view &
 // print questions/answers" switch is on (lib/teacher-qa) — a single-subject
@@ -63,7 +65,7 @@ export default async function PrintTestPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ key?: string; explain?: string }>;
+  searchParams: Promise<{ key?: string; explain?: string; wm?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
@@ -73,6 +75,7 @@ export default async function PrintTestPage({
   const sp = await searchParams;
   const explain = sp.explain === "inline" || sp.explain === "end" ? sp.explain : null;
   const withKey = sp.key === "1" || explain != null;
+  const watermark = watermarkOn(user.role, sp.wm);
   if (!onSide(id, await getQaTestIds(), user.isQa)) notFound();
 
   const db = getServiceClient();
@@ -197,7 +200,9 @@ export default async function PrintTestPage({
             { value: "end", label: t("explainEnd") },
           ],
         },
+        ...(user.role === "admin" ? [watermarkOption(watermark)] : []),
       ]}
+      watermark={watermark}
     >
       <PrintableTest
         testName={test.test_name}
