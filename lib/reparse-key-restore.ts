@@ -20,7 +20,7 @@
 //   live question, and the caller must skip auto-promote for the module.
 
 import { applyLiveHold, type LiveHoldRow } from "@/lib/live-questions";
-import { restoredExplanationNote, restoredKeyNote } from "@/lib/answer-key-merge";
+import { restoredExplanationNote, restoredKeyNote, storedKeyAfterSolve } from "@/lib/answer-key-merge";
 
 export interface RestoreEntry {
   id: string;
@@ -73,6 +73,13 @@ export interface RestoreResult {
 
 export const personEditNote = (current: string | null, stored: string) =>
   `Needs review: the key was changed to ${current ?? "(none)"} during this re-parse, not by it; it was left as is (the stored key was ${stored}) — confirm which is right`;
+// The run's put-back after the solver (putBackStoredKeys) already wrote the
+// stored key and every later run pass leaves correct_answer alone for these
+// rows, so a row still on the solver's answer AND not written since that
+// put-back is practically impossible — the write-back below rarely runs.
+// Anything newer is someone else's write. Do not loosen this (e.g. by dropping
+// the timestamp or accepting other "known" values): it is what keeps a
+// person's edit made during the run from being overwritten.
 const notLater = (a: string | null, b: string | null) => !!a && !!b && Date.parse(a) <= Date.parse(b);
 export const RESTORE_FAILED_WHY = "the re-parse couldn't confirm the stored key";
 
@@ -181,25 +188,89 @@ export async function restoreStoredKeys(entries: RestoreEntry[], deps: RestoreDe
 
   if (out.failed.length > 0) {
     out.skipPromote = true;
-    try {
-      await deps.markNotRescored(out.failed, RESTORE_FAILED_WHY);
-    } catch {
-      /* the module is still not promoted */
+    await failClosed(out.failed, RESTORE_FAILED_WHY, deps);
+  }
+  return out;
+}
+
+/**
+ * Rows whose stored key couldn't be confirmed: "not rescored" note (a
+ * "Needs review:" note, so explain-official / auto-fix keep them in review)
+ * and Needs Review — never for a question that may be live. The caller must
+ * skip auto-promote. Throws if the Needs Review write fails.
+ */
+export async function failClosed(
+  ids: string[],
+  why: string,
+  deps: Pick<RestoreDeps, "db" | "liveIds" | "markNotRescored" | "now">,
+): Promise<void> {
+  if (ids.length === 0) return;
+  const now = deps.now ?? (() => new Date().toISOString());
+  try {
+    await deps.markNotRescored(ids, why);
+  } catch {
+    /* the module is still not promoted */
+  }
+  let live: Set<string> | null = null;
+  try {
+    live = await deps.liveIds(ids);
+  } catch {
+    live = null;
+  }
+  const safe = live ? ids.filter((id) => !live!.has(id)) : ids;
+  if (safe.length === 0) return;
+  let q = deps.db.from("questions").update({ parsing_status: "Needs Review", updated_at: now() }).in("id", safe);
+  if (!live) q = q.neq("parsing_status", "Approved");
+  const { error } = await q;
+  if (error) throw new Error(`reparse key restore: couldn't send ${safe.length} row(s) to Needs Review: ${error.message}`);
+}
+
+export const PUTBACK_FAILED_WHY = "the re-parse couldn't put the stored key back after the solver";
+
+/**
+ * Right after the solver: put each row's stored key back (compare-and-set
+ * over exactly what the solver left), flag a disagreeing solver answer, and
+ * record the write's updated_at for the final restore's "ours" check. A read
+ * error, write error or missed compare-and-set lands in `failed` — the caller
+ * must failClosed() those rows and skip auto-promote.
+ */
+export async function putBackStoredKeys(
+  entries: { id: string; stored: string; review: string[] }[],
+  deps: { db: Db; now?: () => string },
+): Promise<{ solverById: Map<string, string | null>; writtenAt: Map<string, string>; reviewed: Set<string>; failed: string[] }> {
+  const now = deps.now ?? (() => new Date().toISOString());
+  const out = { solverById: new Map<string, string | null>(), writtenAt: new Map<string, string>(), reviewed: new Set<string>(), failed: [] as string[] };
+  for (const e of entries) {
+    const { data: row, error: readErr } = await deps.db
+      .from("questions")
+      .select("correct_answer, parsing_notes, parsing_status, updated_at")
+      .eq("id", e.id)
+      .maybeSingle();
+    if (readErr || !row) {
+      out.failed.push(e.id);
+      continue;
     }
-    // Needs Review, but never demote a question that may be live.
-    let live: Set<string> | null = null;
-    try {
-      live = await deps.liveIds(out.failed);
-    } catch {
-      live = null;
+    const solver = (row.correct_answer as string | null) ?? null;
+    out.solverById.set(e.id, solver);
+    const after = storedKeyAfterSolve(e.stored, solver);
+    const review = [...e.review, ...(after.review ? [after.review] : [])];
+    const update: Record<string, unknown> = { correct_answer: after.correct, updated_at: now() };
+    if (review.length) {
+      update.parsing_status = "Needs Review";
+      update.parsing_notes = review.reduce((n, r) => appendNote(n, r), (row.parsing_notes as string | null) ?? "");
     }
-    const safe = live ? out.failed.filter((id) => !live!.has(id)) : out.failed;
-    if (safe.length > 0) {
-      let q = deps.db.from("questions").update({ parsing_status: "Needs Review", updated_at: now() }).in("id", safe);
-      if (!live) q = q.neq("parsing_status", "Approved");
-      const { error: fErr } = await q;
-      if (fErr) throw new Error(`reparse key restore: couldn't send ${safe.length} row(s) to Needs Review: ${fErr.message}`);
+    // The solver's explanation argues its own answer, not the stored key.
+    if (after.review) update.explanation = null;
+    let w = deps.db.from("questions").update(update).eq("id", e.id);
+    w = row.updated_at == null ? w.is("updated_at", null) : w.eq("updated_at", row.updated_at);
+    w = solver == null ? w.is("correct_answer", null) : w.eq("correct_answer", solver);
+    const { data: wrote, error: wErr } = await w.select("updated_at");
+    if (wErr || !wrote || wrote.length === 0 || !wrote[0].updated_at) {
+      out.failed.push(e.id);
+      continue;
     }
+    out.writtenAt.set(e.id, wrote[0].updated_at as string);
+    if (review.length) out.reviewed.add(e.id);
   }
   return out;
 }

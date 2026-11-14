@@ -26,12 +26,11 @@ import { KEY_ROW_SELECT } from "@/lib/key-change";
 import { markNotRescored, rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
 import { explanationArguesOther } from "@/lib/explanation-autofix";
-import { restoreStoredKeys } from "@/lib/reparse-key-restore";
+import { failClosed, putBackStoredKeys, PUTBACK_FAILED_WHY, restoreStoredKeys } from "@/lib/reparse-key-restore";
 import { extractChoicesFromPdfText, readLabelTicks } from "@/lib/pdf-text-choices";
 import {
   deterministicTicks,
   reparseKeyDecision,
-  storedKeyAfterSolve,
   type ReparseKeyDecision,
   type TickEvidence,
 } from "@/lib/answer-key-merge";
@@ -262,35 +261,32 @@ async function handlePOST(
   // that had one. A solver answer that disagrees → Needs Review ("solver says
   // X, stored key Y"), and the row is never rescored. Rows with no stored key
   // keep the solver / official-key flow below.
-  const solverById = new Map<string, string | null>();
-  /** updated_at of the run's own write putting the stored key back (the restore's "ours" check). */
-  const solverWrittenAt = new Map<string, string>();
-  for (const [qid, d] of storedKeyIds) {
-    const { data: row, error: readErr } = await db.from("questions").select("correct_answer, parsing_notes, parsing_status, updated_at").eq("id", qid).maybeSingle();
-    if (readErr) console.error(`[reparse-inplace] read ${qid} after the solver:`, readErr.message);
-    if (!row || !d.seed) continue;
-    const solver = (row.correct_answer as string | null) ?? null;
-    solverById.set(qid, solver);
-    const after = storedKeyAfterSolve(d.seed, solver);
-    const review = [...d.review, ...(after.review ? [after.review] : [])];
-    const notes = ((row.parsing_notes as string | null) ?? "").split(";").map((x) => x.trim()).filter(Boolean);
-    for (const r of review) if (!notes.includes(r)) notes.push(r);
-    const update: Record<string, unknown> = { correct_answer: after.correct, updated_at: new Date().toISOString() };
-    if (review.length) {
-      update.parsing_status = "Needs Review";
-      update.parsing_notes = notes.join("; ");
-      keyReviewIds.set(qid, d);
+  // Fail closed: a row whose put-back couldn't be done or confirmed is marked
+  // not rescored, sent to Needs Review (unless live), kept out of the final
+  // restore, and the module is not auto-promoted. It stays in storedKeyMap so
+  // no later pass writes its key, and explain-official never approves a row
+  // that isn't on its stored key.
+  let skipPromote = false;
+  const putBack = await putBackStoredKeys(
+    [...storedKeyIds].filter(([, d]) => d.seed).map(([qid, d]) => ({ id: qid, stored: d.seed!, review: d.review })),
+    { db },
+  );
+  const solverById = putBack.solverById;
+  const solverWrittenAt = putBack.writtenAt;
+  for (const qid of putBack.reviewed) keyReviewIds.set(qid, storedKeyIds.get(qid)!);
+  const putBackFailed = new Set(putBack.failed);
+  if (putBackFailed.size) {
+    skipPromote = true;
+    console.error(`[reparse-inplace] stored key not put back on ${putBackFailed.size} row(s) — failing closed`);
+    try {
+      await failClosed(putBack.failed, PUTBACK_FAILED_WHY, {
+        db,
+        liveIds: (ids) => liveQuestionIds(db, ids),
+        markNotRescored: (ids, why) => markNotRescored(db, ids, why),
+      });
+    } catch (e) {
+      console.error("[reparse-inplace] fail-closed:", e);
     }
-    // The solver's explanation argues its own answer, not the stored key.
-    if (after.review) update.explanation = null;
-    // Compare-and-set: only over what the solver left.
-    let w = db.from("questions").update(update).eq("id", qid);
-    w = row.updated_at == null ? w.is("updated_at", null) : w.eq("updated_at", row.updated_at);
-    w = solver == null ? w.is("correct_answer", null) : w.eq("correct_answer", solver);
-    const { data: wrote, error: wErr } = await w.select("updated_at");
-    if (wErr) console.error(`[reparse-inplace] put back stored key ${qid}:`, wErr.message);
-    else if (wrote?.[0]?.updated_at) solverWrittenAt.set(qid, wrote[0].updated_at as string);
-    // Otherwise the row changed under us: the final restore treats it as a person's edit.
   }
   /** id → stored key: explain-official and the truncation guard explain these, never rewrite the key. */
   const storedKeyMap = new Map([...storedKeyIds].map(([qid, d]) => [qid, d.seed!] as [string, string]));
@@ -392,10 +388,11 @@ async function handlePOST(
   // rows only tagged (lib/reparse-key-restore.ts). If it can't finish, the
   // module is not auto-promoted.
   let keysRestored = 0;
-  let skipPromote = false;
   try {
     const res = await restoreStoredKeys(
-      [...storedKeyIds].map(([qid, d]) => ({ id: qid, stored: d.seed!, solver: solverById.get(qid) ?? null, solverWrittenAt: solverWrittenAt.get(qid) ?? null })),
+      [...storedKeyIds]
+        .filter(([qid]) => !putBackFailed.has(qid))
+        .map(([qid, d]) => ({ id: qid, stored: d.seed!, solver: solverById.get(qid) ?? null, solverWrittenAt: solverWrittenAt.get(qid) ?? null })),
       {
         db,
         liveIds: (ids) => liveQuestionIds(db, ids),

@@ -1004,7 +1004,11 @@ export async function explainOfficialAndPersist(
           if (truncatedOfficial) console.warn(`[explain-official] q${q.original_question_number}: explanation still cut off after retry`);
           const blindFigure = stemFigureMissing(q);
           const placeholder = findParsePlaceholder(q.question_text, q.choices);
+          // Re-parse in place: the row isn't on its stored key (the put-back
+          // after the solver failed, or someone changed it) → never approve.
+          const offStoredKey = !!storedKey && q.correct_answer !== storedKey;
           const keep =
+            offStoredKey ||
             EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") ||
             blindFigure ||
             placeholder !== null ||
@@ -1025,6 +1029,7 @@ export async function explainOfficialAndPersist(
             addNote(keyDoubtNote(ans, conflict, "solving it independently before writing the explanation gave a different answer, so the explanation was not rewritten"));
           }
           if (keyProblem) addNote(keyFormNote(keyProblem));
+          if (offStoredKey) addNote(`Needs review: the key on this row (${q.correct_answer ?? "none"}) isn't its stored key ${storedKey} — confirm which is right`);
           if (draftProblem) addNote(`${OFFICIAL_EXPLANATION_FAILED_PREFIX} (${draftProblem.replace(/[;()]/g, ",").slice(0, 160)}) — write and check it by hand`);
           const update: Record<string, unknown> = {
             ...(storedKey ? {} : { correct_answer: ans }),

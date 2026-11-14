@@ -34,7 +34,15 @@ import {
   type PdfTextQuestion,
 } from "../lib/pdf-text-choices";
 import { explanationArguesOther } from "../lib/explanation-autofix";
-import { personEditNote, RESTORE_FAILED_WHY, restoreStoredKeys, type RestoreEntry } from "../lib/reparse-key-restore";
+import {
+  failClosed,
+  personEditNote,
+  PUTBACK_FAILED_WHY,
+  putBackStoredKeys,
+  RESTORE_FAILED_WHY,
+  restoreStoredKeys,
+  type RestoreEntry,
+} from "../lib/reparse-key-restore";
 
 const MC = "Multiple Choice";
 const SPR = "Student Produced Response";
@@ -253,7 +261,7 @@ class FakeQuery {
     if (this.cas && this.db.beforeCas) { const h = this.db.beforeCas; this.db.beforeCas = null; h(); }
     const hits = [...this.db.rows.values()].filter((r) => this.filters.every((f) => f(r)));
     for (const r of hits) Object.assign(r, this.patch);
-    return { data: this.returning ? hits.map((r) => ({ id: r.id })) : null, error: null };
+    return { data: this.returning ? hits.map((r) => ({ id: r.id, updated_at: r.updated_at })) : null, error: null };
   }
   then<T>(res: (v: { data: unknown; error: unknown }) => T, rej?: (e: unknown) => T) { return Promise.resolve(this.run()).then(res, rej); }
 }
@@ -404,6 +412,64 @@ const reparseE2E = async () => {
     assert.ok(row.parsing_notes!.startsWith("[live-fix]"));
     assert.deepEqual(res.liveHeld, ["q1"]);
     assert.equal(res.restored, 0);
+  }
+  // The put-back right after the solver (lib/reparse-key-restore putBackStoredKeys).
+  {
+    const solved = (): QRow => ({
+      id: "q1", correct_answer: "C", official_answer: null, explanation: "The answer is C.", parsing_status: "Approved",
+      parsing_notes: "Re-parsed in place", question_type: MC, question_text: "Which?", updated_at: T(2),
+    });
+    // Success: stored key back, solver disagreement flagged, timestamp recorded.
+    {
+      const db = new FakeDb();
+      db.rows.set("q1", solved());
+      const pb = await putBackStoredKeys([{ id: "q1", stored: "A", review: [] }], { db, now: () => T(3) });
+      const row = db.rows.get("q1")!;
+      assert.deepEqual(pb.failed, []);
+      assert.equal(row.correct_answer, "A");
+      assert.equal(row.parsing_status, "Needs Review");
+      assert.equal(row.explanation, null);
+      assert.ok(row.parsing_notes!.includes(solverConflictNote("C", "A")));
+      assert.equal(pb.writtenAt.get("q1"), T(3));
+      assert.equal(pb.solverById.get("q1"), "C");
+      assert.ok(pb.reviewed.has("q1"));
+    }
+    // Read error / write error / missed compare-and-set → failed, nothing written.
+    for (const mode of ["read", "write", "cas", "missing"] as const) {
+      const db = new FakeDb();
+      if (mode !== "missing") db.rows.set("q1", solved());
+      if (mode === "read") db.failSelect = true;
+      if (mode === "write") db.failUpdate = true;
+      if (mode === "cas") db.beforeCas = () => { const r = db.rows.get("q1")!; r.correct_answer = "D"; r.updated_at = T(5); };
+      const pb = await putBackStoredKeys([{ id: "q1", stored: "A", review: [] }], { db, now: () => T(3) });
+      assert.deepEqual(pb.failed, ["q1"], mode);
+      assert.equal(pb.writtenAt.has("q1"), false, mode);
+      if (mode === "read" || mode === "write") assert.equal(db.rows.get("q1")!.correct_answer, "C", `${mode}: still on the solver's answer`);
+    }
+    // …and failing closed: not rescored, Needs Review (not a live row), throws if that write fails.
+    {
+      const db = new FakeDb();
+      db.rows.set("q1", solved());
+      db.rows.set("q2", { ...solved(), id: "q2" });
+      const marked: string[] = [];
+      await failClosed(["q1", "q2"], PUTBACK_FAILED_WHY, {
+        db,
+        liveIds: async () => new Set(["q2"]),
+        markNotRescored: async (ids, why) => { marked.push(`${ids.join(",")}: ${why}`); },
+      });
+      assert.deepEqual(marked, [`q1,q2: ${PUTBACK_FAILED_WHY}`]);
+      assert.equal(db.rows.get("q1")!.parsing_status, "Needs Review", "left Approved on the solver's answer → review");
+      assert.equal(db.rows.get("q2")!.parsing_status, "Approved", "live: never demoted");
+      // Live status unknown → an Approved row isn't touched (it may be live).
+      const db2 = new FakeDb();
+      db2.rows.set("q1", solved());
+      await failClosed(["q1"], PUTBACK_FAILED_WHY, { db: db2, liveIds: async () => { throw new Error("down"); }, markNotRescored: async () => {} });
+      assert.equal(db2.rows.get("q1")!.parsing_status, "Approved");
+      const db3 = new FakeDb();
+      db3.rows.set("q1", { ...solved(), parsing_status: "Draft" });
+      db3.failUpdate = true;
+      await assert.rejects(failClosed(["q1"], PUTBACK_FAILED_WHY, { db: db3, liveIds: async () => new Set(), markNotRescored: async () => {} }));
+    }
   }
   // DB errors → not rescored, Needs Review, no auto-promote.
   {
