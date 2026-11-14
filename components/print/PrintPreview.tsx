@@ -22,6 +22,8 @@ const PREVIEW_CSS = `
   .print-preview-pages .pagedjs_page:last-child { break-after: auto !important; page-break-after: auto !important; }
   /* Ctrl/Cmd+P before the pages are laid out: print the plain document. */
   html:not([data-print-ready]) .print-source { display: block !important; }
+  /* …and not the pages Paged.js has laid out so far (that would print the content twice). */
+  html:not([data-print-ready]) .print-preview-pages { display: none !important; }
   /* break-before: recto exists only inside Paged.js; the plain document still starts each student on a new page. */
   .print-source .break-before-recto { break-before: page; }
 }
