@@ -914,6 +914,11 @@
     "turnOn": "開啟",
     "turnOff": "關閉",
     "pending": "資料庫更新尚未完成，請先執行 migration 0032。",
-    "failed": "無法更新設定，請再試一次。"
+    "failed": "無法更新設定，請再試一次。",
+    "hiddenByAdmin": "題目內容已被管理員隱藏",
+    "explanationsWithKey": "解析（含答案）",
+    "explainForcesKey": "解析包含答案，因此會自動附上答案。",
+    "unknown": "未知（無法讀取）",
+    "printLoadFailed": "無法載入此測驗的列印內容，請重新整理再試一次。"
   }
 }

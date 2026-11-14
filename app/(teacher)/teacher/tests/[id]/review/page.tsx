@@ -25,7 +25,7 @@ import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/Revi
 // (lib/teacher-qa) the page says so instead. Admins are never blocked.
 async function getTeacherReview(
   testId: string,
-  user: { userId: string; role: string | null | undefined; isQa: boolean; accountStatus?: string | null },
+  user: { userId: string; role: string | null | undefined; isQa: boolean; accountStatus: string | null | undefined },
 ) {
   const db = getServiceClient();
 

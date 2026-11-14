@@ -19,10 +19,16 @@ type DbError = { code?: string; message?: string; status?: number } | null | und
 /** Pure: the error is "teacher_qa_enabled doesn't exist yet" (migration 0032 not applied). */
 export function isTeacherQaColumnMissing(err: DbError): boolean {
   if (!err) return false;
-  if (err.code === "42703") return true;
+  // Only when the error names this column: another missing column is a real bug.
   const msg = err.message ?? "";
   if (!/teacher_qa_enabled/.test(msg)) return false;
-  return err.code === "PGRST204" || err.code === "400" || err.status === 400 || /does not exist|schema cache/.test(msg);
+  return (
+    err.code === "42703" ||
+    err.code === "PGRST204" ||
+    err.code === "400" ||
+    err.status === 400 ||
+    /does not exist|schema cache/.test(msg)
+  );
 }
 
 export type TeacherQaDecision = "allow" | "no-access" | "off";
@@ -35,14 +41,15 @@ export type TeacherQaDecision = "allow" | "no-access" | "off";
  */
 export function decideTeacherQa(input: {
   role: string | null | undefined;
-  accountStatus?: string | null;
+  /** Teachers must be "approved" (unset counts as not approved). */
+  accountStatus: string | null | undefined;
   hasAccess: boolean;
   qaEnabled: boolean;
 }): TeacherQaDecision {
   if (!input.hasAccess) return "no-access";
   if (input.role === "admin") return "allow";
   if (input.role !== "teacher") return "no-access";
-  if (input.accountStatus != null && input.accountStatus !== "approved") return "no-access";
+  if (input.accountStatus !== "approved") return "no-access";
   return input.qaEnabled ? "allow" : "off";
 }
 
@@ -93,6 +100,23 @@ export async function teacherQaOffIds(
   }
 }
 
+/**
+ * True when `user` is a teacher and the switch is off for `testId` (a
+ * full-length section: its parent's): their views must leave out question
+ * content — text, choices, figures, the correct answer and explanations —
+ * keeping numbers, domains, the student's answers, right/wrong and stats.
+ * Admins and students: false (students follow their own answer settings).
+ * Throws on a lookup error (callers fail closed).
+ */
+export async function teacherQaContentHidden(
+  db: SupabaseClient,
+  user: { role: string | null | undefined },
+  testId: string,
+): Promise<boolean> {
+  if (user.role !== "teacher") return false;
+  return (await readTeacherQaEnabled(db, [testId])).get(testId) === false;
+}
+
 /** Set the switch on one test (a full-length parent, never a section). Throws on errors other than the missing column. */
 export async function writeTeacherQaEnabled(
   db: SupabaseClient,
@@ -114,7 +138,7 @@ export async function writeTeacherQaEnabled(
  */
 export async function teacherQaGate(
   db: SupabaseClient,
-  user: { userId: string; role: string | null | undefined; isQa: boolean; accountStatus?: string | null },
+  user: { userId: string; role: string | null | undefined; isQa: boolean; accountStatus: string | null | undefined },
   testId: string,
 ) {
   // Loaded lazily so the pure helpers above stay importable by unit tests

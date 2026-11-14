@@ -17,6 +17,7 @@ export const dynamic = "force-dynamic";
 // GET /print/tests/<id>            → blank copy of the test
 // GET /print/tests/<id>?key=1      → same copy with the answer key
 //   &explain=inline | end           → plus explanations under each question / all at the end
+//                                     (explanations give the answers away, so they turn the key on)
 // Admins; and teachers who can open the test (getTeacherTestAccess, the
 // Questions & answers page's rule) while the admin's "Teachers can view &
 // print questions/answers" switch is on (lib/teacher-qa) — a single-subject
@@ -70,8 +71,8 @@ export default async function PrintTestPage({
 
   const { id } = await params;
   const sp = await searchParams;
-  const withKey = sp.key === "1";
   const explain = sp.explain === "inline" || sp.explain === "end" ? sp.explain : null;
+  const withKey = sp.key === "1" || explain != null;
   if (!onSide(id, await getQaTestIds(), user.isQa)) notFound();
 
   const db = getServiceClient();
@@ -90,11 +91,22 @@ export default async function PrintTestPage({
       );
     }
   }
-  const { data: test } = await db
+  // A failed read shows an error, never a printout with modules missing.
+  const loadFailed = async (what: string, error: { message?: string }) => {
+    console.error(`[print/tests] ${what} lookup failed for ${id}:`, error);
+    const t = await getTranslations("teacherQa");
+    return (
+      <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-2">
+        <p role="alert" className="text-status-error font-semibold">{t("printLoadFailed")}</p>
+      </div>
+    );
+  };
+  const { data: test, error: testError } = await db
     .from("tests")
     .select(`${TEST_COLUMNS}, test_kind`)
     .eq("id", id)
     .maybeSingle();
+  if (testError) return loadFailed("test", testError);
   if (!test) notFound();
 
   // A full-length SAT prints its two hidden sections in exam order: R&W
@@ -104,11 +116,12 @@ export default async function PrintTestPage({
     { test: test as PrintTestRow, sectionLabel: null, dividerBefore: null },
   ];
   if (test.test_kind === "full_length") {
-    const { data: kids } = await db
+    const { data: kids, error: kidsError } = await db
       .from("tests")
       .select(`${TEST_COLUMNS}, section_order`)
       .eq("parent_test_id", id)
       .order("section_order", { ascending: true });
+    if (kidsError) return loadFailed("sections", kidsError);
     const rows = (kids ?? []) as (PrintTestRow & { section_order: number | null })[];
     const rwChild = rows.find((r) => r.section_order === 1) ?? null;
     const mathChild = rows.find((r) => r.section_order === 2) ?? null;
@@ -134,7 +147,7 @@ export default async function PrintTestPage({
     let first = true;
     for (const slot of printSlots(part.test)) {
       if (!slot.moduleId) continue;
-      const [{ data: mod }, { data: questions }] = await Promise.all([
+      const [{ data: mod, error: modError }, { data: questions, error: qError }] = await Promise.all([
         db.from("modules").select("section").eq("id", slot.moduleId).maybeSingle(),
         scopeToStudentQuestionSet(
           db
@@ -146,6 +159,7 @@ export default async function PrintTestPage({
           slot.moduleId,
         ).order("original_question_number", { ascending: true }),
       ]);
+      if (modError || qError) return loadFailed("module questions", (modError ?? qError)!);
       modules.push({
         label: part.sectionLabel ? [part.sectionLabel, slot.label ?? "Module 1"].join(" · ") : slot.label,
         section: part.sectionLabel ? null : ((mod?.section as string | null) ?? null),
@@ -170,10 +184,12 @@ export default async function PrintTestPage({
             { value: "", label: "Blank test" },
             { value: "1", label: "With answer key" },
           ],
+          // Explanations include the answers: the key is on while they are.
+          ...(explain ? { disabledReason: t("explainForcesKey") } : {}),
         },
         {
           param: "explain",
-          label: t("explanations"),
+          label: t("explanationsWithKey"),
           value: explain ?? "",
           choices: [
             { value: "", label: t("explainOff") },

@@ -914,6 +914,11 @@
     "turnOn": "Turn on",
     "turnOff": "Turn off",
     "pending": "Database update pending. Run migration 0032 first.",
-    "failed": "Couldn't update the setting. Try again."
+    "failed": "Couldn't update the setting. Try again.",
+    "hiddenByAdmin": "Question text hidden by admin",
+    "explanationsWithKey": "Explanations (includes answers)",
+    "explainForcesKey": "Explanations include the answers, so the answer key is on.",
+    "unknown": "Unknown (couldn't load)",
+    "printLoadFailed": "Couldn't load this test for printing. Refresh to try again."
   }
 }

@@ -8,7 +8,7 @@ import { parseActivity, summarizeActivity, type ActivitySummary } from "@/lib/qu
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { fullLengthLinks } from "@/lib/full-length";
 import { flSectionScope } from "@/lib/full-length-score";
-import { teacherQaOffIds } from "@/lib/teacher-qa";
+import { teacherQaContentHidden } from "@/lib/teacher-qa";
 
 export interface StudentQuestionRow {
   name: string;
@@ -21,8 +21,9 @@ export interface StudentQuestionRow {
 export interface AnalyticsQuestion {
   questionId: string;
   questionNumber: number;
-  questionText: string;
-  correctAnswer: string;
+  /** null when the admin turned off "Teachers can view & print questions/answers". */
+  questionText: string | null;
+  correctAnswer: string | null;
   domain: string | null;
   difficulty: string | null;
   /** Students who were served this question in a graded module. */
@@ -65,8 +66,15 @@ export async function GET(
   if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  // The page greys out its Questions & answers button when the admin turned it off.
-  const teacherQaOff = (await teacherQaOffIds(db, user, [testId])).has(testId);
+  // Admin turned off "Teachers can view & print questions/answers": the page
+  // greys out its Q&A button and the questions carry no text or answer key.
+  let teacherQaOff: boolean;
+  try {
+    teacherQaOff = await teacherQaContentHidden(db, user, testId);
+  } catch (e) {
+    console.error("[teacher/analytics] teacher_qa_enabled lookup failed", e);
+    return NextResponse.json({ error: "Couldn't load analytics. Please try again." }, { status: 500 });
+  }
 
   // Full-length SAT parent: no questions of its own — the page shows one
   // tab per section the viewer may see, each the section child's analytics.
@@ -200,8 +208,8 @@ export async function GET(
         return {
           questionId: q.id as string,
           questionNumber: q.original_question_number as number,
-          questionText: q.question_text as string,
-          correctAnswer: (q.correct_answer as string | null) ?? "",
+          questionText: teacherQaOff ? null : (q.question_text as string),
+          correctAnswer: teacherQaOff ? null : ((q.correct_answer as string | null) ?? ""),
           domain: q.domain as string | null,
           difficulty: q.difficulty as string | null,
           taken: students.length,

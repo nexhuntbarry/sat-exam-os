@@ -7,13 +7,15 @@ import { clsx } from "clsx";
 import { Check, BookOpen } from "lucide-react";
 import { ResponseDistributionChart } from "@/components/analytics/ResponseDistributionChart";
 import MathMarkdown from "@/components/MathMarkdown";
+import { useTranslations } from "next-intl";
 
 interface QuestionDetail {
   id: string;
   questionNumber: number;
-  questionText: string;
+  /** null (with choices, correctAnswer, explanation) when the admin turned off teacher Q&A. */
+  questionText: string | null;
   choices: Array<{ letter: string; text: string; image_url?: string | null }>;
-  correctAnswer: string;
+  correctAnswer: string | null;
   explanation: string | null;
   difficulty: string | null;
   domain: string | null;
@@ -65,6 +67,7 @@ export default function QuestionDetailPage() {
   const [note, setNote] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [noteError, setNoteError] = useState(false);
+  const tQa = useTranslations("teacherQa");
 
   useEffect(() => {
     fetch(`/api/teacher/tests/${testId}/analytics/${questionId}`)
@@ -75,6 +78,7 @@ export default function QuestionDetailPage() {
         // The API returns DB choices ({ label, text }); this page reads
         // `letter`. Accept both so the correct choice and the answer
         // distribution line up.
+        if (json?.question && !Array.isArray(json.question.choices)) json.question.choices = [];
         if (json?.question && Array.isArray(json.question.choices)) {
           json.question.choices = (json.question.choices as { letter?: string; label?: string; text?: string; image_url?: string | null }[]).map(
             (c) => ({ letter: c.letter ?? c.label ?? "", text: c.text ?? "", image_url: c.image_url ?? null }),
@@ -130,10 +134,14 @@ export default function QuestionDetailPage() {
     submissionByStudent[ws.studentId] = ws.submissionId;
   }
 
-  const pieData = [...(question.choices.map((c) => ({
-    label: c.letter,
-    count: stats.choiceDistribution[c.letter] ?? 0,
-    isCorrect: c.letter === question.correctAnswer,
+  // Content hidden by the admin: no choice list, so chart the answers given.
+  const letters = question.choices.length
+    ? question.choices.map((c) => c.letter)
+    : Object.keys(stats.choiceDistribution).filter((k) => k !== "blank").sort();
+  const pieData = [...(letters.map((letter) => ({
+    label: letter,
+    count: stats.choiceDistribution[letter] ?? 0,
+    isCorrect: letter === question.correctAnswer,
   }))), {
     label: "blank",
     count: stats.blankCount,
@@ -190,9 +198,13 @@ export default function QuestionDetailPage() {
             {classReview ? "Marked for class review" : "Mark for class review"}
           </button>
         </div>
-        <MathMarkdown className="text-charcoal leading-relaxed prose prose-base max-w-none [&_p]:my-2">
-          {question.questionText}
-        </MathMarkdown>
+        {question.questionText == null ? (
+          <p className="text-soft-mute italic" data-teacher-qa-hidden>{tQa("hiddenByAdmin")}</p>
+        ) : (
+          <MathMarkdown className="text-charcoal leading-relaxed prose prose-base max-w-none [&_p]:my-2">
+            {question.questionText}
+          </MathMarkdown>
+        )}
       </div>
 
       {/* Choices */}
@@ -269,7 +281,7 @@ export default function QuestionDetailPage() {
             </div>
             <div className="flex justify-between">
               <span className="text-soft-mute">Correct answer</span>
-              <span className="text-warm-amber font-bold">{question.correctAnswer}</span>
+              <span className="text-warm-amber font-bold">{question.correctAnswer ?? "—"}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-soft-mute">Total submissions</span>

@@ -6,11 +6,13 @@ import { ChevronDown, ChevronRight, Check, X, Flag, BookOpen } from "lucide-reac
 import MathMarkdown from "@/components/MathMarkdown";
 import HighlightableBlock, { type Annotation } from "@/components/tests/HighlightableBlock";
 import type { ActivitySummary } from "@/lib/question-activity";
+import { useTranslations } from "next-intl";
 
 export interface AnswerDetail {
   questionId: string;
   questionNumber: number;
-  questionText: string;
+  /** null (with no choices, figures, key or explanation) when the admin turned off teacher Q&A. */
+  questionText: string | null;
   choices: Array<{ letter: string; text: string; image_url?: string | null }>;
   studentAnswer: string | null;
   correctAnswer: string | null;
@@ -50,6 +52,7 @@ export function SubmissionDetailPanel({
   onToggleClassReview,
   onSaveNote,
 }: SubmissionDetailPanelProps) {
+  const hiddenLabel = useTranslations("teacherQa")("hiddenByAdmin");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [notes, setNotes] = useState<Record<string, string>>(
     Object.fromEntries(answers.map((a) => [a.questionId, a.privateNote]))
@@ -121,9 +124,13 @@ export function SubmissionDetailPanel({
                   expressions display as KaTeX instead of raw "$\frac{1}{7}$"
                   text. Tailwind's line-clamp-1 keeps it on one line. */}
               <div className="flex-1 min-w-0">
-                <MathMarkdown className="text-mid-gray text-sm line-clamp-1 prose prose-sm max-w-none [&_p]:my-0">
-                  {a.questionText}
-                </MathMarkdown>
+                {a.questionText == null ? (
+                  <div className="text-soft-mute text-sm italic" data-teacher-qa-hidden>{hiddenLabel}</div>
+                ) : (
+                  <MathMarkdown className="text-mid-gray text-sm line-clamp-1 prose prose-sm max-w-none [&_p]:my-0">
+                    {a.questionText}
+                  </MathMarkdown>
+                )}
                 {a.domain && (
                   <span className="text-soft-mute text-xs">{a.domain}</span>
                 )}
@@ -182,7 +189,9 @@ export function SubmissionDetailPanel({
                 </div>
                 {/* Full question with student's highlights overlaid (read-only) */}
                 <div className="bg-surface rounded-lg p-4">
-                  {(() => {
+                  {a.questionText == null ? (
+                    <p className="text-soft-mute text-sm italic">{hiddenLabel}</p>
+                  ) : (() => {
                     const stemAnnos = a.studentAnnotations?.["stem"] ?? [];
                     const hasAnnos = stemAnnos.length > 0;
                     return (

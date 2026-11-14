@@ -244,6 +244,8 @@ function QuestionRow({
   detailHref: string;
 }) {
   const pct = q.taken > 0 ? Math.round((q.missed / q.taken) * 100) : null;
+  // null when the admin turned off "Teachers can view & print questions/answers".
+  const hidden = useTranslations("teacherQa")("hiddenByAdmin");
   return (
     <div className={clsx("border-b border-divider last:border-0", q.classReview && "bg-warm-coral/5")}>
       <button
@@ -254,9 +256,13 @@ function QuestionRow({
         <div className="w-4 shrink-0 text-soft-mute">{expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</div>
         <div className="w-10 shrink-0 text-charcoal text-sm font-semibold font-mono">Q{q.questionNumber}</div>
         <div className="flex-1 min-w-0">
-          <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-0 [&_p]:truncate">
-            {preview(q.questionText)}
-          </MathMarkdown>
+          {q.questionText == null ? (
+            <div className="text-soft-mute text-sm italic" data-teacher-qa-hidden>{hidden}</div>
+          ) : (
+            <MathMarkdown className="text-charcoal text-sm prose prose-sm max-w-none [&_p]:my-0 [&_p]:truncate">
+              {preview(q.questionText)}
+            </MathMarkdown>
+          )}
           {q.domain && <div className="text-soft-mute text-xs mt-0.5">{q.domain}</div>}
         </div>
         <div className="w-44 shrink-0">
@@ -282,14 +288,20 @@ function QuestionRow({
 
       {expanded && (
         <div className="px-5 sm:px-14 pb-5 space-y-4">
-          <MathMarkdown className="text-mid-gray text-sm leading-relaxed bg-light-bg/50 rounded-lg p-4 prose prose-sm max-w-none [&_p]:my-2">
-            {q.questionText}
-          </MathMarkdown>
+          {q.questionText == null ? (
+            <p className="text-soft-mute text-sm italic bg-light-bg/50 rounded-lg p-4">{hidden}</p>
+          ) : (
+            <MathMarkdown className="text-mid-gray text-sm leading-relaxed bg-light-bg/50 rounded-lg p-4 prose prose-sm max-w-none [&_p]:my-2">
+              {q.questionText}
+            </MathMarkdown>
+          )}
           <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-            <span>
-              <span className="text-soft-mute">Correct answer: </span>
-              <span className="font-bold text-charcoal">{q.correctAnswer || "—"}</span>
-            </span>
+            {q.correctAnswer != null && (
+              <span>
+                <span className="text-soft-mute">Correct answer: </span>
+                <span className="font-bold text-charcoal">{q.correctAnswer || "—"}</span>
+              </span>
+            )}
             {q.blank > 0 && <span className="text-soft-mute">{q.blank} left blank</span>}
             <button
               onClick={() => onToggleClassReview(q.questionId, q.classReview)}

@@ -5,6 +5,7 @@ import { asParentRows, childTestIds, expandFullLength, fullLengthLinks, hideChil
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { teacherQaContentHidden } from "@/lib/teacher-qa";
 
 // GET /api/teacher/teaching-mode/test-review?testId=optional
 // Returns the latest (or specified) published/closed test that the teacher's
@@ -137,13 +138,15 @@ export async function GET(req: Request) {
     : { data: [] };
 
   const metaMap = new Map((qmeta ?? []).map((q) => [q.id, q]));
+  // Admin turned off "Teachers can view & print questions/answers": no question text.
+  const textHidden = await teacherQaContentHidden(db, user, selected.id);
 
   const hardestQuestions = ranked.map((r) => {
     const m = metaMap.get(r.questionId);
     return {
       questionId: r.questionId,
       questionNumber: m?.original_question_number ?? null,
-      questionText: m?.question_text ?? "",
+      questionText: textHidden ? "" : (m?.question_text ?? ""),
       domain: m?.domain ?? null,
       skill: m?.skill ?? null,
       difficulty: m?.difficulty ?? null,

@@ -314,14 +314,14 @@ export default async function TestDetailPage({
   // their result / review pages enforce (test setting, class review,
   // per-student override, retake safety).
   // "Teachers can view & print questions/answers": a full-length section
-  // shows (and sets) its parent's switch. A failed read shows ON (the
-  // teacher pages read it again and fail closed).
+  // shows (and sets) its parent's switch. A failed read shows "unknown"
+  // with the error (the teacher pages read it again and fail closed).
   const qaTestId = (test.parent_test_id as string | null) ?? test.id;
-  const teacherQaEnabled = await readTeacherQaEnabled(db, [qaTestId])
-    .then((m) => m.get(qaTestId) ?? true)
+  const teacherQa = await readTeacherQaEnabled(db, [qaTestId])
+    .then((m) => ({ enabled: m.get(qaTestId) ?? true, error: null as string | null }))
     .catch((e) => {
       console.error("[admin/tests] teacher_qa_enabled read failed:", e);
-      return true;
+      return { enabled: null, error: e instanceof Error ? e.message : String(e) };
     });
   const [visibilityInputs, tv] = await Promise.all([
     loadAnswerVisibilityInputs(
@@ -783,7 +783,8 @@ export default async function TestDetailPage({
         <div className="border-t border-divider pt-4">
           <TeacherQaToggle
             testId={qaTestId}
-            initialEnabled={teacherQaEnabled}
+            initialEnabled={teacherQa.enabled}
+            loadError={teacherQa.error}
             fullLengthSection={qaTestId !== test.id}
           />
         </div>
