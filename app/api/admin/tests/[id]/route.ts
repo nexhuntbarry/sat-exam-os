@@ -23,6 +23,7 @@ import {
   timeLimitError,
 } from "../../_shared";
 import { moveTestToDraft } from "@/lib/test-readiness";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // GET /api/admin/tests/[id]
 export async function GET(
@@ -113,7 +114,7 @@ async function casArrayOp(
 }
 
 // PATCH /api/admin/tests/[id]
-export async function PATCH(
+async function handlePATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -464,7 +465,7 @@ export async function PATCH(
 // double-confirms, and there are legitimate "I created this in error,
 // scrap it" cases. If we wanted a softer guarantee later, swap to a
 // soft-delete flag on tests.
-export async function DELETE(
+async function handleDELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -503,3 +504,7 @@ export async function DELETE(
     deleted: { id, test_name: target.test_name },
   });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const PATCH = withQueueInvalidation(handlePATCH);
+export const DELETE = withQueueInvalidation(handleDELETE);

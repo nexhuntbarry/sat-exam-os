@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 import { roleError } from "../../../_shared";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // POST /api/admin/tests/[id]/add-students
 // Body: { studentIds: string[] }
@@ -13,7 +14,7 @@ import { roleError } from "../../../_shared";
 //
 // Returns the merged list and a count of newly added students so the
 // UI can show a "Added N students" toast.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -83,3 +84,6 @@ export async function POST(
 
   return NextResponse.json({ ok: true, added, total: mergedTotal });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const POST = withQueueInvalidation(handlePOST);

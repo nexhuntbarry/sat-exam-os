@@ -247,5 +247,5 @@ async function handlePATCH(
   return NextResponse.json({ data: result });
 }
 
-// The review queue's cached grouping is revalidated after a successful change.
+// The review queue's cached grouping is revalidated after every call.
 export const PATCH = withQueueInvalidation(handlePATCH);

@@ -3,9 +3,10 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 import { classNameTaken } from "../../_shared";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // PATCH /api/admin/class-groups/[id]
-export async function PATCH(
+async function handlePATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -57,7 +58,7 @@ export async function PATCH(
 // test_assignments.class_group_ids is a plain uuid[] (no FK), so the id is
 // stripped from every test that referenced it here; otherwise the tests
 // would keep an orphan id.
-export async function DELETE(
+async function handleDELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -117,3 +118,7 @@ export async function DELETE(
     removedTeacherAssignments: teacherCount ?? 0,
   });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const PATCH = withQueueInvalidation(handlePATCH);
+export const DELETE = withQueueInvalidation(handleDELETE);

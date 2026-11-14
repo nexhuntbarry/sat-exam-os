@@ -221,5 +221,5 @@ function parseAiAnswerFromNotes(notes: string | null): string | null {
   return m ? m[1].trim() : null;
 }
 
-// The review queue's cached grouping is revalidated after a successful change.
+// The review queue's cached grouping is revalidated after every call.
 export const POST = withQueueInvalidation(handlePOST);

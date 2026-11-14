@@ -3,6 +3,7 @@ import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { listCutOffExplanations, regenerateCutOffExplanationsBatch } from "@/lib/ai/solve-question";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // One batch = up to BATCH questions, 4 at a time, each up to two Claude calls.
 export const maxDuration = 300;
@@ -14,7 +15,7 @@ const BATCH = 8;
 // The page calls it in batches to stay inside the function time limit.
 // Writes only the explanation + a review note; never the answer, never
 // approves (see regenerateCutOffExplanationsBatch for the live-test rule).
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -43,3 +44,6 @@ export async function POST(
     return NextResponse.json({ error: e instanceof Error ? e.message : "Unknown error" }, { status: 500 });
   }
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const POST = withQueueInvalidation(handlePOST);

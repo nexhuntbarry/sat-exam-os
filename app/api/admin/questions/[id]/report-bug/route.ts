@@ -13,7 +13,7 @@ import { stemFigureMissing } from "@/lib/parse-guards";
 import { notifyBugReportResolved } from "@/lib/notifications";
 import { bugReportSupportBody, createSupportRequest, findSupportForBugReport, resolveBugReportThread } from "@/lib/support";
 import { uploadScreenshots } from "@/app/api/admin/support/upload";
-import { withQueueInvalidation } from "@/lib/review-queue-cache";
+import { invalidateReviewQueue, withQueueInvalidation } from "@/lib/review-queue-cache";
 
 const AUDIT_COLS =
   "id, parsing_status, parsing_notes, section, question_type, correct_answer, has_image, has_table, image_urls, question_text, choices, explanation";
@@ -198,6 +198,9 @@ async function handlePOST(
       }
     } catch (e) {
       console.error("[report-bug] auto-resolve crashed:", e);
+    } finally {
+      // The repair ops above change the question after the response went out.
+      invalidateReviewQueue();
     }
   });
 
@@ -389,5 +392,5 @@ async function notifyDevViaTelegram(input: {
   }
 }
 
-// The review queue's cached grouping is revalidated after a successful change.
+// The review queue's cached grouping is revalidated after every call.
 export const POST = withQueueInvalidation(handlePOST);

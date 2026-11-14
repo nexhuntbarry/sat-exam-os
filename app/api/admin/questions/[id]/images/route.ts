@@ -72,5 +72,5 @@ async function handlePOST(req: Request, { params }: { params: Promise<{ id: stri
   return NextResponse.json({ ok: true, image_urls: urls, image_alts: alts, ...(patch.has_image === false ? { has_image: false } : {}) });
 }
 
-// The review queue's cached grouping is revalidated after a successful change.
+// The review queue's cached grouping is revalidated after every call.
 export const POST = withQueueInvalidation(handlePOST);

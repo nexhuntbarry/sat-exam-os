@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 import { expandWithChildren, fullLengthLinks } from "@/lib/full-length";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // POST /api/admin/tests/[id]/remove-students
 // Body: { studentIds: string[]; deleteSubmissions?: boolean; onlyIfNotStarted?: boolean }
@@ -21,7 +22,7 @@ import { expandWithChildren, fullLengthLinks } from "@/lib/full-length";
 // With `onlyIfNotStarted` (the student page's "Remove assignment"), the
 // request is refused (409) if any of the students has a submission for
 // this test, so nothing they started is ever unassigned from there.
-export async function POST(
+async function handlePOST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
@@ -161,3 +162,6 @@ export async function POST(
 
   return NextResponse.json({ ok: true, removed, deletedSubmissions, stillVisibleViaGroup });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const POST = withQueueInvalidation(handlePOST);

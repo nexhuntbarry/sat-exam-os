@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase";
 import { autoFixExplanations, explanationTargetReasons, loadAutoFixRows, summarize } from "@/lib/explanation-autofix";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 300;
 
@@ -14,7 +15,7 @@ export const maxDuration = 300;
 // ?dry=1 reports what it would do without writing.
 const BUDGET_MS = 240_000;
 
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || (req.headers.get("authorization") || "") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -50,3 +51,6 @@ export async function GET(req: Request) {
     rows: out.map((o) => ({ id: o.id, number: o.number, group: o.group, status_before: o.status_before, status_after: o.status_after, detail: o.detail, blockers: o.blockers })),
   });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const GET = withQueueInvalidation(handleGET);

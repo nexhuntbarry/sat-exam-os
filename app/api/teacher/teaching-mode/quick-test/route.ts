@@ -5,6 +5,7 @@ import { forbidCrossSide, getQaUserIds } from "@/lib/qa";
 import { getTeacherBankSubjects } from "@/lib/teacher-access";
 import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import { teacherQaOffQuestions } from "@/lib/teacher-qa";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // POST /api/teacher/teaching-mode/quick-test
 // Body: { name: string, questionIds: string[], cohortId?: string }
@@ -12,7 +13,7 @@ import { teacherQaOffQuestions } from "@/lib/teacher-qa";
 // is provided) auto-assigns it to that class group's students plus this
 // teacher. Cohort here means a class_groups row id; if omitted we still
 // create the test in Draft so the teacher can publish it manually later.
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const authResult = await requireRole(["teacher", "admin"]);
   if (authResult instanceof NextResponse) return authResult;
   const teacher = authResult;
@@ -198,3 +199,6 @@ export async function POST(req: Request) {
 
   return NextResponse.json({ data: { id: test.id, studentCount: studentIds.length } }, { status: 201 });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const POST = withQueueInvalidation(handlePOST);

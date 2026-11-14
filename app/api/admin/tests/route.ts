@@ -26,6 +26,7 @@ import {
   thresholdError,
   timeLimitError,
 } from "../_shared";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // GET /api/admin/tests
 // ?list=1 — lightweight list for pickers (id, test_name, status, section only).
@@ -125,7 +126,7 @@ export async function GET(req: Request) {
 }
 
 // POST /api/admin/tests — create test
-export async function POST(req: Request) {
+async function handlePOST(req: Request) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
   const admin = authResult;
@@ -461,3 +462,6 @@ async function createFullLength(
   if (error || !id) return NextResponse.json({ error: error ?? "Failed to create test" }, { status: 500 });
   return NextResponse.json({ data: { id } }, { status: 201 });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const POST = withQueueInvalidation(handlePOST);

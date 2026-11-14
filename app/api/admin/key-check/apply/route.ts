@@ -54,5 +54,5 @@ async function handlePOST(req: Request) {
   return NextResponse.json({ ok: true, live: res.live, ...ex, rescore: res.rescore });
 }
 
-// The review queue's cached grouping is revalidated after a successful change.
+// The review queue's cached grouping is revalidated after every call.
 export const POST = withQueueInvalidation(handlePOST);

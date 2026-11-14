@@ -13,6 +13,7 @@ import { getServiceClient } from "./supabase";
 import { forbidCrossSide, getQaTestIds } from "./qa";
 import { blockersMessage, loadPublishCheck, loadTestReadiness, moveTestToDraft } from "./test-readiness";
 import { loadManageDecision } from "./test-manage";
+import { withQueueInvalidation } from "./review-queue-cache";
 
 /** Returns a 401/403/404/409/500 response to refuse, or null to proceed. */
 export type TestAuthorizer = (testId: string) => Promise<NextResponse | null>;
@@ -39,7 +40,7 @@ export const teacherManagerAuth: TestAuthorizer = async (testId) => {
 };
 
 /** Draft → Published (publish) or Closed → Published (reopen). */
-export async function publishTest(
+async function publishTestInner(
   id: string,
   authorize: TestAuthorizer,
   action: "publish" | "reopen",
@@ -101,7 +102,7 @@ export async function publishTest(
 }
 
 /** Published → Closed. Students mid-test can still finish (lib/module2-access). */
-export async function closeTest(id: string, authorize: TestAuthorizer, tag: string): Promise<NextResponse> {
+async function closeTestInner(id: string, authorize: TestAuthorizer, tag: string): Promise<NextResponse> {
   const denied = await authorize(id);
   if (denied) return denied;
   const db = getServiceClient();
@@ -147,7 +148,7 @@ export async function closeTest(id: string, authorize: TestAuthorizer, tag: stri
  * submission, no full-length attempt). Rules and the race handling live in
  * moveTestToDraft (also used by the admin PATCH).
  */
-export async function draftTest(id: string, authorize: TestAuthorizer): Promise<NextResponse> {
+async function draftTestInner(id: string, authorize: TestAuthorizer): Promise<NextResponse> {
   const denied = await authorize(id);
   if (denied) return denied;
   const r = await moveTestToDraft(getServiceClient(), id);
@@ -173,3 +174,9 @@ export async function testReadiness(id: string, authorize: TestAuthorizer, tag: 
     return NextResponse.json({ error: "Could not check the test" }, { status: 500 });
   }
 }
+
+// Publish / close / reopen / draft change which questions are live: the review
+// queue's cached grouping (live labels, live-only filter) is revalidated.
+export const publishTest = withQueueInvalidation(publishTestInner);
+export const closeTest = withQueueInvalidation(closeTestInner);
+export const draftTest = withQueueInvalidation(draftTestInner);

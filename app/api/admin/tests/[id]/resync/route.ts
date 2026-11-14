@@ -15,6 +15,7 @@ import {
   type FlSectionKey,
 } from "@/lib/full-length-admin";
 import { moduleSetError } from "../../../_shared";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // POST /api/admin/tests/[id]/resync — full-length SAT only.
 // Body: { rwSourceTestId?, mathSourceTestId? } (omitted = keep the current source)
@@ -24,7 +25,7 @@ import { moduleSetError } from "../../../_shared";
 // Time limits stay as set on the full-length test. Only allowed on a
 // Draft or Closed test that nobody has started (existing answers are tied
 // to the old modules); publish / reopen re-run the approval check.
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
+async function handlePOST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const authResult = await requireRole("admin");
   if (authResult instanceof NextResponse) return authResult;
   const admin = authResult;
@@ -114,3 +115,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   await db.from("tests").update({ updated_at: new Date().toISOString() }).eq("id", id);
   return NextResponse.json({ success: true });
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const POST = withQueueInvalidation(handlePOST);

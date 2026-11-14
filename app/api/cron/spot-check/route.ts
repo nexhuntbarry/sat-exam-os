@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getServiceClient } from "@/lib/supabase";
 import { cronMaxParam, runSpotCheckBatch } from "@/lib/spot-check-run";
+import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 export const maxDuration = 300;
 
@@ -13,7 +14,7 @@ export const maxDuration = 300;
 // this week's quota (5% of system-approved, at least 20) is reached, so 7 daily
 // runs cover the week. A live question is never demoted (lib/spot-check-run.ts).
 // ?max=N lowers the cap for a run (never raises it).
-export async function GET(req: Request) {
+async function handleGET(req: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || (req.headers.get("authorization") || "") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -31,3 +32,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "failed" }, { status: 500 });
   }
 }
+
+// The review queue's cached grouping is revalidated after every call.
+export const GET = withQueueInvalidation(handleGET);
