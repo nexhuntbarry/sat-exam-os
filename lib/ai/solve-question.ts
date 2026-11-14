@@ -942,6 +942,8 @@ export async function explainOfficialAndPersist(
   moduleId: string,
   db: DbClient,
   callerUserId?: string,
+  /** Re-parse in place: question id → the key already stored on it. Explained against that key; correct_answer is never written for these rows. */
+  storedKeys: Map<string, string> = new Map(),
 ): Promise<{ rewrote: number; approved: number; keptReview: number; skipped: number }> {
   const { data } = await db
     .from("questions")
@@ -961,7 +963,8 @@ export async function explainOfficialAndPersist(
     const chunk = rows.slice(i, i + CHUNK);
     await Promise.all(
       chunk.map(async (q) => {
-        const ans = q.official_answer || q.correct_answer;
+        const storedKey = storedKeys.get(q.id);
+        const ans = storedKey ?? (q.official_answer || q.correct_answer);
         if (!ans) { skipped++; return; }
         try {
           // Solve independently FIRST (independent_answer), then explain the
@@ -1024,7 +1027,7 @@ export async function explainOfficialAndPersist(
           if (keyProblem) addNote(keyFormNote(keyProblem));
           if (draftProblem) addNote(`${OFFICIAL_EXPLANATION_FAILED_PREFIX} (${draftProblem.replace(/[;()]/g, ",").slice(0, 160)}) — write and check it by hand`);
           const update: Record<string, unknown> = {
-            correct_answer: ans,
+            ...(storedKey ? {} : { correct_answer: ans }),
             parsing_status: keep ? "Needs Review" : "Approved",
             // Keep the original defect note on rows staying in review — it
             // names WHAT to fix (e.g. the PDF's real choices).
@@ -1120,6 +1123,8 @@ export async function regenerateTruncatedExplanations(
   moduleId: string,
   db: DbClient,
   callerUserId?: string,
+  /** Re-parse in place: question id → stored key (see explainOfficialAndPersist). */
+  storedKeys: Map<string, string> = new Map(),
 ): Promise<{ checked: number; regenerated: number }> {
   const { data } = await db
     .from("questions")
@@ -1145,7 +1150,8 @@ export async function regenerateTruncatedExplanations(
     const chunk = targets.slice(i, i + CHUNK);
     await Promise.all(
       chunk.map(async (q) => {
-        const ans = q.official_answer || q.correct_answer;
+        const storedKey = storedKeys.get(q.id);
+        const ans = storedKey ?? (q.official_answer || q.correct_answer);
         if (!ans) return;
         const ch = Array.isArray(q.choices)
           ? (q.choices as unknown[]).map((c) => (typeof c === "string" ? c : `${(c as { label?: string }).label}) ${(c as { text?: string }).text || ((c as { image_url?: string | null }).image_url ? "(a graph — image not shown here)" : "")}`)).join("\n")
@@ -1164,7 +1170,7 @@ export async function regenerateTruncatedExplanations(
             regenerated++;
             const { update } = applyLiveHold(
               q,
-              { correct_answer: ans, explanation: expl, updated_at: new Date().toISOString() },
+              { ...(storedKey ? {} : { correct_answer: ans }), explanation: expl, updated_at: new Date().toISOString() },
               "Cut-off explanation regenerated",
               live,
             );

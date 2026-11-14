@@ -263,8 +263,11 @@ async function handlePOST(
   // X, stored key Y"), and the row is never rescored. Rows with no stored key
   // keep the solver / official-key flow below.
   const solverById = new Map<string, string | null>();
+  /** updated_at of the run's own write putting the stored key back (the restore's "ours" check). */
+  const solverWrittenAt = new Map<string, string>();
   for (const [qid, d] of storedKeyIds) {
-    const { data: row } = await db.from("questions").select("correct_answer, parsing_notes, parsing_status").eq("id", qid).maybeSingle();
+    const { data: row, error: readErr } = await db.from("questions").select("correct_answer, parsing_notes, parsing_status, updated_at").eq("id", qid).maybeSingle();
+    if (readErr) console.error(`[reparse-inplace] read ${qid} after the solver:`, readErr.message);
     if (!row || !d.seed) continue;
     const solver = (row.correct_answer as string | null) ?? null;
     solverById.set(qid, solver);
@@ -280,8 +283,17 @@ async function handlePOST(
     }
     // The solver's explanation argues its own answer, not the stored key.
     if (after.review) update.explanation = null;
-    await db.from("questions").update(update).eq("id", qid);
+    // Compare-and-set: only over what the solver left.
+    let w = db.from("questions").update(update).eq("id", qid);
+    w = row.updated_at == null ? w.is("updated_at", null) : w.eq("updated_at", row.updated_at);
+    w = solver == null ? w.is("correct_answer", null) : w.eq("correct_answer", solver);
+    const { data: wrote, error: wErr } = await w.select("updated_at");
+    if (wErr) console.error(`[reparse-inplace] put back stored key ${qid}:`, wErr.message);
+    else if (wrote?.[0]?.updated_at) solverWrittenAt.set(qid, wrote[0].updated_at as string);
+    // Otherwise the row changed under us: the final restore treats it as a person's edit.
   }
+  /** id → stored key: explain-official and the truncation guard explain these, never rewrite the key. */
+  const storedKeyMap = new Map([...storedKeyIds].map(([qid, d]) => [qid, d.seed!] as [string, string]));
 
   let reconciled = 0;
   const { data: rows } = await db
@@ -354,8 +366,8 @@ async function handlePOST(
   try { cleanup = await runPostParseCleanup(id, db); } catch (e) { cleanup = { error: String(e) }; }
   // Explain toward the official answer BEFORE the audit — same as the parse
   // pipeline's Phase 4b — so the audit sees consistent answer↔explanation pairs.
-  try { explained = await explainOfficialAndPersist(id, db); } catch (e) { explained = { error: String(e) }; }
-  try { await regenerateTruncatedExplanations(id, db); } catch (e) { console.error("[reparse-inplace] truncation-guard:", e); }
+  try { explained = await explainOfficialAndPersist(id, db, undefined, storedKeyMap); } catch (e) { explained = { error: String(e) }; }
+  try { await regenerateTruncatedExplanations(id, db, undefined, storedKeyMap); } catch (e) { console.error("[reparse-inplace] truncation-guard:", e); }
   try { audit = await runSemanticAudit(id, db); } catch (e) { audit = { error: String(e) }; }
   try { figures = await recoverMissingFigures(id, db); } catch (e) { figures = { error: String(e) }; }
   try { choicesRecovery = await recoverBrokenChoices(id, db); } catch (e) { choicesRecovery = { error: String(e) }; }
@@ -373,18 +385,17 @@ async function handlePOST(
     if (disagreeNote) await flagQuestionsForReview(id, db, disagreeNote, keyDisagreeNums);
     await enforceStemIntegrity(id, db);
   } catch (e) { console.error("[reparse-inplace] key/stem guards:", e); }
-  // Safety net, after every AI pass and before rescoring / auto-promote. The
-  // rows were written with official_answer = the stored key, so the passes
-  // that set correct_answer = official_answer already land on it; this only
-  // puts the stored key back where the run's own writes (prior official /
-  // solver answer) still left another one — compare-and-set, never over a
-  // person's edit, live rows only tagged (lib/reparse-key-restore.ts). If it
-  // can't finish, the module is not auto-promoted.
+  // Safety net, after every AI pass and before rescoring / auto-promote.
+  // explain-official and the truncation guard got storedKeyMap and never write
+  // these keys; this only puts the stored key back where the run's own solver
+  // answer is still there — compare-and-set, never over a person's edit, live
+  // rows only tagged (lib/reparse-key-restore.ts). If it can't finish, the
+  // module is not auto-promoted.
   let keysRestored = 0;
   let skipPromote = false;
   try {
     const res = await restoreStoredKeys(
-      [...storedKeyIds].map(([qid, d]) => ({ id: qid, stored: d.seed!, priorOfficial: d.priorOfficial, solver: solverById.get(qid) ?? null })),
+      [...storedKeyIds].map(([qid, d]) => ({ id: qid, stored: d.seed!, solver: solverById.get(qid) ?? null, solverWrittenAt: solverWrittenAt.get(qid) ?? null })),
       {
         db,
         liveIds: (ids) => liveQuestionIds(db, ids),

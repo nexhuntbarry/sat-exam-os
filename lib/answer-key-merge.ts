@@ -182,12 +182,10 @@ export interface ReparseKeyDecision {
  * Re-parse in place, one question. A key already stored on the row
  * (correct_answer — what students are graded on — else official_answer) is
  * never changed: a ✓, this run's probe or a differing stored official answer
- * only sends the row to Needs Review. The stored key (the full multi-answer
- * string) is also written as official_answer, so the later passes that set
- * correct_answer = official_answer (explain-official, truncation guard) derive
- * the stored key themselves; a differing old official value survives only in
- * the review note. A row with no stored key takes this run's probe under
- * probe rules (mergeTicksIntoKey).
+ * only sends the row to Needs Review. official_answer is left as it was; the
+ * cron passes the stored keys to explain-official and the truncation guard so
+ * they never write correct_answer from it. A row with no stored key takes
+ * this run's probe under probe rules (mergeTicksIntoKey).
  */
 export function reparseKeyDecision(
   row: { storedOfficial: string | null; storedCorrect: string | null; probe: string | null; type: string | null },
@@ -202,7 +200,7 @@ export function reparseKeyDecision(
     if (storedOfficial && !agrees(stored, storedOfficial)) review.push(storedOfficialConflictNote(stored, storedOfficial));
     if (tick && !agrees(stored, tick)) review.push(storedConflictNote(stored, tick.toUpperCase()));
     if (probe && !agrees(stored, probe)) review.push(storedProbeConflictNote(stored, probe));
-    return { official: stored, seed: stored, review, note: null, storedKey: true, priorOfficial: storedOfficial };
+    return { official: storedOfficial, seed: stored, review, note: null, storedKey: true, priorOfficial: storedOfficial };
   }
   const d = ev ? decide(probe ?? undefined, ev, "probe", row.type) : null;
   const key = d?.key ?? probe;

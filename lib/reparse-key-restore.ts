@@ -1,15 +1,15 @@
 // lib/reparse-key-restore.ts
 //
 // Re-parse in place (app/api/cron/reparse-inplace): last safety net before
-// rescoring and auto-promote. The run writes official_answer = the stored key
-// (lib/answer-key-merge.ts reparseKeyDecision), so the passes that set
-// correct_answer = official_answer derive the stored key themselves; this only
-// catches a row where something the run itself wrote still left another key.
+// rescoring and auto-promote. explain-official and the truncation guard get
+// the stored keys and never write correct_answer for these rows, so this only
+// catches what the run itself may still have left.
 //
-// - It only puts the stored key back when the current correct_answer is a
-//   value the run's own passes could have written (the row's prior
-//   official_answer or the solver's answer). Anything else is taken as a
-//   person's edit during the run: left as is, with a note.
+// - It only puts the stored key back when the current correct_answer is the
+//   solver's answer AND the row hasn't been written since the run put the
+//   stored key back after the solver (solverWrittenAt). Anything else is taken
+//   as a person's edit during the run: left as is, with a note, and a row
+//   that isn't Approved goes to Needs Review (so auto-promote can't take it).
 // - Writes are compare-and-set on (id, updated_at, correct_answer); a row that
 //   changed since the read is left as is, with a note.
 // - A restored row goes to Needs Review (never left Draft or Approved on a
@@ -26,10 +26,10 @@ export interface RestoreEntry {
   id: string;
   /** The stored key the row must end the run with. */
   stored: string;
-  /** official_answer before this run. */
-  priorOfficial: string | null;
   /** The solver's answer in this run (null = none / not captured). */
   solver: string | null;
+  /** updated_at of the run's own write putting the stored key back after the solver (null = unknown). */
+  solverWrittenAt: string | null;
 }
 
 interface RestoreRow {
@@ -73,6 +73,7 @@ export interface RestoreResult {
 
 export const personEditNote = (current: string | null, stored: string) =>
   `Needs review: the key was changed to ${current ?? "(none)"} during this re-parse, not by it; it was left as is (the stored key was ${stored}) — confirm which is right`;
+const notLater = (a: string | null, b: string | null) => !!a && !!b && Date.parse(a) <= Date.parse(b);
 export const RESTORE_FAILED_WHY = "the re-parse couldn't confirm the stored key";
 
 const appendNote = (notes: string | null, note: string) => {
@@ -116,12 +117,15 @@ export async function restoreStoredKeys(entries: RestoreEntry[], deps: RestoreDe
         q = current === null ? q.is("correct_answer", null) : q.eq("correct_answer", current);
         return q.select("id");
       };
-      const ours = [e.priorOfficial, e.solver].some((v) => v !== null && v === current);
+      const ours = e.solver !== null && current === e.solver && notLater(row.updated_at, e.solverWrittenAt);
       let update: Record<string, unknown>;
       let kind: "restore" | "person";
       if (!ours) {
         kind = "person";
-        update = { parsing_notes: appendNote(row.parsing_notes, personEditNote(current, e.stored)) };
+        update = {
+          parsing_notes: appendNote(row.parsing_notes, personEditNote(current, e.stored)),
+          ...(row.parsing_status !== "Approved" ? { parsing_status: "Needs Review" } : {}),
+        };
       } else {
         kind = "restore";
         const why = deps.arguesOther(row, e.stored);
@@ -144,17 +148,28 @@ export async function restoreStoredKeys(entries: RestoreEntry[], deps: RestoreDe
         continue;
       }
       if (!written || written.length === 0) {
-        // Changed since the read: whoever changed it wins; say so.
-        const { data: again, error: rErr } = await deps.db.from("questions").select("parsing_notes").eq("id", row.id).maybeSingle();
-        if (rErr) {
+        // Changed since the read: whoever changed it wins; say so (compare-and-set
+        // again — if that misses too, the row counts as not finished).
+        const { data: again, error: rErr } = await deps.db
+          .from("questions")
+          .select("parsing_notes, parsing_status, updated_at")
+          .eq("id", row.id)
+          .maybeSingle();
+        if (rErr || !again) {
           out.failed.push(row.id);
           continue;
         }
-        const { error: nErr } = await deps.db
+        let nq = deps.db
           .from("questions")
-          .update({ parsing_notes: appendNote(again?.parsing_notes ?? null, personEditNote("another value", e.stored)) })
+          .update({
+            parsing_notes: appendNote(again.parsing_notes ?? null, personEditNote("another value", e.stored)),
+            ...(again.parsing_status !== "Approved" ? { parsing_status: "Needs Review" } : {}),
+            updated_at: now(),
+          })
           .eq("id", row.id);
-        if (nErr) out.failed.push(row.id);
+        nq = again.updated_at === null ? nq.is("updated_at", null) : nq.eq("updated_at", again.updated_at);
+        const { data: noted, error: nErr } = await nq.select("id");
+        if (nErr || !noted || noted.length === 0) out.failed.push(row.id);
         else out.personEdits.push(row.id);
         continue;
       }
@@ -182,7 +197,8 @@ export async function restoreStoredKeys(entries: RestoreEntry[], deps: RestoreDe
     if (safe.length > 0) {
       let q = deps.db.from("questions").update({ parsing_status: "Needs Review", updated_at: now() }).in("id", safe);
       if (!live) q = q.neq("parsing_status", "Approved");
-      await q;
+      const { error: fErr } = await q;
+      if (fErr) throw new Error(`reparse key restore: couldn't send ${safe.length} row(s) to Needs Review: ${fErr.message}`);
     }
   }
   return out;
