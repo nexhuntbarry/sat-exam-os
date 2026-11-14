@@ -236,8 +236,9 @@ export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): 
 // it was built before the last change, by another deploy, or more than
 // REVIEW_QUEUE_REVALIDATE_S ago, it is rebuilt in after() and stored for the
 // next request. Bounds: past STALE_WARN_MS with rebuilds failing, the page
-// says the counts are old; past STALE_MAX_MS the reader waits for a build.
-// A reader also waits when no index is stored at all.
+// says the counts are old; a reader waits for a build only when no index is
+// stored or the newest one is over STALE_MAX_MS old (a day: never on a normal
+// first open of the day).
 
 // A .env.local from `vercel env pull` copies VERCEL="1" and VERCEL_ENV="production"
 // (with the git / deployment vars empty), so only a filled deployment id or
@@ -248,7 +249,7 @@ const STORE_KEY = `review_queue_index:${REVIEW_QUEUE_INDEX_VERSION}:${DEPLOY ? p
 const BUILD_ID = DEPLOY || "local";
 const BUILD_TIMEOUT_MS = 30_000;
 const STALE_WARN_MS = 5 * 60_000;
-const STALE_MAX_MS = 15 * 60_000;
+const STALE_MAX_MS = 24 * 60 * 60_000;
 /** Vercel / Postgres handle more, but an index this big means QueueIndexEntry needs slimming. */
 const INDEX_WARN_BYTES = 2 * 1024 * 1024;
 
