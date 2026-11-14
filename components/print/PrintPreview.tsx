@@ -6,7 +6,7 @@ import { confirmPrintWithMissing, waitForImages } from "@/lib/print-images";
 import { PrintPendingNotice } from "@/components/analytics/PrintButton";
 import { studentPageLabels } from "@/lib/print-duplex";
 import { makeTitleKeeper } from "@/lib/print-title";
-import { WATERMARK_CSS, watermarkSvg } from "@/lib/print-watermark";
+import { WATERMARK_CSS, watermarkSvg, watermarkSymbol } from "@/lib/print-watermark";
 
 // Pages as sheets on screen; on paper, no blank sheet after the last page.
 const PREVIEW_CSS = `
@@ -236,7 +236,7 @@ export default function PrintPreview({
         document.documentElement.dataset.printFailed = "layout";
         // Fall back to the plain document so Print still prints everything.
         targetRef.current!.replaceChildren();
-        src.hidden = false;
+        src.style.display = "";
         setPhase("error");
       }
     })();
@@ -433,12 +433,18 @@ export default function PrintPreview({
       {watermark && (
         <>
           <style>{WATERMARK_CSS}</style>
+          {/* The mark's one definition (outside the source, so Paged.js never copies the id). */}
+          <div aria-hidden="true" dangerouslySetInnerHTML={{ __html: watermarkSymbol() }} />
           {/* Only for printing the plain document (see WATERMARK_CSS). */}
           <div className="print-watermark-fallback" aria-hidden="true" dangerouslySetInnerHTML={{ __html: watermarkSvg() }} />
         </>
       )}
       {/* Source: hidden; its figures load here first. */}
-      <div ref={sourceRef} className="print-source" hidden>
+      {/* Hidden with an inline style, not the `hidden` attribute: Tailwind's
+          preflight hides [hidden] with !important inside @layer base, which
+          beats the unlayered print rule that shows the plain document when
+          Ctrl/Cmd+P comes before the layout (it printed a blank page). */}
+      <div ref={sourceRef} className="print-source" style={phase === "error" ? undefined : { display: "none" }}>
         <PrintPendingNotice />
         {children}
       </div>

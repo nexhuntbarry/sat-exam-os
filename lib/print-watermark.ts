@@ -23,11 +23,27 @@ export function watermarkOn(role: string | null | undefined, wm: string | null |
   return role !== "admin" || wm !== "0";
 }
 
-/** The mark as SVG markup (one path, `viewBox` of the badge). */
+/** id of the one <symbol> holding the mark; every page references it. */
+export const WATERMARK_SYMBOL_ID = "pw";
+
+/**
+ * The mark's definition, once per document: a zero-size SVG holding a
+ * <symbol> (one path, the badge's viewBox). Zero-size rather than
+ * display:none so nothing can hide its contents from the <use> copies.
+ */
+export function watermarkSymbol(): string {
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute;width:0;height:0;overflow:hidden">` +
+    `<symbol id="${WATERMARK_SYMBOL_ID}" viewBox="0 0 ${BADGE_VIEWBOX.width} ${BADGE_VIEWBOX.height}">` +
+    `<path fill="${WATERMARK_FILL}" fill-opacity="${WATERMARK_OPACITY}" d="${BADGE_PATH}"/></symbol></svg>`
+  );
+}
+
+/** One page's mark: a reference to the symbol, sized by the badge's viewBox. */
 export function watermarkSvg(): string {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${BADGE_VIEWBOX.width} ${BADGE_VIEWBOX.height}" aria-hidden="true" focusable="false">` +
-    `<path fill="${WATERMARK_FILL}" fill-opacity="${WATERMARK_OPACITY}" d="${BADGE_PATH}"/></svg>`
+    `<use href="#${WATERMARK_SYMBOL_ID}" width="${BADGE_VIEWBOX.width}" height="${BADGE_VIEWBOX.height}"/></svg>`
   );
 }
 
@@ -45,14 +61,19 @@ export const WATERMARK_CSS = `
 /* Wrappers painted white on screen would hide it; paper is white anyway. */
 .print-preview-pages .pagedjs_page_content .bg-white { background-color: transparent !important; }
 /* Printing the plain document (the layout failed, or Ctrl/Cmd+P before it
-   finished): a fixed element repeats on every printed page. */
+   finished): a fixed element repeats on every printed page. z-index -1
+   puts it behind the in-flow content (root stacking context), so the
+   backgrounds above it are cleared — paper is white anyway. */
 .print-watermark-fallback { display: none; }
 @media print {
   html:not([data-print-ready]) .print-watermark-fallback {
-    display: flex; position: fixed; inset: 0; z-index: 2147483000;
+    display: flex; position: fixed; inset: 0; z-index: -1;
     align-items: center; justify-content: center; pointer-events: none;
   }
   html:not([data-print-ready]) .print-watermark-fallback svg { width: ${WATERMARK_WIDTH * 100}vw; height: auto; }
+  html:not([data-print-ready]) body,
+  html:not([data-print-ready]) .bg-cream,
+  html:not([data-print-ready]) .print-source .bg-white { background-color: transparent !important; }
 }
 `;
 

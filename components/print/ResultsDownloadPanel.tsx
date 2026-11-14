@@ -37,6 +37,7 @@ export default function ResultsDownloadPanel({ testId, canToggleWatermark = fals
   const wmOff = canToggleWatermark && !watermark;
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failed, setFailed] = useState<string[]>([]);
+  const [buildError, setBuildError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/print/results/${testId}/students`)
@@ -83,7 +84,7 @@ export default function ResultsDownloadPanel({ testId, canToggleWatermark = fals
     throw last;
   }
 
-  async function download() {
+  async function buildAndSave() {
     const list = chosen;
     setFailed([]);
     setBlanksAdded(null);
@@ -165,7 +166,20 @@ export default function ResultsDownloadPanel({ testId, canToggleWatermark = fals
       setTimeout(() => URL.revokeObjectURL(a.href), 30_000);
     }
     setFailed(bad);
-    setProgress(null);
+  }
+
+  // Assembling the ZIP / combined PDF can throw (a corrupt PDF, out of
+  // memory): say so, and never leave the button stuck on "Preparing…".
+  async function download() {
+    setBuildError(null);
+    try {
+      await buildAndSave();
+    } catch (e) {
+      console.error("[results download]", e);
+      setBuildError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProgress(null);
+    }
   }
 
   if (error) return <p className="text-sm text-status-error">Couldn&apos;t load the student list ({error}).</p>;
@@ -280,6 +294,11 @@ export default function ResultsDownloadPanel({ testId, canToggleWatermark = fals
         {blanksAdded !== null && (
           <p className="text-xs text-mid-gray">
             {blanksAdded} blank page{blanksAdded === 1 ? "" : "s"} added for double-sided printing.
+          </p>
+        )}
+        {buildError && (
+          <p role="alert" className="text-xs text-status-error">
+            Couldn&apos;t put the {format === "zip" ? "ZIP" : "combined PDF"} together ({buildError}). Try again, or download fewer students at a time.
           </p>
         )}
         {failed.length > 0 && (

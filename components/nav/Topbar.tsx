@@ -14,7 +14,7 @@ interface TopbarProps {
 export default function Topbar({ title }: TopbarProps) {
   return (
     <header className="h-16 border-b border-divider flex items-center px-4 md:px-6 gap-3 md:gap-4 bg-surface/90 backdrop-blur-md sticky top-0 z-40">
-      <div className="flex items-center gap-3 min-w-0">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(SIDEBAR_TOGGLE_EVENT))}
@@ -28,7 +28,7 @@ export default function Topbar({ title }: TopbarProps) {
 
       <div className="flex-1" />
 
-      <div className="flex items-center gap-2 md:gap-3">
+      <div className="flex shrink-0 items-center gap-2 md:gap-3">
         <LanguageSwitcher />
 
         <NotificationBell />

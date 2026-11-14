@@ -49,15 +49,18 @@ export function PremierLockup({ product = "SAT Exam OS", heading = false }: { pr
   );
 }
 
-/** App header (top left): badge + wordmark, "SAT Exam OS · <role>" underneath. */
+/**
+ * App header (top left): badge + wordmark, "SAT Exam OS · <role>" underneath.
+ * Below `sm` only the badge and the role: the rest doesn't fit beside the
+ * header controls on a phone.
+ */
 export function PremierHeaderMark({ role }: { role?: string }) {
   return (
-    <div className="flex items-center gap-2.5 min-w-0" data-brand="premier">
-      <PremierBadge height={34} color={BRAND.darkGold} className="shrink-0" />
+    <div className="flex items-center gap-2 sm:gap-2.5 min-w-0" data-brand="premier">
+      <PremierBadge height={34} color={BRAND.darkGold} className="shrink-0 h-[30px] w-auto sm:h-[34px]" title="Premier" />
       <div className="flex flex-col justify-center gap-1 min-w-0">
-        <PremierWordmark height={13} color={BRAND.darkGold} title="Premier" className="shrink-0" />
+        <PremierWordmark height={13} color={BRAND.darkGold} className="hidden sm:block shrink-0" />
         <span className="text-[10.5px] leading-none font-medium text-soft-mute whitespace-nowrap truncate">
-          {/* Phones show only the role: the full line doesn't fit beside the header controls. */}
           {role ? (
             <>
               <span className="hidden sm:inline">SAT Exam OS · </span>
