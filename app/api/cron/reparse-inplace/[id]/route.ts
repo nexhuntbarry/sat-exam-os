@@ -25,9 +25,11 @@ import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-que
 import { KEY_ROW_SELECT } from "@/lib/key-change";
 import { markNotRescored, rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
+import { explanationArguesOther } from "@/lib/explanation-autofix";
 import { extractChoicesFromPdfText, readLabelTicks } from "@/lib/pdf-text-choices";
 import {
   deterministicTicks,
+  finalStoredKeyRestore,
   reparseKeyDecision,
   storedKeyAfterSolve,
   type ReparseKeyDecision,
@@ -371,6 +373,38 @@ async function handlePOST(
     if (disagreeNote) await flagQuestionsForReview(id, db, disagreeNote, keyDisagreeNums);
     await enforceStemIntegrity(id, db);
   } catch (e) { console.error("[reparse-inplace] key/stem guards:", e); }
+  // Final restore, after every AI pass and before rescoring / auto-promote:
+  // explain-official and the truncation guard write correct_answer =
+  // official_answer, which can replace a stored key (a reviewer's A by a
+  // shifted official B) or narrow "5 or -13" to "5". Put every stored key
+  // back; such a row never stays Draft and is never rescored (it is not in
+  // keyChangedIds), and an explanation that now argues another answer is
+  // cleared with the row in Needs Review.
+  let keysRestored = 0;
+  try {
+    const ids = [...storedKeyIds.keys()];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data: finalRows } = await db
+        .from("questions")
+        .select("id, correct_answer, explanation, parsing_status, parsing_notes, question_type, question_text")
+        .in("id", ids.slice(i, i + 200));
+      for (const r of finalRows ?? []) {
+        const stored = storedKeyIds.get(r.id as string)?.seed;
+        if (!stored) continue;
+        const { update } = finalStoredKeyRestore(
+          r as { correct_answer: string | null; explanation: string | null; parsing_status: string | null; parsing_notes: string | null },
+          stored,
+          (ex, key) => explanationArguesOther(ex, key, (r.question_type as string | null) ?? null, (r.question_text as string | null) ?? null),
+        );
+        if (!update) continue;
+        await db.from("questions").update({ ...update, updated_at: new Date().toISOString() }).eq("id", r.id);
+        keysRestored++;
+      }
+    }
+    if (keysRestored) console.warn(`[reparse-inplace] restored ${keysRestored} stored key(s) a later pass had changed`);
+  } catch (e) { console.error("[reparse-inplace] final key restore:", e); }
+  const restoredStored = keyChangedIds.filter((x) => storedKeyIds.has(x));
+  if (restoredStored.length) keyChangedIds.splice(0, keyChangedIds.length, ...keyChangedIds.filter((x) => !storedKeyIds.has(x)));
   // Rescoring to the official key runs on its own: whatever stops it, the
   // rows get the "not rescored" note so a person sees it.
   try {
@@ -393,6 +427,7 @@ async function handlePOST(
     elapsed_s: Math.round((Date.now() - t0) / 1000),
     keyEntries,
     keyReview: keyReviewIds.size,
+    keysRestored,
     ...(tickReaderNotes.length ? { tickReaderNotes } : {}),
     reExtracted: parsed.length,
     updated,

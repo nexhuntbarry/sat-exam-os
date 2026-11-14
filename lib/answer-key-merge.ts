@@ -26,6 +26,7 @@ import {
   type LabelTick,
   type PdfTextChoices,
 } from "@/lib/pdf-text-choices";
+import { keyCandidates } from "@/lib/answer-key";
 
 export type AnswerKeySource = "upload" | "probe";
 
@@ -51,8 +52,12 @@ export interface TickEvidence {
 const MC = "Multiple Choice";
 const LETTER = /^[A-D]$/;
 const same = (a: string, b: string) => a.replace(/\s+/g, "").toUpperCase() === b.replace(/\s+/g, "").toUpperCase();
-/** A stored key may list accepted answers ("5 or -13", "A, C"): agreeing with any one of them counts. */
-const alternatives = (k: string) => k.split(/\s*(?:\bor\b|[,;|])\s*/i).map((x) => x.replace(/\s+/g, "").toUpperCase()).filter(Boolean);
+/**
+ * A stored key may list accepted answers ("5 or -13", "A, C"): agreeing with
+ * any one of them counts. Same split as the grader (lib/answer-key
+ * keyCandidates), so "1,000" stays one number.
+ */
+const alternatives = (k: string) => keyCandidates(k).map((x) => x.replace(/\s+/g, "").toUpperCase());
 const agrees = (a: string, b: string) => same(a, b) || alternatives(a).some((x) => alternatives(b).includes(x));
 
 export const PROBE_OVERRIDE_PREFIX = "Answer key: probe said";
@@ -68,6 +73,12 @@ export const storedOfficialConflictNote = (stored: string, official: string) =>
   `Needs review: the stored key is ${stored} but the stored official answer says ${official} — confirm which is right`;
 export const solverConflictNote = (solver: string, stored: string) =>
   `Needs review: solver says ${solver}, stored key ${stored} — confirm which is right`;
+export const weakFillNote = (tick: string, why?: string) =>
+  `Answer key: no key answer for this question; used the PDF tick ${tick}, which isn't fully verified${why ? ` (${why})` : ""}`;
+export const restoredKeyNote = (stored: string, was: string) =>
+  `Needs review: a later re-parse pass set the key to ${was}; the stored key ${stored} was put back — check the explanation`;
+export const restoredExplanationNote = (stored: string, why: string) =>
+  `Needs review: the explanation argued another answer than the stored key ${stored} (${why}) — it was cleared; write it for the stored key`;
 export const storedProbeConflictNote = (stored: string, probe: string) =>
   `Needs review: the stored key says ${stored} but the answer key read from the PDF says ${probe} — confirm which is right`;
 
@@ -93,7 +104,11 @@ function decide(
   const tick = ev.tick.trim();
   if (!tickApplies(tick, type)) return null;
   const key = k?.trim();
-  if (!key) return { key: tick };
+  if (!key) {
+    // Filling a gap with a ✓ that isn't fully verified: say so on the question.
+    const weakLetter = !ev.strong && LETTER.test(tick.toUpperCase());
+    return weakLetter ? { key: tick, note: weakFillNote(tick.toUpperCase(), ev.why) } : { key: tick };
+  }
   if (same(key, tick)) return null;
   const T = tick.toUpperCase();
   if (source === "upload") return { key, conflict: uploadConflictNote(key, T) };
@@ -264,11 +279,56 @@ export function deterministicTicks(
     if (!tick) continue;
     const isMc = q.question_type === MC;
     // Choices the text reader bound must be this question's parsed choices.
-    const aligned = !tq || diffChoices(q.choices, tq.choices).diffs.length === 0;
+    // Choice text bound but none of it comparable (math symbols) → unverified, not aligned.
+    const diff = tq ? diffChoices(q.choices, tq.choices) : null;
+    const aligned = !diff || (diff.comparable > 0 && diff.diffs.length === 0);
     const why = !isMc
       ? q.question_type == null ? "question type unknown" : "not a multiple-choice question"
-      : !aligned ? "the parsed choices don't match the PDF's" : undefined;
+      : aligned ? undefined
+      : diff?.comparable === 0 ? "the PDF's choice text can't be compared with the parsed choices"
+      : "the parsed choices don't match the PDF's";
     ticks.set(q.n, { tick, strong: isMc && aligned, why, source });
   }
   return { ticks, notes };
+}
+
+export interface FinalRestore {
+  /** Fields to write; null = the row is already right. */
+  update: Record<string, unknown> | null;
+  /** The Needs Review note written (null = none). */
+  review: string | null;
+}
+
+/**
+ * Re-parse in place, last pass before auto-promote: later AI passes
+ * (explain-official, truncation guard) write correct_answer = official_answer,
+ * which can replace a stored key or narrow "5 or -13" to "5". Put the stored
+ * key back. A row whose key had to be put back never stays Draft (so
+ * auto-promote can't take it); if its explanation now argues another answer
+ * (`arguesOther`, e.g. lib/explanation-autofix explanationArguesOther), the
+ * explanation is cleared and the row goes to Needs Review.
+ */
+export function finalStoredKeyRestore(
+  row: { correct_answer: string | null; explanation: string | null; parsing_status: string | null; parsing_notes: string | null },
+  stored: string,
+  arguesOther: (explanation: string | null, key: string) => string | null,
+): FinalRestore {
+  const current = row.correct_answer;
+  if (current === stored) return { update: null, review: null };
+  const update: Record<string, unknown> = { correct_answer: stored };
+  const notes = (row.parsing_notes ?? "").split(";").map((x) => x.trim()).filter(Boolean);
+  const why = arguesOther(row.explanation, stored);
+  let review: string | null = null;
+  if (why) {
+    review = restoredExplanationNote(stored, why);
+    update.explanation = null;
+  } else if (row.parsing_status === "Draft") {
+    review = restoredKeyNote(stored, current ?? "(none)");
+  }
+  if (review) {
+    if (!notes.includes(review)) notes.push(review);
+    update.parsing_status = "Needs Review";
+    update.parsing_notes = notes.join("; ");
+  }
+  return { update, review };
 }

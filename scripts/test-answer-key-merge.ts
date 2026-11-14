@@ -20,6 +20,10 @@ import {
   solverConflictNote,
   storedConflictNote,
   storedKeyAfterSolve,
+  finalStoredKeyRestore,
+  restoredExplanationNote,
+  restoredKeyNote,
+  weakFillNote,
   uploadConflictNote,
   type TickEvidence,
 } from "../lib/answer-key-merge";
@@ -31,6 +35,7 @@ import {
   type PdfLine,
   type PdfTextQuestion,
 } from "../lib/pdf-text-choices";
+import { explanationArguesOther } from "../lib/explanation-autofix";
 
 const MC = "Multiple Choice";
 const SPR = "Student Produced Response";
@@ -190,6 +195,90 @@ for (const source of ["probe", "upload"] as const) {
   assert.deepEqual(none, { official: null, seed: null, review: [], note: null, storedKey: false });
 }
 
+// ── Multi-answer keys use the grader's split (lib/answer-key keyCandidates):
+// "1,000" is one number, ", " and " or " separate answers.
+assert.notEqual(storedKeyAfterSolve("1,000", "1").review, null, '"1,000" is not "1" or "000"');
+assert.notEqual(storedKeyAfterSolve("1,000", "000").review, null);
+assert.equal(storedKeyAfterSolve("5, -13", "-13").review, null);
+assert.equal(storedKeyAfterSolve("5 or -13", "5").review, null);
+
+// ── A weak ✓ that fills a missing answer leaves a note (a strong one doesn't).
+{
+  const m = mergeTicksIntoKey({}, ev({ 1: weak("C", "the parsed choices don't match the PDF's"), 2: strong("D") }), "probe", allMc(1, 2));
+  assert.deepEqual(m.key, { 1: "C", 2: "D" });
+  assert.equal(m.notes.get(1), weakFillNote("C", "the parsed choices don't match the PDF's"));
+  assert.equal(m.notes.has(2), false);
+  assert.equal(m.conflicts.size, 0);
+}
+
+// ── Re-parse in place, end to end: the cron's write order for stored-key
+// rows — key decision → row written with the seed → solver overwrites
+// correct_answer → stored key put back (storedKeyAfterSolve) → explain-official
+// and the truncation guard (mocked: they write correct_answer =
+// official_answer || correct_answer, as lib/ai/solve-question.ts does) →
+// final restore (finalStoredKeyRestore) before rescore / auto-promote.
+{
+  const arguesOther = (type: string) => (ex: string | null, key: string) => explanationArguesOther(ex, key, type, "Which choice completes the text?");
+  type Row = { correct_answer: string | null; official_answer: string | null; explanation: string | null; parsing_status: string; parsing_notes: string | null };
+  const runCron = (stored: { official: string | null; correct: string | null }, type: string, solver: string, explainOfficial: string) => {
+    const d = reparseKeyDecision({ storedOfficial: stored.official, storedCorrect: stored.correct, probe: null, type }, undefined);
+    const row: Row = { correct_answer: d.seed, official_answer: d.official, explanation: null, parsing_status: d.review.length ? "Needs Review" : "Draft", parsing_notes: ["Re-parsed in place", ...d.review].join("; ") };
+    row.correct_answer = solver; // solver
+    row.explanation = `The answer is ${solver}.`;
+    const after = storedKeyAfterSolve(d.seed!, solver);
+    row.correct_answer = after.correct;
+    if (after.review) { row.parsing_status = "Needs Review"; row.explanation = null; row.parsing_notes += `; ${after.review}`; }
+    // explain-official (approves when nothing blocks) + truncation guard.
+    for (let pass = 0; pass < 2; pass++) {
+      row.correct_answer = row.official_answer || row.correct_answer;
+      if (row.official_answer) {
+        row.explanation = explainOfficial;
+        if (!/needs review:/i.test(row.parsing_notes ?? "")) row.parsing_status = "Approved";
+      }
+    }
+    const fin = finalStoredKeyRestore(row, d.seed!, arguesOther(type));
+    if (fin.update) Object.assign(row, fin.update);
+    return { row, d, fin };
+  };
+
+  // A reviewer's fix A vs a shifted official B → A survives; the explanation
+  // written for B is cleared; Needs Review; never Draft (no auto-promote).
+  {
+    const { row, d, fin } = runCron({ official: "B", correct: "A" }, MC, "A", "The answer is B.");
+    assert.equal(d.storedKey, true);
+    assert.equal(row.correct_answer, "A");
+    assert.equal(row.explanation, null);
+    assert.equal(row.parsing_status, "Needs Review");
+    assert.match(fin.review!, /^Needs review: the explanation argued another answer than the stored key A/);
+    assert.equal(fin.review, restoredExplanationNote("A", explanationArguesOther("The answer is B.", "A", MC, null)!));
+    assert.match(row.parsing_notes!, /stored official answer says B/);
+  }
+  // Multi-answer key narrowed to "5" by explain-official → "5 or -13" survives;
+  // the explanation for 5 is consistent, so it stays.
+  {
+    const { row, fin } = runCron({ official: "5", correct: "5 or -13" }, SPR, "5", "Final answer: 5");
+    assert.equal(row.correct_answer, "5 or -13");
+    assert.equal(row.explanation, "Final answer: 5");
+    assert.equal(fin.review, null, "consistent explanation on an approved row: no review");
+    assert.notEqual(row.parsing_status, "Draft");
+  }
+  // Stored key only in correct_answer, solver disagrees → kept, review, explanation cleared.
+  {
+    const { row } = runCron({ official: null, correct: "C" }, MC, "D", "unused");
+    assert.equal(row.correct_answer, "C");
+    assert.equal(row.parsing_status, "Needs Review");
+    assert.match(row.parsing_notes!, /solver says D, stored key C/);
+    assert.equal(row.explanation, null);
+  }
+  // A Draft row whose key a later pass changed never stays Draft.
+  {
+    const fin = finalStoredKeyRestore({ correct_answer: "B", explanation: null, parsing_status: "Draft", parsing_notes: null }, "A", () => null);
+    assert.deepEqual(fin.update, { correct_answer: "A", parsing_status: "Needs Review", parsing_notes: restoredKeyNote("A", "B") });
+  }
+  // Already right → nothing written.
+  assert.deepEqual(finalStoredKeyRestore({ correct_answer: "A", explanation: "x", parsing_status: "Draft", parsing_notes: null }, "A", () => "no"), { update: null, review: null });
+}
+
 // ── deterministicTicks
 const LABELS: ChoiceLabel[] = ["A", "B", "C", "D"];
 // Distinct words per question and label, so another question's choices never "agree".
@@ -271,6 +360,14 @@ const letter = (n: number) => LABELS[n % 4];
 }
 
 // Evidence per question.
+{
+  // Choice text bound but nothing comparable (math symbols) → unverified, weak.
+  const sym = (n: number) => LABELS.map((label) => ({ label, text: `${n} + ${LABELS.indexOf(label)}` }));
+  const main0 = pdfText(nums(10).map((n) => ({ ...tq(n, letter(n)), choices: sym(n) })));
+  const r0 = deterministicTicks(nums(10).map((n) => ({ n, question_type: MC, choices: sym(n) })), main0, null, 0);
+  assert.equal(r0.ticks.get(3)?.strong, false);
+  assert.equal(r0.ticks.get(3)?.why, "the PDF's choice text can't be compared with the parsed choices");
+}
 {
   // Choice misalignment: the text reader bound Q4's choices under Q5 → Q5's ✓ is weak.
   const main = pdfText(nums(10).map((n) => tq(n, letter(n), n === 5 ? { textOf: 4 } : {})));
