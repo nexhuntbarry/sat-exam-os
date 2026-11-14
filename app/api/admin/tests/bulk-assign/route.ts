@@ -9,7 +9,7 @@ import { publishAtError } from "@/lib/test-assign-shared";
 
 // POST /api/admin/tests/bulk-assign  (ticket b271dd38)
 // Body: {
-//   testIds: string[],                 // 1..100 tests (full-length: the parent)
+//   testIds: string[],                 // 1..30 tests (full-length: the parent)
 //   studentIds?: string[], classGroupIds?: string[], teacherIds?: string[],
 //   publishAt?: string | null,         // ISO with zone; Drafts publish then
 // }
@@ -23,7 +23,10 @@ import { publishAtError } from "@/lib/test-assign-shared";
 //
 // Returns { results, totals, summary, notified }. 503 when publishAt is set
 // before migration 0034 (database update pending).
-const MAX_TESTS = 100;
+const MAX_TESTS = 30;
+
+// 30 tests, 5 at a time, stays far inside this.
+export const maxDuration = 60;
 const MAX_IDS = 500;
 
 function idList(v: unknown): string[] | null {

@@ -150,6 +150,15 @@ async function handlePATCH(
 
   const updates: Record<string, unknown> = {};
 
+  // Unschedule: { publishAt: null } drops a Draft's scheduled publish
+  // (tests.publish_at, migration 0034). Setting a time goes through
+  // POST /api/admin/tests/bulk-assign.
+  let unschedule = false;
+  if (body.publishAt !== undefined) {
+    if (body.publishAt !== null) return bad("Only publishAt: null (unschedule) is accepted here");
+    unschedule = true;
+  }
+
   // Same field rules as POST /api/admin/tests.
   if (body.testName !== undefined) {
     const err = testNameError(body.testName);
@@ -336,6 +345,7 @@ async function handlePATCH(
   if (toDraft) {
     const r = await moveTestToDraft(db, id);
     if (!r.ok) return NextResponse.json({ error: r.error, testStatus: r.testStatus }, { status: r.httpStatus });
+    await clearPublishSchedule(db, id);
   }
 
   // Sections first (time limits, names); the parent update below then
@@ -363,8 +373,10 @@ async function handlePATCH(
       console.error("[admin/tests/patch]", error);
       return NextResponse.json({ error: "Failed to update test" }, { status: 500 });
     }
-    // Published by hand: a pending scheduled publish is done with.
-    if (updates.status === "Published" && current.status === "Draft") await clearPublishSchedule(db, id);
+    // Left Draft by hand (published / closed): a pending schedule is done with.
+    if (typeof updates.status === "string" && updates.status !== "Draft" && current.status === "Draft") {
+      await clearPublishSchedule(db, id);
+    }
   }
 
   // Update assignment if provided.
@@ -415,6 +427,10 @@ async function handlePATCH(
     if (!testFieldsChanged) {
       await db.from("tests").update({ updated_at: new Date().toISOString() }).eq("id", id);
     }
+  }
+
+  if (unschedule && !(await clearPublishSchedule(db, id))) {
+    return bad("Could not remove the scheduled publish", 500);
   }
 
   return NextResponse.json({ success: true });

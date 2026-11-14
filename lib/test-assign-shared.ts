@@ -77,7 +77,7 @@ export interface BulkAssignTotals {
   skipped: number;
   /** publish_at of each Draft scheduled by this request. */
   scheduled: string[];
-  /** Closed tests / full-length sections, refused. */
+  /** Closed tests / full-length sections, refused (reasons per test). */
   refused: number;
   /** Tests that failed with an error. */
   failed: number;
@@ -109,7 +109,7 @@ export function bulkAssignSummary(t: BulkAssignTotals, now: Date = new Date()): 
         : `${t.scheduled.length} scheduled to publish`,
     );
   }
-  if (t.refused > 0) parts.push(`${t.refused} refused (Closed)`);
+  if (t.refused > 0) parts.push(`${t.refused} refused`);
   if (t.failed > 0) parts.push(`${t.failed} failed`);
   return parts.join(" · ");
 }

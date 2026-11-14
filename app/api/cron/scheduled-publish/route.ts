@@ -17,12 +17,14 @@ export const maxDuration = 60;
  * Before migration 0034 it does nothing ({ columnsMissing: true }).
  *
  * Auth: Vercel injects `Authorization: Bearer <CRON_SECRET>` on scheduled
- * invocations; manual calls pass the same header (same as the other crons).
+ * invocations; manual calls pass the same header. Unlike the older crons, a
+ * missing CRON_SECRET refuses every call.
  */
 export async function GET(req: Request) {
   const expected = process.env.CRON_SECRET;
   const provided = req.headers.get("authorization") ?? "";
-  if (expected && provided !== `Bearer ${expected}`) {
+  // Strict: no secret configured → refuse (this route publishes tests).
+  if (!expected || provided !== `Bearer ${expected}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   const url = new URL(req.url);

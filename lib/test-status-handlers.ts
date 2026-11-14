@@ -161,8 +161,11 @@ async function closeTestInner(id: string, authorize: TestAuthorizer, tag: string
 async function draftTestInner(id: string, authorize: TestAuthorizer): Promise<NextResponse> {
   const denied = await authorize(id);
   if (denied) return denied;
-  const r = await moveTestToDraft(getServiceClient(), id);
+  const db = getServiceClient();
+  const r = await moveTestToDraft(db, id);
   if (!r.ok) return NextResponse.json({ error: r.error, testStatus: r.testStatus }, { status: r.httpStatus });
+  // Back in Draft with no schedule (the 0034 trigger already cleared it on the way out).
+  await clearPublishSchedule(db, id);
   return NextResponse.json({ success: true });
 }
 

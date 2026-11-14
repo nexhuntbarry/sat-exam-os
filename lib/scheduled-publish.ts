@@ -6,21 +6,30 @@
 // the same readiness check, status-filtered Draft → Published update and
 // review-queue invalidation as the Publish button) with a system identity.
 //
-// A refusal (not ready, e.g. questions not Approved) leaves the test in
-// Draft, keeps publish_at with an error note so it isn't retried every run,
-// and notifies the admin; it is retried only when an admin reschedules
-// (writePublishAt clears the note). A transient failure (500) is retried
-// on the next run.
+// A stale schedule can't fire: the 0034 trigger clears publish_at whenever a
+// test leaves Draft (and moving back to Draft clears it too), so any
+// publish_at on a Draft was set while it was a Draft.
+//
+// Outcomes per due test:
+//   - published: its students (direct + classes) get one notice per run;
+//   - not-ready (a refusal, e.g. questions not Approved): stays Draft, keeps
+//     publish_at with an error note, the admin is notified; not retried until
+//     an admin reschedules (writePublishAt clears the note);
+//   - skipped: the test left Draft meanwhile (someone published / closed it):
+//     nothing is written, nobody notified;
+//   - retry-later: a 5xx, or the error note couldn't be written: no notice,
+//     tried again on the next run.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isQaEmail, scopeUsers } from "./qa";
 import { loadPublishCheck, blockersMessage } from "./test-readiness";
 import { publishTest, systemTestAuth } from "./test-status-handlers";
-import { isPublishAtColumnMissing, writePublishAtError } from "./test-assign";
+import { assignedStudents, insertTestsAssignedNotices, isPublishAtColumnMissing, writePublishAtError } from "./test-assign";
 import {
   SCHEDULED_PUBLISH_FAILED_TYPE,
   duePublishes,
   publishAtErrorNote,
+  testsPerStudent,
   type ScheduledRow,
 } from "./test-assign-shared";
 
@@ -30,7 +39,7 @@ export interface ScheduledPublishOutcome {
   testId: string;
   name: string;
   publishAt: string;
-  result: "published" | "not-ready" | "retry-later" | "would-publish" | "would-fail";
+  result: "published" | "not-ready" | "skipped" | "retry-later" | "would-publish" | "would-fail";
   reason?: string;
 }
 
@@ -39,6 +48,8 @@ export interface ScheduledPublishRun {
   dryRun: boolean;
   due: number;
   outcomes: ScheduledPublishOutcome[];
+  /** Students notified about tests published in this run. */
+  studentsNotified: number;
 }
 
 /**
@@ -63,7 +74,7 @@ export async function runScheduledPublish(
   if (opts.testIds && opts.testIds.length > 0) q = q.in("id", opts.testIds);
   const { data, error } = await q;
   if (error) {
-    if (isPublishAtColumnMissing(error)) return { columnsMissing: true, dryRun, due: 0, outcomes: [] };
+    if (isPublishAtColumnMissing(error)) return { columnsMissing: true, dryRun, due: 0, outcomes: [], studentsNotified: 0 };
     throw new Error(`scheduled publish lookup failed: ${error.message}`);
   }
   const due = duePublishes((data ?? []) as DueRow[], now);
@@ -89,21 +100,52 @@ export async function runScheduledPublish(
     const j = (await res.json().catch(() => ({}))) as { error?: string };
     const reason = j.error ?? `HTTP ${res.status}`;
     if (res.status >= 500) {
-      // Lookup / write error: try again on the next run.
       outcomes.push({ ...base, result: "retry-later", reason });
       continue;
     }
-    // A refusal (409 not ready / no longer Draft, 404 gone): don't retry.
+    // A refusal. If the test isn't a Draft any more, someone else moved it
+    // (published / closed it, or it was deleted) — not a failure to report.
+    const { data: now2, error: reErr } = await db.from("tests").select("status").eq("id", t.id).maybeSingle();
+    if (reErr) {
+      outcomes.push({ ...base, result: "retry-later", reason: "Could not re-check the test" });
+      continue;
+    }
+    if (!now2 || now2.status !== "Draft") {
+      outcomes.push({ ...base, result: "skipped", reason: now2 ? `now ${now2.status}` : "deleted" });
+      continue;
+    }
+    let marked: boolean;
     try {
-      await writePublishAtError(db, t.id, publishAtErrorNote(reason, now));
-    } catch (e) {
-      console.error("[cron/scheduled-publish] error note", t.id, e);
+      marked = await writePublishAtError(db, t.id, publishAtErrorNote(reason, now));
+    } catch {
+      outcomes.push({ ...base, result: "retry-later", reason: "Could not record the failure" });
+      continue;
+    }
+    if (!marked) {
+      // Left Draft or unscheduled between the re-read and the write.
+      outcomes.push({ ...base, result: "skipped", reason: "no longer scheduled" });
+      continue;
     }
     await notifyAdmins(db, t, reason);
     outcomes.push({ ...base, result: "not-ready", reason });
   }
 
-  return { columnsMissing: false, dryRun, due: due.length, outcomes };
+  const studentsNotified = dryRun ? 0 : await notifyPublished(db, due, outcomes, now);
+  return { columnsMissing: false, dryRun, due: due.length, outcomes, studentsNotified };
+}
+
+/** One notice per student for every test published in this run. Never throws. */
+async function notifyPublished(db: SupabaseClient, due: DueRow[], outcomes: ScheduledPublishOutcome[], now: Date): Promise<number> {
+  const published = outcomes.filter((o) => o.result === "published").map((o) => o.testId);
+  if (published.length === 0) return 0;
+  try {
+    const reached = await assignedStudents(db, published);
+    const names = new Map(due.map((t) => [t.id, t.test_name]));
+    return (await insertTestsAssignedNotices(db, testsPerStudent(reached), names, now)).length;
+  } catch (e) {
+    console.error("[cron/scheduled-publish] student notices failed:", e instanceof Error ? e.message : e);
+    return 0;
+  }
 }
 
 /**
