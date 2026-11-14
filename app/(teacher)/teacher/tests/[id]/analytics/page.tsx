@@ -15,6 +15,8 @@ interface AnalyticsData {
   submittedAttempts: number;
   /** Full-length SAT parent: its sections' analytics are the children's. */
   fullLength?: { sections: { key: string; label: string; testId: string }[] };
+  /** The admin turned off "Teachers can view & print questions/answers" (lib/teacher-qa). */
+  teacherQaOff?: boolean;
 }
 
 function fmtTime(seconds: number | null | undefined) {
@@ -46,6 +48,7 @@ export default function QuestionAnalyticsPage() {
   const params = useParams<{ id: string }>();
   const pageTestId = params.id;
   const tReview = useTranslations("teacher.classReview");
+  const tQa = useTranslations("teacherQa");
 
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -157,7 +160,7 @@ export default function QuestionAnalyticsPage() {
       <div>
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <h1 className="text-2xl font-bold text-charcoal">Question Analytics</h1>
-          <ClassReviewButton testId={pageTestId} label={tReview("button")} />
+          <ClassReviewButton testId={pageTestId} label={tReview("button")} disabledReason={data.teacherQaOff ? tQa("off") : null} />
         </div>
         <p className="text-soft-mute text-sm mt-1">
           {`${data.submittedAttempts} student${data.submittedAttempts === 1 ? "" : "s"} submitted. `}

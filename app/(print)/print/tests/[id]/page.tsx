@@ -1,4 +1,6 @@
 import { notFound, redirect } from "next/navigation";
+import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaTestIds, onSide } from "@/lib/qa";
@@ -7,12 +9,19 @@ import { formatDate } from "@/lib/datetime";
 import PrintableTest, { type PrintModule, type PrintQuestion } from "@/components/tests/PrintableTest";
 import PrintPreview from "@/components/print/PrintPreview";
 import { printPageCss } from "@/lib/print-page-css";
+import { teacherQaGate } from "@/lib/teacher-qa";
+import { FL_ALL_SECTIONS, flSectionScope } from "@/lib/full-length-score";
 
 export const dynamic = "force-dynamic";
 
 // GET /print/tests/<id>            → blank copy of the test
 // GET /print/tests/<id>?key=1      → same copy with the answer key
-// Admin only. Prints exactly the question set a student is shown and graded
+//   &explain=inline | end           → plus explanations under each question / all at the end
+// Admins; and teachers who can open the test (getTeacherTestAccess, the
+// Questions & answers page's rule) while the admin's "Teachers can view &
+// print questions/answers" switch is on (lib/teacher-qa) — a single-subject
+// teacher gets only their section of a full-length SAT. Students never.
+// Prints exactly the question set a student is shown and graded
 // on (Approved only, same scoping as the take page). An adaptive test prints
 // Module 1 and both Module 2 variants, since a student gets one or the other.
 // A full-length SAT prints R&W, then a "Section 2: Math" divider, then Math.
@@ -53,17 +62,34 @@ export default async function PrintTestPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ key?: string }>;
+  searchParams: Promise<{ key?: string; explain?: string }>;
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
-  if (user.role !== "admin") redirect(user.role === "teacher" ? "/teacher" : "/student");
+  if (user.role !== "admin" && user.role !== "teacher") redirect("/student");
 
   const { id } = await params;
-  const withKey = (await searchParams).key === "1";
+  const sp = await searchParams;
+  const withKey = sp.key === "1";
+  const explain = sp.explain === "inline" || sp.explain === "end" ? sp.explain : null;
   if (!onSide(id, await getQaTestIds(), user.isQa)) notFound();
 
   const db = getServiceClient();
+  if (user.role === "teacher") {
+    const { decision } = await teacherQaGate(db, user, id);
+    if (decision === "no-access") notFound();
+    if (decision === "off") {
+      const t = await getTranslations("teacherQa");
+      return (
+        <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-4">
+          <p data-teacher-qa-off className="text-charcoal font-semibold">{t("off")}</p>
+          <Link href={`/teacher/tests/${id}`} className="text-sm text-warm-coral-text hover:underline">
+            {t("backToTest")}
+          </Link>
+        </div>
+      );
+    }
+  }
   const { data: test } = await db
     .from("tests")
     .select(`${TEST_COLUMNS}, test_kind`)
@@ -84,13 +110,21 @@ export default async function PrintTestPage({
       .eq("parent_test_id", id)
       .order("section_order", { ascending: true });
     const rows = (kids ?? []) as (PrintTestRow & { section_order: number | null })[];
+    const rwChild = rows.find((r) => r.section_order === 1) ?? null;
+    const mathChild = rows.find((r) => r.section_order === 2) ?? null;
+    // A single-subject teacher prints only their own section (the Questions
+    // & answers page's rule); the Math divider only follows R&W.
+    const scope =
+      user.role === "admin"
+        ? FL_ALL_SECTIONS
+        : await flSectionScope(db, user, { rw: rwChild?.id ?? null, math: mathChild?.id ?? null });
+    const withRw = Boolean(rwChild && scope.rw);
     parts = [
-      { order: 1, sectionLabel: "Reading and Writing", dividerBefore: null },
-      { order: 2, sectionLabel: "Math", dividerBefore: "Section 2: Math" },
-    ].flatMap((p) => {
-      const child = rows.find((r) => r.section_order === p.order);
-      return child ? [{ test: child, sectionLabel: p.sectionLabel, dividerBefore: p.dividerBefore }] : [];
-    });
+      ...(rwChild && scope.rw ? [{ test: rwChild, sectionLabel: "Reading and Writing", dividerBefore: null }] : []),
+      ...(mathChild && scope.math
+        ? [{ test: mathChild, sectionLabel: "Math", dividerBefore: withRw ? "Section 2: Math" : null }]
+        : []),
+    ];
   }
   // A full-length test missing a section can't be printed as an exam.
   if (parts.length === 0) notFound();
@@ -105,7 +139,9 @@ export default async function PrintTestPage({
         scopeToStudentQuestionSet(
           db
             .from("questions")
-            .select("id, original_question_number, question_text, choices, question_type, image_urls, correct_answer"),
+            .select(
+              `id, original_question_number, question_text, choices, question_type, image_urls, correct_answer${explain ? ", explanation" : ""}`,
+            ),
           part.test,
           slot.moduleId,
         ).order("original_question_number", { ascending: true }),
@@ -113,16 +149,17 @@ export default async function PrintTestPage({
       modules.push({
         label: part.sectionLabel ? [part.sectionLabel, slot.label ?? "Module 1"].join(" · ") : slot.label,
         section: part.sectionLabel ? null : ((mod?.section as string | null) ?? null),
-        questions: orderToQuestionIds((questions ?? []) as PrintQuestion[], part.test, slot.moduleId, (q) => q.id),
+        questions: orderToQuestionIds((questions ?? []) as unknown as PrintQuestion[], part.test, slot.moduleId, (q) => q.id),
         ...(first && part.dividerBefore ? { dividerBefore: part.dividerBefore } : {}),
       });
       first = false;
     }
   }
 
+  const t = await getTranslations("teacherQa");
   return (
     <PrintPreview
-      title={`${test.test_name} — ${withKey ? "with answer key" : "blank test"}`}
+      title={`${test.test_name} — ${withKey ? "with answer key" : "blank test"}${explain ? " + explanations" : ""}`}
       pageCss={printPageCss({ header: { text: test.test_name } })}
       options={[
         {
@@ -134,12 +171,23 @@ export default async function PrintTestPage({
             { value: "1", label: "With answer key" },
           ],
         },
+        {
+          param: "explain",
+          label: t("explanations"),
+          value: explain ?? "",
+          choices: [
+            { value: "", label: t("explainOff") },
+            { value: "inline", label: t("explainInline") },
+            { value: "end", label: t("explainEnd") },
+          ],
+        },
       ]}
     >
       <PrintableTest
         testName={test.test_name}
         modules={modules}
         withKey={withKey}
+        explanations={explain}
         generatedOn={formatDate(new Date().toISOString())}
       />
     </PrintPreview>

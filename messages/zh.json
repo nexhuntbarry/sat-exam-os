@@ -894,5 +894,26 @@
     "saveFailed": "無法儲存變更，請再試一次。",
     "networkError": "無法連線到伺服器，請檢查網路後再試。",
     "editHint": "模組來自來源測驗：請在測驗頁面使用「從來源重新同步」來變更。"
+  },
+  "teacherQa": {
+    "off": "管理員已關閉此測驗的題目與答案",
+    "print": "列印",
+    "printHint": "列印此測驗：空白卷或附答案，可選擇加上解析",
+    "backToTest": "返回測驗",
+    "explanations": "解析",
+    "explainOff": "不列印",
+    "explainInline": "每題下方",
+    "explainEnd": "全部放在最後",
+    "toggleTitle": "老師可查看與列印題目和答案",
+    "stateOn": "開啟",
+    "stateOff": "關閉",
+    "helpOn": "可開啟此測驗的老師能看到「題目與答案」頁面並列印。",
+    "helpOff": "老師無法開啟「題目與答案」或列印此測驗，但仍可看到成績與結果。",
+    "fullLengthNote": "在完整模考上設定，同時套用到兩個部分。",
+    "separateNote": "與學生的課堂講解鎖定分開設定。",
+    "turnOn": "開啟",
+    "turnOff": "關閉",
+    "pending": "資料庫更新尚未完成，請先執行 migration 0032。",
+    "failed": "無法更新設定，請再試一次。"
   }
 }

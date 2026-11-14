@@ -6,6 +6,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import ClassReviewButton from "@/components/tests/ClassReviewButton";
+import { teacherQaOffIds } from "@/lib/teacher-qa";
 import { StatCard } from "@/components/analytics/StatCard";
 import { ScoreDistributionChart } from "@/components/analytics/ScoreDistributionChart";
 import { StudentResultsTable } from "@/components/analytics/StudentResultsTable";
@@ -283,6 +284,9 @@ async function FullLengthResultsPage({
   const data = await getFullLengthResultsData(id, kids, user);
   if (!data) notFound();
   const reviewLabel = (await getTranslations("teacher.classReview"))("button");
+  const qaOffReason = (await teacherQaOffIds(getServiceClient(), user, [id])).has(id)
+    ? (await getTranslations("teacherQa"))("off")
+    : null;
   const { test, scope, rows, stats } = data;
   return (
     <div className="max-w-6xl mx-auto space-y-8">
@@ -308,7 +312,7 @@ async function FullLengthResultsPage({
           )}
         </div>
         <div className="flex items-start gap-3 flex-wrap">
-          <ClassReviewButton testId={id} label={reviewLabel} />
+          <ClassReviewButton testId={id} label={reviewLabel} disabledReason={qaOffReason} />
           <ExportCsvButton
             testId={id}
             filename={`${test.test_name.replace(/[^a-z0-9]/gi, "_")}-results.csv`}
@@ -376,6 +380,9 @@ export default async function TestResultsPage({
   const data = await getResultsData(id, user.userId, user.role ?? "", user.isQa);
   if (!data) notFound();
   const reviewLabel = (await getTranslations("teacher.classReview"))("button");
+  const qaOffReason = (await teacherQaOffIds(getServiceClient(), user, [id])).has(id)
+    ? (await getTranslations("teacherQa"))("off")
+    : null;
 
   const { test, stats, scoreDistribution, students } = data;
   const mod = test.modules as unknown as
@@ -406,7 +413,7 @@ export default async function TestResultsPage({
           </p>
         </div>
         <div className="flex items-start gap-3 flex-wrap">
-          <ClassReviewButton testId={id} label={reviewLabel} />
+          <ClassReviewButton testId={id} label={reviewLabel} disabledReason={qaOffReason} />
           <ExportCsvButton
             testId={id}
             filename={`${test.test_name.replace(/[^a-z0-9]/gi, "_")}-results.csv`}

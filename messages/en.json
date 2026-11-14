@@ -894,5 +894,26 @@
     "saveFailed": "Couldn't save that change. Please try again.",
     "networkError": "Couldn't reach the server. Check your connection and try again.",
     "editHint": "Modules come from the source tests: use Re-sync on the test page to change them."
+  },
+  "teacherQa": {
+    "off": "The admin has turned off questions & answers for this test",
+    "print": "Print",
+    "printHint": "Print this test: blank or with the answer key, explanations optional",
+    "backToTest": "Back to the test",
+    "explanations": "Explanations",
+    "explainOff": "Off",
+    "explainInline": "Under each question",
+    "explainEnd": "All at the end",
+    "toggleTitle": "Teachers can view & print questions/answers",
+    "stateOn": "On",
+    "stateOff": "Off",
+    "helpOn": "Teachers who can open this test see its Questions & answers page and can print it.",
+    "helpOff": "Teachers can't open Questions & answers or print this test. They still see results and scores.",
+    "fullLengthNote": "Set on the full-length test; applies to both sections.",
+    "separateNote": "Separate from the students' class review lock.",
+    "turnOn": "Turn on",
+    "turnOff": "Turn off",
+    "pending": "Database update pending. Run migration 0032 first.",
+    "failed": "Couldn't update the setting. Try again."
   }
 }

@@ -11,6 +11,7 @@ import { ClipboardList, Users, BarChart2, AlertTriangle, CalendarClock, Eye, Pre
 import { getTranslations } from "next-intl/server";
 import { DataRow, DataTable, EmptyRow, HeadRow, RowButton, Td, Th } from "@/components/ui/data-table";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
+import { teacherQaOffIds } from "@/lib/teacher-qa";
 import { classReviewHref, submittedStudentsByTest, teacherResultsHref, todayWindow, todaysTests } from "@/lib/assigned-tests-view";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime, formatShortDateTime } from "@/lib/datetime";
@@ -208,10 +209,13 @@ export default async function TeacherDashboardPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const [{ tests, todayTests, recentSubmissions, attentionStudents, stats }, tReview] = await Promise.all([
+  const [{ tests, todayTests, recentSubmissions, attentionStudents, stats }, tReview, tQa] = await Promise.all([
     getTeacherDashboardData(user),
     getTranslations("teacher.classReview"),
+    getTranslations("teacherQa"),
   ]);
+  // Q&A greyed out where the admin turned "Teachers can view & print questions/answers" off.
+  const qaOff = await teacherQaOffIds(getServiceClient(), user, todayTests.map((t) => t.id));
 
   return (
     <div className="max-w-5xl mx-auto space-y-8">
@@ -301,7 +305,13 @@ export default async function TeacherDashboardPage() {
                 <Td kind="actions" sticky="right">
                   {/* Two outline buttons (no red primary in a list); stacked below xl. */}
                   <span className="inline-flex flex-col items-stretch gap-1.5 whitespace-nowrap align-middle xl:flex-row xl:items-center">
-                    <RowButton label={tReview("short")} icon={<Presentation size={13} />} href={classReviewHref(t.id)} />
+                    {qaOff.has(t.id) ? (
+                      <span title={tQa("off")} data-teacher-qa-disabled className="inline-flex">
+                        <RowButton label={tReview("short")} icon={<Presentation size={13} />} disabled title={tQa("off")} />
+                      </span>
+                    ) : (
+                      <RowButton label={tReview("short")} icon={<Presentation size={13} />} href={classReviewHref(t.id)} />
+                    )}
                     <RowButton label="Results" icon={<Eye size={13} />} href={teacherResultsHref(t.id)} />
                   </span>
                 </Td>

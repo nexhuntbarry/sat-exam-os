@@ -31,6 +31,8 @@ import {
 } from "@/lib/full-length-admin";
 import { getFullLengthSources } from "../full-length-sources";
 import ReviewModeToggle from "@/components/tests/ReviewModeToggle";
+import TeacherQaToggle from "@/components/tests/TeacherQaToggle";
+import { readTeacherQaEnabled } from "@/lib/teacher-qa";
 import AnswerVisibilityToggle from "@/components/tests/AnswerVisibilityToggle";
 import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
 import { getQaClassGroupIds, getQaTestIds, onSide, scopeIds, scopeUsers } from "@/lib/qa";
@@ -311,6 +313,16 @@ export default async function TestDetailPage({
   // (individual + class-assigned + unassigned-with-work) — the same decision
   // their result / review pages enforce (test setting, class review,
   // per-student override, retake safety).
+  // "Teachers can view & print questions/answers": a full-length section
+  // shows (and sets) its parent's switch. A failed read shows ON (the
+  // teacher pages read it again and fail closed).
+  const qaTestId = (test.parent_test_id as string | null) ?? test.id;
+  const teacherQaEnabled = await readTeacherQaEnabled(db, [qaTestId])
+    .then((m) => m.get(qaTestId) ?? true)
+    .catch((e) => {
+      console.error("[admin/tests] teacher_qa_enabled read failed:", e);
+      return true;
+    });
   const [visibilityInputs, tv] = await Promise.all([
     loadAnswerVisibilityInputs(
       db,
@@ -767,6 +779,13 @@ export default async function TestDetailPage({
           <div className="md:pl-5 border-t border-divider pt-4 md:border-t-0 md:pt-0">
             <ReviewModeToggle compact testId={test.id} initialUnlocked={Boolean(test.review_unlocked)} />
           </div>
+        </div>
+        <div className="border-t border-divider pt-4">
+          <TeacherQaToggle
+            testId={qaTestId}
+            initialEnabled={teacherQaEnabled}
+            fullLengthSection={qaTestId !== test.id}
+          />
         </div>
       </div>
 

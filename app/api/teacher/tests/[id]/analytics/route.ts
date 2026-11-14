@@ -8,6 +8,7 @@ import { parseActivity, summarizeActivity, type ActivitySummary } from "@/lib/qu
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { fullLengthLinks } from "@/lib/full-length";
 import { flSectionScope } from "@/lib/full-length-score";
+import { teacherQaOffIds } from "@/lib/teacher-qa";
 
 export interface StudentQuestionRow {
   name: string;
@@ -64,6 +65,8 @@ export async function GET(
   if (access.mode === null) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
+  // The page greys out its Questions & answers button when the admin turned it off.
+  const teacherQaOff = (await teacherQaOffIds(db, user, [testId])).has(testId);
 
   // Full-length SAT parent: no questions of its own — the page shows one
   // tab per section the viewer may see, each the section child's analytics.
@@ -74,7 +77,7 @@ export async function GET(
       scope.rw && flKids.rw ? { key: "rw", label: "Reading and Writing", testId: flKids.rw } : null,
       scope.math && flKids.math ? { key: "math", label: "Math", testId: flKids.math } : null,
     ].filter(Boolean);
-    return NextResponse.json({ modules: [], submittedAttempts: 0, fullLength: { sections } });
+    return NextResponse.json({ modules: [], submittedAttempts: 0, fullLength: { sections }, teacherQaOff });
   }
 
   const { data: test } = await db
@@ -230,5 +233,5 @@ export async function GET(
     }
   }
 
-  return NextResponse.json({ modules, submittedAttempts });
+  return NextResponse.json({ modules, submittedAttempts, teacherQaOff });
 }

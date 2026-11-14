@@ -17,6 +17,7 @@ import { fetchAllRows } from "@/lib/fetch-all-rows";
 import ClassGradebook from "@/components/analytics/ClassGradebook";
 import AssignedTestsTable from "@/components/analytics/AssignedTestsTable";
 import { assignedTestRows, classReviewHref } from "@/lib/assigned-tests-view";
+import { teacherQaOffIds } from "@/lib/teacher-qa";
 import { getTranslations } from "next-intl/server";
 import {
   DataRow,
@@ -259,6 +260,11 @@ export default async function TeacherClassDetailPage({
     : null;
   const tReview = await getTranslations("teacher.classReview");
   const reviewLabel = { chip: tReview("chip"), full: tReview("button") };
+  // Q&A greyed out where the admin turned "Teachers can view & print questions/answers" off.
+  const reviewOff = {
+    ids: [...(await teacherQaOffIds(getServiceClient(), me, gradebook?.columns.map((c) => c.id) ?? []))],
+    message: (await getTranslations("teacherQa"))("off"),
+  };
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -295,7 +301,8 @@ export default async function TeacherClassDetailPage({
         gradebook={gradebook}
         live={{ endpoint: `/api/teacher/classes/${group.id}/live-progress`, initial: liveInitial }}
         reviewLabel={reviewLabel}
-        above={<AssignedTestsTable tests={assigned ?? []} failed={!assigned} reviewLabel={tReview("short")} />}
+        reviewOff={reviewOff}
+        above={<AssignedTestsTable tests={assigned ?? []} failed={!assigned} reviewLabel={tReview("short")} reviewOff={reviewOff} />}
       />
 
       <section>

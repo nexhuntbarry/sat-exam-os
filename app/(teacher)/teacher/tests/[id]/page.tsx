@@ -6,6 +6,7 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import ClassReviewButton from "@/components/tests/ClassReviewButton";
+import { teacherQaOffIds } from "@/lib/teacher-qa";
 import { formatDate, formatDateTime, formatShortDate } from "@/lib/datetime";
 import { averageSat, type AttemptScore } from "@/lib/score-display";
 import { expandFullLength, fullLengthLinksOrNone, type FullLengthLinks } from "@/lib/full-length";
@@ -224,6 +225,9 @@ export default async function TeacherTestDetailPage({
   const data = await getTeacherTest(id, user);
   if (!data) notFound();
   const tReview = await getTranslations("teacher.classReview");
+  const qaOffReason = (await teacherQaOffIds(getServiceClient(), user, [id])).has(id)
+    ? (await getTranslations("teacherQa"))("off")
+    : null;
 
   const { test, section, submissions, canManageSettings, isFullLength, flLinks, flMeta, flScope, liveSnapshot } = data;
   const notStarted = liveSnapshot.notStarted;
@@ -309,7 +313,7 @@ export default async function TeacherTestDetailPage({
 
       {/* Action links */}
       <div className="flex flex-wrap gap-3">
-        <ClassReviewButton testId={id} label={tReview("button")} />
+        <ClassReviewButton testId={id} label={tReview("button")} disabledReason={qaOffReason} />
         <Link
           href={`/teacher/tests/${id}/results`}
           className="px-4 py-2 rounded-xl bg-warm-coral/10 border border-warm-coral/20 text-warm-coral-text text-sm font-medium hover:bg-warm-coral/20 transition-colors"
