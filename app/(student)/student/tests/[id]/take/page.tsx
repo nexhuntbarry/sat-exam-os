@@ -63,6 +63,23 @@ async function getActiveSubmission(
             .eq("id", recovered.id)
             .eq("status", "In Progress")
             .maybeSingle());
+        } else if (!recovered) {
+          // Nothing to recover — but a parallel request (another tab's
+          // "Continue to Module 2") may have opened Module 2 since the read
+          // above: look again before bouncing. The signal skips the memoized
+          // first result of this identical query.
+          ({ data: submission } = await db
+            .from("submissions")
+            .select(
+              "id, test_id, answers, status, started_at, metadata, module_id, adaptive_track, session_id",
+            )
+            .eq("test_id", testId)
+            .eq("student_id", studentId)
+            .eq("status", "In Progress")
+            .order("started_at", { ascending: false })
+            .limit(1)
+            .abortSignal(new AbortController().signal)
+            .maybeSingle());
         }
       } catch (e) {
         // The test page shows "Continue to Module 2", which retries.

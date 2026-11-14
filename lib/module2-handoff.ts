@@ -223,7 +223,9 @@ export async function ensureModule2(
  * Recovery for a student who comes back to a test whose latest session has
  * Module 1 graded but no Module 2 (handoff failed, the cron closed Module 1
  * before this code existed, the browser crashed...). Creates the missing
- * Module 2 and returns its id; null when there is nothing to recover;
+ * Module 2 and returns its id (or the session's open Module 2 when one
+ * already exists, e.g. made by a concurrent request); null when there is
+ * nothing to recover;
  * { blocked } when it may not be created now (module2RecoveryBlock).
  * Only ever the student's LATEST session: with onlySessionId, nothing is
  * done unless that session is the latest one. The caller checks the
@@ -251,8 +253,14 @@ export async function recoverModule2(
   const session = (rows ?? []).filter((r) => r.session_id === latestSessionId);
   const m1 = session.find((r) => r.adaptive_track === "module_1");
   if (!m1 || (m1.status !== "Submitted" && m1.status !== "Late")) return null;
-  if (session.some((r) => (MODULE_2_TRACKS as readonly string[]).includes(String(r.adaptive_track)))) {
-    return null;
+  const m2 = session.filter((r) => (MODULE_2_TRACKS as readonly string[]).includes(String(r.adaptive_track)));
+  if (m2.length > 0) {
+    // Already there: usually a concurrent handoff/recovery (another tab's
+    // "Continue to Module 2") created it after the caller looked for an
+    // open row. Hand that one back while it is still open (the oldest, as
+    // module2Rows picks); a finished Module 2 means nothing to recover.
+    const open = [...m2].reverse().find((r) => r.status === "In Progress");
+    return open ? { id: open.id as string, created: false } : null;
   }
   const blocked = module2RecoveryBlock(test, (m1.submitted_at as string | null) ?? null);
   if (blocked) return { blocked };
