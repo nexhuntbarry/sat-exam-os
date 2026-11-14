@@ -5,7 +5,10 @@
 // Closed → Reopen / Back to draft), and checked rows get a bulk Publish /
 // Close bar. Every action confirms first and goes through the same routes
 // as the test detail page, which enforce the rules server-side
-// (lib/test-readiness); this file only shows them.
+// (lib/test-readiness); this file only shows them. The teacher side reuses
+// it with apiBase="/api/teacher/tests" (same rules, lib/test-status-handlers)
+// and linkIssues={false} (teachers can't open the admin pages the reasons
+// link to).
 
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
@@ -34,17 +37,19 @@ const ACTION_LABEL: Record<StatusAction, string> = {
   draft: "Back to draft",
 };
 
-async function fetchReadiness(testId: string): Promise<TestReadiness> {
-  const res = await fetch(`/api/admin/tests/${testId}/readiness`, { cache: "no-store" });
+export const ADMIN_TESTS_API = "/api/admin/tests";
+
+async function fetchReadiness(testId: string, apiBase: string): Promise<TestReadiness> {
+  const res = await fetch(`${apiBase}/${testId}/readiness`, { cache: "no-store" });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
   return j.data as TestReadiness;
 }
 
 /** Runs one status change; returns null on success or the server's reason. */
-export async function runStatusAction(testId: string, action: StatusAction): Promise<string | null> {
+export async function runStatusAction(testId: string, action: StatusAction, apiBase = ADMIN_TESTS_API): Promise<string | null> {
   try {
-    const res = await fetch(`/api/admin/tests/${testId}/${action}`, { method: "POST" });
+    const res = await fetch(`${apiBase}/${testId}/${action}`, { method: "POST" });
     if (res.ok) return null;
     const j = await res.json().catch(() => ({}));
     return j.error ?? `Failed (HTTP ${res.status})`;
@@ -53,7 +58,7 @@ export async function runStatusAction(testId: string, action: StatusAction): Pro
   }
 }
 
-function IssueList({ issues, tone }: { issues: ReadinessIssue[]; tone: "error" | "warning" }) {
+function IssueList({ issues, tone, links }: { issues: ReadinessIssue[]; tone: "error" | "warning"; links: boolean }) {
   if (issues.length === 0) return null;
   return (
     <ul className={cn("space-y-1 text-xs", tone === "error" ? "text-status-error" : "text-status-warning")}>
@@ -62,7 +67,7 @@ function IssueList({ issues, tone }: { issues: ReadinessIssue[]; tone: "error" |
           <AlertTriangle size={12} className="mt-0.5 shrink-0" />
           <span>
             {i.message}
-            {i.href && (
+            {links && i.href && (
               <>
                 {" "}
                 <Link
@@ -192,11 +197,17 @@ export function TestStatusMenu({
   testName,
   status,
   onChanged,
+  apiBase = ADMIN_TESTS_API,
+  linkIssues = true,
 }: {
   testId: string;
   testName: string;
   status: TestStatus;
   onChanged: (testId: string, status: TestStatus) => void;
+  /** Where the status routes live: /api/admin/tests or /api/teacher/tests. */
+  apiBase?: string;
+  /** Link each reason to its admin fix-it page (admins only). */
+  linkIssues?: boolean;
 }) {
   const router = useRouter();
   const { open, setOpen, close, anchorRef, popRef, style } = usePopover();
@@ -215,13 +226,13 @@ export function TestStatusMenu({
     let live = true;
     setReadiness(null);
     setLoadError(null);
-    fetchReadiness(testId)
+    fetchReadiness(testId, apiBase)
       .then((r) => live && setReadiness(r))
       .catch((e: Error) => live && setLoadError(e.message));
     return () => {
       live = false;
     };
-  }, [open, testId]);
+  }, [open, testId, apiBase]);
 
   function items(): HTMLElement[] {
     return Array.from(popRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
@@ -291,7 +302,7 @@ export function TestStatusMenu({
     if (!confirm) return;
     setBusy(true);
     setActionError(null);
-    const err = await runStatusAction(testId, confirm);
+    const err = await runStatusAction(testId, confirm, apiBase);
     setBusy(false);
     if (err) {
       setActionError(err);
@@ -369,8 +380,8 @@ export function TestStatusMenu({
               {loadError && <p className="text-xs text-status-error">Couldn&apos;t check this test: {loadError}</p>}
               {readiness && publishLike && (
                 <div className="space-y-1 border-t border-divider pt-2">
-                  <IssueList issues={readiness.blockers} tone="error" />
-                  <IssueList issues={readiness.warnings} tone="warning" />
+                  <IssueList issues={readiness.blockers} tone="error" links={linkIssues} />
+                  <IssueList issues={readiness.warnings} tone="warning" links={linkIssues} />
                   {readiness.canPublish && readiness.warnings.length === 0 && (
                     <p className="text-xs text-soft-mute">Ready to {publishLike}: {readiness.audience}</p>
                   )}
@@ -470,10 +481,13 @@ export function BulkStatusBar({
   rows,
   onClear,
   onChanged,
+  apiBase = ADMIN_TESTS_API,
 }: {
   rows: BulkRow[];
   onClear: () => void;
   onChanged: (changes: { id: string; status: TestStatus }[]) => void;
+  /** Where the status routes live: /api/admin/tests or /api/teacher/tests. */
+  apiBase?: string;
 }) {
   const [action, setAction] = useState<"publish" | "close" | null>(null);
   const [lines, setLines] = useState<BulkLine[]>([]);
@@ -506,7 +520,7 @@ export function BulkStatusBar({
       await Promise.all(
         todo.slice(k, k + 4).map(async ({ l, i }) => {
           try {
-            const r = await fetchReadiness(l.id);
+            const r = await fetchReadiness(l.id, apiBase);
             out[i] = { ...l, readiness: r, skip: r.canPublish ? undefined : r.blockers.map((b) => b.message).join("; ") };
           } catch (e) {
             out[i] = { ...l, skip: `Couldn't check: ${(e as Error).message}` };
@@ -535,7 +549,7 @@ export function BulkStatusBar({
     const changes: { id: string; status: TestStatus }[] = [];
     const results = new Map<string, string | null>();
     for (let i = 0; i < targets.length; i++) {
-      const err = await runStatusAction(targets[i], action);
+      const err = await runStatusAction(targets[i], action, apiBase);
       results.set(targets[i], err);
       if (!err) changes.push({ id: targets[i], status: NEXT_STATUS[action] });
       setRunning({ done: i + 1, total: targets.length });

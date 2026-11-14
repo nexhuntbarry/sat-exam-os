@@ -6,23 +6,12 @@ import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
-import { formatShortDate } from "@/lib/datetime";
-import { getQaUserIds, scopeIds } from "@/lib/qa";
+import { getQaTestIds, getQaUserIds, scopeIds } from "@/lib/qa";
 import { getAssignedStudentIds, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
-import {
-  DataTable,
-  HeadRow,
-  Th,
-  Td,
-  DataRow,
-  DetailItem,
-  EmptyRow,
-  ExpandToggle,
-  TwoLineCell,
-} from "@/components/ui/data-table";
-import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
+import { manageDecision, type ManageUser } from "@/lib/test-manage";
+import TeacherTestsTable, { type TeacherTestRow } from "./TeacherTestsTable";
 
-async function getTeacherTests(user: { userId: string; role: string | null; isQa: boolean }) {
+async function getTeacherTests(user: ManageUser & { role: string | null }): Promise<TeacherTestRow[]> {
   const db = getServiceClient();
 
   // Admins see every test; teachers see tests they're directly assigned
@@ -36,14 +25,14 @@ async function getTeacherTests(user: { userId: string; role: string | null; isQa
     hideChildTests(
       db.from("tests")
         .select(`
-        id, test_name, status, due_date, time_limit_minutes,
+        id, test_name, status, due_date, time_limit_minutes, created_by, parent_test_id, test_kind,
         modules!module_id(module_name, section, module_number)
       `)
         .in("id", testIds),
       new Set(flLinks.parentOf.keys()),
     ).order("due_date", { ascending: true }),
     db.from("test_assignments")
-      .select("test_id, student_ids, class_group_ids")
+      .select("test_id, student_ids, class_group_ids, teacher_ids")
       .in("test_id", testIds),
     scopeIds(db.from("submissions")
       .select(
@@ -114,17 +103,42 @@ async function getTeacherTests(user: { userId: string; role: string | null; isQa
     aggregates[testId] = { done: sessions.size, pcts };
   }
 
+  // Status menu only on tests the teacher manages (same rule as the
+  // /api/teacher/tests/[id]/{publish,…} routes, lib/test-manage).
+  const qaTestIds = await getQaTestIds();
+  const teacherIdsByTest = new Map<string, unknown[]>();
+  for (const a of assignments ?? []) {
+    const ids = Array.isArray(a.teacher_ids) ? (a.teacher_ids as unknown[]) : [];
+    teacherIdsByTest.set(a.test_id as string, [...(teacherIdsByTest.get(a.test_id as string) ?? []), ...ids]);
+  }
+
   return (tests ?? []).map((t) => {
     const agg = aggregates[t.id] ?? { done: 0, pcts: [] };
     const avgScore = agg.pcts.length > 0
       ? agg.pcts.reduce((a, b) => a + b, 0) / agg.pcts.length
       : null;
+    const mod = t.modules as unknown as { section: string; module_number: number | null } | null;
     return {
-      ...t,
+      id: t.id as string,
+      test_name: t.test_name as string,
+      status: t.status as string,
+      due_date: (t.due_date as string | null) ?? null,
+      module: mod ? { section: mod.section, module_number: mod.module_number } : null,
       isFullLength: flLinks.childrenOf.has(t.id),
       totalStudents: rosterSize[t.id] ?? 0,
       submittedCount: agg.done,
       avgScore,
+      manages: manageDecision({
+        user,
+        test: {
+          id: t.id as string,
+          created_by: (t.created_by as string | null) ?? null,
+          parent_test_id: (t.parent_test_id as string | null) ?? null,
+          test_kind: (t.test_kind as string | null) ?? null,
+        },
+        teacherIds: teacherIdsByTest.get(t.id as string) ?? [],
+        qaTestIds,
+      }).ok,
     };
   });
 }
@@ -134,90 +148,6 @@ export default async function TeacherTestsPage() {
   if (!user) redirect("/sign-in");
 
   const [tests, tf] = await Promise.all([getTeacherTests(user), getTranslations("fullLength")]);
-
-  // Closed tests sink into a collapsed section at the bottom so the
-  // list shows what's live by default.
-  const activeTests = tests.filter((t) => t.status !== "Closed");
-  const closedTests = tests.filter((t) => t.status === "Closed");
-  const COL_SPAN = 8;
-
-  const renderTable = (rows: typeof tests) => (
-    <DataTable>
-      <thead>
-        <HeadRow>
-          <Th kind="main" sticky="left">Test Name</Th>
-          <Th priority="md">Section</Th>
-          <Th>Status</Th>
-          <Th priority="md">Students</Th>
-          <Th>Submitted</Th>
-          <Th priority="md">Avg Score</Th>
-          <Th priority="lg">Due</Th>
-          <Th kind="actions" sticky="right"><span className="sr-only">Actions</span></Th>
-        </HeadRow>
-      </thead>
-      <tbody>
-        {rows.map((test) => {
-          const mod = test.modules as unknown as
-            | { module_name: string; section: string; module_number: number | null }
-            | null;
-          const section = test.isFullLength ? (
-            <SubjectTag section={tf("tag")} />
-          ) : mod ? (
-            <span className="inline-flex items-center gap-1.5">
-              <SubjectTag section={mod.section} />
-              {mod.module_number ? <span>M{mod.module_number}</span> : null}
-            </span>
-          ) : (
-            "Adaptive"
-          );
-          const dueLabel = test.due_date ? formatShortDate(test.due_date) : "—";
-
-          return (
-            <DataRow
-              key={test.id}
-              href={`/teacher/tests/${test.id}`}
-              expandBelow="lg"
-              colSpan={COL_SPAN}
-              details={
-                <>
-                  <DetailItem label="Section" priority="md">{section}</DetailItem>
-                  <DetailItem label="Students" priority="md">{String(test.totalStudents)}</DetailItem>
-                  <DetailItem label="Avg Score" priority="md">{test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}</DetailItem>
-                  <DetailItem label="Due" priority="lg">{dueLabel}</DetailItem>
-                </>
-              }
-            >
-              <Td kind="main" sticky="left">
-                <Link
-                  href={`/teacher/tests/${test.id}`}
-                  className="block text-charcoal hover:text-warm-coral-text transition-colors"
-                >
-                  <TwoLineCell main={test.test_name} wrapMain mainClassName="font-medium text-inherit" />
-                </Link>
-              </Td>
-              <Td priority="md" className="text-mid-gray">
-                {section}
-              </Td>
-              <Td>
-                <StatusBadge kind="test" status={test.status as TestStatus} />
-              </Td>
-              <Td priority="md" className="text-mid-gray">{test.totalStudents}</Td>
-              <Td className="text-mid-gray">{test.submittedCount}</Td>
-              <Td priority="md" className="text-mid-gray">
-                {test.avgScore != null ? `${test.avgScore.toFixed(1)}%` : "—"}
-              </Td>
-              <Td priority="lg" className="text-soft-mute">
-                {dueLabel}
-              </Td>
-              <Td kind="actions" sticky="right">
-                <ExpandToggle label={`More about ${test.test_name}`} />
-              </Td>
-            </DataRow>
-          );
-        })}
-      </tbody>
-    </DataTable>
-  );
 
   return (
     <div className="space-y-6">
@@ -241,17 +171,7 @@ export default async function TeacherTestsPage() {
           </p>
         </div>
       ) : (
-        <>
-          {activeTests.length > 0 && renderTable(activeTests)}
-          {closedTests.length > 0 && (
-            <details className="border-t border-divider">
-              <summary className="px-3 py-3 text-sm text-soft-mute cursor-pointer hover:text-charcoal select-none">
-                Closed tests ({closedTests.length})
-              </summary>
-              {renderTable(closedTests)}
-            </details>
-          )}
-        </>
+        <TeacherTestsTable tests={tests} flTag={tf("tag")} />
       )}
     </div>
   );

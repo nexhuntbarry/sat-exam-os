@@ -1,7 +1,10 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { canManageTestSettings, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
-import { scopeUsers } from "@/lib/qa";
+import { getQaTestIds, scopeUsers } from "@/lib/qa";
+import { loadManageDecision, type ManageUser } from "@/lib/test-manage";
+import TeacherTestStatus from "./TeacherTestStatus";
+import type { TestStatus } from "@/components/ui/StatusBadge";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
@@ -47,7 +50,7 @@ import {
 
 async function getTeacherTest(
   testId: string,
-  user: { userId: string; role: string | null | undefined; isQa: boolean },
+  user: ManageUser,
 ) {
   const db = getServiceClient();
 
@@ -117,6 +120,9 @@ async function getTeacherTest(
     studentIds,
     submissions: submissions ?? [],
     canManageSettings: await canManageTestSettings(db, user, testId),
+    // Status menu (Publish / Close / Reopen / Back to draft): same rule as
+    // /api/teacher/tests/[id]/{publish,…}.
+    managesStatus: (await loadManageDecision(db, user, testId, await getQaTestIds())).ok,
   };
 }
 
@@ -225,7 +231,7 @@ export default async function TeacherTestDetailPage({
   if (!data) notFound();
   const tReview = await getTranslations("teacher.classReview");
 
-  const { test, section, submissions, canManageSettings, isFullLength, flLinks, flMeta, flScope, liveSnapshot } = data;
+  const { test, section, submissions, canManageSettings, managesStatus, isFullLength, flLinks, flMeta, flScope, liveSnapshot } = data;
   const notStarted = liveSnapshot.notStarted;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
@@ -254,7 +260,15 @@ export default async function TeacherTestDetailPage({
       </div>
 
       <div>
-        <h1 className="text-2xl font-bold text-charcoal">{test.test_name}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-bold text-charcoal">{test.test_name}</h1>
+          <TeacherTestStatus
+            testId={test.id}
+            testName={test.test_name}
+            status={test.status as TestStatus}
+            manages={managesStatus}
+          />
+        </div>
         <p className="text-soft-mute text-sm mt-1">
           {isFullLength
             ? "Full-length SAT · Reading and Writing + Math · Total 400–1600"
