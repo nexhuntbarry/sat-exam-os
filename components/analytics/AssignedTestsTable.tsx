@@ -47,10 +47,13 @@ export default function AssignedTestsTable({
   tests,
   reviewLabel,
   failed = false,
+  reviewOff,
 }: {
   tests: AssignedTestRow[];
   /** "Questions & answers" in the viewer's language (teacher.classReview.short). */
   reviewLabel: string;
+  /** Tests whose Questions & answers the admin turned off: greyed out, message as tooltip. */
+  reviewOff?: { ids: string[]; message: string };
   /** The class gradebook couldn't load (no rows to show). */
   failed?: boolean;
 }) {
@@ -155,7 +158,13 @@ export default function AssignedTestsTable({
                     </Td>
                     <Td kind="actions" sticky="right">
                       <span className="inline-flex flex-col items-stretch gap-1.5 whitespace-nowrap align-middle xl:flex-row xl:items-center">
-                        <RowButton label={reviewLabel} icon={<Presentation size={13} />} href={classReviewHref(t.id)} />
+                        {reviewOff?.ids.includes(t.id) ? (
+                          <span title={reviewOff.message} data-teacher-qa-disabled className="inline-flex">
+                            <RowButton label={reviewLabel} icon={<Presentation size={13} />} disabled title={reviewOff.message} />
+                          </span>
+                        ) : (
+                          <RowButton label={reviewLabel} icon={<Presentation size={13} />} href={classReviewHref(t.id)} />
+                        )}
                         <RowButton label="Results" icon={<Eye size={13} />} href={teacherResultsHref(t.id)} />
                       </span>
                     </Td>

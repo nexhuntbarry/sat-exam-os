@@ -46,6 +46,8 @@ export default function ClassGradebook(props: {
   above?: ReactNode;
   /** Text of the Questions & answers (Class Review) link next to each test name. */
   reviewLabel?: { chip: string; full: string };
+  /** Tests whose Questions & answers the admin turned off (chip greyed out). */
+  reviewOff?: { ids: string[]; message: string };
 }) {
   if (!props.gradebook) {
     return (
@@ -79,6 +81,7 @@ function GradebookView({
   live,
   above,
   reviewLabel,
+  reviewOff,
 }: {
   classId: string;
   className: string;
@@ -86,6 +89,7 @@ function GradebookView({
   live: ClassLive;
   above?: ReactNode;
   reviewLabel?: { chip: string; full: string };
+  reviewOff?: { ids: string[]; message: string };
 }) {
   const [filter, setFilter] = useState<GradebookFilter>(NO_FILTER);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "name", dir: "asc" });
@@ -209,7 +213,7 @@ function GradebookView({
         ) : (
           <>
             <div className="overflow-x-auto rounded-2xl border border-divider bg-surface">
-              <GradebookTable gradebook={gradebook} columns={columns} rows={rows} sort={sort} onSort={onSort} reviewLabel={reviewLabel} />
+              <GradebookTable gradebook={gradebook} columns={columns} rows={rows} sort={sort} onSort={onSort} reviewLabel={reviewLabel} reviewOff={reviewOff} />
             </div>
             <div className="mt-2">
               <GradebookLegend />

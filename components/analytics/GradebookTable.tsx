@@ -129,6 +129,7 @@ export default function GradebookTable({
   compact = false,
   summary = true,
   reviewLabel,
+  reviewOff,
 }: {
   gradebook: Pick<Gradebook, "scope" | "averages">;
   /** Show the summary columns (a printed grid split into several tables shows them once). */
@@ -143,6 +144,8 @@ export default function GradebookTable({
   compact?: boolean;
   /** Text of each column's Questions & answers (Class Review) link (columns with a reviewHref). */
   reviewLabel?: { chip: string; full: string };
+  /** Columns whose Questions & answers the admin turned off: chip greyed out, message as tooltip. */
+  reviewOff?: { ids: string[]; message: string };
 }) {
   const review = reviewLabel ?? { chip: "Q&A", full: "Questions & answers (Class Review)" };
   const { scope, averages } = gradebook;
@@ -187,7 +190,18 @@ export default function GradebookTable({
                 {KIND_LABEL[c.kind]}
                 {c.dueDate ? ` · Due ${formatShortDate(c.dueDate)}` : ""}
               </div>
-              {!compact && c.reviewHref && (
+              {!compact && c.reviewHref && reviewOff?.ids.includes(c.id) && (
+                <span
+                  title={reviewOff.message}
+                  aria-disabled
+                  data-teacher-qa-disabled
+                  className="mt-0.5 inline-flex cursor-not-allowed items-center gap-1 rounded border border-divider bg-light-bg px-1.5 text-[11px] font-medium leading-5 text-soft-mute"
+                >
+                  <Presentation size={11} aria-hidden />
+                  {review.chip}
+                </span>
+              )}
+              {!compact && c.reviewHref && !reviewOff?.ids.includes(c.id) && (
                 <Link
                   href={c.reviewHref}
                   title={`${review.full}: ${c.name}`}

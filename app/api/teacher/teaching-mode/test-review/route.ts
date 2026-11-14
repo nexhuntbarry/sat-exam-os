@@ -5,6 +5,7 @@ import { asParentRows, childTestIds, expandFullLength, fullLengthLinks, hideChil
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { teacherQaContentHidden } from "@/lib/teacher-qa";
 
 // GET /api/teacher/teaching-mode/test-review?testId=optional
 // Returns the latest (or specified) published/closed test that the teacher's
@@ -137,13 +138,21 @@ export async function GET(req: Request) {
     : { data: [] };
 
   const metaMap = new Map((qmeta ?? []).map((q) => [q.id, q]));
+  // Admin turned off "Teachers can view & print questions/answers": no question text.
+  let textHidden: boolean;
+  try {
+    textHidden = await teacherQaContentHidden(db, user, selected.id);
+  } catch (e) {
+    console.error("[teaching-mode/test-review] teacher_qa_enabled lookup failed", e);
+    return NextResponse.json({ error: "Couldn't load this test. Please try again." }, { status: 500 });
+  }
 
   const hardestQuestions = ranked.map((r) => {
     const m = metaMap.get(r.questionId);
     return {
       questionId: r.questionId,
       questionNumber: m?.original_question_number ?? null,
-      questionText: m?.question_text ?? "",
+      questionText: textHidden ? "" : (m?.question_text ?? ""),
       domain: m?.domain ?? null,
       skill: m?.skill ?? null,
       difficulty: m?.difficulty ?? null,

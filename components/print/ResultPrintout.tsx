@@ -160,7 +160,16 @@ export default function ResultPrintout({
             </div>
           )}
           <ol className="space-y-4">
-            {m.questions.map((q) => (
+            {m.questions.map((q) => q.contentHidden ? (
+              // Admin turned off teacher Q&A: number, domain, answer, right/wrong only.
+              <li key={q.id} className="print-question flex items-center gap-3 text-sm break-inside-avoid">
+                <span className="w-6 h-6 rounded bg-charcoal text-white text-xs font-bold flex items-center justify-center shrink-0">{q.n}</span>
+                {q.outcome && <Mark kind={q.outcome} size={13} />}
+                <span>Answer: <span className="font-semibold">{q.studentAnswer ?? "(blank)"}</span></span>
+                {q.domain && <span className="text-mid-gray">· {q.domain}</span>}
+                <span className="text-soft-mute italic">· Question content hidden by the admin</span>
+              </li>
+            ) : (
               <QuestionBlock
                 key={q.id}
                 n={q.n}

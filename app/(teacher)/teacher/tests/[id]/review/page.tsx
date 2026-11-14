@@ -3,11 +3,11 @@ import { getServiceClient } from "@/lib/supabase";
 import { childrenOf, reviewSectionTests } from "@/lib/full-length";
 import { flSectionScope } from "@/lib/full-length-score";
 import { getCurrentUser } from "@/lib/auth";
-import { getTeacherTestAccess } from "@/lib/teacher-access";
+import { teacherQaGate } from "@/lib/teacher-qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
-import { Presentation } from "lucide-react";
+import { Presentation, Printer } from "lucide-react";
 import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/ReviewQuestionCard";
 
 // Teacher class-review walkthrough — the projector view for going over a
@@ -20,15 +20,18 @@ import ReviewQuestionCard, { type ReviewQuestion } from "@/components/tests/Revi
 // Access: any teacher assigned to the test directly OR as the class-group
 // teacher (getTeacherTestAccess): a class teacher can run the review — even
 // before any student starts — when the test is assigned to their class or
-// students, or was taken by their students; any other test is a 404.
+// students, or was taken by their students; any other test is a 404. When
+// the admin turned off "Teachers can view & print questions/answers"
+// (lib/teacher-qa) the page says so instead. Admins are never blocked.
 async function getTeacherReview(
   testId: string,
-  user: { userId: string; role: string | null | undefined; isQa: boolean },
+  user: { userId: string; role: string | null | undefined; isQa: boolean; accountStatus: string | null | undefined },
 ) {
   const db = getServiceClient();
 
-  const access = await getTeacherTestAccess(db, user, testId);
-  if (access.mode === null) return null;
+  const { decision } = await teacherQaGate(db, user, testId);
+  if (decision === "no-access") return null;
+  if (decision === "off") return { off: true as const };
 
   const columns =
     "id, test_name, module_id, module_2_id, is_adaptive, module_1_id, module_2_easy_id, module_2_hard_id, question_ids";
@@ -48,7 +51,7 @@ async function getTeacherReview(
       ? [t.module_1_id, t.module_2_easy_id, t.module_2_hard_id].filter((x): x is string => Boolean(x))
       : [t.module_id, t.module_2_id].filter((x): x is string => Boolean(x));
   const moduleIds = parts.flatMap((p) => modulesOf(p.test));
-  if (moduleIds.length === 0) return { test, sections: [] };
+  if (moduleIds.length === 0) return { off: false as const, test, sections: [] };
 
   // Same question set students see and are graded on.
   const qquery = scopeToStudentQuestionSet(
@@ -88,7 +91,7 @@ async function getTeacherReview(
   }
   // Module 1 first, then Module 2 (query order is by question number, which interleaves modules).
   const sections = Array.from(groups.values()).sort((a, b) => moduleIds.indexOf(a.moduleId) - moduleIds.indexOf(b.moduleId));
-  return { test, sections };
+  return { off: false as const, test, sections };
 }
 
 export default async function TeacherTestReviewPage({
@@ -101,6 +104,19 @@ export default async function TeacherTestReviewPage({
   const { id } = await params;
   const data = await getTeacherReview(id, user);
   if (!data) notFound();
+  const tQa = await getTranslations("teacherQa");
+  if (data.off) {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <div data-teacher-qa-off className="bg-surface border border-divider rounded-2xl p-12 text-center space-y-3">
+          <p className="text-charcoal font-semibold">{tQa("off")}</p>
+          <Link href={`/teacher/tests/${id}`} className="text-sm text-warm-coral-text hover:underline">
+            {tQa("backToTest")}
+          </Link>
+        </div>
+      </div>
+    );
+  }
   const { test, sections } = data;
   const reviewLabel = (await getTranslations("teacher.classReview"))("button");
 
@@ -116,7 +132,7 @@ export default async function TeacherTestReviewPage({
 
       <div className="rounded-2xl border border-warm-coral/20 bg-warm-coral/5 px-4 py-3 flex items-start gap-3">
         <Presentation size={18} className="text-warm-coral-text mt-0.5 shrink-0" />
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-charcoal font-bold text-base">{test.test_name} — {reviewLabel}</h1>
           <p className="text-soft-mute text-xs mt-0.5">
             Projector walkthrough: every question with choices, figures, the correct answer,
@@ -126,6 +142,18 @@ export default async function TeacherTestReviewPage({
             </Link>.
           </p>
         </div>
+        {/* Same compact printout admins use (blank / answer key / explanations, chosen in the preview). */}
+        <a
+          href={`/print/tests/${test.id}`}
+          target="_blank"
+          rel="noopener"
+          title={tQa("printHint")}
+          data-teacher-qa-print
+          className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface border border-divider text-charcoal text-xs font-semibold hover:bg-light-bg transition-colors"
+        >
+          <Printer size={14} aria-hidden />
+          {tQa("print")}
+        </a>
       </div>
 
       {sections.length === 0 ? (

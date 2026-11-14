@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess, testOwningQuestion } from "@/lib/teacher-access";
+import { teacherQaGate } from "@/lib/teacher-qa";
 
 // GET /api/teacher/tests/[id]/analytics/[question_id]
 export async function GET(
@@ -34,6 +35,15 @@ export async function GET(
   }
   if (!ownerTestId) {
     return NextResponse.json({ error: "Question is not part of this test" }, { status: 404 });
+  }
+  // "Teachers can view & print questions/answers" off (a full-length
+  // section follows its parent's switch): stats only, no question content.
+  let contentHidden: boolean;
+  try {
+    contentHidden = (await teacherQaGate(db, user, ownerTestId)).decision !== "allow";
+  } catch (e) {
+    console.error("[teacher/analytics/question] teacher_qa_enabled lookup failed", e);
+    return NextResponse.json({ error: "Couldn't load this question. Please try again." }, { status: 500 });
   }
 
   // Fetch question
@@ -137,10 +147,10 @@ export async function GET(
     question: {
       id: question.id,
       questionNumber: question.original_question_number,
-      questionText: question.question_text,
-      choices: question.choices,
-      correctAnswer: question.correct_answer,
-      explanation: question.explanation,
+      questionText: contentHidden ? null : question.question_text,
+      choices: contentHidden ? null : question.choices,
+      correctAnswer: contentHidden ? null : question.correct_answer,
+      explanation: contentHidden ? null : question.explanation,
       difficulty: question.difficulty,
       domain: question.domain,
       skill: question.skill,
@@ -158,5 +168,6 @@ export async function GET(
     wrongStudentSubmissions,
     classReview,
     privateNote,
+    contentHidden,
   });
 }

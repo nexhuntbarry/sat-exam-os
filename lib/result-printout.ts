@@ -12,6 +12,7 @@ import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { answerCandidates } from "@/lib/grade-submission";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { teacherQaContentHidden } from "@/lib/teacher-qa";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
 import {
@@ -57,6 +58,13 @@ export interface ResultQuestion {
   /** "blank" = no answer; null when the student may not see answers. */
   outcome: "correct" | "wrong" | "blank" | null;
   explanation: string | null;
+  /**
+   * The admin turned off "Teachers can view & print questions/answers" and
+   * the viewer is a teacher: text, choices, figures, key and explanation are
+   * left out (number, domain, the student's answer and right/wrong stay).
+   */
+  contentHidden?: boolean;
+  domain?: string | null;
 }
 
 export interface ResultModule {
@@ -213,6 +221,7 @@ async function buildModules(
   graded: { sub: SubRow; label: string | null; section?: "rw" | "math" }[],
   shows: { answers: boolean; explanations: boolean },
   opts: PrintOptions,
+  contentHidden = false,
 ): Promise<{ modules: ResultModule[]; grid: StudentResultPrintout["grid"] }> {
   const modules: ResultModule[] = [];
   const grid: StudentResultPrintout["grid"] = [];
@@ -220,12 +229,12 @@ async function buildModules(
   const { data: records, error } = await db
     .from("answer_records")
     .select(`submission_id, question_id, student_answer, correct_answer, is_correct,
-      questions!inner(original_question_number, question_text, choices, question_type, explanation, image_urls)`)
+      questions!inner(original_question_number, question_text, choices, question_type, explanation, image_urls, domain)`)
     .in("submission_id", graded.map((g) => g.sub.id));
   if (error) throw new Error(`printout: answers lookup failed: ${error.message}`);
   type Rec = {
     submission_id: string; question_id: string; student_answer: string | null; correct_answer: string | null; is_correct: boolean | null;
-    questions: { original_question_number: number; question_text: string; choices: ResultChoice[] | null; question_type: string; explanation: string | null; image_urls: string[] | null };
+    questions: { original_question_number: number; question_text: string; choices: ResultChoice[] | null; question_type: string; explanation: string | null; image_urls: string[] | null; domain: string | null };
   };
   const recs = (records ?? []) as unknown as Rec[];
   // A quiz picked from several source tests prints in the teacher's pick order.
@@ -246,6 +255,22 @@ async function buildModules(
       const blank = !r.student_answer || r.student_answer.trim() === "";
       const outcome: ResultQuestion["outcome"] = !shows.answers ? null : blank ? "blank" : r.is_correct ? "correct" : "wrong";
       grid.push({ module: label, n: i + 1, outcome });
+      if (contentHidden) {
+        return {
+          id: r.question_id,
+          n: i + 1,
+          text: "",
+          type: r.questions.question_type,
+          imageUrls: [],
+          choices: [],
+          studentAnswer: blank ? null : r.student_answer,
+          correctAnswer: null,
+          outcome,
+          explanation: null,
+          contentHidden: true,
+          domain: r.questions.domain,
+        };
+      }
       return {
         id: r.question_id,
         n: i + 1,
@@ -283,6 +308,7 @@ export async function loadResultPrintouts(
   opts: PrintOptions,
 ): Promise<StudentResultPrintout[]> {
   const allowed = await allowedStudents(db, viewer, testId);
+  const contentHidden = await teacherQaContentHidden(db, viewer, testId);
   const { data: test } = await db.from("tests").select("id, test_name, module_2_id, is_adaptive").eq("id", testId).maybeSingle();
   if (!test) throw new PrintAccessError(404, "Test not found");
   if (viewer.role === "student" && !onSide(testId, await getQaTestIds(), viewer.isQa)) {
@@ -291,7 +317,7 @@ export async function loadResultPrintouts(
 
   // Full-length SAT parent: one printout per full-length attempt.
   const flKids = (await fullLengthLinks(db)).childrenOf.get(testId);
-  if (flKids) return loadFullLengthPrintouts(db, viewer, testId, test.test_name as string, flKids, allowed, submissionIds, opts);
+  if (flKids) return loadFullLengthPrintouts(db, viewer, testId, test.test_name as string, flKids, allowed, submissionIds, opts, contentHidden);
 
   // Resolve requested ids → attempts.
   let picked: SubRow[] = [];
@@ -355,6 +381,7 @@ export async function loadResultPrintouts(
       graded.map((sub) => ({ sub, label: two ? (TRACK_LABEL[sub.adaptive_track ?? ""] ?? null) : null })),
       shows,
       opts,
+      contentHidden,
     );
     out.push({
       submissionId: rows[rows.length - 1].id,
@@ -394,6 +421,7 @@ async function loadFullLengthPrintouts(
   allowed: Set<string> | null,
   submissionIds: string[],
   opts: PrintOptions,
+  contentHidden = false,
 ): Promise<StudentResultPrintout[]> {
   const childIds = [kids.rw, kids.math].filter((x): x is string => Boolean(x));
   const meta = await loadFlAttemptMeta(db, [testId], viewer.role === "student" ? viewer.userId : undefined);
@@ -465,7 +493,7 @@ async function loadFullLengthPrintouts(
       ...(scope.rw ? rw : []).filter((r) => DONE.has(r.status)).map((sub) => ({ sub, label: label("Reading and Writing", sub), section: "rw" as const })),
       ...(scope.math ? math : []).filter((r) => DONE.has(r.status)).map((sub) => ({ sub, label: label("Math", sub), section: "math" as const })),
     ];
-    const { modules, grid } = await buildModules(db, graded, shows, opts);
+    const { modules, grid } = await buildModules(db, graded, shows, opts, contentHidden);
     const ordered = [...rw, ...math];
     out.push({
       submissionId: ordered[ordered.length - 1].id,

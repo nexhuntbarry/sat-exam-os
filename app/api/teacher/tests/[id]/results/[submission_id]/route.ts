@@ -10,6 +10,7 @@ import { tabSwitchTotal } from "@/lib/tab-switches";
 import { flSectionScope, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey } from "@/lib/full-length-score";
 import { sectionDetailRowId } from "@/lib/full-length-results";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
+import { teacherQaContentHidden } from "@/lib/teacher-qa";
 
 // Two-track access model:
 // 1) admin → unrestricted
@@ -71,6 +72,17 @@ export async function GET(
     if (!ok) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+  }
+
+  // Admin turned off "Teachers can view & print questions/answers": a teacher
+  // gets the score and, per question, number / domain / the student's
+  // answer / right-wrong — no text, choices, figures, key or explanation.
+  let contentHidden: boolean;
+  try {
+    contentHidden = await teacherQaContentHidden(db, user, testId);
+  } catch (e) {
+    console.error("[teacher/results/GET] teacher_qa_enabled lookup failed", e);
+    return NextResponse.json({ error: "Couldn't load this submission. Please try again." }, { status: 500 });
   }
 
   // Fetch submission. student_profiles is joined separately since
@@ -228,6 +240,33 @@ export async function GET(
     const q = ar.questions;
     const noteData = notesMap[q.id] ?? { classReview: false, privateNote: "", sharedNote: "" };
     const wasFlagged = answersJson[q.id]?.flagged === true;
+    if (contentHidden) {
+      return {
+        questionId: q.id,
+        questionNumber: q.original_question_number,
+        questionText: null,
+        choices: [],
+        studentAnswer: ar.student_answer,
+        correctAnswer: null,
+        isCorrect: ar.is_correct,
+        timeSpentSeconds: ar.time_spent_seconds,
+        activity: summarizeActivity(activityBySubmission.get(ar.submission_id)?.[q.id]),
+        wasFlagged,
+        explanation: null,
+        hasImage: false,
+        hasTable: false,
+        imageUrls: [],
+        imageAlts: [],
+        pageNumber: null,
+        domain: q.domain,
+        skill: q.skill,
+        difficulty: q.difficulty,
+        classReview: noteData.classReview,
+        privateNote: noteData.privateNote,
+        sharedNote: noteData.sharedNote,
+        studentAnnotations: null,
+      };
+    }
     return {
       questionId: q.id,
       questionNumber: q.original_question_number,

@@ -10,6 +10,8 @@ export interface PrintQuestion {
   question_type: string;
   image_urls?: string[] | null;
   correct_answer: string | null;
+  /** Loaded only when the printout includes explanations. */
+  explanation?: string | null;
 }
 
 export interface PrintModule {
@@ -26,18 +28,21 @@ export const imgSrc = (url: string) => `/api/blob-image?u=${encodeURIComponent(u
 // A paper copy of a test: every module, every question as the student sees
 // it. withKey marks the correct choice / answer on each question and adds an
 // answer key table at the end of each module. Each module starts on a new
-// page and a question never splits across pages. Shown through
-// PrintPreview (app/(print)/print/tests/[id]).
+// page and a question never splits across pages. explanations prints each
+// question's explanation under it ("inline") or all of them after the last
+// module ("end"). Shown through PrintPreview (app/(print)/print/tests/[id]).
 export default function PrintableTest({
   testName,
   modules,
   withKey,
   generatedOn,
+  explanations = null,
 }: {
   testName: string;
   modules: PrintModule[];
   withKey: boolean;
   generatedOn: string;
+  explanations?: "inline" | "end" | null;
 }) {
   return (
     <div className="bg-white text-charcoal">
@@ -80,7 +85,13 @@ export default function PrintableTest({
 
             <ol className="space-y-4">
               {m.questions.map((q, qi) => (
-                <QuestionBlock key={q.id} q={q} n={qi + 1} withKey={withKey} />
+                <QuestionBlock
+                  key={q.id}
+                  q={q}
+                  n={qi + 1}
+                  withKey={withKey}
+                  explanation={explanations === "inline" ? q.explanation : null}
+                />
               ))}
             </ol>
 
@@ -102,6 +113,36 @@ export default function PrintableTest({
           </section>
         </Fragment>
       ))}
+
+      {explanations === "end" && (
+        <section className="break-before-page pt-2">
+          <h1 className="text-xl font-bold border-b-2 border-charcoal pb-2 mb-4">{testName} · Explanations</h1>
+          {modules.map((m, mi) =>
+            m.questions.length === 0 ? null : (
+              <div key={mi} className="mb-5">
+                {(m.label || m.section) && (
+                  <h2 className="text-sm font-bold uppercase tracking-wide mb-2">{[m.section, m.label].filter(Boolean).join(" · ")}</h2>
+                )}
+                <ol className="space-y-2">
+                  {m.questions.map((q, qi) => (
+                    <li key={q.id} className="break-inside-avoid text-xs flex gap-2">
+                      <span className="w-6 shrink-0 text-right font-bold">{qi + 1}.</span>
+                      <div className="min-w-0">
+                        <span className="font-semibold">Answer: {answerCandidates(q.correct_answer).join(" or ") || "—"}</span>
+                        {q.explanation ? (
+                          <MathMarkdown className="prose prose-sm max-w-none text-inherit text-xs [&_p]:my-0.5">{q.explanation}</MathMarkdown>
+                        ) : (
+                          <span className="text-soft-mute"> · No explanation.</span>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ),
+          )}
+        </section>
+      )}
 
       <p className="mt-6 text-xs text-soft-mute">Printed {generatedOn}</p>
     </div>
@@ -183,11 +224,14 @@ export function QuestionBlock({
   withKey,
   result,
   src = imgSrc,
+  explanation: explanationProp = null,
 }: {
   q: PrintQuestion;
   n: number;
   withKey: boolean;
   result?: QuestionResultMarks;
+  /** Shown under the question (test printout with explanations); a result's own explanation wins. */
+  explanation?: string | null;
   /** Image URL for a stored blob URL (default: the authenticated proxy). */
   src?: (url: string) => string;
 }) {
@@ -303,10 +347,10 @@ export function QuestionBlock({
           <p className="text-sm pt-1">Answer: ________________</p>
         )}
 
-        {result?.explanation && (
+        {(result?.explanation ?? explanationProp) && (
           <div className="text-xs text-charcoal border-l-2 border-charcoal/40 pl-3 break-inside-avoid">
             <span className="font-semibold">Explanation: </span>
-            <MathMarkdown className="prose prose-sm max-w-none text-inherit text-xs [&_p]:my-0.5 inline">{result.explanation}</MathMarkdown>
+            <MathMarkdown className="prose prose-sm max-w-none text-inherit text-xs [&_p]:my-0.5 inline">{(result?.explanation ?? explanationProp)!}</MathMarkdown>
           </div>
         )}
       </div>
