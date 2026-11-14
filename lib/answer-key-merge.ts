@@ -174,14 +174,20 @@ export interface ReparseKeyDecision {
   note: string | null;
   /** The row already had a key: it is put back after the solver (storedKeyAfterSolve). */
   storedKey: boolean;
+  /** official_answer the row had before this run (only in the review note when it differs). */
+  priorOfficial: string | null;
 }
 
 /**
  * Re-parse in place, one question. A key already stored on the row
  * (correct_answer — what students are graded on — else official_answer) is
  * never changed: a ✓, this run's probe or a differing stored official answer
- * only sends the row to Needs Review. A row with no stored key takes this
- * run's probe under probe rules (mergeTicksIntoKey).
+ * only sends the row to Needs Review. The stored key (the full multi-answer
+ * string) is also written as official_answer, so the later passes that set
+ * correct_answer = official_answer (explain-official, truncation guard) derive
+ * the stored key themselves; a differing old official value survives only in
+ * the review note. A row with no stored key takes this run's probe under
+ * probe rules (mergeTicksIntoKey).
  */
 export function reparseKeyDecision(
   row: { storedOfficial: string | null; storedCorrect: string | null; probe: string | null; type: string | null },
@@ -196,12 +202,11 @@ export function reparseKeyDecision(
     if (storedOfficial && !agrees(stored, storedOfficial)) review.push(storedOfficialConflictNote(stored, storedOfficial));
     if (tick && !agrees(stored, tick)) review.push(storedConflictNote(stored, tick.toUpperCase()));
     if (probe && !agrees(stored, probe)) review.push(storedProbeConflictNote(stored, probe));
-    const confirmed = (probe && agrees(probe, stored)) || (tick && agrees(tick, stored));
-    return { official: storedOfficial || (confirmed ? stored : null), seed: stored, review, note: null, storedKey: true };
+    return { official: stored, seed: stored, review, note: null, storedKey: true, priorOfficial: storedOfficial };
   }
   const d = ev ? decide(probe ?? undefined, ev, "probe", row.type) : null;
   const key = d?.key ?? probe;
-  return { official: key, seed: key, review: d?.conflict ? [d.conflict] : [], note: d?.note ?? null, storedKey: false };
+  return { official: key, seed: key, review: d?.conflict ? [d.conflict] : [], note: d?.note ?? null, storedKey: false, priorOfficial: storedOfficial };
 }
 
 /**
@@ -290,45 +295,4 @@ export function deterministicTicks(
     ticks.set(q.n, { tick, strong: isMc && aligned, why, source });
   }
   return { ticks, notes };
-}
-
-export interface FinalRestore {
-  /** Fields to write; null = the row is already right. */
-  update: Record<string, unknown> | null;
-  /** The Needs Review note written (null = none). */
-  review: string | null;
-}
-
-/**
- * Re-parse in place, last pass before auto-promote: later AI passes
- * (explain-official, truncation guard) write correct_answer = official_answer,
- * which can replace a stored key or narrow "5 or -13" to "5". Put the stored
- * key back. A row whose key had to be put back never stays Draft (so
- * auto-promote can't take it); if its explanation now argues another answer
- * (`arguesOther`, e.g. lib/explanation-autofix explanationArguesOther), the
- * explanation is cleared and the row goes to Needs Review.
- */
-export function finalStoredKeyRestore(
-  row: { correct_answer: string | null; explanation: string | null; parsing_status: string | null; parsing_notes: string | null },
-  stored: string,
-  arguesOther: (explanation: string | null, key: string) => string | null,
-): FinalRestore {
-  const current = row.correct_answer;
-  if (current === stored) return { update: null, review: null };
-  const update: Record<string, unknown> = { correct_answer: stored };
-  const notes = (row.parsing_notes ?? "").split(";").map((x) => x.trim()).filter(Boolean);
-  const why = arguesOther(row.explanation, stored);
-  let review: string | null = null;
-  if (why) {
-    review = restoredExplanationNote(stored, why);
-    update.explanation = null;
-  } else if (row.parsing_status === "Draft") {
-    review = restoredKeyNote(stored, current ?? "(none)");
-  }
-  if (review) {
-    if (!notes.includes(review)) notes.push(review);
-    update.parsing_status = "Needs Review";
-    update.parsing_notes = notes.join("; ");
-  }
-  return { update, review };
 }

@@ -20,8 +20,6 @@ import {
   solverConflictNote,
   storedConflictNote,
   storedKeyAfterSolve,
-  finalStoredKeyRestore,
-  restoredExplanationNote,
   restoredKeyNote,
   weakFillNote,
   uploadConflictNote,
@@ -36,6 +34,7 @@ import {
   type PdfTextQuestion,
 } from "../lib/pdf-text-choices";
 import { explanationArguesOther } from "../lib/explanation-autofix";
+import { personEditNote, RESTORE_FAILED_WHY, restoreStoredKeys, type RestoreEntry } from "../lib/reparse-key-restore";
 
 const MC = "Multiple Choice";
 const SPR = "Student Produced Response";
@@ -144,7 +143,8 @@ for (const source of ["probe", "upload"] as const) {
   // [Test #23] Math M1 Q15: official empty, correct_answer B, label-only ✓ D.
   const q15 = reparseKeyDecision({ storedOfficial: null, storedCorrect: "B", probe: null, type: MC }, strong("D"));
   assert.equal(q15.seed, "B", "stored key kept");
-  assert.equal(q15.official, null, "official left empty");
+  assert.equal(q15.official, "B", "official_answer = the stored key (root fix)");
+  assert.equal(q15.priorOfficial, null);
   assert.deepEqual(q15.review, [storedConflictNote("B", "D")]);
   assert.equal(q15.note, null);
   // Stored official vs a probe that disagrees (no ✓) → review, key kept.
@@ -154,7 +154,7 @@ for (const source of ["probe", "upload"] as const) {
   assert.match(p.review[0], /^Needs review: the stored key says C but the answer key read from the PDF says A/);
   // ✓ and probe confirm the stored key → no review; an empty official is filled with it.
   const ok = reparseKeyDecision({ storedOfficial: null, storedCorrect: "D", probe: "D", type: MC }, strong("D"));
-  assert.deepEqual(ok, { official: "D", seed: "D", review: [], note: null, storedKey: true });
+  assert.deepEqual(ok, { official: "D", seed: "D", review: [], note: null, storedKey: true, priorOfficial: null });
   // No stored key: this run's probe under probe rules.
   const fresh = reparseKeyDecision({ storedOfficial: null, storedCorrect: null, probe: "A", type: MC }, strong("D"));
   assert.equal(fresh.official, "D");
@@ -166,7 +166,8 @@ for (const source of ["probe", "upload"] as const) {
   // official answer only flags the row.
   const offDiff = reparseKeyDecision({ storedOfficial: "B", storedCorrect: "A", probe: null, type: MC }, undefined);
   assert.equal(offDiff.seed, "A");
-  assert.equal(offDiff.official, "B");
+  assert.equal(offDiff.official, "A", "the old official B only survives in the note");
+  assert.equal(offDiff.priorOfficial, "B");
   assert.match(offDiff.review[0], /^Needs review: the stored key is A but the stored official answer says B/);
   assert.equal(fresh.storedKey, false);
   // A letter ✓ on an SPR row with a stored number key: ignored.
@@ -192,7 +193,7 @@ for (const source of ["probe", "upload"] as const) {
   assert.deepEqual(reparseKeyDecision({ storedOfficial: null, storedCorrect: "A or C", probe: null, type: MC }, strong("C")).review, []);
   // A row without a stored key is not a stored-key row: today's solver flow.
   const none = reparseKeyDecision({ storedOfficial: null, storedCorrect: null, probe: null, type: MC }, undefined);
-  assert.deepEqual(none, { official: null, seed: null, review: [], note: null, storedKey: false });
+  assert.deepEqual(none, { official: null, seed: null, review: [], note: null, storedKey: false, priorOfficial: null });
 }
 
 // ── Multi-answer keys use the grader's split (lib/answer-key keyCandidates):
@@ -211,73 +212,195 @@ assert.equal(storedKeyAfterSolve("5 or -13", "5").review, null);
   assert.equal(m.conflicts.size, 0);
 }
 
-// ── Re-parse in place, end to end: the cron's write order for stored-key
-// rows — key decision → row written with the seed → solver overwrites
-// correct_answer → stored key put back (storedKeyAfterSolve) → explain-official
-// and the truncation guard (mocked: they write correct_answer =
-// official_answer || correct_answer, as lib/ai/solve-question.ts does) →
-// final restore (finalStoredKeyRestore) before rescore / auto-promote.
-{
-  const arguesOther = (type: string) => (ex: string | null, key: string) => explanationArguesOther(ex, key, type, "Which choice completes the text?");
-  type Row = { correct_answer: string | null; official_answer: string | null; explanation: string | null; parsing_status: string; parsing_notes: string | null };
-  const runCron = (stored: { official: string | null; correct: string | null }, type: string, solver: string, explainOfficial: string) => {
+// ── Re-parse in place, end to end (async part runs at the bottom).
+// A tiny in-memory stand-in for the Supabase calls lib/reparse-key-restore.ts
+// makes, with hooks for errors and for another writer between read and write.
+type QRow = {
+  id: string; correct_answer: string | null; official_answer: string | null; explanation: string | null;
+  parsing_status: string; parsing_notes: string | null; question_type: string | null; question_text: string | null; updated_at: string | null;
+};
+class FakeDb {
+  rows = new Map<string, QRow>();
+  failSelect = false;
+  failUpdate = false;
+  /** Runs once, just before the next compare-and-set write lands. */
+  beforeCas: (() => void) | null = null;
+  from(_t: string) { return new FakeQuery(this); }
+}
+class FakeQuery {
+  private filters: ((r: QRow) => boolean)[] = [];
+  private op: "select" | "update" = "select";
+  private patch: Partial<QRow> = {};
+  private returning = false;
+  private single = false;
+  private cas = false;
+  private db: FakeDb;
+  constructor(db: FakeDb) { this.db = db; }
+  select(_c?: string) { if (this.op === "update") this.returning = true; return this; }
+  update(p: Partial<QRow>) { this.op = "update"; this.patch = p; return this; }
+  eq(c: keyof QRow, v: unknown) { if (c === "updated_at" || c === "correct_answer") this.cas = true; this.filters.push((r) => r[c] === v); return this; }
+  is(c: keyof QRow, v: null) { this.filters.push((r) => r[c] === v); return this; }
+  neq(c: keyof QRow, v: unknown) { this.filters.push((r) => r[c] !== v); return this; }
+  in(c: keyof QRow, vs: unknown[]) { this.filters.push((r) => vs.includes(r[c])); return this; }
+  maybeSingle() { this.single = true; return this; }
+  private run() {
+    if (this.op === "select") {
+      if (this.db.failSelect) return { data: null, error: { message: "select failed" } };
+      const hits = [...this.db.rows.values()].filter((r) => this.filters.every((f) => f(r))).map((r) => ({ ...r }));
+      return { data: this.single ? hits[0] ?? null : hits, error: null };
+    }
+    if (this.db.failUpdate) return { data: null, error: { message: "update failed" } };
+    if (this.cas && this.db.beforeCas) { const h = this.db.beforeCas; this.db.beforeCas = null; h(); }
+    const hits = [...this.db.rows.values()].filter((r) => this.filters.every((f) => f(r)));
+    for (const r of hits) Object.assign(r, this.patch);
+    return { data: this.returning ? hits.map((r) => ({ id: r.id })) : null, error: null };
+  }
+  then<T>(res: (v: { data: unknown; error: unknown }) => T, rej?: (e: unknown) => T) { return Promise.resolve(this.run()).then(res, rej); }
+}
+
+const reparseE2E = async () => {
+  const arguesOther = (r: { explanation: string | null; question_type: string | null; question_text: string | null }, key: string) =>
+    explanationArguesOther(r.explanation, key, r.question_type, r.question_text);
+  // The cron's write order for one stored-key row. Returns what the
+  // explain-official / truncation mocks saw and the restore result.
+  const runCron = async (
+    stored: { official: string | null; correct: string | null },
+    type: string,
+    solver: string,
+    opts: { live?: boolean; tamper?: (r: QRow) => void; db?: FakeDb; narrow?: string } = {},
+  ) => {
+    const db = opts.db ?? new FakeDb();
     const d = reparseKeyDecision({ storedOfficial: stored.official, storedCorrect: stored.correct, probe: null, type }, undefined);
-    const row: Row = { correct_answer: d.seed, official_answer: d.official, explanation: null, parsing_status: d.review.length ? "Needs Review" : "Draft", parsing_notes: ["Re-parsed in place", ...d.review].join("; ") };
-    row.correct_answer = solver; // solver
-    row.explanation = `The answer is ${solver}.`;
+    // 1. row written with the decision
+    const row: QRow = {
+      id: "q1", correct_answer: d.seed, official_answer: d.official, explanation: null,
+      parsing_status: d.review.length ? "Needs Review" : "Draft", parsing_notes: ["Re-parsed in place", ...d.review].join("; "),
+      question_type: type, question_text: "Which choice completes the text?", updated_at: "t1",
+    };
+    db.rows.set(row.id, row);
+    // 2. solver overwrites, 3. stored key put back
+    row.correct_answer = solver;
+    row.explanation = type === SPR ? `Final answer: ${solver}` : `The answer is ${solver}.`;
     const after = storedKeyAfterSolve(d.seed!, solver);
     row.correct_answer = after.correct;
     if (after.review) { row.parsing_status = "Needs Review"; row.explanation = null; row.parsing_notes += `; ${after.review}`; }
-    // explain-official (approves when nothing blocks) + truncation guard.
+    // 4. explain-official + truncation guard (lib/ai/solve-question.ts): correct_answer = official_answer || correct_answer
+    const seenByExplain: (string | null)[] = [];
     for (let pass = 0; pass < 2; pass++) {
-      row.correct_answer = row.official_answer || row.correct_answer;
-      if (row.official_answer) {
-        row.explanation = explainOfficial;
-        if (!/needs review:/i.test(row.parsing_notes ?? "")) row.parsing_status = "Approved";
-      }
+      const ans: string | null = row.official_answer || row.correct_answer;
+      seenByExplain.push(ans);
+      row.correct_answer = ans;
+      row.explanation = type === SPR ? `Final answer: ${ans}` : `The answer is ${ans}.`;
+      if (!/needs review:/i.test(row.parsing_notes ?? "")) row.parsing_status = "Approved";
+      row.updated_at = `t${pass + 2}`;
     }
-    const fin = finalStoredKeyRestore(row, d.seed!, arguesOther(type));
-    if (fin.update) Object.assign(row, fin.update);
-    return { row, d, fin };
+    if (opts.narrow !== undefined) { row.correct_answer = opts.narrow; row.explanation = `Final answer: ${opts.narrow}`; }
+    opts.tamper?.(row);
+    // 5. safety-net restore
+    const marked: string[] = [];
+    const entry: RestoreEntry = { id: row.id, stored: d.seed!, priorOfficial: d.priorOfficial, solver };
+    const res = await restoreStoredKeys([entry], {
+      db,
+      liveIds: async (ids) => new Set(opts.live ? ids.filter((x) => x === row.id) : []),
+      arguesOther,
+      markNotRescored: async (ids) => { marked.push(...ids); },
+      now: () => "t9",
+    });
+    return { row, d, seenByExplain, res, marked };
   };
 
-  // A reviewer's fix A vs a shifted official B → A survives; the explanation
-  // written for B is cleared; Needs Review; never Draft (no auto-promote).
+  // Root fix: explain-official / truncation see the stored key, so nothing to restore.
   {
-    const { row, d, fin } = runCron({ official: "B", correct: "A" }, MC, "A", "The answer is B.");
-    assert.equal(d.storedKey, true);
+    // A reviewer's fix A vs a shifted official B.
+    const { row, seenByExplain, res, d } = await runCron({ official: "B", correct: "A" }, MC, "A");
+    assert.deepEqual(seenByExplain, ["A", "A"], "explain-official derives the stored key");
+    assert.equal(row.correct_answer, "A");
+    assert.equal(row.official_answer, "A");
+    assert.match(d.review[0], /stored official answer says B/, "old official only in the note");
+    assert.equal(res.restored, 0);
+    assert.equal(res.skipPromote, false);
+    assert.equal(row.parsing_status, "Needs Review");
+  }
+  {
+    // Multi-answer key: never narrowed.
+    const { row, seenByExplain, res } = await runCron({ official: "5", correct: "5 or -13" }, SPR, "5");
+    assert.deepEqual(seenByExplain, ["5 or -13", "5 or -13"]);
+    assert.equal(row.correct_answer, "5 or -13");
+    assert.equal(res.restored, 0);
+  }
+  // Safety net: a run write still narrowed the key while the row got approved → put back, Needs Review.
+  {
+    const { row, res } = await runCron({ official: "5", correct: "5 or -13" }, SPR, "5", { narrow: "5" });
+    assert.equal(res.restored, 1);
+    assert.equal(row.correct_answer, "5 or -13");
+    assert.equal(row.parsing_status, "Needs Review", "approved on a narrowed key → review");
+    assert.equal(row.explanation, "Final answer: 5", "5 is one of the accepted answers: explanation kept");
+    assert.equal(row.updated_at, "t9");
+  }
+  {
+    // Key left at the prior official B with an explanation for B → restored, explanation cleared.
+    const { row, res } = await runCron({ official: "B", correct: "A" }, MC, "A", { tamper: (r) => { r.correct_answer = "B"; r.explanation = "The answer is B."; } });
+    assert.equal(res.restored, 1);
     assert.equal(row.correct_answer, "A");
     assert.equal(row.explanation, null);
+    assert.match(row.parsing_notes!, /the explanation argued another answer than the stored key A/);
+  }
+  // A person edits the key during the run → their value survives, with a note.
+  {
+    const { row, res } = await runCron({ official: null, correct: "A" }, MC, "A", { tamper: (r) => { r.correct_answer = "D"; } });
+    assert.equal(row.correct_answer, "D");
+    assert.deepEqual(res.personEdits, ["q1"]);
+    assert.equal(res.restored, 0);
+    assert.ok(row.parsing_notes!.includes(personEditNote("D", "A")));
+  }
+  {
+    // …or between the restore's read and its write (compare-and-set misses).
+    const db = new FakeDb();
+    db.beforeCas = () => { const r = db.rows.get("q1")!; r.correct_answer = "C"; r.updated_at = "person"; };
+    const { row, res } = await runCron({ official: "B", correct: "A" }, MC, "A", { db, tamper: (r) => { r.correct_answer = "B"; } });
+    assert.equal(row.correct_answer, "C", "the person's value wins");
+    assert.equal(res.restored, 0);
+    assert.deepEqual(res.personEdits, ["q1"]);
+    assert.match(row.parsing_notes!, /changed to another value during this re-parse/);
+  }
+  // The row went live (and is Approved) during the run → tagged, never demoted, answer not changed.
+  {
+    const { row, res } = await runCron({ official: null, correct: "5 or -13" }, SPR, "5", { live: true, narrow: "5" });
+    assert.equal(row.parsing_status, "Approved");
+    assert.equal(row.correct_answer, "5");
+    assert.ok(row.parsing_notes!.startsWith("[live-fix]"));
+    assert.deepEqual(res.liveHeld, ["q1"]);
+    assert.equal(res.restored, 0);
+  }
+  // DB errors → rows marked not rescored, Needs Review, module not auto-promoted.
+  {
+    const db = new FakeDb();
+    db.failSelect = true;
+    const { row, res, marked } = await runCron({ official: null, correct: "A" }, MC, "A", { db, tamper: (r) => { r.correct_answer = "B"; } });
+    assert.equal(res.skipPromote, true);
+    assert.deepEqual(res.failed, ["q1"]);
+    assert.deepEqual(marked, ["q1"]);
     assert.equal(row.parsing_status, "Needs Review");
-    assert.match(fin.review!, /^Needs review: the explanation argued another answer than the stored key A/);
-    assert.equal(fin.review, restoredExplanationNote("A", explanationArguesOther("The answer is B.", "A", MC, null)!));
-    assert.match(row.parsing_notes!, /stored official answer says B/);
+    assert.equal(RESTORE_FAILED_WHY, "the re-parse couldn't confirm the stored key");
   }
-  // Multi-answer key narrowed to "5" by explain-official → "5 or -13" survives;
-  // the explanation for 5 is consistent, so it stays.
   {
-    const { row, fin } = runCron({ official: "5", correct: "5 or -13" }, SPR, "5", "Final answer: 5");
-    assert.equal(row.correct_answer, "5 or -13");
-    assert.equal(row.explanation, "Final answer: 5");
-    assert.equal(fin.review, null, "consistent explanation on an approved row: no review");
-    assert.notEqual(row.parsing_status, "Draft");
+    const db = new FakeDb();
+    db.failUpdate = true;
+    const { res, marked } = await runCron({ official: "B", correct: "A" }, MC, "A", { db, tamper: (r) => { r.correct_answer = "B"; } });
+    assert.equal(res.skipPromote, true);
+    assert.deepEqual(res.failed, ["q1"]);
+    assert.deepEqual(marked, ["q1"]);
+    assert.equal(res.restored, 0, "only successful writes count");
   }
-  // Stored key only in correct_answer, solver disagrees → kept, review, explanation cleared.
   {
-    const { row } = runCron({ official: null, correct: "C" }, MC, "D", "unused");
-    assert.equal(row.correct_answer, "C");
-    assert.equal(row.parsing_status, "Needs Review");
-    assert.match(row.parsing_notes!, /solver says D, stored key C/);
-    assert.equal(row.explanation, null);
+    // Failure on a live, Approved row: still not promoted, but never demoted.
+    const db = new FakeDb();
+    db.failUpdate = true;
+    const { row, res } = await runCron({ official: null, correct: "5 or -13" }, SPR, "5", { db, live: true, narrow: "5" });
+    assert.equal(res.skipPromote, true);
+    assert.equal(row.parsing_status, "Approved");
   }
-  // A Draft row whose key a later pass changed never stays Draft.
-  {
-    const fin = finalStoredKeyRestore({ correct_answer: "B", explanation: null, parsing_status: "Draft", parsing_notes: null }, "A", () => null);
-    assert.deepEqual(fin.update, { correct_answer: "A", parsing_status: "Needs Review", parsing_notes: restoredKeyNote("A", "B") });
-  }
-  // Already right → nothing written.
-  assert.deepEqual(finalStoredKeyRestore({ correct_answer: "A", explanation: "x", parsing_status: "Draft", parsing_notes: null }, "A", () => "no"), { update: null, review: null });
-}
+};
 
 // ── deterministicTicks
 const LABELS: ChoiceLabel[] = ["A", "B", "C", "D"];
@@ -454,4 +577,10 @@ const line = (text: string, checked = false, x = 50): PdfLine => ({ page: 1, tex
   assert.equal(r2.byNumber.get(2)?.checked, "A");
 }
 
-console.log("answer-key-merge: ok");
+reparseE2E().then(
+  () => console.log("answer-key-merge: ok"),
+  (e) => {
+    console.error(e);
+    process.exit(1);
+  },
+);
