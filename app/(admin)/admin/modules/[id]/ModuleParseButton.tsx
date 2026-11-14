@@ -90,7 +90,9 @@ export default function ModuleParseButton({ moduleId, initialStatus, labels }: M
         method: "POST",
         headers: { "Content-Type": "application/json" },
         // No key from the probe: tell the parser so it doesn't extract one again.
-        body: JSON.stringify(answerKey ? { answerKey } : { noKey: true }),
+        // The key here is always the AI probe's reading, never a person's
+        // upload, so the PDF's own ✓ marks win over it (lib/answer-key-merge).
+        body: JSON.stringify(answerKey ? { answerKey, answerKeySource: "probe" } : { noKey: true }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {

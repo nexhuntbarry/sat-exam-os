@@ -25,6 +25,8 @@ import { applyLiveHold, liveQuestionIds, type LiveHoldRow } from "@/lib/live-que
 import { KEY_ROW_SELECT } from "@/lib/key-change";
 import { markNotRescored, rescoreOfficialKeyChanges } from "@/lib/reparse-rescore";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
+import { extractChoicesFromPdfText, readLabelTicks } from "@/lib/pdf-text-choices";
+import { deterministicTicks, mergeTicksIntoKey } from "@/lib/answer-key-merge";
 
 export const maxDuration = 800;
 
@@ -84,8 +86,9 @@ async function handlePOST(
   let keyEntries = officialByNum.size;
   // Key page titled for a different module than the questions → not applied.
   let keyModuleNote: string | null = null;
+  let b64: string | null = null;
   try {
-    const b64 = await fetchPdfAsBase64(mod.pdf_url);
+    b64 = await fetchPdfAsBase64(mod.pdf_url);
     const key = await extractAnswerKey(b64);
     keyModuleNote = key.found
       ? keyModuleMismatchNote(key.keyTitle, key.questionHeader, mod.module_name, mod.module_number)
@@ -128,6 +131,26 @@ async function handlePOST(
     if (offset > 0) for (const q of parsed) q.original_question_number -= offset;
   }
 
+  // Same rule as the parse route (lib/answer-key-merge.ts): this key is the AI
+  // probe's reading (or a stored copy of one), so a ✓ read off the PDF's text
+  // layer wins over it; the disagreement is noted on the row.
+  let tickNotes = new Map<number, string>();
+  if (b64) {
+    try {
+      const pdfText = await extractChoicesFromPdfText(b64);
+      const labelTicks = pdfText.hasTextLayer ? await readLabelTicks(b64) : null;
+      const ticks = deterministicTicks(parsed.map((q) => q.original_question_number), pdfText, labelTicks);
+      const merged = mergeTicksIntoKey(Object.fromEntries(officialByNum), ticks, "probe");
+      officialByNum.clear();
+      for (const [n, v] of Object.entries(merged.key)) officialByNum.set(Number(n), v);
+      keyEntries = officialByNum.size;
+      tickNotes = merged.notes;
+      if (ticks.size > 0) console.log(`[reparse-inplace] ${ticks.size} ✓ read from the PDF text, ${merged.overrides} replaced the probe's answer`);
+    } catch (err) {
+      console.error("[reparse-inplace] PDF ✓ pass failed (non-fatal):", err);
+    }
+  }
+
   // Overwrite rows in place by question number.
   let updated = 0, inserted = 0;
   const seen = new Set<number>();
@@ -151,7 +174,7 @@ async function handlePOST(
       source_pdf_url: mod.pdf_url,
       page_number: q.page_number,
       parsing_status: "Draft",
-      parsing_notes: "Re-parsed in place",
+      parsing_notes: ["Re-parsed in place", tickNotes.get(q.original_question_number)].filter(Boolean).join("; "),
       ai_confidence_score: q.ai_confidence_score,
       question_text_embedding: simpleEmbedding(q.question_text),
       official_answer: official,

@@ -42,11 +42,12 @@ import {
 import { keyFormNote, keyTypeProblem } from "@/lib/answer-key";
 import {
   extractChoicesFromPdfText,
-  isTextLayerReliable,
-  lookupPdfTextQuestion,
+  readLabelTicks,
   checkChoiceAlignment,
+  type LabelTick,
   type PdfTextChoices,
 } from "@/lib/pdf-text-choices";
+import { answerKeySourceOf, deterministicTicks, mergeTicksIntoKey } from "@/lib/answer-key-merge";
 import { autoPromoteModule } from "@/lib/auto-promote";
 import { parsePrintoutPdf } from "@/lib/printout-parser";
 import type { ParsedQuestion } from "@/lib/ai/parse-pdf";
@@ -107,8 +108,12 @@ export const maxDuration = 800;
 //   serverless budget runs out partway, the questions are already in the
 //   bank — admins can re-trigger if needed.
 //
-// Optional body: { answerKey: { [questionNumber: number]: string } }
-// When provided (typically from a prior /probe-answer-key call), the
+// Optional body: { answerKey: { [questionNumber: number]: string },
+//                 answerKeySource?: "probe" | "upload" }
+// answerKeySource says where the key came from (lib/answer-key-merge.ts):
+// "upload" (a person's key) is authoritative over the PDF's ✓ marks; "probe"
+// (the default — the /probe-answer-key AI reading) loses to a ✓ read off the
+// text layer. When provided, the
 // parser stores each official answer alongside the AI-derived solver
 // answer. After the solver runs, mismatches are flagged
 // (mismatch_with_official=true, parsing_status="Needs Review",
@@ -143,11 +148,13 @@ async function handlePOST(
   // again at parse time (it once returned an invented 22-answer key for the
   // same PDF the probe had just said had none — J Test Math M1).
   let probedNoKey = false;
+  let keySource = answerKeySourceOf(undefined);
   try {
     const body = (await req.clone().json()) as
-      | { answerKey?: Record<string, string>; noKey?: boolean }
+      | { answerKey?: Record<string, string>; answerKeySource?: string; noKey?: boolean }
       | undefined;
     probedNoKey = body?.noKey === true;
+    keySource = answerKeySourceOf(body?.answerKeySource);
     if (body?.answerKey) {
       answerKey = {};
       for (const [k, v] of Object.entries(body.answerKey)) {
@@ -162,12 +169,21 @@ async function handlePOST(
     // No body / invalid JSON → parse without answer key (legacy behaviour).
   }
 
-  // An answer key the admin uploaded is authoritative: the PDF checkmarks never
-  // override it. Where they disagree the question goes to Needs Review.
-  let adminKey: Record<number, string> | null = answerKey ? { ...answerKey } : null;
-  const keyConflicts = new Map<number, string>();
-  const noteKeyConflict = (n: number, admin: string, pdf: string) =>
-    keyConflicts.set(n, `Needs review: the uploaded answer key says ${admin} but the source PDF ticks ${pdf} — confirm which is right`);
+  // The key as sent (or as the parse-time probe reads it) and the answers read
+  // deterministically off the PDF (printout ✓ / answer boxes, text-layer ✓).
+  // answerKey is always mergeTicksIntoKey(sentKey, ticks, keySource): a
+  // person's upload beats the ✓ (disagreement → Needs Review); the AI probe
+  // loses to an A–D ✓ (disagreement → a note).
+  let sentKey: Record<number, string> | null = answerKey ? { ...answerKey } : null;
+  const ticks = new Map<number, string>();
+  let keyConflicts = new Map<number, string>();
+  let keyNotes = new Map<number, string>();
+  const mergeKey = () => {
+    const m = mergeTicksIntoKey(sentKey, ticks, keySource);
+    keyConflicts = m.conflicts;
+    keyNotes = m.notes;
+    return { key: Object.keys(m.key).length > 0 ? m.key : null, overrides: m.overrides };
+  };
 
   // Fetch module
   const { data: mod, error: fetchError } = await db
@@ -300,19 +316,17 @@ async function handlePOST(
       } else if (printout.detected) {
         printoutQuestions = printout.questions;
         // The checked answers ARE the official key for these printouts —
-        // except where the admin uploaded a key (that wins; disagreement → review).
-        const key: Record<number, string> = { ...(answerKey ?? {}) };
+        // except where a person uploaded a key (that wins; disagreement → review).
         for (const q of printout.questions) {
-          const n = q.original_question_number;
-          if (!q.correct_answer) continue;
-          if (adminKey?.[n]) {
-            if (adminKey[n].trim().toUpperCase() !== q.correct_answer.trim().toUpperCase()) noteKeyConflict(n, adminKey[n], q.correct_answer);
-            q.correct_answer = adminKey[n];
-          } else if (!key[n]) {
-            key[n] = q.correct_answer;
+          if (q.correct_answer) ticks.set(q.original_question_number, q.correct_answer);
+        }
+        answerKey = mergeKey().key;
+        if (keySource === "upload" && sentKey) {
+          for (const q of printout.questions) {
+            const k = sentKey[q.original_question_number];
+            if (k && q.correct_answer) q.correct_answer = k;
           }
         }
-        if (Object.keys(key).length > 0) answerKey = key;
         console.log(`[modules/parse] printout parser: ${JSON.stringify(printout.stats)}`);
       }
     } catch (err) {
@@ -344,8 +358,9 @@ async function handlePOST(
       // The only key a request carries is the probe's reading of this same
       // PDF, so it can't be real either.
       if (answerKey) console.warn("[modules/parse] dropping the request's answer key — the PDF has no answer marks");
-      answerKey = null;
-      adminKey = null;
+      sentKey = null;
+      ticks.clear();
+      answerKey = mergeKey().key;
     }
     if (!answerKey && probedNoKey) {
       console.log("[modules/parse] probe found no answer key — not extracting one at parse time");
@@ -360,7 +375,9 @@ async function handlePOST(
             `[modules/parse] answer key NOT applied — key page "${probed.keyTitle}" vs questions "${probed.questionHeader ?? mod.module_name}"`,
           );
         } else if (probed.found && Object.keys(probed.answers).length > 0) {
-          answerKey = probed.answers;
+          sentKey = probed.answers;
+          keySource = "probe";
+          answerKey = mergeKey().key;
           console.log(
             `[modules/parse] auto-extracted official answer key: ${Object.keys(probed.answers).length} answers`,
           );
@@ -425,8 +442,11 @@ async function handlePOST(
           for (const [n, v] of Object.entries(k)) shifted[Number(n) - offset] = v;
           return shifted;
         };
-        if (answerKey) answerKey = shift(answerKey);
-        if (adminKey) adminKey = shift(adminKey);
+        if (sentKey) sentKey = shift(sentKey);
+        const shiftedTicks = shift(Object.fromEntries(ticks));
+        ticks.clear();
+        for (const [n, v] of Object.entries(shiftedTicks)) ticks.set(Number(n), v);
+        answerKey = mergeKey().key;
         console.log(
           `[modules/parse] normalized question numbers: shifted by -${offset} → 1..${parsedQuestions.length}`,
         );
@@ -440,8 +460,9 @@ async function handlePOST(
       if (sprLetters) {
         keyModuleNote = keyRejectedNote(sprLetterKeyReason(sprLetters));
         console.warn(`[modules/parse] answer key rejected: ${keyModuleNote}`);
-        answerKey = null;
-        adminKey = null;
+        sentKey = null;
+        ticks.clear();
+        answerKey = mergeKey().key;
       }
     }
     // No answer marks → answers the whole-PDF AI parse "read" are guesses, not
@@ -474,32 +495,31 @@ async function handlePOST(
     } catch (err) {
       console.error("[modules/parse] PDF text-layer pass failed (non-fatal):", err);
     }
-    if (pdfText && isTextLayerReliable(pdfText, parsedQuestions.length)) {
-      // Printouts that mark the correct choice with a check-circle: the mark is
-      // read straight off the PDF, so it beats the AI answer-key probe (which
-      // suffers the same page-break mis-binding). Require most questions to be
-      // marked so a stray glyph can't masquerade as a key.
-      const marked = [...pdfText.byNumber.values()].filter((t) => t.checked).length;
-      if (marked >= Math.ceil(pdfText.byNumber.size * 0.5)) {
-        const key: Record<number, string> = { ...(answerKey ?? {}) };
-        let overrides = 0;
-        for (const q of parsedQuestions) {
-          const n = q.original_question_number;
-          const tq = lookupPdfTextQuestion(pdfText, n);
-          if (!tq?.checked) continue;
-          if (adminKey?.[n]) {
-            // Admin-supplied key wins; a disagreeing tick is flagged, not applied.
-            if (adminKey[n].trim().toUpperCase() !== tq.checked) noteKeyConflict(n, adminKey[n], tq.checked);
-            continue;
-          }
-          if (key[n] && key[n] !== tq.checked) overrides++;
-          key[n] = tq.checked;
-        }
-        answerKey = key;
-        console.log(
-          `[modules/parse] checkmark answers from PDF text: ${marked} marked, ${overrides} disagreed with the AI key probe (checkmark wins)`,
-        );
+    // Printouts that mark the correct choice with a check-circle: the mark is
+    // read straight off the PDF, so it beats the AI answer-key probe (which
+    // suffers the same page-break mis-binding) — but never a person's upload.
+    // Image-choice printouts (Math) bind no choice text, so the label-only
+    // reader supplies their ✓ (lib/answer-key-merge.ts deterministicTicks).
+    let labelTicks: { byNumber: Map<number, LabelTick> } | null = null;
+    if (pdfText?.hasTextLayer) {
+      try {
+        labelTicks = await readLabelTicks(pdfBase64);
+      } catch (err) {
+        console.error("[modules/parse] label-only ✓ pass failed (non-fatal):", err);
       }
+    }
+    const textTicks = deterministicTicks(
+      parsedQuestions.map((q) => q.original_question_number),
+      pdfText,
+      labelTicks,
+    );
+    if (textTicks.size > 0) {
+      for (const [n, c] of textTicks) ticks.set(n, c);
+      const merged = mergeKey();
+      answerKey = merged.key;
+      console.log(
+        `[modules/parse] checkmark answers from PDF text: ${textTicks.size} ticks, ${merged.overrides} replaced the AI key probe's answer, ${keyConflicts.size} disagree with an uploaded key (key source: ${keySource})`,
+      );
     }
     let misaligned: ReturnType<typeof checkChoiceAlignment> = new Map();
     try {
@@ -638,6 +658,9 @@ async function handlePOST(
         parsingStatus = "Needs Review";
         parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + conflict;
       }
+      // The ✓ replaced the probe's answer: a note only, the ✓ is the key.
+      const keyNote = keyNotes.get(q.original_question_number);
+      if (keyNote) parsingNotes = (parsingNotes ? parsingNotes + "; " : "") + keyNote;
 
       // Choices bound to the wrong stem (see Step B2) → never auto-approve.
       const misalign = misaligned.get(q.original_question_number);

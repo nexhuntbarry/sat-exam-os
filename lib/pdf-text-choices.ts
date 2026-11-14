@@ -58,6 +58,8 @@ interface Line {
   page: number;
   text: string;
   checked: boolean;
+  /** Horizontal centre of the line's first text item. */
+  x: number;
 }
 
 /** Open a PDF with pdfjs in-process (no worker), Node-safe. Shared with lib/printout-parser.ts. */
@@ -95,8 +97,8 @@ async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasText
     const page = await doc.getPage(p);
     const content = await page.getTextContent();
     // Group text items into visual lines by baseline y (PDF y grows upward).
-    const rows: { y: number; items: { x: number; str: string }[] }[] = [];
-    for (const it of content.items as { str?: string; transform?: number[] }[]) {
+    const rows: { y: number; items: { x: number; w: number; str: string }[] }[] = [];
+    for (const it of content.items as { str?: string; transform?: number[]; width?: number }[]) {
       if (typeof it.str !== "string" || !it.transform) continue;
       if (!it.str.trim()) continue;
       const x = it.transform[4];
@@ -106,7 +108,7 @@ async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasText
         row = { y, items: [] };
         rows.push(row);
       }
-      row.items.push({ x, str: it.str });
+      row.items.push({ x, w: it.width ?? 0, str: it.str });
     }
     rows.sort((a, b) => b.y - a.y);
     for (const r of rows) {
@@ -118,7 +120,7 @@ async function loadPdfLines(pdfBase64: string): Promise<{ lines: Line[]; hasText
       textChars += text.length;
       if (text && HEADER_FOOTER.some((re) => re.test(text))) continue;
       if (!text && !checked) continue;
-      lines.push({ page: p, text, checked });
+      lines.push({ page: p, text, checked, x: r.items[0].x + r.items[0].w / 2 });
     }
     page.cleanup();
   }
@@ -249,12 +251,82 @@ export async function extractChoicesFromPdfText(pdfBase64: string): Promise<PdfT
  * booklet-sliced numbering (e.g. 137–163) down to 1..N, so apply the same
  * offset here: the lowest printed number maps to 1.
  */
-export function lookupPdfTextQuestion(pdfText: PdfTextChoices, storedNumber: number): PdfTextQuestion | null {
+export function lookupPdfTextQuestion<T>(pdfText: { byNumber: Map<number, T> }, storedNumber: number): T | null {
   if (pdfText.byNumber.size === 0) return null;
   const offset = Math.min(...pdfText.byNumber.keys()) - 1;
   // Only shift when the module clearly starts past 1 (a missed Q1 shouldn't shift everything).
   const shift = offset >= 3 ? offset : 0;
   return pdfText.byNumber.get(storedNumber + shift) ?? null;
+}
+
+/** A question the label-only walker bound: its four A–D labels and the ✓ among them. */
+export interface LabelTick {
+  number: number;
+  /** The ticked label; null when there is no ✓ or more than one. */
+  checked: ChoiceLabel | null;
+  multi: boolean;
+  stemPage: number;
+  choicesPage: number;
+}
+
+/**
+ * ✓ reader for printouts whose choices are images (Premier Math "Survey: print
+ * page" PDFs): the text layer holds only the number box, the A–D labels and
+ * the ✓, so extractChoicesFromPdfText (which needs choice text) binds nothing.
+ * Same lines, header/footer filter and "a ✓ on its own row belongs to the last
+ * label" rule, without requiring choice text. Two extra guards: a bare number
+ * only opens the next question at the number boxes' horizontal centre (so a
+ * table cell "11" can't), and a question with two ✓s has no tick.
+ * Deterministic, no AI. Agreed with extractChoicesFromPdfText on all 623
+ * questions both bound (2026-11-14 key-shift scan).
+ */
+export async function readLabelTicks(pdfBase64: string): Promise<{ byNumber: Map<number, LabelTick> }> {
+  const { lines } = await loadPdfLines(pdfBase64);
+  const byNumber = new Map<number, LabelTick>();
+  let cur: { number: number; labels: number; ticks: Set<ChoiceLabel>; stemPage: number; choicesPage: number } | null = null;
+  let lastNum = 0;
+  let boxX: number | null = null;
+  const flush = () => {
+    if (cur && cur.labels === 4 && !byNumber.has(cur.number)) {
+      byNumber.set(cur.number, {
+        number: cur.number,
+        checked: cur.ticks.size === 1 ? [...cur.ticks][0] : null,
+        multi: cur.ticks.size > 1,
+        stemPage: cur.stemPage,
+        choicesPage: cur.choicesPage,
+      });
+    }
+    cur = null;
+  };
+  for (const l of lines) {
+    const t = l.text;
+    if (/^Survey: print page/i.test(t)) continue;
+    const box = t.match(/^(\d{1,3})\.?(?:\s|$)/);
+    if (
+      box &&
+      Number(box[1]) === lastNum + 1 &&
+      (!cur || cur.labels === 4 || (cur.labels === 0 && boxX !== null && Math.abs(l.x - boxX) < 2.5)) &&
+      (/^\d{1,3}$/.test(t) || /^\d{1,3}\.\s+\S/.test(t))
+    ) {
+      if (/^\d{1,3}$/.test(t)) boxX = l.x;
+      flush();
+      lastNum = Number(box[1]);
+      cur = { number: lastNum, labels: 0, ticks: new Set(), stemPage: l.page, choicesPage: l.page };
+      continue;
+    }
+    if (!cur) continue;
+    // Same label forms as extractChoicesFromPdfText: "A" / "(A)" / "A)" / "A." alone, or "A) text" / "(A) text" / "A. text".
+    const lab = t.match(/^\(?([A-D])\)?[.)]?$/) ?? t.match(/^\(?([A-D])\)\s+.+$/) ?? t.match(/^([A-D])\.\s+.+$/);
+    if (lab && cur.labels < 4 && lab[1] === LABELS[cur.labels]) {
+      cur.labels++;
+      cur.choicesPage = l.page;
+      if (l.checked) cur.ticks.add(LABELS[cur.labels - 1]);
+      continue;
+    }
+    if (l.checked && cur.labels > 0) cur.ticks.add(LABELS[cur.labels - 1]);
+  }
+  flush();
+  return { byNumber };
 }
 
 /**
