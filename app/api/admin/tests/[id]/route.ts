@@ -24,6 +24,7 @@ import {
 } from "../../_shared";
 import { moveTestToDraft } from "@/lib/test-readiness";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
+import { casAssignmentArray, clearPublishSchedule } from "@/lib/test-assign";
 
 // GET /api/admin/tests/[id]
 export async function GET(
@@ -74,43 +75,6 @@ export async function GET(
       submissions: submissions ?? [],
     },
   });
-}
-
-/** Atomically adds/removes ids from a jsonb string-array column via compare-and-swap.
- * Retries up to 5 times on CAS conflict (concurrent writer changed the value).
- * Returns {message, status} on failure, null on success. */
-async function casArrayOp(
-  db: ReturnType<typeof getServiceClient>,
-  testId: string,
-  jsonField: "class_group_ids" | "student_ids",
-  toAdd: string[],
-  toRemove: Set<string>,
-): Promise<{ message: string; status: number } | null> {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const { data: row, error: readErr } = await db
-      .from("test_assignments")
-      .select(jsonField)
-      .eq("test_id", testId)
-      .maybeSingle();
-    if (readErr) return { message: "Could not read test assignment", status: 500 };
-    if (!row) return { message: "Test assignment not found", status: 404 };
-    const rowRecord = row as Record<string, unknown>;
-    const old: string[] = Array.isArray(rowRecord[jsonField]) ? (rowRecord[jsonField] as string[]) : [];
-    const next = [...new Set([...old.filter((v) => !toRemove.has(v)), ...toAdd])];
-    if (JSON.stringify(old) === JSON.stringify(next)) return null; // no-op
-    // CAS: only commit if no concurrent writer changed the field between read and write.
-    const { data: updated, error: updErr } = await db
-      .from("test_assignments")
-      .update({ [jsonField]: next })
-      .eq("test_id", testId)
-      .filter(jsonField, "eq", JSON.stringify(old))
-      .select("test_id");
-    // A real write error is not a conflict — report it instead of retrying.
-    if (updErr) return { message: `Assignment update failed: ${updErr.message}`, status: 500 };
-    if ((updated ?? []).length > 0) return null; // committed
-    if (attempt < 4) await new Promise((r) => setTimeout(r, 15 * (attempt + 1)));
-  }
-  return { message: "Concurrent update conflict — please retry", status: 409 };
 }
 
 // PATCH /api/admin/tests/[id]
@@ -399,6 +363,8 @@ async function handlePATCH(
       console.error("[admin/tests/patch]", error);
       return NextResponse.json({ error: "Failed to update test" }, { status: 500 });
     }
+    // Published by hand: a pending scheduled publish is done with.
+    if (updates.status === "Published" && current.status === "Draft") await clearPublishSchedule(db, id);
   }
 
   // Update assignment if provided.
@@ -441,8 +407,8 @@ async function handlePATCH(
       if (badId) return bad("Cross-side class group assignment not allowed");
     }
 
-    const casErr = await casArrayOp(db, id, "class_group_ids", toAdd, toRemove);
-    if (casErr) return bad(casErr.message, casErr.status);
+    const cas = await casAssignmentArray(db, id, "class_group_ids", toAdd, toRemove);
+    if (!("added" in cas)) return bad(cas.message, cas.status);
 
     // Write updated_at now that the CAS succeeded (skipped above when no test
     // fields changed so we don't timestamp a no-op before CAS).

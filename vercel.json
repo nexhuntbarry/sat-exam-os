@@ -5,6 +5,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/scheduled-publish",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/ai-spend-alert",
       "schedule": "0 13 * * *"
     },

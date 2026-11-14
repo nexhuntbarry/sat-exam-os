@@ -17,6 +17,8 @@ interface Notification {
     auto?: boolean;
     request_id?: string;
     status?: string;
+    title?: string;
+    test_id?: string;
   } | null;
   read_at: string | null;
   created_at: string;
@@ -89,6 +91,8 @@ export default function NotificationBell() {
 
   function href(n: Notification): string {
     if (n.payload?.kind === "support_reply") return `/admin/support#${n.payload.request_id}`;
+    if (n.payload?.kind === "tests_assigned") return "/student/tests";
+    if (n.payload?.kind === "scheduled_publish_failed") return `/admin/tests/${n.payload.test_id}`;
     const q = n.payload?.question_id;
     return q ? `/admin/questions/${q}` : "#";
   }
@@ -113,6 +117,8 @@ export default function NotificationBell() {
         : "Reply to your problem report";
       return { title, body: p.message || "" };
     }
+    if (p.kind === "tests_assigned") return { title: p.title || "New tests assigned", body: p.message || "" };
+    if (p.kind === "scheduled_publish_failed") return { title: "Scheduled publish didn't happen", body: p.message || "" };
     return { title: n.type, body: p.message || "" };
   }
 

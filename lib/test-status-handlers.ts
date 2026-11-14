@@ -14,6 +14,7 @@ import { forbidCrossSide, getQaTestIds } from "./qa";
 import { blockersMessage, loadPublishCheck, loadTestReadiness, moveTestToDraft } from "./test-readiness";
 import { loadManageDecision } from "./test-manage";
 import { withQueueInvalidation } from "./review-queue-cache";
+import { clearPublishSchedule } from "./test-assign";
 
 /** Returns a 401/403/404/409/500 response to refuse, or null to proceed. */
 export type TestAuthorizer = (testId: string) => Promise<NextResponse | null>;
@@ -38,6 +39,13 @@ export const teacherManagerAuth: TestAuthorizer = async (testId) => {
   const r = await loadManageDecision(getServiceClient(), user, testId, qaTestIds);
   return r.ok ? null : NextResponse.json({ error: r.error }, { status: r.status });
 };
+
+/**
+ * No caller to check: the scheduled-publish cron (/api/cron/scheduled-publish,
+ * itself behind CRON_SECRET) publishing a Draft an admin scheduled. Only for
+ * server code that has already authorized itself.
+ */
+export const systemTestAuth: TestAuthorizer = async () => null;
 
 /** Draft → Published (publish) or Closed → Published (reopen). */
 async function publishTestInner(
@@ -97,6 +105,8 @@ async function publishTestInner(
       { status: 409 },
     );
   }
+  // Published: a pending scheduled publish (tests.publish_at) is done with.
+  if (action === "publish") await clearPublishSchedule(db, id);
 
   return NextResponse.json({ success: true });
 }
