@@ -142,9 +142,9 @@ export default function GradebookTable({
   /** Printout: smaller type, no links. */
   compact?: boolean;
   /** Text of each column's Questions & answers (Class Review) link (columns with a reviewHref). */
-  reviewLabel?: { short: string; full: string };
+  reviewLabel?: { chip: string; full: string };
 }) {
-  const review = reviewLabel ?? { short: "Questions & answers", full: "Questions & answers (Class Review)" };
+  const review = reviewLabel ?? { chip: "Q&A", full: "Questions & answers (Class Review)" };
   const { scope, averages } = gradebook;
   const showMath = summary && scope.math;
   const showRw = summary && scope.rw;
@@ -195,7 +195,7 @@ export default function GradebookTable({
                   className="mt-0.5 inline-flex items-center gap-1 rounded border border-warm-coral/30 bg-warm-coral/5 px-1.5 text-[11px] font-medium leading-5 text-warm-coral-text hover:bg-warm-coral/15"
                 >
                   <Presentation size={11} aria-hidden />
-                  {review.short}
+                  {review.chip}
                 </Link>
               )}
             </th>

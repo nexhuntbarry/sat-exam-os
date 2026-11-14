@@ -45,7 +45,7 @@ export default function ClassGradebook(props: {
   live: ClassLive;
   above?: ReactNode;
   /** Text of the Questions & answers (Class Review) link next to each test name. */
-  reviewLabel?: { short: string; full: string };
+  reviewLabel?: { chip: string; full: string };
 }) {
   if (!props.gradebook) {
     return (
@@ -85,7 +85,7 @@ function GradebookView({
   gradebook: Gradebook;
   live: ClassLive;
   above?: ReactNode;
-  reviewLabel?: { short: string; full: string };
+  reviewLabel?: { chip: string; full: string };
 }) {
   const [filter, setFilter] = useState<GradebookFilter>(NO_FILTER);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "name", dir: "asc" });

@@ -461,7 +461,8 @@
   "teacher": {
     "classReview": {
       "button": "Questions & answers (Class Review)",
-      "short": "Questions & answers"
+      "short": "Questions & answers",
+      "chip": "Q&A"
     },
     "tests": {
       "title": "My Tests",

@@ -283,7 +283,11 @@ export default async function TeacherDashboardPage() {
                   {/* Status / Subject columns are hidden below lg: fold them under the name. */}
                   <span className="mt-1 flex flex-wrap items-center gap-1.5 lg:hidden">
                     {t.status && <StatusBadge kind="test" status={t.status as TestStatus} />}
-                    {t.section === "Math" || t.section === "Reading & Writing" ? <SubjectTag section={t.section} /> : null}
+                    {t.section === "Math" || t.section === "Reading & Writing" ? (
+                      <SubjectTag section={t.section} />
+                    ) : t.section ? (
+                      <span className="text-xs text-mid-gray">{t.section}</span>
+                    ) : null}
                   </span>
                   {(t.openDate || t.dueDate) && (
                     <span className="mt-0.5 block whitespace-normal text-xs text-soft-mute">

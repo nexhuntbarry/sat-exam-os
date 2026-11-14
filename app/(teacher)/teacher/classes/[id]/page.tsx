@@ -258,7 +258,7 @@ export default async function TeacherClassDetailPage({
         })
     : null;
   const tReview = await getTranslations("teacher.classReview");
-  const reviewLabel = { short: tReview("short"), full: tReview("button") };
+  const reviewLabel = { chip: tReview("chip"), full: tReview("button") };
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -295,7 +295,7 @@ export default async function TeacherClassDetailPage({
         gradebook={gradebook}
         live={{ endpoint: `/api/teacher/classes/${group.id}/live-progress`, initial: liveInitial }}
         reviewLabel={reviewLabel}
-        above={<AssignedTestsTable tests={assigned ?? []} failed={!assigned} reviewLabel={reviewLabel.short} />}
+        above={<AssignedTestsTable tests={assigned ?? []} failed={!assigned} reviewLabel={tReview("short")} />}
       />
 
       <section>
