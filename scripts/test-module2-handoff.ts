@@ -229,7 +229,8 @@ async function main() {
     check("rule: past due, Module 1 graded 2 h ago → allowed", module2RecoveryBlock(pub(now - H), new Date(now - 2 * H).toISOString()) === null);
     check("rule: past due, Module 1 graded 30 h ago → past_due", module2RecoveryBlock(pub(now - H), new Date(now - 30 * H).toISOString()) === "past_due");
     check("rule: past due, no submitted_at → past_due", module2RecoveryBlock(pub(now - H), null) === "past_due");
-    check("rule: not Published → not_published", module2RecoveryBlock({ status: "Closed", due_date: null }, new Date().toISOString()) === "not_published");
+    check("rule: Draft → not_published", module2RecoveryBlock({ status: "Draft", due_date: null }, new Date().toISOString()) === "not_published");
+    check("rule: Closed → allowed (students mid-test can finish)", module2RecoveryBlock({ status: "Closed", due_date: null }, new Date().toISOString()) === null);
     await clear(S1, linear.id);
     const m1old = await insertModule1(S1, linear.id, linear.module_id!, 40 * 60);
     await grade(m1old, linear);
