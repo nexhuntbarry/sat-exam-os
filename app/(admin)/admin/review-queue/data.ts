@@ -48,6 +48,8 @@ const CARD_SELECT = `${DECIDE_SELECT}, page_number, reviewed_by, reviewed_at`;
 
 export interface QueueIndex {
   version: string;
+  /** The deploy that built it (VERCEL_GIT_COMMIT_SHA / deployment id, "local"). */
+  build: string;
   /** When the build started reading rows: an index started before the last change is stale. */
   startedAt: string;
   builtAt: string;
@@ -208,6 +210,7 @@ export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): 
 
   return {
     version: REVIEW_QUEUE_INDEX_VERSION,
+    build: BUILD_ID,
     startedAt,
     builtAt: new Date().toISOString(),
     entries,
@@ -226,27 +229,41 @@ export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): 
 // unstable_cache keys on the function's source text, so each kept its own
 // copy and built it again.
 //
-// So the index is stored in app_settings (one row, the key/value table that
-// already holds spot-check results and live-fix snapshots; no schema change),
-// shared by every instance and deploy, plus this instance's copy in memory.
-// A reader always gets the newest one it has at once. If it was built before
-// the last change, or is older than REVIEW_QUEUE_REVALIDATE_S, it is rebuilt
-// in after() and stored for the next request. Only an open with no stored
-// index at all (a new REVIEW_QUEUE_INDEX_VERSION) waits for a build.
+// So the index is stored in app_settings (one row per environment, the
+// key/value table that already holds spot-check results and live-fix
+// snapshots; no schema change), shared by every instance, plus this
+// instance's copy in memory. A reader gets the newest one it has at once. If
+// it was built before the last change, by another deploy, or more than
+// REVIEW_QUEUE_REVALIDATE_S ago, it is rebuilt in after() and stored for the
+// next request. Bounds: past STALE_WARN_MS with rebuilds failing, the page
+// says the counts are old; past STALE_MAX_MS the reader waits for a build.
+// A reader also waits when no index is stored at all.
 
-const STORE_KEY = `review_queue_index:${REVIEW_QUEUE_INDEX_VERSION}`;
+// A .env.local from `vercel env pull` copies VERCEL="1" and VERCEL_ENV="production"
+// (with the git / deployment vars empty), so only a filled deployment id or
+// commit SHA means a real deployment; anything else stores under "local".
+const DEPLOY = process.env.VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_DEPLOYMENT_ID || "";
+const STORE_KEY = `review_queue_index:${REVIEW_QUEUE_INDEX_VERSION}:${DEPLOY ? process.env.VERCEL_ENV || "unknown" : "local"}`;
+/** The deploy that built an index: an index from another deploy is rebuilt (served meanwhile). */
+const BUILD_ID = DEPLOY || "local";
+const BUILD_TIMEOUT_MS = 30_000;
+const STALE_WARN_MS = 5 * 60_000;
+const STALE_MAX_MS = 15 * 60_000;
+/** Vercel / Postgres handle more, but an index this big means QueueIndexEntry needs slimming. */
+const INDEX_WARN_BYTES = 2 * 1024 * 1024;
 
 /** When the queue last changed: recomputed (Date.now()) on the first read after a writer revalidates REVIEW_QUEUE_TAG. */
 const changedAt = unstable_cache(async () => Date.now(), ["review-queue-changed-at"], { tags: [REVIEW_QUEUE_TAG] });
 
 let memo: QueueIndex | null = null;
 let rebuilding: Promise<QueueIndex> | null = null;
+/** Since when builds have been throwing or timing out (null: the last build finished). */
+let failingSince: number | null = null;
 
+const ageMs = (index: QueueIndex) => Date.now() - Date.parse(index.startedAt);
 const newer = (a: QueueIndex | null, b: QueueIndex) => (a && Date.parse(a.startedAt) >= Date.parse(b.startedAt) ? a : b);
-const isFresh = (index: QueueIndex, changed: number) => {
-  const started = Date.parse(index.startedAt);
-  return started >= changed && Date.now() - started < REVIEW_QUEUE_REVALIDATE_S * 1000;
-};
+const isFresh = (index: QueueIndex, changed: number) =>
+  index.build === BUILD_ID && Date.parse(index.startedAt) >= changed && ageMs(index) < REVIEW_QUEUE_REVALIDATE_S * 1000;
 
 async function readStored(): Promise<QueueIndex | null> {
   const { data, error } = await getServiceClient().from("app_settings").select("value").eq("key", STORE_KEY).maybeSingle();
@@ -258,42 +275,104 @@ async function readStored(): Promise<QueueIndex | null> {
   return index?.version === REVIEW_QUEUE_INDEX_VERSION && typeof index.startedAt === "string" ? index : null;
 }
 
-/** Build now (one build per instance at a time). An index with failed lookups is returned but never stored. */
+/** Store `index` unless the stored one is newer (an older build finishing late never overwrites a newer one). */
+async function store(index: QueueIndex): Promise<void> {
+  const db = getServiceClient();
+  const row = { value: index, updated_at: index.builtAt };
+  // startedAt is always toISOString() (same length, UTC): text order is time order.
+  const update = () =>
+    db.from("app_settings").update(row).eq("key", STORE_KEY).or(`value->>startedAt.is.null,value->>startedAt.lt.${index.startedAt}`).select("key");
+  const res = await update();
+  let error = res.error?.message ?? null;
+  if (!res.error && res.data.length === 0) {
+    // Nothing updated: the row is missing, or holds a newer index (then the insert hits the key and is skipped).
+    const ins = await db.from("app_settings").insert({ key: STORE_KEY, ...row });
+    if (ins.error?.code === "23505") error = (await update()).error?.message ?? null; // inserted by another instance meanwhile: compare again
+    else error = ins.error?.message ?? null;
+  }
+  if (error) console.error("[review-queue] storing the index failed:", error);
+}
+
+/** Build now (one build per instance at a time, 30 s at most). An index with failed lookups is kept here, never stored. */
 function rebuild(): Promise<QueueIndex> {
-  rebuilding ??= (async () => {
+  if (rebuilding) return rebuilding;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const work = (async () => {
     const t0 = Date.now();
     const index = await buildQueueIndex();
     const bytes = JSON.stringify(index).length;
-    console.log(`[review-queue] index built: ${index.entries.length} questions, ${(bytes / 1024).toFixed(0)} KB, ${Date.now() - t0} ms`);
+    const errors = index.lookupErrors.length ? `, lookup errors: ${index.lookupErrors.join("; ")}` : "";
+    const line = `[review-queue] index built: ${index.entries.length} questions, ${(bytes / 1024).toFixed(0)} KB, ${Date.now() - t0} ms${errors}`;
+    if (bytes > INDEX_WARN_BYTES) console.warn(`${line} — over 2 MB: slim QueueIndexEntry`);
+    else console.log(line);
+    memo = newer(memo, index);
     if (index.lookupErrors.length === 0) {
-      memo = newer(memo, index);
-      const { error } = await getServiceClient().from("app_settings").upsert({ key: STORE_KEY, value: index, updated_at: index.builtAt });
-      if (error) console.error("[review-queue] storing the index failed:", error.message);
+      failingSince = null;
+      await store(index);
     }
     return index;
-  })().finally(() => {
-    rebuilding = null;
+  })();
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`index build took over ${BUILD_TIMEOUT_MS / 1000} s`)), BUILD_TIMEOUT_MS);
   });
+  // On a timeout the build may still finish later (and is then kept / stored),
+  // but `rebuilding` is cleared so the next request can start another one.
+  rebuilding = Promise.race([work, deadline])
+    .catch((e) => {
+      failingSince ??= Date.now();
+      throw e;
+    })
+    .finally(() => {
+      clearTimeout(timer);
+      rebuilding = null;
+    });
   return rebuilding;
 }
 
 /** Background refresh: adopt a fresh index another instance stored, else build one. */
 async function refresh(changed: number): Promise<void> {
+  if (rebuilding) return;
   const stored = await readStored();
   if (stored) memo = newer(memo, stored);
   if (memo && isFresh(memo, changed)) return;
   await rebuild();
 }
 
-/** The newest index at once (stale-while-revalidate); waits for a build only when none was ever stored. */
+/** `index` with a banner line saying its counts are old because refreshing keeps failing. */
+function markOld(index: QueueIndex): QueueIndex {
+  const at = new Date(index.builtAt).toLocaleString("en-US", { timeZone: "America/New_York", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return { ...index, lookupErrors: [...index.lookupErrors, `fresh counts (these are from ${at} ET; refreshing keeps failing)`] };
+}
+
+/** The newest index at once (stale-while-revalidate, within the bounds above). */
 export async function getQueueIndex(): Promise<QueueIndex> {
-  const [changed, current] = await Promise.all([changedAt().catch(() => Date.now()), memo ?? readStored()]);
+  const [changed, current] = await Promise.all([
+    changedAt().catch((e) => {
+      console.error("[review-queue] change marker read failed (only the age limit applies):", e);
+      return 0;
+    }),
+    memo ?? readStored(),
+  ]);
   if (!current) return rebuild();
   memo = newer(memo, current);
-  if (!isFresh(memo, changed)) {
+  if (ageMs(memo) > STALE_MAX_MS) {
+    // Too old to serve: another instance may have stored a newer one, else wait for a build.
+    const stored = await readStored();
+    if (stored) memo = newer(memo, stored);
+    if (ageMs(memo) > STALE_MAX_MS) {
+      try {
+        return await rebuild();
+      } catch (e) {
+        console.error("[review-queue] index build failed; serving the old index:", e);
+        return markOld(memo);
+      }
+    }
+  }
+  const served = memo;
+  if (!isFresh(served, changed)) {
     after(() => refresh(changed).catch((e) => console.error("[review-queue] background rebuild failed:", e)));
   }
-  return memo;
+  return failingSince !== null && ageMs(served) > STALE_WARN_MS ? markOld(served) : served;
 }
 
 // ── 2. Cards ─────────────────────────────────────────────────────────
