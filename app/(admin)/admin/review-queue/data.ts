@@ -63,10 +63,24 @@ export interface QueueIndex {
 
 const isLiveFixRow = (r: Pick<AutoFixRow, "parsing_notes">) => (r.parsing_notes ?? "").startsWith(LIVE_FIX_TAG);
 
+// groupRow renders every explanation's Markdown + KaTeX (render checks): about
+// 4 ms of CPU per row locally, so ~0.5 s for the whole queue in one block of the
+// event loop, and longer on Vercel, which stalled other requests on the same
+// instance (a page open right after a background rebuild took 3-4 s). It is a
+// pure function of the row, so results are kept per instance, keyed by the
+// row's content: a rebuild only regroups rows that changed.
+const groupingMemo = new Map<string, RowGrouping>();
+const GROUPING_MEMO_MAX = 5000;
+
 /** groupRow, with an Approved live-test change always in the live-fix group. */
 function grouping(r: AutoFixRow): RowGrouping {
-  const g = groupRow(r);
-  if (r.parsing_status === "Approved") return { ...g, primary: "live_fix", groups: ["live_fix", ...g.groups.filter((x) => x !== "live_fix")] };
+  const key = JSON.stringify(r);
+  const hit = groupingMemo.get(key);
+  if (hit) return hit;
+  const g0 = groupRow(r);
+  const g: RowGrouping = r.parsing_status === "Approved" ? { ...g0, primary: "live_fix", groups: ["live_fix", ...g0.groups.filter((x) => x !== "live_fix")] } : g0;
+  if (groupingMemo.size >= GROUPING_MEMO_MAX) groupingMemo.clear();
+  groupingMemo.set(key, g);
   return g;
 }
 
@@ -157,7 +171,13 @@ export async function buildQueueIndex(db: SupabaseClient = getServiceClient()): 
     if (g) autoFixed[g] = (autoFixed[g] ?? 0) + 1;
   }
 
-  const groupings = new Map(rows.map((r) => [r.id, grouping(r)] as const));
+  // Yield between small batches: a cold grouping must not hold the event loop
+  // while a page on the same instance is rendering.
+  const groupings = new Map<string, RowGrouping>();
+  for (let i = 0; i < rows.length; i++) {
+    if (i > 0 && i % 8 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+    groupings.set(rows[i].id, grouping(rows[i]));
+  }
   const keyModules = rows.filter((r) => GROUP_BY_ID[groupings.get(r.id)!.primary].decision === "key").map((r) => r.module_id ?? "");
   const usedModules = [...new Set(rows.map((r) => r.module_id).filter((x): x is string => !!x))];
   const modInfo = new Map((mods.data ?? []).map((m) => [m.id as string, { name: (m.module_name as string) ?? "Unknown module", pdfUrl: (m.pdf_url as string | null) ?? null }] as const));
