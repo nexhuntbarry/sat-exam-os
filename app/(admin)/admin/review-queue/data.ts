@@ -277,6 +277,8 @@ let keyLogged = false;
 const BUILD_TIMEOUT_MS = 30_000;
 const STALE_WARN_MS = 5 * 60_000;
 const STALE_MAX_MS = 24 * 60 * 60_000;
+/** Cross-instance build lock: prevent N Vercel instances from each running buildQueueIndex() after one invalidation. */
+const BUILDING_KEY = `${STORE_KEY}:building`;
 /** Vercel / Postgres handle more, but an index this big means QueueIndexEntry needs slimming. */
 const INDEX_WARN_BYTES = 2 * 1024 * 1024;
 
@@ -361,12 +363,42 @@ function rebuild(): Promise<QueueIndex> {
   return rebuilding;
 }
 
+/**
+ * Try to atomically claim the cross-instance build lock. Returns true when this
+ * instance may proceed with a rebuild, false when another instance recently
+ * started one (detected via the BUILDING_KEY row in app_settings).
+ * Non-fatal: a DB error lets the build proceed (a double-build is cheaper than a stall).
+ */
+async function tryBuildLock(): Promise<boolean> {
+  const db = getServiceClient();
+  const cutoff = new Date(Date.now() - BUILD_TIMEOUT_MS).toISOString();
+  const now = new Date().toISOString();
+  try {
+    // Claim if the lock row is absent, or was written before the cutoff (previous lock expired).
+    const { data: updated } = await db
+      .from("app_settings")
+      .update({ value: { build: BUILD_ID }, updated_at: now })
+      .eq("key", BUILDING_KEY)
+      .lt("updated_at", cutoff)
+      .select("key");
+    if (updated && updated.length > 0) return true;
+    // Row absent → try to insert; row present and fresh → 23505 (another instance holds the lock).
+    const { error } = await db.from("app_settings").insert({ key: BUILDING_KEY, value: { build: BUILD_ID }, updated_at: now });
+    if (!error) return true;
+    if (error.code === "23505") return false;
+    return true; // Unknown DB error: proceed rather than stall.
+  } catch {
+    return true;
+  }
+}
+
 /** Background refresh: adopt a fresh index another instance stored, else build one. */
 async function refresh(changed: number): Promise<void> {
   if (rebuilding) return;
   const stored = await readStored();
   if (stored) memo = newer(memo, stored);
   if (memo && isFresh(memo, changed)) return;
+  if (!(await tryBuildLock())) return;
   await rebuild();
 }
 
