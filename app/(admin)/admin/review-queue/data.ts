@@ -41,6 +41,7 @@ import {
   type QueueFilters,
   type QueueIndexEntry,
 } from "@/lib/review-queue-view";
+import { tryBuildLock, releaseBuildLock } from "@/lib/review-queue-build-lock";
 import type { GroupSummary, QueueItem, QueuePageData, QueueProposal } from "./types";
 
 type Row = AutoFixRow & { page_number: number | null; source_pdf_url: string | null; reviewed_by: string | null; reviewed_at: string | null };
@@ -323,8 +324,14 @@ async function store(index: QueueIndex): Promise<void> {
   if (error) console.error("[review-queue] storing the index failed:", error);
 }
 
-/** Build now (one build per instance at a time, 30 s at most). An index with failed lookups is kept here, never stored. */
-function rebuild(): Promise<QueueIndex> {
+/**
+ * Build now (one build per instance at a time, 30 s at most). An index with
+ * failed lookups is kept here, never stored. `lockToken`: when supplied the
+ * cross-instance build lock (BUILDING_KEY) is released after the build
+ * finishes (success or failure), so a mid-build invalidation can trigger a
+ * fresh rebuild on the next request rather than waiting for the lock to expire.
+ */
+function rebuild(lockToken?: string): Promise<QueueIndex> {
   if (rebuilding) return rebuilding;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const work = (async () => {
@@ -359,37 +366,17 @@ function rebuild(): Promise<QueueIndex> {
     .finally(() => {
       clearTimeout(timer);
       rebuilding = null;
+      // Release the cross-instance lock so the next invalidation that arrived
+      // during the build can trigger a fresh rebuild on the first post-build
+      // request (isFresh will be false when changedAt > index.startedAt).
+      // Fire-and-forget: a release failure means the lock expires naturally.
+      if (lockToken) {
+        void releaseBuildLock(getServiceClient(), BUILDING_KEY, lockToken).catch((e) =>
+          console.error("[review-queue] lock release failed:", e),
+        );
+      }
     });
   return rebuilding;
-}
-
-/**
- * Try to atomically claim the cross-instance build lock. Returns true when this
- * instance may proceed with a rebuild, false when another instance recently
- * started one (detected via the BUILDING_KEY row in app_settings).
- * Non-fatal: a DB error lets the build proceed (a double-build is cheaper than a stall).
- */
-async function tryBuildLock(): Promise<boolean> {
-  const db = getServiceClient();
-  const cutoff = new Date(Date.now() - BUILD_TIMEOUT_MS).toISOString();
-  const now = new Date().toISOString();
-  try {
-    // Claim if the lock row is absent, or was written before the cutoff (previous lock expired).
-    const { data: updated } = await db
-      .from("app_settings")
-      .update({ value: { build: BUILD_ID }, updated_at: now })
-      .eq("key", BUILDING_KEY)
-      .lt("updated_at", cutoff)
-      .select("key");
-    if (updated && updated.length > 0) return true;
-    // Row absent → try to insert; row present and fresh → 23505 (another instance holds the lock).
-    const { error } = await db.from("app_settings").insert({ key: BUILDING_KEY, value: { build: BUILD_ID }, updated_at: now });
-    if (!error) return true;
-    if (error.code === "23505") return false;
-    return true; // Unknown DB error: proceed rather than stall.
-  } catch {
-    return true;
-  }
 }
 
 /** Background refresh: adopt a fresh index another instance stored, else build one. */
@@ -398,8 +385,9 @@ async function refresh(changed: number): Promise<void> {
   const stored = await readStored();
   if (stored) memo = newer(memo, stored);
   if (memo && isFresh(memo, changed)) return;
-  if (!(await tryBuildLock())) return;
-  await rebuild();
+  const lockToken = await tryBuildLock(getServiceClient(), BUILDING_KEY, BUILD_TIMEOUT_MS);
+  if (!lockToken) return;
+  await rebuild(lockToken);
 }
 
 /** `index` with a banner line saying its counts are old because refreshing keeps failing. */
