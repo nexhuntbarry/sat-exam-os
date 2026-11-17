@@ -93,6 +93,8 @@ export default async function FullLengthLanding({
 
   const breakMinutes = open && attempt ? attempt.break_minutes ?? 10 : parent.break_minutes ?? 10;
   const allowPause = open && attempt ? Boolean(attempt.allow_section_pause) : Boolean(parent.allow_section_pause);
+  // No break (0 minutes, pausing off): R&W goes straight into Math (skipsBreak).
+  const noBreak = breakMinutes === 0 && !allowPause;
   const fmt = (s: number | null) => (s == null ? "—" : formatDuration(s));
   const totalSeconds = [rw.m1Seconds, rw.m2Seconds, math.m1Seconds, math.m2Seconds].reduce<number>((a, s) => a + (s ?? 0), 0);
 
@@ -124,7 +126,7 @@ export default async function FullLengthLanding({
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl text-center">
             <Clock size={20} className="text-warm-coral-text mb-2" />
             <div className="text-charcoal font-semibold text-sm">{fmt(totalSeconds)}</div>
-            <div className="text-soft-mute text-xs">Testing time + {breakMinutes} min break</div>
+            <div className="text-soft-mute text-xs">{noBreak ? "Testing time · no break" : `Testing time + ${breakMinutes} min break`}</div>
           </div>
           <div className="flex flex-col items-center p-4 bg-surface border border-divider rounded-xl">
             <BookOpen size={20} className="text-warm-coral-text mb-2" />
@@ -147,12 +149,14 @@ export default async function FullLengthLanding({
               Module 1: {rw.m1Count} questions, {fmt(rw.m1Seconds)} · Module 2: {rw.m2Count} questions, {fmt(rw.m2Seconds)}
             </span>
           </li>
-          <li className="flex justify-between gap-3 border-b border-divider pb-2">
-            <span className="text-charcoal inline-flex items-center gap-1.5"><Coffee size={14} /> Break</span>
-            <span className="text-soft-mute text-right">
-              {breakMinutes} min{allowPause ? " · you may leave and continue later" : ""}
-            </span>
-          </li>
+          {!noBreak && (
+            <li className="flex justify-between gap-3 border-b border-divider pb-2">
+              <span className="text-charcoal inline-flex items-center gap-1.5"><Coffee size={14} /> Break</span>
+              <span className="text-soft-mute text-right">
+                {breakMinutes} min{allowPause ? " · you may leave and continue later" : ""}
+              </span>
+            </li>
+          )}
           <li className="flex justify-between gap-3">
             <span className="text-charcoal">Section 2 · Math</span>
             <span className="text-soft-mute text-right">
@@ -178,7 +182,7 @@ export default async function FullLengthLanding({
                 You can finish this attempt, but you&apos;re no longer assigned to this test.
               </p>
             )}
-            <StartFullLengthButton testId={testId} label={st?.state === "break" ? "Continue to the break screen" : "Resume Test"} isResume />
+            <StartFullLengthButton testId={testId} label={st?.state === "break" && !noBreak ? "Continue to the break screen" : "Resume Test"} isResume />
           </div>
         ) : finished ? (
           <div className="space-y-3">

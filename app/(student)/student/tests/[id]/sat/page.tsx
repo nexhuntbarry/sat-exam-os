@@ -21,6 +21,8 @@ import {
   formatDuration,
   latestFlAttempt,
   loadFlContext,
+  skipsBreak,
+  startFlMath,
   type FlChildTest,
   type FlRow,
 } from "@/lib/full-length-attempt";
@@ -159,6 +161,12 @@ export default async function FullLengthSatPage({
           message="Math can no longer be started — the due date has passed. Your Reading and Writing section is kept."
         />
       );
+    }
+    // No break (0 minutes, pausing off): start Math now and go straight in.
+    // startFlMath is idempotent; if it refuses, the break screen explains.
+    if (skipsBreak(attempt)) {
+      const started = await startFlMath(db, ctx, attempt, { device });
+      if (started.ok) redirect(`/student/tests/${id}/sat`);
     }
     const mathMeta = flModuleMetadata(attempt);
     const mathSeconds = moduleTimeLimitSeconds(ctx.math, "module_1", mathMeta);

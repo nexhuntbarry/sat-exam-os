@@ -209,6 +209,15 @@ export function mathStartBlock(
   return null;
 }
 
+/**
+ * No break at all (break_minutes 0 with pausing off — a Custom test's
+ * default): R&W goes straight into Math, no break screen. With pausing on,
+ * the student still gets the screen to leave from.
+ */
+export function skipsBreak(attempt: Pick<FlAttempt, "break_minutes" | "allow_section_pause">): boolean {
+  return attempt.break_minutes === 0 && !attempt.allow_section_pause;
+}
+
 /** Is an automatic start (break screen at 0:00) early by more than the tolerance? */
 export function autoStartTooEarly(breakEnds: number, now: number): boolean {
   return now < breakEnds - FL_AUTO_START_TOLERANCE_MS;
