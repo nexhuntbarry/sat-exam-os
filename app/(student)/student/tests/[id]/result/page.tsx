@@ -5,7 +5,8 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { CheckCircle, XCircle, Clock, BarChart2, Printer } from "lucide-react";
 import { clsx } from "clsx";
-import { attemptScore } from "@/lib/score-display";
+import { attemptScore, isCustomRows } from "@/lib/score-display";
+import { officialBreakdownRow } from "@/lib/sat-skills";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import { studentReportsEnabledFor } from "@/lib/student-reports";
@@ -31,6 +32,7 @@ type SessionRow = {
   adaptive_track: string | null;
   time_spent_seconds: number | null;
   started_at: string | null;
+  module_id?: string | null;
 };
 
 async function getResult(testId: string, studentId: string, submissionId?: string) {
@@ -182,7 +184,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     .from("answer_records")
     .select("is_correct, questions!inner(section, domain, skill)")
     .in("submission_id", breakdownSubmissionIds);
-  const breakdownRows = ((breakdownRecords ?? []) as unknown as {
+  const rawBreakdown = ((breakdownRecords ?? []) as unknown as {
     is_correct: boolean;
     questions: { section: string | null; domain: string | null; skill: string | null };
   }[]).map((r) => ({
@@ -191,6 +193,10 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     domain: r.questions?.domain ?? null,
     skill: r.questions?.skill ?? null,
   }));
+  // A Custom test is built from the official skills: report by them.
+  const breakdownRows = isCustomRows(sessionRows && sessionRows.length > 0 ? sessionRows : [submission])
+    ? rawBreakdown.map(officialBreakdownRow)
+    : rawBreakdown;
 
   return { submission, test, visibility, answerDetails, sessionRows, breakdownRows };
 }

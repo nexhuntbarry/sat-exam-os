@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import CreateTestClient from "./CreateTestClient";
 import { getQaClassGroupIds, scopeIds, scopeUsers } from "@/lib/qa";
 import { fullLengthEnabledFor } from "@/lib/full-length-admin";
+import { customTestsReady } from "@/lib/custom-test/db";
 import { approvalCounts } from "../module-approval";
 import { getFullLengthSources } from "../full-length-sources";
 
@@ -12,7 +13,7 @@ async function getData(viewerIsQa: boolean) {
   const qaGroups = await getQaClassGroupIds();
   const db = getServiceClient();
 
-  const [{ data: modules }, { data: teachers }, { data: students }, { data: classGroups }, fullLengthEnabled] = await Promise.all([
+  const [{ data: modules }, { data: teachers }, { data: students }, { data: classGroups }, fullLengthEnabled, customTestEnabled] = await Promise.all([
     hideStageModules(db.from("modules")
       .select("id, module_name, section, module_number, parsing_status, total_questions, questions:questions!module_id(parsing_status)"))
       .order("module_name"),
@@ -30,6 +31,7 @@ async function getData(viewerIsQa: boolean) {
       .select("id, name, campus, grade"), "id", qaGroups, viewerIsQa)
       .order("name"),
     fullLengthEnabledFor(db, { isQa: viewerIsQa }),
+    customTestsReady(db),
   ]);
 
   const moduleRows = (modules ?? []).map(({ questions, ...m }) => {
@@ -40,6 +42,7 @@ async function getData(viewerIsQa: boolean) {
   return {
     modules: moduleRows,
     fullLengthEnabled,
+    customTestEnabled,
     fullLengthSources: fullLengthEnabled ? await getFullLengthSources(viewerIsQa, moduleRows) : [],
     teachers: teachers ?? [],
     students: students ?? [],

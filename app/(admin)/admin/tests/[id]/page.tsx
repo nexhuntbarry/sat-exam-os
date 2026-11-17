@@ -21,6 +21,8 @@ import ScheduleNote from "../ScheduleNote";
 import { readPublishSchedules } from "@/lib/test-assign";
 import { approvalCounts, isFullyApproved } from "../module-approval";
 import FullLengthSourcesCard from "./FullLengthSourcesCard";
+import CustomRulesCard from "./CustomRulesCard";
+import { loadCustomTest } from "@/lib/custom-test/db";
 import AccommodationsCard from "./AccommodationsCard";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import {
@@ -30,6 +32,7 @@ import {
   listAccommodations,
   loadChildTests,
   profileTimeMultiplier,
+  testModuleIds,
   type ChildTest,
 } from "@/lib/full-length-admin";
 import { getFullLengthSources } from "../full-length-sources";
@@ -418,7 +421,14 @@ export default async function TestDetailPage({
   // Score column: SAT estimate per student; header click sorts by it
   // (?sort=score high→low, ?sort=score-asc low→high, unfinished last).
   // Full-length SAT: the combined cell (total 400–1600, "R&W · Math").
-  const customTest = servesStageModules([test.module_id, test.module_2_id, test.module_1_id, test.module_2_easy_id, test.module_2_hard_id]);
+  // A Custom test (lib/custom-test): its modules are stage modules. Its rules
+  // (custom_rules, migration 0035) are only read once that is known.
+  const customTest = servesStageModules(
+    fl
+      ? [fl.children.rw, fl.children.math].flatMap((c) => (c ? testModuleIds(c) : []))
+      : [test.module_id, test.module_2_id, test.module_1_id, test.module_2_easy_id, test.module_2_hard_id],
+  );
+  const custom = customTest ? await loadCustomTest(db, test.id).catch(() => null) : null;
   const scoreOf = new Map(
     assignment.students.map((st) => [st.id, st.fullLength ? st.fullLength.score : scoreDisplay(st.progress.modules, section, { custom: customTest })]),
   );
@@ -443,9 +453,9 @@ export default async function TestDetailPage({
     ? [
         ...FL_SECTIONS.map((s) => ({
           label: s.key === "rw" ? tf("sectionRw") : tf("sectionMath"),
-          value: `${tf("sourceLabel", { name: fl.sourceNames[s.key] ?? tf("sourceDeleted") })} · ${sectionModules(fl.children[s.key])} · ${sectionTime(fl.children[s.key])}`,
+          value: `${customTest ? "Custom test" : tf("sourceLabel", { name: fl.sourceNames[s.key] ?? tf("sourceDeleted") })} · ${sectionModules(fl.children[s.key])} · ${sectionTime(fl.children[s.key])}`,
         })),
-        { label: tf("settingBreak"), value: `${fl.breakMinutes} min` },
+        { label: tf("settingBreak"), value: fl.breakMinutes === 0 && !fl.allowSectionPause ? "No break" : `${fl.breakMinutes} min` },
         { label: tf("settingPause"), value: fl.allowSectionPause ? tf("yes") : tf("no") },
         { label: "Open date", value: test.open_date ? formatDateTime(test.open_date) : "—" },
         { label: "Due date", value: test.due_date ? formatDateTime(test.due_date) : "—" },
@@ -499,7 +509,8 @@ export default async function TestDetailPage({
               <>
                 <SubjectTag section={tf("tag")} />
                 <span>
-                  {tf("sectionRw")} {sectionTime(fl.children.rw)} → {tf("breakValue", { minutes: fl.breakMinutes })} →{" "}
+                  {tf("sectionRw")} {sectionTime(fl.children.rw)} →{" "}
+                  {fl.breakMinutes === 0 && !fl.allowSectionPause ? "no break" : tf("breakValue", { minutes: fl.breakMinutes })} →{" "}
                   {tf("sectionMath")} {sectionTime(fl.children.math)}
                 </span>
               </>
@@ -555,6 +566,7 @@ export default async function TestDetailPage({
               desmos_enabled: Boolean(test.desmos_enabled),
             }}
             modules={eligibleModules}
+            customTest={customTest}
             hasSubmissions={test.stats.total > 0}
             fullLength={
               fl
@@ -741,10 +753,19 @@ export default async function TestDetailPage({
         )}
       </section>
 
+      {custom?.test.custom_rules && (
+        <CustomRulesCard
+          testId={test.id}
+          rules={custom.test.custom_rules}
+          status={test.status}
+          started={fl ? fl.started : test.stats.total > 0}
+        />
+      )}
+
       {/* Full-length SAT: sections + re-sync, and per-student extended time */}
       {fl && (
         <>
-          <FullLengthSourcesCard
+          {!customTest && <FullLengthSourcesCard
             testId={test.id}
             lockReason={
               !fl.canManage ? "flag" : fl.started ? "started" : test.status === "Published" ? "published" : null
@@ -763,7 +784,7 @@ export default async function TestDetailPage({
               modulesLabel: sectionModules(fl.children[s.key]),
               timeLabel: sectionTime(fl.children[s.key]),
             }))}
-          />
+          />}
           {fl.canManage && (
             <AccommodationsCard
               testId={test.id}

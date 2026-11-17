@@ -52,6 +52,8 @@ interface Props {
   hasSubmissions: boolean;
   /** Set for a full-length SAT: section time limits, break and pause; no modules. */
   fullLength?: FullLengthEditData | null;
+  /** A Custom test: no module pickers (its questions are edited in its builder). */
+  customTest?: boolean;
 }
 
 function moduleLabel(m: ModuleOption): string {
@@ -60,7 +62,7 @@ function moduleLabel(m: ModuleOption): string {
   return `${m.module_name} · ${m.section}${m.module_number ? ` M${m.module_number}` : ""}${counts}`;
 }
 
-export default function EditTestButton({ test, modules, hasSubmissions, fullLength = null }: Props) {
+export default function EditTestButton({ test, modules, hasSubmissions, fullLength = null, customTest = false }: Props) {
   const router = useRouter();
   const tf = useTranslations("fullLength");
   const [open, setOpen] = useState(false);
@@ -328,6 +330,13 @@ export default function EditTestButton({ test, modules, hasSubmissions, fullLeng
                 </div>
               ) : (
               <>
+              {customTest ? (
+              <div className="rounded-xl border border-divider p-3">
+                <p className="text-xs text-mid-gray">
+                  A Custom test&apos;s questions come from its rules: change them with Edit questions on the test page.
+                </p>
+              </div>
+              ) : (
               <div className="rounded-xl border border-divider p-3 space-y-3">
                 <p className="text-charcoal text-sm font-semibold">
                   Modules{" "}
@@ -446,6 +455,7 @@ export default function EditTestButton({ test, modules, hasSubmissions, fullLeng
                   </>
                 )}
               </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Module 1 time limit (minutes)">

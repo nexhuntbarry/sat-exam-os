@@ -14,7 +14,8 @@ import {
   flAttemptKey,
   type FlScoreRow,
 } from "@/lib/full-length-score";
-import type { AttemptScore } from "@/lib/score-display";
+import { isCustomRows, type AttemptScore } from "@/lib/score-display";
+import { officialBreakdownRow } from "@/lib/sat-skills";
 import AnswerReviewItem, { type AnswerDetail } from "./AnswerReviewItem";
 
 // Result of a full-length SAT (plan Phase 3): Total /1600, R&W and Math
@@ -91,7 +92,7 @@ export default async function FullLengthResult({
     .from("submissions")
     .select(
       "id, test_id, student_id, status, correct_count, total_questions, percentage, adaptive_track, session_id, " +
-        "attempt_number, started_at, submitted_at, time_spent_seconds",
+        "attempt_number, started_at, submitted_at, time_spent_seconds, module_id",
     )
     .in("test_id", [ctx.rw.id, ctx.math.id])
     .eq("student_id", studentId);
@@ -180,6 +181,8 @@ export default async function FullLengthResult({
       domain: r.questions?.domain ?? null,
       skill: r.questions?.skill ?? null,
     }));
+    // A Custom test is built from the official skills: report by them.
+    if (isCustomRows(rows)) breakdownRows = breakdownRows.map(officialBreakdownRow);
   }
 
   const graded = rows.filter((r) => DONE.has(r.status));

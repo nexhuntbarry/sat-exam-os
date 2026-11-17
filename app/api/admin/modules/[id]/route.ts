@@ -140,6 +140,30 @@ async function handleDELETE(
   const { data: qRows } = await db.from("questions").select("id").eq("module_id", id);
   const questionIds = (qRows ?? []).map((q) => q.id);
 
+  // A test that picks questions by id (a Custom test, a quick test) would
+  // silently lose them: refuse while any test's question_ids names one.
+  if (questionIds.length > 0) {
+    const { data: pickers, error: pickErr } = await db
+      .from("tests")
+      .select("test_name, question_ids")
+      .not("question_ids", "is", null);
+    if (pickErr) {
+      return NextResponse.json({ error: "Could not check which tests use this module's questions" }, { status: 500 });
+    }
+    const mine = new Set(questionIds as string[]);
+    const using = (pickers ?? []).filter(
+      (t) => Array.isArray(t.question_ids) && (t.question_ids as unknown[]).some((q) => typeof q === "string" && mine.has(q)),
+    );
+    if (using.length > 0) {
+      return NextResponse.json(
+        {
+          error: `Questions of this module are used by ${using.length} test(s): ${using.map((t) => t.test_name).join(", ")}. Delete those tests first.`,
+        },
+        { status: 409 },
+      );
+    }
+  }
+
   if (questionIds.length > 0) {
     const { count: arCount } = await db
       .from("answer_records")

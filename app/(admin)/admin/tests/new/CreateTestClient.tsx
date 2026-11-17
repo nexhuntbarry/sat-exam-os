@@ -41,6 +41,8 @@ interface Props {
   /** Feature flag (QA admins always): show the Full-length SAT option. Cosmetic; the API checks it too. */
   fullLengthEnabled?: boolean;
   fullLengthSources?: FullLengthSource[];
+  /** Migration 0035 is in: show the Custom test option (it opens its own builder). */
+  customTestEnabled?: boolean;
 }
 
 type FlLimits = { rwM1: number | ""; rwM2: number | ""; mathM1: number | ""; mathM2: number | "" };
@@ -59,6 +61,7 @@ export default function CreateTestClient({
   classGroups,
   fullLengthEnabled = false,
   fullLengthSources = [],
+  customTestEnabled = false,
 }: Props) {
   const router = useRouter();
   const tf = useTranslations("fullLength");
@@ -316,13 +319,13 @@ export default function CreateTestClient({
 
       <div className="bg-surface border border-divider rounded-2xl p-6">
         {/* Step 1: Module selection */}
-        {step === 1 && fullLengthEnabled && (
+        {step === 1 && (fullLengthEnabled || customTestEnabled) && (
           <div className="mb-5 space-y-2">
             <p className="text-sm font-medium text-charcoal">{tf("testType")}</p>
-            <div role="radiogroup" aria-label={tf("testType")} className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div role="radiogroup" aria-label={tf("testType")} className={clsx("grid grid-cols-1 gap-2", customTestEnabled && fullLengthEnabled ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
               {([
                 [false, tf("typeSection"), tf("typeSectionHint")],
-                [true, tf("typeFull"), tf("typeFullHint")],
+                ...(fullLengthEnabled ? ([[true, tf("typeFull"), tf("typeFullHint")]] as const) : []),
               ] as const).map(([full, label, hint]) => (
                 <button
                   key={label}
@@ -341,6 +344,19 @@ export default function CreateTestClient({
                   <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">{hint}</span>
                 </button>
               ))}
+              {customTestEnabled && (
+                <a
+                  href="/admin/tests/new/custom"
+                  role="radio"
+                  aria-checked={false}
+                  className="rounded-xl border border-divider px-3.5 py-2.5 text-left transition-colors hover:bg-light-bg"
+                >
+                  <span className="block text-sm font-medium text-charcoal">Custom test</span>
+                  <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">
+                    Picked from the question bank by rules: domains, skills, difficulty, optional adaptive.
+                  </span>
+                </a>
+              )}
             </div>
           </div>
         )}
