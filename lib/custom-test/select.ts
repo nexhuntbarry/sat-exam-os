@@ -93,21 +93,27 @@ interface Slot {
   difficulty: Difficulty;
 }
 
-/** What a student sees together with this module (for the skill cap). */
-function companions(stage: StageKey, all: StageKey[]): StageKey[] {
-  if (stage === "m1") return all.filter((s) => s !== "m1");
-  return all.includes("m1") ? ["m1"] : [];
+/** The module combinations one student can see: Module 1 + one Module 2. */
+function studentPaths(all: StageKey[]): StageKey[][] {
+  const m2s = all.filter((s) => s !== "m1");
+  if (!all.includes("m1")) return m2s.map((s) => [s]);
+  return m2s.length ? m2s.map((s) => ["m1", s]) : [["m1"]];
 }
 
 class Picker {
   private used = new Set<string>();
   private usedKeys = new Set<string>();
-  /** stage → skill key → count. */
-  private skillCount = new Map<StageKey, Map<string, number>>();
+  /**
+   * stage → skill key → load: the planned slots of that skill plus any
+   * question another skill's slot fell back to. Planned slots already add
+   * up to the part's counts (≤ cap) on every student path, so only the
+   * fallbacks can push a skill over the cap.
+   */
+  private load = new Map<StageKey, Map<string, number>>();
   private byCell = new Map<string, PoolQuestion[]>();
   private reuseByCell = new Map<string, PoolQuestion[]>();
   private readonly cap: number;
-  private readonly stages: StageKey[];
+  private readonly paths: StageKey[][];
   readonly rng: () => number;
   constructor(
     pool: PoolQuestion[],
@@ -116,10 +122,12 @@ class Picker {
     part: PartRules,
     stages: StageKey[],
     taken: { ids: Set<string>; keys: Set<string> },
+    planned?: Partial<Record<StageKey, Map<string, number>>>,
   ) {
     this.rng = rng;
     this.cap = skillCap(part);
-    this.stages = stages;
+    this.paths = studentPaths(stages);
+    for (const s of stages) this.load.set(s, new Map(planned?.[s] ?? []));
     this.used = taken.ids;
     this.usedKeys = taken.keys;
     for (const [list, map] of [[pool, this.byCell], [reuse, this.reuseByCell]] as const) {
@@ -150,36 +158,29 @@ class Picker {
     return null;
   }
 
-  private count(stage: StageKey, skill: string): number {
-    return this.skillCount.get(stage)?.get(skill) ?? 0;
-  }
-
-  /** Room left for `skill` in `stage` under the cap (what one student sees). */
+  /** Room for one more `skill` question in `stage` under the cap, over every student path through it. */
   capRoom(stage: StageKey, domain: string, skill: string): number {
     const k = `${domain}\u0000${skill}`;
-    const seen = [stage, ...companions(stage, this.stages)];
-    // The worst case over the Module 2 tracks a student might get.
-    const m2s = seen.filter((s) => s !== "m1");
-    const m1 = seen.includes("m1") ? this.count("m1", k) : 0;
-    const worst = stage === "m1" ? Math.max(0, ...m2s.map((s) => this.count(s, k))) + this.count("m1", k) : m1 + this.count(stage, k);
+    const worst = Math.max(
+      0,
+      ...this.paths.filter((p) => p.includes(stage)).map((p) => p.reduce((n, s) => n + (this.load.get(s)?.get(k) ?? 0), 0)),
+    );
     return this.cap - worst;
   }
 
-  record(stage: StageKey, q: PoolQuestion) {
+  /**
+   * Mark a question used. `extra`: it adds to its skill's load (a fallback
+   * from another skill's slot, or — when replacing — every question of the
+   * test, as nothing is planned then).
+   */
+  record(stage: StageKey, q: PoolQuestion, extra: boolean) {
     this.used.add(q.id);
     this.usedKeys.add(q.dupKey);
+    if (!extra) return;
     const k = `${q.domain}\u0000${q.skill}`;
-    const m = this.skillCount.get(stage) ?? new Map<string, number>();
+    const m = this.load.get(stage) ?? new Map<string, number>();
     m.set(k, (m.get(k) ?? 0) + 1);
-    this.skillCount.set(stage, m);
-  }
-
-  release(stage: StageKey, q: PoolQuestion) {
-    this.used.delete(q.id);
-    this.usedKeys.delete(q.dupKey);
-    const k = `${q.domain}\u0000${q.skill}`;
-    const m = this.skillCount.get(stage);
-    if (m) m.set(k, Math.max(0, (m.get(k) ?? 0) - 1));
+    this.load.set(stage, m);
   }
 
   /**
@@ -342,6 +343,7 @@ export function buildSelection(pool: PoolQuestion[], rules: CustomRules, opts: S
     const part = rules.parts[key]!;
     const stages = partStages(rules.subject, part);
     const stageKeys = stages.map((s) => s.key);
+    const skillCounts = stageSkillCounts(rules.subject, part);
     const picker = new Picker(
       fresh.filter((q) => q.part === key),
       reuse.filter((q) => q.part === key),
@@ -349,8 +351,8 @@ export function buildSelection(pool: PoolQuestion[], rules: CustomRules, opts: S
       part,
       stageKeys,
       taken,
+      skillCounts,
     );
-    const skillCounts = stageSkillCounts(rules.subject, part);
     const skillsByDomain = new Map<string, string[]>();
     for (const [d, skills] of Object.entries(part.skills)) {
       const inPool = new Set(fresh.filter((q) => q.part === key && q.domain === d).map((q) => q.skill));
@@ -380,7 +382,7 @@ export function buildSelection(pool: PoolQuestion[], rules: CustomRules, opts: S
           a.used.set("empty", (a.used.get("empty") ?? 0) + 1);
           continue;
         }
-        picker.record(stageKey, got.q);
+        picker.record(stageKey, got.q, got.how === "skill");
         mine.push(got.q);
         if (got.how === "exact") a.found++;
         else a.used.set(got.how, (a.used.get(got.how) ?? 0) + 1);
@@ -405,7 +407,8 @@ export function replaceQuestion(
   pool: PoolQuestion[],
   rules: CustomRules,
   selection: Selection,
-  target: { part: PartKey; questionId: string },
+  /** `info`: the replaced question's cell when it is no longer in the pool (no longer eligible). */
+  target: { part: PartKey; questionId: string; info?: PoolQuestion | null },
   opts: SelectOptions,
 ): { selection: Selection; note: string | null } | { error: string } {
   const stages = selection.parts[target.part];
@@ -414,7 +417,7 @@ export function replaceQuestion(
   const stage = stages.find((s) => s.questionIds.includes(target.questionId));
   if (!stage) return { error: "That question isn't in this test" };
   const byId = new Map(pool.map((q) => [q.id, q]));
-  const old = byId.get(target.questionId);
+  const old = byId.get(target.questionId) ?? target.info ?? null;
   if (!old) return { error: "That question is no longer eligible — regenerate the test" };
 
   const exclude = opts.exclude ?? new Set<string>();
@@ -429,7 +432,7 @@ export function replaceQuestion(
   for (const s of Object.values(selection.parts).flat()) {
     for (const id of s!.questionIds) {
       const q = byId.get(id);
-      if (q && id !== target.questionId) picker.record(s!.key, q);
+      if (q && id !== target.questionId) picker.record(s!.key, q, true);
     }
   }
   const skillsInDomain = [...new Set(inPart.filter((q) => q.domain === old.domain).map((q) => q.skill))];

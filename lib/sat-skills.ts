@@ -178,6 +178,16 @@ const MATH_RULES: Rule[] = [
 ];
 
 /**
+ * A score-breakdown row (section, domain, skill) with the official domain
+ * and skill — how a Custom test, which is built from official skills,
+ * reports its domain → skill breakdown.
+ */
+export function officialBreakdownRow<T extends { section: string | null; domain: string | null; skill: string | null }>(r: T): T {
+  const c = canonicalSkill(r.section, r.domain, r.skill);
+  return { ...r, domain: c.domain || r.domain, skill: c.skill };
+}
+
+/**
  * The official domain + skill for a stored (section, domain, skill), or
  * `Other (<domain>)` under the stored domain when the label can't be
  * placed. `hint.quantitative`: the question has a table or graph (used for

@@ -54,7 +54,9 @@ export function ineligibleReason(q: BankRow): string | null {
 /** Text with tags, markdown and spacing removed, lower-cased. */
 export function normalizeText(s: string): string {
   return s
-    .replace(/<[^>]*>/g, " ")
+    // Inline tags (<u>, <b>) vanish; block breaks become spaces.
+    .replace(/<\/?(br|p|div|li|tr|td|th)\b[^>]*>/gi, " ")
+    .replace(/<[^>]*>/g, "")
     .replace(/[*_`#>~|\\]/g, "")
     .replace(/\$+/g, "")
     .replace(/\s+/g, " ")

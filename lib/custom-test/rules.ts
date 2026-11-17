@@ -255,6 +255,46 @@ export function defaultPart(subject: Subject, key: PartKey, counts: PoolCounts =
   return part;
 }
 
+/**
+ * Only the known fields of rules that passed rulesErrors (so nothing else
+ * from a request is stored). Bookkeeping (seed, family, version,
+ * shortfalls) is set by the caller.
+ */
+export function normalizeRules(raw: CustomRules): CustomRules {
+  const parts: CustomRules["parts"] = {};
+  for (const key of partsOf(raw.subject)) {
+    const p = raw.parts[key]!;
+    const stages = partStages(raw.subject, p);
+    const skills: PartRules["skills"] = {};
+    for (const d of domainsOf(PART_SECTION[key])) {
+      skills[d.name] = {};
+      for (const [s, v] of Object.entries(p.skills[d.name] ?? {})) if (v > 0) skills[d.name][s] = v;
+    }
+    const pick = (m: Mix): Mix => ({ Easy: m.Easy, Medium: m.Medium, Hard: m.Hard });
+    parts[key] = {
+      questions: p.questions,
+      adaptive: p.adaptive,
+      threshold: p.adaptive ? p.threshold : DEFAULT_THRESHOLD,
+      skills,
+      // The mixes that weren't validated (not used by this part) are reset.
+      mix: p.adaptive
+        ? { all: pick(DEFAULT_MIX.all), m1: pick(p.mix.m1), m2_easy: pick(p.mix.m2_easy), m2_hard: pick(p.mix.m2_hard) }
+        : { all: pick(p.mix.all), m1: pick(DEFAULT_MIX.m1), m2_easy: pick(DEFAULT_MIX.m2_easy), m2_hard: pick(DEFAULT_MIX.m2_hard) },
+      minutes: { m1: p.minutes.m1, m2: stages.length > 1 ? p.minutes.m2 : null },
+    };
+  }
+  return {
+    v: 1,
+    subject: raw.subject,
+    order: ["rw", "math"].filter((k) => parts[k as PartKey]) as PartKey[],
+    break: raw.subject === "both" && raw.break && raw.break.minutes > 0 ? { minutes: raw.break.minutes, allowPause: Boolean(raw.break.allowPause) } : null,
+    parts,
+    seed: "",
+    family_id: "",
+    version: 1,
+  };
+}
+
 // ------------------------------------------------------------ validation
 
 const isInt = (v: unknown, lo: number, hi: number) => typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi;
@@ -297,9 +337,10 @@ export function rulesErrors(raw: unknown): string[] {
     if (p.adaptive && !isInt(p.threshold, 1, 100)) errors.push(`${label}: threshold must be 1–100%`);
     if (!p.skills || typeof p.skills !== "object") errors.push(`${label}: domain split is missing`);
     else {
-      const domains = new Set(domainsOf(PART_SECTION[key]).map((d) => d.name));
+      const domains = new Map(domainsOf(PART_SECTION[key]).map((d) => [d.name, new Set([...d.skills, otherSkill(d.name)])]));
       for (const [d, skills] of Object.entries(p.skills)) {
         if (!domains.has(d)) errors.push(`${label}: unknown domain "${d}"`);
+        else for (const s of Object.keys(skills ?? {})) if (!domains.get(d)!.has(s)) errors.push(`${label}: unknown skill "${s}"`);
         for (const v of Object.values(skills ?? {})) if (!isInt(v, 0, MAX_QUESTIONS[key])) errors.push(`${label}: skill counts must be whole numbers`);
       }
       if (errors.length === 0 && skillTotal(p.skills) !== p.questions) {
