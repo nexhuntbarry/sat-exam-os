@@ -8,6 +8,7 @@ import { useTranslations } from "next-intl";
 import { isFullyApproved } from "../module-approval";
 import { datetimeLocalToIso } from "../datetime-local";
 import type { FullLengthSource } from "../full-length-sources";
+import FullLengthModulesStep, { EMPTY_PICK, pickBody, pickComplete, type FlKey, type SectionPick } from "./FullLengthModulesStep";
 
 interface Module {
   id: string;
@@ -41,7 +42,7 @@ interface Props {
   /** Feature flag (QA admins always): show the Full-length SAT option. Cosmetic; the API checks it too. */
   fullLengthEnabled?: boolean;
   fullLengthSources?: FullLengthSource[];
-  /** Migration 0035 is in: show the Custom test option (it opens its own builder). */
+  /** Migration 0035 is in: the Custom test option opens its own builder (else shown as not enabled yet). */
   customTestEnabled?: boolean;
 }
 
@@ -82,10 +83,11 @@ export default function CreateTestClient({
   const [module2HardId, setModule2HardId] = useState("");
   const [adaptiveThreshold, setAdaptiveThreshold] = useState<number>(60);
 
-  // Full-length SAT: an R&W test + a Math test combined into one sitting.
+  // Full-length SAT: R&W then Math in one sitting, its four modules picked
+  // directly (optionally filled from an existing R&W / Math test).
   const [isFullLength, setIsFullLength] = useState(false);
-  const [rwSourceId, setRwSourceId] = useState("");
-  const [mathSourceId, setMathSourceId] = useState("");
+  const [flPicks, setFlPicks] = useState<Record<FlKey, SectionPick>>({ rw: EMPTY_PICK, math: EMPTY_PICK });
+  const [flSourceIds, setFlSourceIds] = useState<Record<FlKey, string>>({ rw: "", math: "" });
   const [flLimits, setFlLimits] = useState<FlLimits>({ rwM1: 32, rwM2: 32, mathM1: 35, mathM2: 35 });
   const [breakMinutes, setBreakMinutes] = useState<number | "">(10);
   const [allowSectionPause, setAllowSectionPause] = useState(false);
@@ -127,7 +129,7 @@ export default function CreateTestClient({
   const isMathTest = activeModuleForSection?.section === "Math";
 
   // Anything typed yet? Then warn before a refresh / tab close wipes it.
-  const dirty = step > 1 || Boolean(selectedModuleId || module1Id || testName || rwSourceId || mathSourceId);
+  const dirty = step > 1 || Boolean(selectedModuleId || module1Id || testName || flPicks.rw.m1 || flPicks.math.m1);
   useEffect(() => {
     if (!dirty || submitting) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -173,19 +175,18 @@ export default function CreateTestClient({
     setter(arr.includes(item) ? arr.filter((i) => i !== item) : [...arr, item]);
   }
 
-  const rwSource = fullLengthSources.find((t) => t.id === rwSourceId);
-  const mathSource = fullLengthSources.find((t) => t.id === mathSourceId);
-  function pickSource(key: "rw" | "math", id: string) {
-    const src = fullLengthSources.find((t) => t.id === id);
-    if (key === "rw") setRwSourceId(id);
-    else setMathSourceId(id);
-    if (src) {
-      setFlLimits((l) =>
-        key === "rw"
-          ? { ...l, rwM1: src.limits.m1, rwM2: src.limits.m2 }
-          : { ...l, mathM1: src.limits.m1, mathM2: src.limits.m2 },
-      );
-    }
+  // "Start from an existing test": fills that section's block (modules,
+  // adaptive, threshold) and its time limits from the source test.
+  const rwSource = fullLengthSources.find((t) => t.id === flSourceIds.rw);
+  const mathSource = fullLengthSources.find((t) => t.id === flSourceIds.math);
+  function fillFromSource(key: FlKey, src: FullLengthSource) {
+    setFlSourceIds((ids) => ({ ...ids, [key]: src.id }));
+    setFlPicks((p) => ({ ...p, [key]: { adaptive: src.isAdaptive, ...src.pick } }));
+    setFlLimits((l) =>
+      key === "rw"
+        ? { ...l, rwM1: src.limits.m1, rwM2: src.limits.m2 }
+        : { ...l, mathM1: src.limits.m1, mathM2: src.limits.m2 },
+    );
     // Default name from both sources, unless the admin typed their own.
     const rw = key === "rw" ? src : rwSource;
     const math = key === "math" ? src : mathSource;
@@ -193,13 +194,17 @@ export default function CreateTestClient({
       a && b ? tf("defaultName", { rw: a.test_name, math: b.test_name }) : "";
     if (!testName || testName === auto(rwSource, mathSource)) setTestName(auto(rw, math));
   }
+  function editPick(key: FlKey, pick: SectionPick) {
+    setFlPicks((p) => ({ ...p, [key]: pick }));
+    // Edited by hand: no longer "that test" in the shortcut picker.
+    setFlSourceIds((ids) => ({ ...ids, [key]: "" }));
+  }
 
   // Full-length: its own request body (POST kind "full_length").
   const fullLengthBody = (allowDuplicateName: boolean) => ({
     kind: "full_length",
     testName,
-    rwSourceTestId: rwSourceId,
-    mathSourceTestId: mathSourceId,
+    sections: { rw: pickBody(flPicks.rw), math: pickBody(flPicks.math) },
     rwTimeLimitMinutes: flLimits.rwM1,
     rwTimeLimitMinutesModule2: flLimits.rwM2,
     mathTimeLimitMinutes: flLimits.mathM1,
@@ -319,43 +324,57 @@ export default function CreateTestClient({
 
       <div className="bg-surface border border-divider rounded-2xl p-6">
         {/* Step 1: Module selection */}
-        {step === 1 && (fullLengthEnabled || customTestEnabled) && (
+        {/* Step 1 starts with the test type: Section · Full-length SAT ·
+            Custom test. A type that isn't switched on yet (full-length flag,
+            Custom test migration) is shown disabled. */}
+        {step === 1 && (
           <div className="mb-5 space-y-2">
             <p className="text-sm font-medium text-charcoal">{tf("testType")}</p>
-            <div role="radiogroup" aria-label={tf("testType")} className={clsx("grid grid-cols-1 gap-2", customTestEnabled && fullLengthEnabled ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
+            <div role="radiogroup" aria-label={tf("testType")} className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               {([
-                [false, tf("typeSection"), tf("typeSectionHint")],
-                ...(fullLengthEnabled ? ([[true, tf("typeFull"), tf("typeFullHint")]] as const) : []),
-              ] as const).map(([full, label, hint]) => (
+                [false, tf("typeSection"), tf("typeSectionHint"), true],
+                [true, tf("typeFull"), tf("typeFullHint"), fullLengthEnabled],
+              ] as const).map(([full, label, hint, enabled]) => (
                 <button
                   key={label}
                   type="button"
                   role="radio"
                   aria-checked={isFullLength === full}
+                  disabled={!enabled}
                   onClick={() => setIsFullLength(full)}
                   className={clsx(
-                    "rounded-xl border px-3.5 py-2.5 text-left transition-colors",
+                    "rounded-xl border px-3.5 py-2.5 text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed",
                     isFullLength === full
                       ? "border-warm-coral bg-warm-coral/5"
-                      : "border-divider hover:bg-light-bg",
+                      : "border-divider hover:bg-light-bg disabled:hover:bg-transparent",
                   )}
                 >
                   <span className="block text-sm font-medium text-charcoal">{label}</span>
-                  <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">{hint}</span>
+                  <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">
+                    {enabled ? hint : tf("typeNotEnabled")}
+                  </span>
                 </button>
               ))}
-              {customTestEnabled && (
+              {customTestEnabled ? (
                 <a
                   href="/admin/tests/new/custom"
                   role="radio"
                   aria-checked={false}
                   className="rounded-xl border border-divider px-3.5 py-2.5 text-left transition-colors hover:bg-light-bg"
                 >
-                  <span className="block text-sm font-medium text-charcoal">Custom test</span>
-                  <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">
-                    Picked from the question bank by rules: domains, skills, difficulty, optional adaptive.
-                  </span>
+                  <span className="block text-sm font-medium text-charcoal">{tf("typeCustom")}</span>
+                  <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">{tf("typeCustomHint")}</span>
                 </a>
+              ) : (
+                <div
+                  role="radio"
+                  aria-checked={false}
+                  aria-disabled
+                  className="rounded-xl border border-divider px-3.5 py-2.5 text-left opacity-50 cursor-not-allowed"
+                >
+                  <span className="block text-sm font-medium text-charcoal">{tf("typeCustom")}</span>
+                  <span className="block text-xs text-soft-mute mt-0.5 leading-relaxed">{tf("typeNotEnabled")}</span>
+                </div>
               )}
             </div>
           </div>
@@ -363,42 +382,17 @@ export default function CreateTestClient({
 
         {step === 1 && isFullLength && (
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-charcoal">{tf("chooseSources")}</h2>
-            <p className="text-mid-gray text-sm">{tf("sourcesHint")}</p>
-            {(["rw", "math"] as const).map((key) => {
-              const options = fullLengthSources.filter((t) => t.section === key);
-              const sectionName = key === "rw" ? tf("sectionRw") : tf("sectionMath");
-              return (
-                <div key={key}>
-                  <label className="block text-sm font-medium text-charcoal mb-1">
-                    {key === "rw" ? tf("rwSource") : tf("mathSource")} <span className="text-status-error">*</span>
-                  </label>
-                  {options.length === 0 ? (
-                    <p className="text-soft-mute text-sm">{tf("noSources", { section: sectionName })}</p>
-                  ) : (
-                    <select
-                      value={key === "rw" ? rwSourceId : mathSourceId}
-                      onChange={(e) => pickSource(key, e.target.value)}
-                      className="w-full bg-surface border border-divider text-charcoal rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:border-warm-coral/50"
-                    >
-                      <option value="">{tf("selectTest")}</option>
-                      {options.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.test_name} · {t.isAdaptive ? "Adaptive" : "M1 + M2"} ·{" "}
-                          {t.unapprovedModules === 0 ? tf("allApproved") : tf("notApproved", { count: t.unapprovedModules })}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              );
-            })}
-            {((rwSource?.unapprovedModules ?? 0) > 0 || (mathSource?.unapprovedModules ?? 0) > 0) && (
-              <p className="text-mid-gray text-xs">{tf("notApprovedWarning")}</p>
-            )}
+            <FullLengthModulesStep
+              modules={eligibleModules}
+              sources={fullLengthSources}
+              picks={flPicks}
+              onPick={editPick}
+              onSource={fillFromSource}
+              sourceIds={flSourceIds}
+            />
             <div className="flex justify-end pt-2">
               <button
-                disabled={!rwSourceId || !mathSourceId}
+                disabled={!pickComplete(flPicks.rw) || !pickComplete(flPicks.math)}
                 onClick={() => setStep(2)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-warm-coral hover:bg-warm-coral-dark text-white font-semibold text-sm transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >

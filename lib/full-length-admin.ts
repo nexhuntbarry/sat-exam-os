@@ -170,8 +170,105 @@ export async function loadFullLengthSources(
   return { sources: out, error: null };
 }
 
+// ----------------------------------------------------- picked directly
+// Create Test can also pick a full-length test's four modules directly (no
+// source section tests). Each section is validated like a Section test
+// (adaptive: Module 1 + at least one Module 2 track, tracks differ from
+// Module 1; otherwise Module 1 + Module 2, different), plus the full-length
+// rule that each section has two modules. The route then checks the
+// modules exist, are all in the section (moduleSectionError) and are fully
+// approved (moduleApprovalError), as the Section-test create does.
+
+/** A section's module setup: a source test, or modules picked directly (id null). */
+export type SectionSetup = Omit<SourceTest, "id" | "test_name"> & { id: string | null };
+
+/** One section as sent by Create Test (same fields as a Section test's create body). */
+export interface PickedSectionBody {
+  isAdaptive?: unknown;
+  moduleId?: unknown;
+  module2Id?: unknown;
+  module1Id?: unknown;
+  module2EasyId?: unknown;
+  module2HardId?: unknown;
+  adaptiveThreshold?: unknown;
+}
+
+const optId = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+/**
+ * Pure: validate the two picked sections and turn them into section
+ * setups (no source test, Desmos on for Math as on a new Math section
+ * test, no time limits so the SAT standard prefills). Module existence,
+ * section and approval are the route's DB checks.
+ */
+export function parsePickedSections(
+  raw: unknown,
+): { sections: Record<FlSectionKey, SectionSetup> | null; error: string | null } {
+  const fail = (error: string) => ({ sections: null, error });
+  if (!raw || typeof raw !== "object") return fail("Choose the modules of both sections");
+  const out = {} as Record<FlSectionKey, SectionSetup>;
+  const seen = new Set<string>();
+  for (const s of FL_SECTIONS) {
+    const b = (raw as Record<string, PickedSectionBody | undefined>)[s.key];
+    const label = s.label;
+    if (!b || typeof b !== "object") return fail(`Choose the ${label} modules`);
+    const ids = [b.moduleId, b.module2Id, b.module1Id, b.module2EasyId, b.module2HardId];
+    if (ids.some((v) => v !== undefined && v !== null && typeof v !== "string")) return fail(`${label}: invalid module id`);
+    const adaptive = b.isAdaptive === true;
+    const threshold = b.adaptiveThreshold;
+    if (adaptive && threshold !== undefined && threshold !== null &&
+      (typeof threshold !== "number" || !Number.isFinite(threshold) || threshold < 0 || threshold > 100)) {
+      return fail(`${label}: adaptive threshold must be between 0 and 100`);
+    }
+    const m1 = optId(adaptive ? b.module1Id : b.moduleId);
+    const m2 = adaptive ? null : optId(b.module2Id);
+    const easy = adaptive ? optId(b.module2EasyId) : null;
+    const hard = adaptive ? optId(b.module2HardId) : null;
+    if (!m1) return fail(`${label}: choose Module 1`);
+    if (adaptive) {
+      if (!easy && !hard) return fail(`${label}: choose at least one Module 2 track (easy or hard)`);
+      if (m1 === easy || m1 === hard) return fail(`${label}: Module 2 tracks must differ from Module 1`);
+    } else {
+      if (!m2) return fail(`${label}: choose Module 2 (a full-length section has two modules)`);
+      if (m1 === m2) return fail(`${label}: Module 1 and Module 2 must be different`);
+    }
+    const setup: SectionSetup = {
+      id: null,
+      is_adaptive: adaptive,
+      module_id: adaptive ? null : m1,
+      module_2_id: m2,
+      module_1_id: adaptive ? m1 : null,
+      module_2_easy_id: easy,
+      module_2_hard_id: hard,
+      adaptive_threshold: adaptive && typeof threshold === "number" ? Math.round(threshold) : 60,
+      time_limit_minutes: null,
+      time_limit_minutes_module_2: null,
+      desmos_enabled: s.key === "math",
+      formula_sheet_url: null,
+    };
+    const mods = testModuleIds(setup);
+    if (servesStageModules(mods)) return fail(`${label}: a Custom test's modules can't be picked here`);
+    if (mods.some((id) => seen.has(id))) return fail("The same module can't be used in both sections");
+    mods.forEach((id) => seen.add(id));
+    out[s.key] = setup;
+  }
+  return { sections: out, error: null };
+}
+
+/** DB check of picked sections: every module exists and is in its section. */
+export async function pickedSectionsError(
+  db: SupabaseClient,
+  sections: Record<FlSectionKey, SectionSetup>,
+): Promise<string | null> {
+  for (const s of FL_SECTIONS) {
+    const err = await moduleSectionError(db, testModuleIds(sections[s.key]), s.section, `The ${s.label} section`);
+    if (err) return err;
+  }
+  return null;
+}
+
 /** The module-config columns a child copies from its source (snapshot). */
-export function sourceSnapshot(src: SourceTest): Record<string, unknown> {
+export function sourceSnapshot(src: SectionSetup): Record<string, unknown> {
   return {
     is_adaptive: Boolean(src.is_adaptive),
     module_id: src.is_adaptive ? null : src.module_id,
@@ -201,7 +298,8 @@ export interface SectionLimits {
 
 export interface CreateFullLengthInput {
   testName: string;
-  sources: Record<FlSectionKey, SourceTest>;
+  /** Source tests, or sections picked directly (lib parsePickedSections). */
+  sources: Record<FlSectionKey, SectionSetup>;
   limits: Record<FlSectionKey, SectionLimits>;
   breakMinutes: number;
   allowSectionPause: boolean;

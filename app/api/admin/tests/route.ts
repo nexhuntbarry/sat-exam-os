@@ -12,9 +12,12 @@ import {
   defaultSectionLimits,
   fullLengthEnabledFor,
   loadFullLengthSources,
+  parsePickedSections,
+  pickedSectionsError,
   testModuleIds,
   type FlSectionKey,
   type SectionLimits,
+  type SectionSetup,
 } from "@/lib/full-length-admin";
 import {
   dateOrderError,
@@ -334,6 +337,11 @@ async function handlePOST(req: Request) {
 interface FullLengthBody {
   kind: "full_length";
   testName: string;
+  /**
+   * Modules picked directly, per section (same fields as a Section test's
+   * create body). When present, the source test ids are ignored.
+   */
+  sections?: unknown;
   rwSourceTestId?: string;
   mathSourceTestId?: string;
   rwTimeLimitMinutes?: number;
@@ -354,8 +362,10 @@ interface FullLengthBody {
 }
 
 // POST /api/admin/tests with kind "full_length": a parent test plus two
-// hidden section children snapshotted from an R&W and a Math source test
-// (lib/full-length-admin.ts). Server-side feature flag first.
+// hidden section children (lib/full-length-admin.ts), each either picked
+// directly (`sections`: Module 1 + Module 2 / adaptive tracks, approved
+// modules only, like a Section test) or snapshotted from an R&W and a Math
+// source test (rwSourceTestId / mathSourceTestId). Server-side feature flag first.
 async function createFullLength(
   admin: { userId: string; isQa: boolean },
   body: FullLengthBody,
@@ -386,36 +396,56 @@ async function createFullLength(
   if (due.error) return bad(due.error);
   const orderErr = dateOrderError(open.value, due.value);
   if (orderErr) return bad(orderErr);
-  if (typeof body.rwSourceTestId !== "string" || typeof body.mathSourceTestId !== "string") {
-    return bad("Choose a Reading and Writing test and a Math test");
-  }
+  let sources: Record<FlSectionKey, SectionSetup>;
+  if (body.sections !== undefined && body.sections !== null) {
+    // Picked directly: Section-test rules per section, then every module
+    // must exist, be in its section and be fully approved.
+    const picked = parsePickedSections(body.sections);
+    if (picked.error || !picked.sections) return bad(picked.error ?? "Choose the modules of both sections");
+    const crossSide = await forbidCrossSide(admin, {
+      userIds: [...(body.teacherIds ?? []), ...(body.studentIds ?? [])],
+      classGroupIds: body.classGroupIds,
+    });
+    if (crossSide) return crossSide;
+    const allIds = [...testModuleIds(picked.sections.rw), ...testModuleIds(picked.sections.math)];
+    const moduleErr = (await pickedSectionsError(db, picked.sections)) ?? (await moduleApprovalError(db, allIds));
+    if (moduleErr) return bad(moduleErr);
+    sources = picked.sections;
+  } else {
+    if (typeof body.rwSourceTestId !== "string" || typeof body.mathSourceTestId !== "string") {
+      return bad("Choose a Reading and Writing test and a Math test");
+    }
 
-  const crossSide = await forbidCrossSide(admin, {
-    userIds: [...(body.teacherIds ?? []), ...(body.studentIds ?? [])],
-    classGroupIds: body.classGroupIds,
-    testIds: [body.rwSourceTestId, body.mathSourceTestId],
-  });
-  if (crossSide) return crossSide;
+    const crossSide = await forbidCrossSide(admin, {
+      userIds: [...(body.teacherIds ?? []), ...(body.studentIds ?? [])],
+      classGroupIds: body.classGroupIds,
+      testIds: [body.rwSourceTestId, body.mathSourceTestId],
+    });
+    if (crossSide) return crossSide;
 
-  // Sources must be ordinary section tests (not a full-length test or one
-  // of its sections), two modules each, all R&W / all Math respectively.
-  let flIds: Set<string>;
-  try {
-    const links = await fullLengthLinks(db);
-    flIds = new Set([...links.parentOf.keys(), ...links.childrenOf.keys()]);
-  } catch (e) {
-    console.error("[admin/tests/post full-length] links", e);
-    return NextResponse.json({ error: "Could not verify the source tests" }, { status: 500 });
+    // Sources must be ordinary section tests (not a full-length test or one
+    // of its sections), two modules each, all R&W / all Math respectively.
+    let flIds: Set<string>;
+    try {
+      const links = await fullLengthLinks(db);
+      flIds = new Set([...links.parentOf.keys(), ...links.childrenOf.keys()]);
+    } catch (e) {
+      console.error("[admin/tests/post full-length] links", e);
+      return NextResponse.json({ error: "Could not verify the source tests" }, { status: 500 });
+    }
+    const loaded = await loadFullLengthSources(
+      db,
+      { rw: body.rwSourceTestId, math: body.mathSourceTestId },
+      flIds,
+    );
+    if (loaded.error || !loaded.sources) return bad(loaded.error ?? "Invalid source tests");
+    const setErr =
+      (await moduleSetError(db, testModuleIds(loaded.sources.rw))) ??
+      (await moduleSetError(db, testModuleIds(loaded.sources.math)));
+    if (setErr) return bad(setErr);
+    sources = loaded.sources;
   }
-  const { sources, error: sourceErr } = await loadFullLengthSources(
-    db,
-    { rw: body.rwSourceTestId, math: body.mathSourceTestId },
-    flIds,
-  );
-  if (sourceErr || !sources) return bad(sourceErr ?? "Invalid source tests");
   const roleErr =
-    (await moduleSetError(db, testModuleIds(sources.rw))) ??
-    (await moduleSetError(db, testModuleIds(sources.math))) ??
     (await roleError(db, body.teacherIds, "teacher")) ??
     (await roleError(db, body.studentIds, "student"));
   if (roleErr) return bad(roleErr);

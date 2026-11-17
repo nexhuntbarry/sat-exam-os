@@ -96,7 +96,8 @@ async function handlePOST(req: Request, { params }: { params: Promise<{ id: stri
     math: (body.mathSourceTestId as string | undefined) ?? children.math.source_test_id ?? "",
   };
   for (const s of FL_SECTIONS) {
-    if (!ids[s.key]) return bad(`The ${s.label} source test was deleted — choose another one.`);
+    // No source: its modules were picked directly, or the source was deleted.
+    if (!ids[s.key]) return bad(`The ${s.label} section has no source test — choose one to re-sync from.`);
   }
   // Sources picked by default (unchanged) are re-checked for side too.
   const sideErr = await forbidCrossSide(admin, { testIds: [ids.rw, ids.math] });

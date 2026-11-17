@@ -22,6 +22,8 @@ export interface FullLengthSource {
   unapprovedModules: number;
   /** Module time limits to prefill. */
   limits: { m1: number; m2: number };
+  /** Its module setup, to fill a section of a full-length test picked directly. */
+  pick: { m1: string; m2: string; easy: string; hard: string; threshold: number };
 }
 
 // Section tests a full-length SAT can be built from: two modules, all in
@@ -60,6 +62,13 @@ export async function getFullLengthSources(
       isAdaptive: Boolean(t.is_adaptive),
       unapprovedModules: ids.length - mods.filter((m) => allModulesApproved([m!])).length,
       limits: defaultSectionLimits(t, key),
+      pick: {
+        m1: (t.is_adaptive ? t.module_1_id : t.module_id) ?? "",
+        m2: (t.is_adaptive ? null : t.module_2_id) ?? "",
+        easy: (t.is_adaptive ? t.module_2_easy_id : null) ?? "",
+        hard: (t.is_adaptive ? t.module_2_hard_id : null) ?? "",
+        threshold: t.adaptive_threshold ?? 60,
+      },
     });
   }
   return out;
