@@ -910,7 +910,11 @@
     "selectModule": "選擇模組…",
     "noneTrack": "— 無 —",
     "threshold": "適性門檻（模組 1 分數 % → 困難模組 2）",
-    "noModules": "目前沒有全部核准的{section}模組，請先到「模組」完成審核。"
+    "noModules": "目前沒有全部核准的{section}模組，請先到「模組」完成審核。",
+    "modulesLink": "模組",
+    "linearShort": "模組 1 + 模組 2",
+    "moduleShort": "模組 {n}",
+    "approvedCount": "已核准 {approved}/{total}"
   },
   "teacherQa": {
     "off": "管理員已關閉此測驗的題目與答案",

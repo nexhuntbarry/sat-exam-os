@@ -910,7 +910,11 @@
     "selectModule": "Select a module…",
     "noneTrack": "— None —",
     "threshold": "Adaptive threshold (Module 1 score % → hard track)",
-    "noModules": "No fully approved {section} modules yet. Finish review in Modules first."
+    "noModules": "No fully approved {section} modules yet. Finish review in Modules first.",
+    "modulesLink": "Modules",
+    "linearShort": "M1 + M2",
+    "moduleShort": "M{n}",
+    "approvedCount": "{approved}/{total} approved"
   },
   "teacherQa": {
     "off": "The admin has turned off questions & answers for this test",

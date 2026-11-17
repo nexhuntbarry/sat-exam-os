@@ -77,6 +77,8 @@ const linearMath = { isAdaptive: false, moduleId: "m1", module2Id: "m2" };
     [{ rw: { isAdaptive: false, module2Id: "rw2" }, math: linearMath }, /choose Module 1/],
     [{ rw: { isAdaptive: true, module1Id: "rw1" }, math: linearMath }, /at least one Module 2 track/],
     [{ rw: { isAdaptive: true, module1Id: "rw1", module2EasyId: "rw1" }, math: linearMath }, /differ from Module 1/],
+    [{ rw: { isAdaptive: true, module1Id: "rw1", module2EasyId: "rwE", module2HardId: "rwE" }, math: linearMath }, /Reading and Writing: the easy and hard Module 2 tracks must be different/],
+    [{ rw: adaptiveRw, math: { isAdaptive: true, module1Id: "m1", module2EasyId: " mH ", module2HardId: "mH" } }, /Math: the easy and hard Module 2 tracks must be different/],
     [{ rw: { ...adaptiveRw, adaptiveThreshold: 101 }, math: linearMath }, /threshold/],
     [{ rw: { ...adaptiveRw, adaptiveThreshold: "50" }, math: linearMath }, /threshold/],
     [{ rw: { isAdaptive: false, moduleId: 5, module2Id: "rw2" }, math: linearMath }, /invalid module id/],

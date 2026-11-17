@@ -20,10 +20,10 @@ export const EMPTY_PICK: SectionPick = { adaptive: false, m1: "", m2: "", easy: 
 
 export const FL_BLOCK_SECTION: Record<FlKey, string> = { rw: "Reading & Writing", math: "Math" };
 
-/** Is the section complete (two modules; tracks differ from Module 1)? The API re-checks. */
+/** Is the section complete (two modules; tracks differ from Module 1 and each other)? The API re-checks. */
 export function pickComplete(p: SectionPick): boolean {
   if (!p.m1) return false;
-  if (p.adaptive) return Boolean(p.easy || p.hard) && p.easy !== p.m1 && p.hard !== p.m1;
+  if (p.adaptive) return Boolean(p.easy || p.hard) && p.easy !== p.m1 && p.hard !== p.m1 && !(p.easy && p.easy === p.hard);
   return Boolean(p.m2) && p.m2 !== p.m1;
 }
 
@@ -64,7 +64,7 @@ const selectCls =
 export default function FullLengthModulesStep({ modules, sources, picks, onPick, onSource, sourceIds }: Props) {
   const tf = useTranslations("fullLength");
   const optionLabel = (m: ModuleOption) =>
-    `${m.module_name}${m.module_number ? ` · M${m.module_number}` : ""} · ${m.approved}/${m.approvalTotal} approved`;
+    `${m.module_name}${m.module_number ? ` · ${tf("moduleShort", { n: m.module_number })}` : ""} · ${tf("approvedCount", { approved: m.approved, total: m.approvalTotal })}`;
 
   return (
     <div className="space-y-5">
@@ -72,7 +72,7 @@ export default function FullLengthModulesStep({ modules, sources, picks, onPick,
         <h2 className="text-lg font-semibold text-charcoal">{tf("chooseModules")}</h2>
         <p className="text-mid-gray text-sm">
           {tf("modulesHint")}{" "}
-          <a href="/admin/modules" className="text-warm-coral-text hover:underline">Modules</a>
+          <a href="/admin/modules" className="text-warm-coral-text hover:underline">{tf("modulesLink")}</a>
         </p>
       </div>
 
@@ -98,7 +98,7 @@ export default function FullLengthModulesStep({ modules, sources, picks, onPick,
                     // Only fully approved modules can be picked, so a test with
                     // unapproved modules can't fill a section.
                     <option key={s.id} value={s.id} disabled={s.unapprovedModules > 0}>
-                      {s.test_name} · {s.isAdaptive ? tf("adaptive") : "M1 + M2"}
+                      {s.test_name} · {s.isAdaptive ? tf("adaptive") : tf("linearShort")}
                       {s.unapprovedModules > 0 ? ` · ${tf("notApproved", { count: s.unapprovedModules })}` : ""}
                     </option>
                   ))}
@@ -195,9 +195,11 @@ export default function FullLengthModulesStep({ modules, sources, picks, onPick,
                             className={selectCls}
                           >
                             <option value="">{tf("noneTrack")}</option>
-                            {others.map((m) => (
-                              <option key={m.id} value={m.id}>{optionLabel(m)}</option>
-                            ))}
+                            {others
+                              .filter((m) => m.id !== p[track === "easy" ? "hard" : "easy"])
+                              .map((m) => (
+                                <option key={m.id} value={m.id}>{optionLabel(m)}</option>
+                              ))}
                           </select>
                         </div>
                       ))}

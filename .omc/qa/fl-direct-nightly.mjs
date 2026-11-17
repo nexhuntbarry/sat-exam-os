@@ -82,7 +82,9 @@ export async function runFlDirectChecks(h) {
         const page = await req.get(`${BASE}/admin/tests/new`);
         const html = await page.text();
         if (page.status() !== 200) fail(`/admin/tests/new → HTTP ${page.status()}`);
-        for (const card of ["Section test", "Full-length SAT", "Custom test"]) if (!html.includes(card)) fail(`type card "${card}" missing on Create Test`);
+        // Either locale (the QA admin may browse in en or zh).
+        const cards = [["Section test", "單科測驗"], ["Full-length SAT", "完整 SAT"], ["Custom test", "自訂測驗"]];
+        for (const names of cards) if (!names.some((n) => html.includes(n))) fail(`type card "${names.join(" / ")}" missing on Create Test`);
 
         const base = { kind: "full_length", allowDuplicateName: true, studentIds: [] };
         // Section filtering is enforced server side: a Math module in the R&W block.

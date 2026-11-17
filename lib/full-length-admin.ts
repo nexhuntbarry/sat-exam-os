@@ -174,7 +174,7 @@ export async function loadFullLengthSources(
 // Create Test can also pick a full-length test's four modules directly (no
 // source section tests). Each section is validated like a Section test
 // (adaptive: Module 1 + at least one Module 2 track, tracks differ from
-// Module 1; otherwise Module 1 + Module 2, different), plus the full-length
+// Module 1 and from each other; otherwise Module 1 + Module 2, different), plus the full-length
 // rule that each section has two modules. The route then checks the
 // modules exist, are all in the section (moduleSectionError) and are fully
 // approved (moduleApprovalError), as the Section-test create does.
@@ -228,6 +228,7 @@ export function parsePickedSections(
     if (adaptive) {
       if (!easy && !hard) return fail(`${label}: choose at least one Module 2 track (easy or hard)`);
       if (m1 === easy || m1 === hard) return fail(`${label}: Module 2 tracks must differ from Module 1`);
+      if (easy && easy === hard) return fail(`${label}: the easy and hard Module 2 tracks must be different modules`);
     } else {
       if (!m2) return fail(`${label}: choose Module 2 (a full-length section has two modules)`);
       if (m1 === m2) return fail(`${label}: Module 1 and Module 2 must be different`);
