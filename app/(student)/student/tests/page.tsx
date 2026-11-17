@@ -216,7 +216,7 @@ async function getStudentTests(studentId: string) {
       .order("due_date", { ascending: true }),
     db.from("submissions")
       .select(
-        "test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track",
+        "test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track, module_id",
       )
       .eq("student_id", studentId)
       .in("test_id", expandWithChildren(testIds, flLinks))

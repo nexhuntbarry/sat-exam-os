@@ -1,3 +1,4 @@
+import { hideStageModules } from "@/lib/custom-test/stage";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
@@ -10,10 +11,12 @@ export async function GET() {
   if (authResult instanceof NextResponse) return authResult;
 
   const db = getServiceClient();
-  const { data, error } = await db
-    .from("modules")
-    .select("id, module_name, section, module_number, difficulty, source_name, version, pdf_url, total_questions, parsing_status, created_at")
-    .order("created_at", { ascending: false });
+  // Custom test stage modules (lib/custom-test/stage) are not uploads.
+  const { data, error } = await hideStageModules(
+    db
+      .from("modules")
+      .select("id, module_name, section, module_number, difficulty, source_name, version, pdf_url, total_questions, parsing_status, created_at"),
+  ).order("created_at", { ascending: false });
 
   if (error) {
     console.error("[modules/get] DB error:", error);

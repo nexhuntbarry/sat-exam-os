@@ -1,3 +1,4 @@
+import { isStageModuleId } from "@/lib/custom-test/stage";
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
@@ -95,7 +96,7 @@ export async function GET(
       id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, answers,
       tutor_notes, attempt_number, scaled_score, scaled_section, metadata,
-      session_id, adaptive_track,
+      session_id, adaptive_track, module_id,
       users!inner(display_name, email)
     `)
     .eq("id", submissionId)
@@ -433,6 +434,8 @@ export async function GET(
       attemptNumber: submission.attempt_number ?? 1,
       scaledScore: isMultiModule ? combinedScaled : submission.scaled_score ?? null,
       scaledSection: submission.scaled_section ?? null,
+      // A Custom test (stage module): "Estimated" SAT, no "in review" notes.
+      custom: isStageModuleId(submission.module_id),
       isMultiModule,
       // This section / test, every module of the session.
       tabSwitches: tabSwitchTotal(siblings.map((s) => ({ tab_switches: s.metadata?.tab_switches }))),

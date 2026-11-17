@@ -6,6 +6,7 @@
 // lib/module-page-access.ts.
 
 import { questionIdsSpanModules } from "@/lib/student-exam";
+import { stageQuestionIdsFor } from "@/lib/custom-test/stage";
 
 export interface PageScopeTest {
   id: string;
@@ -44,6 +45,10 @@ export function testShowsModulePage(
   served: readonly string[] = testModuleIds(t),
 ): boolean {
   if (pageQuestionIds.length === 0) return false;
+  // A Custom test: its served stage modules' lists are the set, whatever
+  // module each question comes from (lib/custom-test/stage).
+  const staged = stageQuestionIdsFor(t.question_ids, served);
+  if (staged) return pageQuestionIds.some((id) => staged.includes(id));
   const list =
     !t.is_adaptive && Array.isArray(t.question_ids) && t.question_ids.length > 0
       ? t.question_ids

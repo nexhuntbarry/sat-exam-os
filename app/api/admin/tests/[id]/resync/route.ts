@@ -16,6 +16,7 @@ import {
 } from "@/lib/full-length-admin";
 import { moduleSetError } from "../../../_shared";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
+import { servesStageModules } from "@/lib/custom-test/stage";
 
 // POST /api/admin/tests/[id]/resync — full-length SAT only.
 // Body: { rwSourceTestId?, mathSourceTestId? } (omitted = keep the current source)
@@ -75,6 +76,11 @@ async function handlePOST(req: Request, { params }: { params: Promise<{ id: stri
   const { children, error: loadErr } = await loadChildTests(db, id);
   if (loadErr) return bad(loadErr, 500);
   if (!children.rw || !children.math) return bad("This full-length test is missing a section", 409);
+  // A Custom test's sections are built from its rules, not copied from
+  // source tests: a re-sync would overwrite them (lib/custom-test).
+  if (servesStageModules([...testModuleIds(children.rw), ...testModuleIds(children.math)])) {
+    return bad("This is a Custom test: its sections come from its rules. Use Edit questions or Make another version instead.", 409);
+  }
 
   const { started, error: startedErr } = await fullLengthStarted(db, id, [children.rw.id, children.math.id]);
   if (startedErr) return bad(startedErr, 500);

@@ -13,6 +13,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { childrenOf, parentOf } from "@/lib/full-length";
+import { parseStages } from "@/lib/custom-test/stage";
 
 type DbError = { code?: string; message?: string; status?: number } | null | undefined;
 
@@ -151,7 +152,8 @@ export function teacherQaOffQuestionsFrom(rows: QuestionRefRow[]): TeacherQaOffQ
   const questionIds = new Set<string>();
   for (const t of rows) {
     const picked = Array.isArray(t.question_ids) ? (t.question_ids as unknown[]).filter((x): x is string => typeof x === "string") : [];
-    if (!t.is_adaptive && picked.length > 0) {
+    // A Custom test (adaptive or not) shows exactly its stage lists.
+    if ((!t.is_adaptive || parseStages(picked) !== null) && picked.length > 0) {
       for (const id of picked) questionIds.add(id);
       continue;
     }

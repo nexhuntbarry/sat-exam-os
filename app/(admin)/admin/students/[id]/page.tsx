@@ -10,7 +10,7 @@ import { getStudentAssignments } from "@/lib/student-exam";
 import { studentTestProgress } from "@/lib/test-progress";
 import { getTestSections } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
-import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
+import { isCustomRows, scoreDisplay, type ScoreModule } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { profileTimeMultiplier } from "@/lib/full-length-admin";
 import {
@@ -77,7 +77,7 @@ async function getStudentSubmissions(studentId: string) {
     .select(
       `id, test_id, student_id, status, score, correct_count, total_questions, percentage,
        started_at, submitted_at, time_spent_seconds, attempt_number,
-       scaled_score, scaled_section, session_id, adaptive_track,
+       scaled_score, scaled_section, session_id, adaptive_track, module_id,
        tests!inner(test_name),
        modules!module_id(module_name, section, module_number)`,
     )
@@ -103,6 +103,7 @@ type SubmissionRow = {
   scaled_section: string | null;
   session_id: string | null;
   adaptive_track: string | null;
+  module_id: string | null;
   tests: { test_name: string };
   modules: { module_name: string; section: string; module_number: number | null } | null;
 };
@@ -314,6 +315,8 @@ export default async function AdminStudentDetailPage({
   const flScored = scoreGroups(flGroups, await loadFlAttemptMeta(getServiceClient(), flParentIds, id));
 
   const groups = buildSessionGroups(submissions);
+  // Custom tests (stage modules): "Estimated" SAT, no "in review" notes.
+  const customTestIds = new Set(submissions.filter((s) => isCustomRows([s])).map((s) => s.test_id));
 
   // Every test assigned to the student (directly or via a class group,
   // same resolution as the student's own My Tests), on the viewer's QA side.
@@ -524,7 +527,7 @@ export default async function AdminStudentDetailPage({
       ? g.modules.map((m, i) => ({ number: i + 1, graded: m.graded, correct: m.correct, total: m.total }))
       : [{ number: 1, graded: g.status !== "In Progress", correct: g.correct, total: g.total }];
     for (let n = mods.length + 1; n <= count; n++) mods.push({ number: n, graded: false, correct: null, total: null });
-    return scoreDisplay(mods, g.section);
+    return scoreDisplay(mods, g.section, { custom: customTestIds.has(g.testId) });
   };
   const attemptRows: TestRow[] = groups.map((g) => {
     const input = visibilityInputs.get(visibilityKey(g.testId, id));

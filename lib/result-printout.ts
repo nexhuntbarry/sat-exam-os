@@ -321,7 +321,7 @@ export async function loadResultPrintouts(
 
   // Resolve requested ids → attempts.
   let picked: SubRow[] = [];
-  const cols = "id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions";
+  const cols = "id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions, module_id";
   if (submissionIds.length > 0) {
     const { data, error } = await db.from("submissions").select(cols).eq("test_id", testId).in("id", submissionIds.slice(0, 500));
     if (error) throw new Error(`printout: submissions lookup failed: ${error.message}`);
@@ -402,7 +402,7 @@ export async function loadResultPrintouts(
   return out;
 }
 
-const SUB_COLS = "id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions";
+const SUB_COLS = "id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions, module_id";
 const byModuleOrder = (a: SubRow, b: SubRow) =>
   (a.adaptive_track === "module_1" ? 0 : 1) - (b.adaptive_track === "module_1" ? 0 : 1) || (a.started_at ?? "").localeCompare(b.started_at ?? "");
 

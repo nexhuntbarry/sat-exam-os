@@ -58,7 +58,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, attempt_number,
-      scaled_score, scaled_section, session_id, adaptive_track,
+      scaled_score, scaled_section, session_id, adaptive_track, module_id,
       tab_switches:metadata->tab_switches,
       users!inner(display_name, email, student_profiles(grade, class_group))
     `)

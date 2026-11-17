@@ -41,7 +41,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     .select(`
       id, status, score, correct_count, total_questions, percentage,
       started_at, submitted_at, time_spent_seconds, attempt_number,
-      scaled_score, scaled_section, session_id, adaptive_track,
+      scaled_score, scaled_section, session_id, adaptive_track, module_id,
       tests!inner(
         test_name, module_id, module_2_id, is_adaptive, question_ids,
         modules!module_id(module_name, section)
@@ -88,7 +88,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     const { data: rows } = await db
       .from("submissions")
       .select(
-        "id, status, percentage, correct_count, total_questions, scaled_score, session_id, adaptive_track, time_spent_seconds, started_at",
+        "id, status, percentage, correct_count, total_questions, scaled_score, session_id, adaptive_track, time_spent_seconds, started_at, module_id",
       )
       .eq("session_id", submissionWithSession.session_id)
       .order("started_at", { ascending: true });

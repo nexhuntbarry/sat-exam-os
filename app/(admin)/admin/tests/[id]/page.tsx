@@ -2,6 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { studentTestProgress, summarizeTestProgress, type StudentTestProgress } from "@/lib/test-progress";
 import { flBadge, flFinished, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, type FullLengthScore } from "@/lib/full-length-score";
 import { scoreDisplay, averageSat } from "@/lib/score-display";
+import { hideStageModules, servesStageModules } from "@/lib/custom-test/stage";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import { DetailHeader, StatCards } from "@/components/ui/DetailHeader";
@@ -341,12 +342,13 @@ export default async function TestDetailPage({
 
   // Eligible modules for the Edit modal — same predicate as the create
   // page: every non-rejected question Approved (see module-approval.ts).
-  const { data: modulesRaw } = await db
-    .from("modules")
-    .select(
-      "id, module_name, section, module_number, parsing_status, total_questions, questions:questions!module_id(parsing_status)",
-    )
-    .order("module_name");
+  const { data: modulesRaw } = await hideStageModules(
+    db
+      .from("modules")
+      .select(
+        "id, module_name, section, module_number, parsing_status, total_questions, questions:questions!module_id(parsing_status)",
+      ),
+  ).order("module_name");
   type ModRow = {
     id: string;
     module_name: string;
@@ -416,8 +418,9 @@ export default async function TestDetailPage({
   // Score column: SAT estimate per student; header click sorts by it
   // (?sort=score high→low, ?sort=score-asc low→high, unfinished last).
   // Full-length SAT: the combined cell (total 400–1600, "R&W · Math").
+  const customTest = servesStageModules([test.module_id, test.module_2_id, test.module_1_id, test.module_2_easy_id, test.module_2_hard_id]);
   const scoreOf = new Map(
-    assignment.students.map((st) => [st.id, st.fullLength ? st.fullLength.score : scoreDisplay(st.progress.modules, section)]),
+    assignment.students.map((st) => [st.id, st.fullLength ? st.fullLength.score : scoreDisplay(st.progress.modules, section, { custom: customTest })]),
   );
   const satOf = (sid: string) => scoreOf.get(sid)?.sat ?? null;
   const sortDir = sort === "score" ? -1 : sort === "score-asc" ? 1 : 0;

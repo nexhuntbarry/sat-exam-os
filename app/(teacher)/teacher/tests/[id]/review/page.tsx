@@ -1,5 +1,6 @@
 import { orderToQuestionIds, questionIdsSpanModules, scopeToStudentQuestionSet } from "@/lib/student-exam";
 import { getServiceClient } from "@/lib/supabase";
+import { stageOfQuestion } from "@/lib/custom-test/stage";
 import { childrenOf, reviewSectionTests } from "@/lib/full-length";
 import { flSectionScope } from "@/lib/full-length-score";
 import { getCurrentUser } from "@/lib/auth";
@@ -53,6 +54,14 @@ async function getTeacherReview(
   const moduleIds = parts.flatMap((p) => modulesOf(p.test));
   if (moduleIds.length === 0) return { off: false as const, test, sections: [] };
 
+  // A Custom test's sections own no questions: their stage lists name them
+  // (lib/custom-test/stage); both sections' lists together are one list.
+  const stagedQids = parts.some((p) => stageOfQuestion(p.test.question_ids).size > 0)
+    ? parts.flatMap((p) => (p.test.question_ids as string[] | null) ?? [])
+    : null;
+  const stageOf = stageOfQuestion(stagedQids);
+  const scopeTest = stagedQids ? { ...(parts[0]?.test ?? test), question_ids: stagedQids } : parts[0]?.test ?? test;
+
   // Same question set students see and are graded on.
   const qquery = scopeToStudentQuestionSet(
     db
@@ -61,7 +70,7 @@ async function getTeacherReview(
         "id, module_id, original_question_number, question_text, choices, question_type, correct_answer, explanation, has_image, has_table, image_urls, image_alts, page_number, source_pdf_url, modules!inner(module_name, section, module_number)",
       )
       .order("original_question_number", { ascending: true }),
-    parts[0]?.test ?? test,
+    scopeTest,
     moduleIds,
   );
   const { data: questions } = await qquery;
@@ -69,23 +78,28 @@ async function getTeacherReview(
   type Section = { moduleId: string; title: string; questions: NonNullable<typeof questions> };
   const groups = new Map<string, Section>();
   // A quiz picked from several source tests is one section, in pick order.
-  const scope = parts[0]?.test ?? test;
+  const scope = scopeTest;
   const oneSection = questionIdsSpanModules(scope, moduleIds) ? scope.module_id : null;
   for (const q of orderToQuestionIds(questions ?? [], scope, moduleIds, (x) => x.id)) {
-    const mod = q.modules as unknown as { module_name: string; section: string; module_number: number | null } | null;
-    const part = parts.find((p) => modulesOf(p.test).includes(q.module_id)) ?? { test, prefix: "" };
+    const stage = stageOf.get(q.id);
+    // A Custom test's modules are named after the test, not a source PDF.
+    const mod = stage
+      ? { module_name: test.test_name as string, section: "", module_number: null }
+      : (q.modules as unknown as { module_name: string; section: string; module_number: number | null } | null);
+    const moduleId = stage ?? q.module_id;
+    const part = parts.find((p) => modulesOf(p.test).includes(moduleId)) ?? { test, prefix: "" };
     const t = part.test;
     let label = mod?.module_name ?? "Module";
     if (t.is_adaptive) {
-      if (q.module_id === t.module_1_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === t.module_2_easy_id) label = `Module 2 · Easy — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === t.module_2_hard_id) label = `Module 2 · Hard — ${mod?.module_name ?? ""}`;
+      if (moduleId === t.module_1_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
+      else if (moduleId === t.module_2_easy_id) label = `Module 2 · Easy — ${mod?.module_name ?? ""}`;
+      else if (moduleId === t.module_2_hard_id) label = `Module 2 · Hard — ${mod?.module_name ?? ""}`;
     } else if (t.module_2_id) {
-      if (q.module_id === t.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
-      else if (q.module_id === t.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
+      if (moduleId === t.module_id) label = `Module 1 — ${mod?.module_name ?? ""}`;
+      else if (moduleId === t.module_2_id) label = `Module 2 — ${mod?.module_name ?? ""}`;
     }
     label = oneSection ? test.test_name : part.prefix + label;
-    const key = oneSection ?? q.module_id;
+    const key = oneSection ?? moduleId;
     if (!groups.has(key)) groups.set(key, { moduleId: key, title: label, questions: [] });
     groups.get(key)!.questions.push(q);
   }

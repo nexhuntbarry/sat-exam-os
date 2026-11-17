@@ -89,7 +89,7 @@ async function loadStudent(
     .from("submissions")
     .select(
       `id, test_id, student_id, status, score, percentage, correct_count, total_questions,
-       started_at, submitted_at, session_id, adaptive_track, attempt_number,
+       started_at, submitted_at, session_id, adaptive_track, attempt_number, module_id,
        tests!inner(id, test_name, due_date, is_adaptive, module_2_id)`,
     )
     .eq("student_id", studentId)

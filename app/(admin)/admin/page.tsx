@@ -1,3 +1,4 @@
+import { hideStageModules } from "@/lib/custom-test/stage";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { Users, GraduationCap, BookOpen, ClipboardList, HelpCircle, Clock, BarChart3 } from "lucide-react";
@@ -13,7 +14,7 @@ async function getAdminStats(viewerIsQa: boolean) {
     scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "pending"), viewerIsQa),
     scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "student").eq("account_status", "approved"), viewerIsQa),
     scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "teacher").eq("account_status", "approved"), viewerIsQa),
-    db.from("modules").select("id", { count: "exact", head: true }),
+    hideStageModules(db.from("modules").select("id", { count: "exact", head: true })),
     // Self-signed-up teachers awaiting approval (invited rows are pending
     // too until first sign-in, but have no clerk_user_id and need no action).
     scopeUsers(db.from("users").select("id", { count: "exact", head: true }).eq("role", "teacher").eq("account_status", "pending").not("clerk_user_id", "is", null), viewerIsQa),

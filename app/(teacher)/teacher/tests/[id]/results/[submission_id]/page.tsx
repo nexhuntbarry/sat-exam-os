@@ -34,6 +34,7 @@ interface SubmissionInfo {
   scaledScore: number | null;
   scaledSection: string | null;
   isMultiModule: boolean;
+  custom?: boolean;
   /** Times the student left the exam tab (this test / section). */
   tabSwitches: number | null;
 }
@@ -193,7 +194,7 @@ export default function SubmissionDetailPage() {
   if (scoreModules.length === 1 && data.modules?.[0].label === "Module 1") {
     scoreModules.push({ number: 2, graded: false, correct: null, total: null });
   }
-  const score = scoreDisplay(scoreModules, submission.scaledSection);
+  const score = scoreDisplay(scoreModules, submission.scaledSection, { custom: submission.custom });
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 print:max-w-none">

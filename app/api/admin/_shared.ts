@@ -100,6 +100,9 @@ export async function moduleApprovalError(db: Db, ids: string[]): Promise<string
   }
   const bad = approvals.filter((m) => m.pending > 0 || m.approved === 0);
   if (bad.length === 0) return null;
+  if (bad.some((m) => m.custom)) {
+    return "Some questions of this Custom test are no longer eligible (not Approved, or flagged for review). Replace them on the test page first.";
+  }
   return `These modules still have questions that are not Approved: ${bad.map((m) => m.name).join(", ")}. Approve or reject every question first.`;
 }
 

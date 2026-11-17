@@ -166,7 +166,7 @@ export async function loadClassGradebook(
           db
             .from("submissions")
             .select(
-              "id, test_id, student_id, status, session_id, adaptive_track, started_at, submitted_at, correct_count, total_questions, attempt_number",
+              "id, test_id, student_id, status, session_id, adaptive_track, started_at, submitted_at, correct_count, total_questions, attempt_number, module_id",
             )
             .in("test_id", expandWithChildren(testIds, links))
             .in("student_id", studentIds)

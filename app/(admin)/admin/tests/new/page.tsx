@@ -1,3 +1,4 @@
+import { hideStageModules } from "@/lib/custom-test/stage";
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
@@ -12,8 +13,8 @@ async function getData(viewerIsQa: boolean) {
   const db = getServiceClient();
 
   const [{ data: modules }, { data: teachers }, { data: students }, { data: classGroups }, fullLengthEnabled] = await Promise.all([
-    db.from("modules")
-      .select("id, module_name, section, module_number, parsing_status, total_questions, questions:questions!module_id(parsing_status)")
+    hideStageModules(db.from("modules")
+      .select("id, module_name, section, module_number, parsing_status, total_questions, questions:questions!module_id(parsing_status)"))
       .order("module_name"),
     scopeUsers(db.from("users")
       .select("id, display_name, email")

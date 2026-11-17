@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { isTestAssignedToStudent, questionIdsSpanModules } from "@/lib/student-exam";
+import { stageQuestionIdsFor } from "@/lib/custom-test/stage";
 import {
   STUDENT_REPORT_KINDS,
   STUDENT_REPORT_NOTE_MAX,
@@ -93,9 +94,14 @@ export async function POST(req: Request) {
   );
   // A quiz picked from several source tests: its question_ids list is the
   // set, whatever module each question comes from.
-  const picked =
-    questionIdsSpanModules(test, test.module_id ? [test.module_id as string] : []) &&
-    ((test.question_ids as string[] | null) ?? []).includes(question.id as string);
+  // A Custom test: its stage lists are the set (the submission's own stage
+  // when there is one, lib/custom-test/stage).
+  const staged = stageQuestionIdsFor(test.question_ids, submissionModuleId ? [submissionModuleId] : [...testModules]);
+  const picked = staged
+    ? staged.includes(question.id as string)
+    : questionIdsSpanModules(test, test.module_id ? [test.module_id as string] : []) &&
+      ((test.question_ids as string[] | null) ?? []).includes(question.id as string);
+  if (staged && !picked) return bad("Not found", 404);
   if (!picked) {
     if (!testModules.has(question.module_id as string)) return bad("Not found", 404);
     // A submission covers one module; the question must be from it.

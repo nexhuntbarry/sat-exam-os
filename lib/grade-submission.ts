@@ -17,6 +17,7 @@ import {
   scopeToStudentQuestionSet,
 } from "@/lib/student-exam";
 import { keyCandidates, parseSprEntry, sprEntryCreditedForCandidate } from "@/lib/answer-key";
+import { isStageModuleId } from "@/lib/custom-test/stage";
 
 // Hyphen look-alikes students paste or type on some keyboards (U+2212
 // minus sign, figure/en/em dashes, small and fullwidth hyphen-minus).
@@ -259,6 +260,12 @@ export async function finalizeSubmission(
   const { data: questions, error: qErr } = await questionQuery;
   if (qErr || !questions) {
     throw new Error(`fetch questions: ${qErr?.message ?? "unknown"}`);
+  }
+  // A Custom test's module owns no questions: its set is its stage list in
+  // test.question_ids. An empty set means that list didn't reach us (a
+  // caller that left question_ids out of its select) — never grade 0/0.
+  if (questions.length === 0 && isStageModuleId(gradingModuleId)) {
+    throw new Error(`custom test module ${gradingModuleId} resolved to no questions (question_ids missing?)`);
   }
 
   const answers = (input.answersOverride ?? submission.answers ?? {}) as Record<string, string>;

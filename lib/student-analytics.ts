@@ -41,7 +41,7 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
   const db = getServiceClient();
   const { data: subs } = await db
     .from("submissions")
-    .select("id, student_id, status, session_id, adaptive_track, correct_count, total_questions, submitted_at, tests!inner(test_name)")
+    .select("id, student_id, status, session_id, adaptive_track, module_id, correct_count, total_questions, submitted_at, tests!inner(test_name)")
     .eq("student_id", studentId)
     .in("status", ["Submitted", "Late"]);
   const rows = (subs ?? []) as unknown as (ProgressSubmission & {

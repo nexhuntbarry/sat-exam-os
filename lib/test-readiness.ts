@@ -15,6 +15,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { FL_SECTIONS, fullLengthPublishModules, fullLengthStarted, loadChildTests } from "./full-length-admin";
 import { fetchAllRows } from "./fetch-all-rows";
+import { isStageModuleId, parseStages } from "./custom-test/stage";
+import { BANK_COLUMNS, ineligibleReason, type BankRow } from "./custom-test/pool";
 
 export interface ModuleApproval {
   id: string;
@@ -24,6 +26,8 @@ export interface ModuleApproval {
   /** Questions still Draft / Needs Review. */
   pending: number;
   approved: number;
+  /** A Custom test's module: `pending` = referenced questions no longer eligible. */
+  custom?: boolean;
 }
 
 export interface ReadinessIssue {
@@ -70,7 +74,13 @@ export function publishBlockers(input: BlockersInput): ReadinessIssue[] {
     blockers.push({ code: "no_modules", message: "No module selected" });
   } else {
     for (const m of input.modules) {
-      if (m.pending > 0) {
+      if (m.pending > 0 && m.custom) {
+        blockers.push({
+          code: "questions_pending",
+          message: `${plural(m.pending, "question")} no longer eligible (${m.label}) — replace ${m.pending === 1 ? "it" : "them"} on the test page`,
+          moduleId: m.id,
+        });
+      } else if (m.pending > 0) {
         blockers.push({
           code: "questions_pending",
           message: `${plural(m.pending, "question")} still in review (${m.label})`,
@@ -81,7 +91,7 @@ export function publishBlockers(input: BlockersInput): ReadinessIssue[] {
         blockers.push({
           code: "no_questions",
           message: `${m.label} has no approved questions`,
-          href: `/admin/modules/${m.id}`,
+          ...(m.custom ? {} : { href: `/admin/modules/${m.id}` }),
           moduleId: m.id,
         });
       }
@@ -142,6 +152,14 @@ export async function moduleApprovals(
   db: SupabaseClient,
   mods: { id: string; label: string }[],
 ): Promise<ModuleApproval[]> {
+  // A Custom test's modules own no questions: check the questions their
+  // stage lists reference instead (customStageApprovals).
+  const stage = mods.filter((m) => isStageModuleId(m.id));
+  if (stage.length > 0) {
+    const rest = mods.filter((m) => !isStageModuleId(m.id));
+    const [a, b] = await Promise.all([customStageApprovals(db, stage), moduleApprovals(db, rest)]);
+    return mods.map((m) => [...a, ...b].find((x) => x.id === m.id && x.label === m.label)!);
+  }
   const ids = Array.from(new Set(mods.map((m) => m.id)));
   if (ids.length === 0) return [];
   const [pending, approved, names] = await Promise.all([
@@ -158,6 +176,37 @@ export async function moduleApprovals(
     pending: count(pending.data, m.id),
     approved: count(approved.data, m.id),
   }));
+}
+
+/**
+ * Readiness of a Custom test's stage modules (lib/custom-test/stage): each
+ * one's list comes from the test that names it in question_ids. Approved =
+ * still Approved and still eligible (no key doubt / review tag, key and
+ * metadata present, figures complete); every other referenced question is
+ * `pending` ("no longer eligible — replace it"). Throws on a lookup error.
+ */
+export async function customStageApprovals(
+  db: SupabaseClient,
+  mods: { id: string; label: string }[],
+): Promise<ModuleApproval[]> {
+  const lists = new Map<string, string[]>();
+  for (const id of new Set(mods.map((m) => m.id))) {
+    const { data, error } = await db.from("tests").select("question_ids").filter("question_ids", "cs", JSON.stringify([id])).limit(1);
+    if (error) throw new Error("Could not verify module question status");
+    lists.set(id, parseStages(data?.[0]?.question_ids)?.get(id) ?? []);
+  }
+  const all = [...new Set([...lists.values()].flat())];
+  const ok = new Set<string>();
+  for (let i = 0; i < all.length; i += 200) {
+    const { data, error } = await db.from("questions").select(BANK_COLUMNS).in("id", all.slice(i, i + 200));
+    if (error) throw new Error("Could not verify module question status");
+    for (const q of (data ?? []) as unknown as BankRow[]) if (!ineligibleReason(q)) ok.add(q.id);
+  }
+  return mods.map((m) => {
+    const list = lists.get(m.id) ?? [];
+    const approved = list.filter((id) => ok.has(id)).length;
+    return { id: m.id, label: m.label, name: m.label, pending: list.length - approved, approved, custom: true };
+  });
 }
 
 export interface PublishCheck {

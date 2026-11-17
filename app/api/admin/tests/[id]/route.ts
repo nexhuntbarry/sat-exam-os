@@ -23,6 +23,7 @@ import {
   timeLimitError,
 } from "../../_shared";
 import { moveTestToDraft } from "@/lib/test-readiness";
+import { servesStageModules } from "@/lib/custom-test/stage";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
 import { casAssignmentArray, clearPublishSchedule } from "@/lib/test-assign";
 
@@ -136,6 +137,15 @@ async function handlePATCH(
     ].filter((k) => body[k] !== undefined);
     if (sectionOnly.length > 0) {
       return bad(`Not editable on a full-length test: ${sectionOnly.join(", ")}. Use Re-sync to change the source tests.`);
+    }
+  }
+
+  // A Custom test's modules and question lists come from its rules
+  // (lib/custom-test): changed only through its own editor.
+  if (servesStageModules([current.module_id, current.module_2_id, current.module_1_id, current.module_2_easy_id, current.module_2_hard_id])) {
+    const locked = ["moduleId", "module2Id", "module1Id", "module2EasyId", "module2HardId", "questionIds"].filter((k) => body[k] !== undefined);
+    if (locked.length > 0) {
+      return bad("A Custom test's questions are changed on its test page (Edit questions / Make another version).", 409);
     }
   }
 

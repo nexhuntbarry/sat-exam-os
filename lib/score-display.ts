@@ -1,5 +1,6 @@
 import { scaleSectionScore } from "@/lib/scoring";
 import { studentTestProgress, type ProgressSubmission } from "@/lib/test-progress";
+import { isStageModuleId } from "@/lib/custom-test/stage";
 
 // One score display everywhere (support f83c766b): SAT section score first,
 // per-module correct counts second. No per-module SAT estimate (the real SAT
@@ -26,6 +27,19 @@ export interface ScoreDisplay {
   pct: number | null;
   /** "M1: 1 question in review, not scored". */
   notes: string[];
+  /**
+   * A Custom test (lib/custom-test): the SAT score is an estimate from the
+   * usual curve, labelled "Estimated" (it ignores which Module 2 was served).
+   */
+  estimated?: boolean;
+}
+
+/** A Custom test part below this many questions shows no SAT estimate (counts only). */
+export const CUSTOM_MIN_SCALED_QUESTIONS = 10;
+
+export interface ScoreDisplayOptions {
+  /** A Custom test: no "in review" notes (its modules are any size), "Estimated" SAT, none under CUSTOM_MIN_SCALED_QUESTIONS. */
+  custom?: boolean;
 }
 
 /** Percent rounded the way grading stores it (1 decimal). */
@@ -41,10 +55,16 @@ export function satFromCounts(correct: number, total: number): number | null {
 
 /** Build the score cell for one attempt. Returns null when nothing has been
  *  started (render "—"). */
-export function scoreDisplay(modules: ScoreModule[], section: string | null | undefined): ScoreDisplay | null {
+export function scoreDisplay(
+  modules: ScoreModule[],
+  section: string | null | undefined,
+  opts: ScoreDisplayOptions = {},
+): ScoreDisplay | null {
   if (modules.length === 0) return null;
   const two = modules.length > 1;
-  const full = section ? FULL_MODULE[section] : undefined;
+  // A Custom test's modules are as long as its rules say: a short one isn't
+  // missing questions, so no "in review" notes.
+  const full = section && !opts.custom ? FULL_MODULE[section] : undefined;
   const notes: string[] = [];
   const parts = modules.map((m) => {
     const tag = two ? `M${m.number} ` : "";
@@ -59,12 +79,26 @@ export function scoreDisplay(modules: ScoreModule[], section: string | null | un
   const correct = done.reduce((n, m) => n + (m.correct ?? 0), 0);
   const total = done.reduce((n, m) => n + (m.total ?? 0), 0);
   const finished = done.length === modules.length;
+  if (opts.custom) {
+    return {
+      sat: finished && total >= CUSTOM_MIN_SCALED_QUESTIONS ? satFromCounts(correct, total) : null,
+      modules: parts.join(" · "),
+      pct: finished ? pctOf(correct, total) : null,
+      notes,
+      estimated: true,
+    };
+  }
   return {
     sat: finished ? satFromCounts(correct, total) : null,
     modules: parts.join(" · "),
     pct: finished ? pctOf(correct, total) : null,
     notes,
   };
+}
+
+/** Do these submission rows belong to a Custom test (their module is a stage module)? */
+export function isCustomRows(rows: readonly { module_id?: string | null }[]): boolean {
+  return rows.some((r) => isStageModuleId(r.module_id));
 }
 
 /** Mean of SAT scores, rounded to a whole number. */
@@ -90,7 +124,8 @@ export function attemptScore(rows: ProgressSubmission[], section: string | null 
   const p = studentTestProgress(rows, rows.some((r) => Boolean(r.adaptive_track)));
   const late = p.status === "Submitted" && rows.some((r) => r.status === "Late");
   return {
-    score: scoreDisplay(p.modules, section),
+    // Custom tests are recognised from the rows' module (select module_id).
+    score: scoreDisplay(p.modules, section, { custom: isCustomRows(rows) }),
     status: late ? "Late" : p.status,
     module: p.currentModule ? { n: p.currentModule, of: p.moduleCount } : null,
     modules: p.modules,

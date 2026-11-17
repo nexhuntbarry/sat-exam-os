@@ -11,6 +11,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { asParentRows, closedFullLengthAttemptKeys, fullLengthLinksOrNone, resolveParentTestId } from "@/lib/full-length";
+import { stageQuestionIdsFor, stagedQuestionIds } from "@/lib/custom-test/stage";
 
 /** The only parsing_status a student ever sees or is graded on. */
 export const STUDENT_VISIBLE_QUESTION_STATUS = "Approved";
@@ -55,7 +56,9 @@ export function questionIdsSpanModules(
  * Rows in the order of the test's question_ids (the teacher's pick order)
  * when that list is the whole set (questionIdsSpanModules). Its questions
  * come from several source tests, so their original_question_numbers
- * collide and interleave. Any other test: `rows` unchanged, as queried.
+ * collide and interleave. A Custom test (lib/custom-test/stage) is always
+ * in its stage lists' order, whatever modules are asked for. Any other
+ * test: `rows` unchanged, as queried.
  */
 export function orderToQuestionIds<T>(
   rows: T[],
@@ -64,8 +67,9 @@ export function orderToQuestionIds<T>(
   idOf: (row: T) => string,
 ): T[] {
   const mods = typeof moduleIds === "string" ? [moduleIds] : moduleIds;
-  if (!questionIdsSpanModules(test, mods)) return rows;
-  const ids = test.question_ids as string[];
+  const staged = stagedQuestionIds(test.question_ids);
+  if (!staged && !questionIdsSpanModules(test, mods)) return rows;
+  const ids = staged ?? (test.question_ids as string[]);
   const rank = new Map(ids.map((id, i) => [id, i] as const));
   const at = (row: T) => rank.get(idOf(row)) ?? ids.length;
   return [...rows].sort((a, b) => at(a) - at(b));
@@ -76,7 +80,9 @@ export function orderToQuestionIds<T>(
  * Approved only, plus the per-test question_ids subset on the legacy
  * non-adaptive path (adaptive tests grade every question of the module).
  * When the list is the test's whole set (questionIdsSpanModules) it
- * replaces the module filter. The caller still applies ordering.
+ * replaces the module filter. A Custom test's stage module (fixed or
+ * adaptive, lib/custom-test/stage) is exactly its stage list: Approved and
+ * in that list, no module filter. The caller still applies ordering.
  */
 export function scopeToStudentQuestionSet<Q>(
   query: Q,
@@ -88,6 +94,8 @@ export function scopeToStudentQuestionSet<Q>(
     "parsing_status",
     STUDENT_VISIBLE_QUESTION_STATUS,
   );
+  const stageIds = stageQuestionIdsFor(test.question_ids, mods);
+  if (stageIds) return q.in("id", stageIds) as unknown as Q;
   if (!questionIdsSpanModules(test, mods)) {
     q = mods.length === 1 ? q.eq("module_id", mods[0]) : q.in("module_id", mods);
   }

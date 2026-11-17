@@ -109,14 +109,18 @@ export function fullLengthAttemptScore(
     const graded = [...rw.modules, ...math.modules].filter((m) => m.graded);
     const correct = graded.reduce((n, m) => n + (m.correct ?? 0), 0);
     const questions = graded.reduce((n, m) => n + (m.total ?? 0), 0);
+    // A Custom test: "Estimated" scores; its % shows once both sections are
+    // in even when a short section has no SAT estimate (lib/score-display).
+    const estimated = Boolean(rw.score?.estimated || math.score?.estimated);
     score = {
       sat: total,
       modules: `R&W ${rw.score?.sat ?? "—"} · Math ${math.score?.sat ?? "—"}`,
-      pct: total != null ? pctOf(correct, questions) : null,
+      pct: total != null || (estimated && rwDone && mathDone) ? pctOf(correct, questions) : null,
       notes: [
         ...(rw.score?.notes ?? []).map((n) => `R&W ${n}`),
         ...(math.score?.notes ?? []).map((n) => `Math ${n}`),
       ],
+      ...(estimated ? { estimated } : {}),
     };
   }
 

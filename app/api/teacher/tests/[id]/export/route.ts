@@ -10,6 +10,7 @@ import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
 import { flCsvHeader, flCsvOrder, flCsvQuestionColumns, flCsvRow, flSectionScope } from "@/lib/full-length-score";
 import { orderToQuestionIds, questionIdsSpanModules, STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import { loadFullLengthResults } from "@/lib/full-length-results";
+import { parseStages, stagedQuestionIds, stageOfQuestion } from "@/lib/custom-test/stage";
 import { tabSwitchTotal } from "@/lib/tab-switches";
 
 // GET /api/teacher/tests/[id]/export
@@ -67,7 +68,11 @@ export async function GET(
     .order("original_question_number", { ascending: true });
 
   const qIds = test.question_ids as string[] | null;
-  if (!test.is_adaptive && qIds && qIds.length > 0) {
+  // A Custom test: its stage lists (lib/custom-test/stage).
+  const staged = stagedQuestionIds(qIds);
+  if (staged) {
+    questionQuery = questionQuery.in("id", staged);
+  } else if (!test.is_adaptive && qIds && qIds.length > 0) {
     questionQuery = questionQuery.in("id", qIds);
   } else if (test.is_adaptive) {
     const adaptiveModuleIds = [
@@ -100,8 +105,15 @@ export async function GET(
   // position as the student saw it.
   const testModules = test.module_id ? [test.module_id as string] : [];
   const pickOrder = questionIdsSpanModules(test, testModules);
+  // Custom test: each question is filed under its stage module (M1, M2
+  // Easy…) and numbered by its place in that module.
+  const stageOf = stageOfQuestion(qIds);
+  const stageNumber = new Map<string, number>();
+  for (const [, ids] of parseStages(qIds) ?? []) ids.forEach((id, i) => stageNumber.set(id, i + 1));
   const questionList = orderToQuestionIds(
-    [...(questions ?? [])].sort(
+    [...(questions ?? [])].map((q) =>
+      staged ? { ...q, module_id: stageOf.get(q.id) ?? q.module_id, original_question_number: stageNumber.get(q.id) ?? q.original_question_number } : q,
+    ).sort(
       (a, b) =>
         rank(a.module_id) - rank(b.module_id) ||
         (a.original_question_number ?? 0) - (b.original_question_number ?? 0),
@@ -117,7 +129,7 @@ export async function GET(
     .select(`
       id, student_id, status, correct_count, total_questions, percentage,
       scaled_score, submitted_at, time_spent_seconds, attempt_number,
-      session_id, adaptive_track, tab_switches:metadata->tab_switches,
+      session_id, adaptive_track, module_id, tab_switches:metadata->tab_switches,
       users!inner(display_name, email, student_profiles(grade))
     `)
     .eq("test_id", testId)
@@ -148,6 +160,7 @@ export async function GET(
     attempt_number: number | null;
     session_id: string | null;
     adaptive_track: string | null;
+    module_id: string | null;
     tab_switches: unknown;
     users: {
       display_name: string;
@@ -196,7 +209,7 @@ export async function GET(
   const seen = new Map<string, number>();
   const qHeaders = questionList.map((q, i) => {
     const prefix = q.module_id ? modulePrefix.get(q.module_id) : undefined;
-    const base = pickOrder ? `Q${i + 1}` : `${prefix ? `${prefix}-` : ""}Q${q.original_question_number}`;
+    const base = pickOrder && !staged ? `Q${i + 1}` : `${prefix ? `${prefix}-` : ""}Q${q.original_question_number}`;
     const n = (seen.get(base) ?? 0) + 1;
     seen.set(base, n);
     return n > 1 ? `${base} (${n})` : base;
@@ -304,14 +317,14 @@ async function fullLengthCsv(
     db.from("tests").select("id, test_name").eq("id", testId).single(),
     db
       .from("tests")
-      .select("id, is_adaptive, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id")
+      .select("id, is_adaptive, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id, question_ids")
       .in("id", childIds),
     flSectionScope(db, user, kids),
     loadFullLengthResults(db, testId, kids, { studentAllowlist, isQa: user.isQa }),
   ]);
   if (!test) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  type Child = { id: string; is_adaptive: boolean | null; module_id: string | null; module_2_id: string | null; module_1_id: string | null; module_2_easy_id: string | null; module_2_hard_id: string | null };
+  type Child = { id: string; is_adaptive: boolean | null; module_id: string | null; module_2_id: string | null; module_1_id: string | null; module_2_easy_id: string | null; module_2_hard_id: string | null; question_ids: string[] | null };
   const children = (childTests ?? []) as Child[];
   // Module slots in test order, prefixed like the section export
   // ("RW M1", "RW M2 Easy", "RW M2 Hard", "Math M1", …).
@@ -373,6 +386,25 @@ async function fullLengthCsv(
       return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
     }
     questionRows = (qs ?? []) as typeof questionRows;
+    // A Custom test's sections own no questions: their stage lists name
+    // them (lib/custom-test/stage). Filed under the stage, numbered by place.
+    const stageOf = new Map<string, { stage: string; n: number }>();
+    for (const c of children) {
+      for (const [stage, ids] of parseStages(c.question_ids) ?? []) ids.forEach((id, i) => stageOf.set(id, { stage, n: i + 1 }));
+    }
+    if (stageOf.size > 0) {
+      const { data: staged, error: stagedErr } = await db
+        .from("questions")
+        .select("id, module_id, original_question_number, parsing_status")
+        .in("id", [...stageOf.keys()]);
+      if (stagedErr) {
+        console.error("[teacher/tests/export questions]", stagedErr);
+        return NextResponse.json({ error: "Failed to load questions" }, { status: 500 });
+      }
+      questionRows = ((staged ?? []) as typeof questionRows)
+        .map((q) => ({ ...q, module_id: stageOf.get(q.id)!.stage, original_question_number: stageOf.get(q.id)!.n }))
+        .sort((a, b) => (a.original_question_number ?? 0) - (b.original_question_number ?? 0));
+    }
   }
   const questions = flCsvQuestionColumns(
     modules.map((m) => ({

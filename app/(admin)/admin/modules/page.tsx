@@ -1,3 +1,4 @@
+import { hideStageModules } from "@/lib/custom-test/stage";
 import { getServiceClient } from "@/lib/supabase";
 import Link from "next/link";
 import { Plus, FileText, ArrowUp, ArrowDown } from "lucide-react";
@@ -36,10 +37,12 @@ interface ModuleRow {
 
 async function getModules(): Promise<ModuleRow[]> {
   const db = getServiceClient();
-  const { data } = await db
-    .from("modules")
-    .select("id, module_name, section, module_number, difficulty, source_name, total_questions, parsing_status, created_at, questions:questions!module_id(parsing_status)")
-    .order("created_at", { ascending: false });
+  // Custom test stage modules (lib/custom-test/stage) are not uploads.
+  const { data } = await hideStageModules(
+    db
+      .from("modules")
+      .select("id, module_name, section, module_number, difficulty, source_name, total_questions, parsing_status, created_at, questions:questions!module_id(parsing_status)"),
+  ).order("created_at", { ascending: false });
   return (data ?? []).map(({ questions, ...m }) => {
     const counts = approvalCounts(questions as { parsing_status: string }[] | null);
     return { ...m, approved: counts.approved, approvalTotal: counts.total } as ModuleRow;

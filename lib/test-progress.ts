@@ -10,6 +10,8 @@ export interface ProgressSubmission {
   started_at?: string | null;
   correct_count?: number | null;
   total_questions?: number | null;
+  /** The module served; a Custom test's stage module changes how the score shows (lib/score-display). */
+  module_id?: string | null;
 }
 
 export interface TestProgress {

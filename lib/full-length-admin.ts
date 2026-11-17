@@ -14,6 +14,7 @@
 // dates and answer settings equal to the parent's.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { servesStageModules } from "@/lib/custom-test/stage";
 
 // ------------------------------------------------------------------ flag
 
@@ -158,6 +159,9 @@ export async function loadFullLengthSources(
     const label = `The ${s.label} test`;
     const t = rows.find((r) => r.id === ids[s.key]);
     if (!t) return fail(`${label} was not found`);
+    // A Custom test's modules are its question lists (tests.question_ids),
+    // which a section snapshot doesn't copy.
+    if (servesStageModules(testModuleIds(t))) return fail(`${label} is a Custom test — choose an uploaded section test`);
     const err =
       twoModuleError(t, label) ?? (await moduleSectionError(db, testModuleIds(t), s.section, label));
     if (err) return fail(err);
