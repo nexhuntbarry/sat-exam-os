@@ -8,7 +8,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { finalizeSubmission } from "@/lib/grade-submission";
 import { moduleStartedAtIso, moduleTimeLimitMinutes } from "@/lib/student-exam";
-import { ensureModule2, HANDOFF_TEST_COLUMNS, type HandoffTest } from "@/lib/module2-handoff";
+import { ensureModule2, HANDOFF_TEST_COLUMNS, MODULE_2_LATE_RECOVERY_HOURS, type HandoffTest } from "@/lib/module2-handoff";
 
 // Time a student is allowed to keep an attempt open past the module's
 // configured limit before the cron force-grades it. Keeps last-second
@@ -16,10 +16,25 @@ import { ensureModule2, HANDOFF_TEST_COLUMNS, type HandoffTest } from "@/lib/mod
 export const GRACE_MINUTES = 5;
 
 // A Module 2 the student never opened has no clock running (its timer
-// starts on first open, metadata.module_2_started_at). Don't grade it as
-// a zero while they may still come back; only close it out once it has
-// sat untouched this long after the Module 1 handoff.
-export const UNOPENED_MODULE_2_GRACE_HOURS = 24;
+// starts on first open, metadata.module_2_started_at). The cron closes it
+// only on a test with a due date, once that date has passed AND the
+// student can no longer open it (the same past-due window recovery uses,
+// MODULE_2_LATE_RECOVERY_HOURS after the Module 1 handoff). Without a due
+// date it stays open until the admin closes it (Premier 2026-11-17).
+export function unopenedModule2CloseReason(
+  dueDate: string | null,
+  handoffIso: string,
+  now = Date.now(),
+): string | null {
+  if (!dueDate) return "module 2 not opened yet (no due date: stays open)";
+  const due = new Date(dueDate).getTime();
+  if (!(due <= now)) return "module 2 not opened yet (due date not reached)";
+  const sinceHandoffH = (now - new Date(handoffIso).getTime()) / 3_600_000;
+  if (!(sinceHandoffH > MODULE_2_LATE_RECOVERY_HOURS)) {
+    return `module 2 not opened yet (past due, inside the ${MODULE_2_LATE_RECOVERY_HOURS}h window: ${Math.round(sinceHandoffH)}h)`;
+  }
+  return null;
+}
 
 export const STALE_SUBMISSION_COLUMNS =
   "id, test_id, student_id, answers, started_at, module_id, adaptive_track, session_id, metadata, attempt_number";
@@ -79,14 +94,8 @@ export async function finalizeStaleSubmission(
   // the student first opened it, not from the Module 1 handoff.
   const moduleStartIso = moduleStartedAtIso(sub);
   if (!moduleStartIso) {
-    const sinceHandoffH = (Date.now() - new Date(sub.started_at).getTime()) / 3_600_000;
-    if (sinceHandoffH < UNOPENED_MODULE_2_GRACE_HOURS) {
-      return {
-        ...base,
-        action: "skipped",
-        reason: `module 2 not opened yet (${Math.round(sinceHandoffH)}h / ${UNOPENED_MODULE_2_GRACE_HOURS}h)`,
-      };
-    }
+    const keepOpen = unopenedModule2CloseReason(test.due_date, sub.started_at);
+    if (keepOpen) return { ...base, action: "skipped", reason: keepOpen };
   } else {
     const elapsedMin = (Date.now() - new Date(moduleStartIso).getTime()) / 60000;
     if (elapsedMin < limitMinutes + GRACE_MINUTES) {
