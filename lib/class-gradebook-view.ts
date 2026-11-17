@@ -252,6 +252,9 @@ export function cellHint(cell: Pick<GradebookCell, "state" | "statusLabel">): st
   if (cell.state === "closed" && cell.statusLabel === "Closed — Math not taken") {
     return "Full-length attempt closed: the Math section was never started";
   }
+  if (cell.state === "closed" && cell.statusLabel?.startsWith("Incomplete")) {
+    return "Module 2 was closed before the student opened it: no total score";
+  }
   return STATE_HINT[cell.state];
 }
 

@@ -15,7 +15,9 @@ import { ChevronDown, ChevronUp, ChevronsUpDown, Eye, FileText } from "lucide-re
 import TestDetailActions from "./TestDetailActions";
 import PrintTestMenu from "./PrintTestMenu";
 import EditTestButton from "./EditTestButton";
-import RemoveStudentButton from "./RemoveStudentButton";
+import AttemptActionsMenu from "./AttemptActionsMenu";
+import { ATTEMPT_ACTION_COLUMNS, attemptFacts, latestAttemptOf, type AttemptActionRow, type AttemptFacts } from "@/lib/attempt-actions";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import AssignDialog from "./AssignDialog";
 import ScheduleNote from "../ScheduleNote";
 import { readPublishSchedules } from "@/lib/test-assign";
@@ -60,7 +62,6 @@ import {
   ExpandToggle,
   RowActions,
   RowButton,
-  RowMenuSlot,
   TwoLineCell,
 } from "@/components/ui/data-table";
 
@@ -99,14 +100,17 @@ async function getTest(id: string, viewerIsQa: boolean) {
 
   // Full-length SAT parent: its submissions are on its two section children.
   const flKids = (await fullLengthLinksOrNone(db)).childrenOf.get(id) ?? null;
-  const [{ data: assignment }, { data: submissions }, flMeta] = await Promise.all([
+  const [{ data: assignment }, { data: submissions }, flMeta, { data: grants }] = await Promise.all([
     db.from("test_assignments").select("teacher_ids, student_ids, class_group_ids").eq("test_id", id).single(),
     db
       .from("submissions")
-      .select("id, test_id, attempt_number, status, score, percentage, student_id, submitted_at, session_id, adaptive_track, started_at, correct_count, total_questions")
+      .select(`test_id, score, percentage, student_id, submitted_at, ${ATTEMPT_ACTION_COLUMNS}, ${M2_NOT_TAKEN_COLUMN}`)
       .in("test_id", flKids ? [flKids.rw, flKids.math].filter((x): x is string => Boolean(x)) : [id]),
     flKids ? loadFlAttemptMeta(db, [id]) : Promise.resolve(null),
+    // Pending retake grants: the row menu shows "Retake already granted".
+    db.from("test_retake_grants").select("student_id").eq("test_id", id).is("consumed_at", null),
   ]);
+  const retakePending = new Set(((grants ?? []) as { student_id: string }[]).map((g) => g.student_id));
 
   const teacherIds: string[] = assignment?.teacher_ids ?? [];
   const studentIds: string[] = assignment?.student_ids ?? [];
@@ -176,6 +180,22 @@ async function getTest(id: string, viewerIsQa: boolean) {
       const subs = (submissions ?? []).filter((s) => s.student_id === u.id);
       const groups = groupsByStudent.get(u.id) ?? [];
       const fl = flKids ? flProgress(subs, u.id) : null;
+      // The row's "…" menu acts on the latest attempt (lib/attempt-actions).
+      let actions: AttemptFacts | null = null;
+      if (fl?.fl && subs.length > 0) {
+        const n = Math.max(...subs.map((r) => (r.attempt_number as number | null) ?? 1));
+        const rows = subs.filter((r) => ((r.attempt_number as number | null) ?? 1) === n);
+        const s = fl.fl.status;
+        actions = {
+          state: flFinished(fl.fl) || s === "Incomplete" || s.startsWith("Closed") ? "finished" : "in_progress",
+          twoModules: true,
+          attemptNumber: n,
+          modules: [],
+          rowIds: rows.map((r) => r.id as string),
+        };
+      } else if (!flKids) {
+        actions = attemptFacts(latestAttemptOf(subs as unknown as AttemptActionRow[]));
+      }
       return {
         id: u.id,
         name: u.display_name || u.email,
@@ -187,6 +207,8 @@ async function getTest(id: string, viewerIsQa: boolean) {
         fullLength: fl?.fl ?? null,
         submissionCount: subs.length,
         hasGradedSubmission: subs.some((s) => s.status === "Submitted" || s.status === "Late"),
+        actions,
+        retakePending: retakePending.has(u.id),
         // Individually assigned students who are also in an assigned class
         // group keep seeing the test after Remove (M-17).
         visibleViaGroup: groups.length > 0,
@@ -731,18 +753,30 @@ export default async function TestDetailPage({
                       <RowActions>
                       <ExpandToggle label={`More about ${st.name}`} />
                       {primary && <RowButton label={primary.label} icon={primary.icon} href={primary.href} />}
-                      {st.individual ? (
-                        <RemoveStudentButton
-                          testId={test.id}
-                          studentId={st.id}
-                          studentName={st.name}
-                          submissionCount={st.submissionCount}
-                          hasGradedSubmission={st.hasGradedSubmission}
-                          visibleViaGroup={st.visibleViaGroup}
-                        />
-                      ) : (
-                        <RowMenuSlot />
-                      )}
+                      {/* State-fitting actions (ticket 969e0414); empty slot when there are none. */}
+                      <AttemptActionsMenu
+                        testId={test.id}
+                        studentId={st.id}
+                        studentName={st.name}
+                        attempt={st.actions}
+                        isLatest
+                        fullLength={Boolean(st.fullLength)}
+                        fullLengthSummary={
+                          st.fullLength
+                            ? [st.fullLength.total != null ? `Total ${st.fullLength.total}` : flBadge(st.fullLength).label ?? st.fullLength.status, st.fullLength.score?.modules]
+                                .filter(Boolean)
+                                .join(" · ")
+                            : undefined
+                        }
+                        dueDate={test.due_date}
+                        retakePending={st.retakePending}
+                        remove={
+                          st.individual
+                            ? { submissionCount: st.submissionCount, hasGradedSubmission: st.hasGradedSubmission, visibleViaGroup: st.visibleViaGroup }
+                            : null
+                        }
+                        classOnly={st.individual ? undefined : st.groups}
+                      />
                       </RowActions>
                     </Td>
                   </DataRow>

@@ -259,7 +259,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                     : "—"}
                 </Td>
                 <Td kind="actions" sticky="right">
-                  {(row.status === "Submitted" || row.status === "Late") && (
+                  {(row.status === "Submitted" || row.status === "Late" || row.status === "Incomplete") && (
                     <Link
                       href={row.detailHref ?? `/teacher/tests/${row.testId}/results/${row.submissionId}`}
                       className="text-warm-coral-text text-xs hover:underline whitespace-nowrap"

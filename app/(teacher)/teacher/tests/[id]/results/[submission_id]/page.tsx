@@ -44,6 +44,8 @@ interface ModuleBreakdown {
   label: string;
   isCurrent: boolean;
   status: string;
+  /** Module 2 closed without being opened (lib/module2-not-taken). */
+  notTaken?: boolean;
   correctCount: number;
   totalQuestions: number;
   percentage: number | null;
@@ -187,9 +189,10 @@ export default function SubmissionDetailPage() {
   // unfinished.
   const scoreModules: ScoreModule[] = (data.modules ?? []).map((m, i) => ({
     number: i + 1,
-    graded: m.status === "Submitted" || m.status === "Late",
+    graded: (m.status === "Submitted" || m.status === "Late") && !m.notTaken,
     correct: m.correctCount,
     total: m.totalQuestions,
+    notTaken: m.notTaken,
   }));
   if (scoreModules.length === 1 && data.modules?.[0].label === "Module 1") {
     scoreModules.push({ number: 2, graded: false, correct: null, total: null });
@@ -371,9 +374,15 @@ export default function SubmissionDetailPage() {
                   <div>
                     <h2 className="text-charcoal font-semibold text-base">{m.label}</h2>
                     <p className="text-soft-mute text-xs mt-0.5">
-                      {m.correctCount}/{m.totalQuestions} correct
-                      {m.percentage != null && ` · ${m.percentage.toFixed(1)}%`}
-                      {" · "}{fmtTime(m.timeSpentSeconds)}
+                      {m.notTaken ? (
+                        "Not taken: closed before the student opened it"
+                      ) : (
+                        <>
+                          {m.correctCount}/{m.totalQuestions} correct
+                          {m.percentage != null && ` · ${m.percentage.toFixed(1)}%`}
+                          {" · "}{fmtTime(m.timeSpentSeconds)}
+                        </>
+                      )}
                     </p>
                   </div>
                   {m.isCurrent && (

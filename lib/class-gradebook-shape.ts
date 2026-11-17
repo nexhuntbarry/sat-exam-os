@@ -17,6 +17,7 @@
 
 import { attemptScore, averageSat } from "@/lib/score-display";
 import {
+  flBadge,
   flFinished,
   fullLengthAttemptScore,
   groupFullLengthAttempts,
@@ -76,6 +77,8 @@ export interface ShapeGradebookInput {
 }
 
 const isGraded = (s: string) => s === "Submitted" || s === "Late";
+/** Cell label of an attempt whose Module 2 was closed unopened (lib/module2-not-taken). */
+export const INCOMPLETE_LABEL = "Incomplete · Module 2 not taken";
 const moduleRank = (t: string | null | undefined) => (t === "module_1" ? 0 : 1);
 
 export function kindOf(section: string | null, fullLength: boolean): GradebookKind {
@@ -154,10 +157,25 @@ export function sectionCell(testId: string, section: string | null, rows: Gradeb
       href: `/teacher/tests/${testId}/results/${shown.rows[shown.rows.length - 1].id}`,
       takenAt: lastSubmittedAt(shown.rows),
       attemptNumber: shown.rows[0].attempt_number ?? 1,
-      retake: shown === latest ? null : { state: "in-progress", attemptNumber: latest.rows[0].attempt_number ?? null },
+      retake:
+        shown === latest
+          ? null
+          : { state: latest.score.status === "Incomplete" ? "closed" : "in-progress", attemptNumber: latest.rows[0].attempt_number ?? null },
     };
   }
   const a = latest.score;
+  // Module 2 closed without being opened (lib/module2-not-taken): a closed
+  // attempt with no score, Module 1's counts only.
+  if (a.status === "Incomplete") {
+    return {
+      ...emptyCell("closed"),
+      statusLabel: INCOMPLETE_LABEL,
+      detail: a.score?.modules ?? null,
+      href: `/teacher/tests/${testId}/results/${latest.rows[0].id}`,
+      takenAt: lastSubmittedAt(latest.rows),
+      attemptNumber: latest.rows[0].attempt_number ?? 1,
+    };
+  }
   const cell = emptyCell(openState(a.status === "In progress", pastDue));
   // An unfinished attempt keeps its module counts ("M1 20/27 · M2 —").
   return a.status === "In progress" ? { ...cell, detail: a.score?.modules ?? null, attemptNumber: latest.rows[0].attempt_number ?? 1 } : cell;
@@ -171,7 +189,7 @@ function lastGradedRowId(rows: GradebookSubRow[]): string | null {
 
 export type FlGroup = { rw: GradebookSubRow[]; math: GradebookSubRow[]; attemptNumber: number; key: string };
 
-const isClosed = (status: string) => status === "Closed" || status === "Closed — Math not taken";
+const isClosed = (status: string) => status === "Closed" || status === "Closed — Math not taken" || status === "Incomplete";
 
 /**
  * One student's cell on a full-length SAT, from all their attempts on it:
@@ -215,7 +233,12 @@ export function fullLengthCell(
   }
   const s = latest.s;
   if (isClosed(s.status)) {
-    return { ...emptyCell("closed"), statusLabel: s.status, detail: s.score?.modules ?? null, attemptNumber: latest.g.attemptNumber };
+    return {
+      ...emptyCell("closed"),
+      statusLabel: s.status === "Incomplete" ? flBadge(s).label ?? INCOMPLETE_LABEL : s.status,
+      detail: s.score?.modules ?? null,
+      attemptNumber: latest.g.attemptNumber,
+    };
   }
   const started = s.status === "In progress" || s.status === "On break";
   const cell = emptyCell(openState(started, pastDue));

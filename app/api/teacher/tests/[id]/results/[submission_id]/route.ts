@@ -12,6 +12,7 @@ import { flSectionScope, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey
 import { sectionDetailRowId } from "@/lib/full-length-results";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import { teacherQaContentHidden } from "@/lib/teacher-qa";
+import { isModule2NotTaken } from "@/lib/module2-not-taken";
 
 // Two-track access model:
 // 1) admin → unrestricted
@@ -321,34 +322,42 @@ export async function GET(
     module_2_hard: "Module 2 · Hard",
   };
 
-  const modules = siblings.map((sib) => ({
-    submissionId: sib.id,
-    label: TRACK_LABEL[sib.adaptive_track ?? ""] ?? "Module",
-    isCurrent: sib.id === submission.id,
-    status: sib.status,
-    correctCount: sib.correct_count ?? 0,
-    totalQuestions: sib.total_questions ?? 0,
-    percentage: sib.percentage != null ? Number(sib.percentage) : null,
-    scaledScore: sib.scaled_score ?? null,
-    timeSpentSeconds: sib.time_spent_seconds ?? 0,
-    answers: (recordsByModule.get(sib.id) ?? []).map(mapAnswer),
-  }));
+  // A Module 2 closed without being opened (lib/module2-not-taken) is not
+  // a result: no answers listed, left out of the combined numbers.
+  const modules = siblings.map((sib) => {
+    const notTaken = isModule2NotTaken(sib);
+    return {
+      submissionId: sib.id,
+      label: TRACK_LABEL[sib.adaptive_track ?? ""] ?? "Module",
+      isCurrent: sib.id === submission.id,
+      status: sib.status,
+      notTaken,
+      correctCount: sib.correct_count ?? 0,
+      totalQuestions: sib.total_questions ?? 0,
+      percentage: sib.percentage != null ? Number(sib.percentage) : null,
+      scaledScore: notTaken ? null : sib.scaled_score ?? null,
+      timeSpentSeconds: sib.time_spent_seconds ?? 0,
+      answers: notTaken ? [] : (recordsByModule.get(sib.id) ?? []).map(mapAnswer),
+    };
+  });
+  const incomplete = modules.some((m) => m.notTaken);
+  const counted = modules.filter((m) => !m.notTaken);
 
   // Combined headline numbers — when this is a multi-module session
   // the UI should show one Math/R&W score on top, not just the row we
   // navigated to. scaleSectionScore lives in lib/scoring; do it here
   // so the client doesn't have to reach for it again.
   const isMultiModule = modules.length > 1;
-  const correctSum = modules.reduce((s, m) => s + m.correctCount, 0);
-  const totalSum = modules.reduce((s, m) => s + m.totalQuestions, 0);
-  const timeSum = modules.reduce((s, m) => s + m.timeSpentSeconds, 0);
+  const correctSum = counted.reduce((s, m) => s + m.correctCount, 0);
+  const totalSum = counted.reduce((s, m) => s + m.totalQuestions, 0);
+  const timeSum = counted.reduce((s, m) => s + m.timeSpentSeconds, 0);
   const combinedPct =
     totalSum > 0 ? Math.round((correctSum / totalSum) * 1000) / 10 : null;
   // Per-section scaling kept inline to avoid a new import — same table
   // as lib/scoring. For non-multi-module rows the original submission
   // numbers stay in the payload.
   const { scaleSectionScore } = await import("@/lib/scoring");
-  const combinedScaled = combinedPct != null ? scaleSectionScore(combinedPct) : null;
+  const combinedScaled = combinedPct != null && !incomplete ? scaleSectionScore(combinedPct) : null;
 
   // Flat answers stay in the response for backwards-compatible
   // single-module rendering; the new `modules` field is the source of
@@ -422,7 +431,8 @@ export async function GET(
     },
     submission: {
       id: submission.id,
-      status: submission.status,
+      // "Incomplete" = Module 2 closed unopened (lib/module2-not-taken).
+      status: incomplete ? "Incomplete" : submission.status,
       score: submission.score,
       percentage: isMultiModule ? combinedPct : submission.percentage,
       correctCount: isMultiModule ? correctSum : submission.correct_count,

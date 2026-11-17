@@ -15,6 +15,7 @@ import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { teacherQaContentHidden } from "@/lib/teacher-qa";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import {
   FL_ALL_SECTIONS,
   flAttemptKey,
@@ -138,6 +139,7 @@ type SubRow = {
   submitted_at: string | null;
   correct_count: number | null;
   total_questions: number | null;
+  m2_not_taken?: unknown;
 };
 
 /** studentId → display name and class name(s) (class groups, else the profile's class). */
@@ -321,7 +323,7 @@ export async function loadResultPrintouts(
 
   // Resolve requested ids → attempts.
   let picked: SubRow[] = [];
-  const cols = "id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions, module_id";
+  const cols = `id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions, module_id, ${M2_NOT_TAKEN_COLUMN}`;
   if (submissionIds.length > 0) {
     const { data, error } = await db.from("submissions").select(cols).eq("test_id", testId).in("id", submissionIds.slice(0, 500));
     if (error) throw new Error(`printout: submissions lookup failed: ${error.message}`);
@@ -372,7 +374,8 @@ export async function loadResultPrintouts(
       const review = decideAnswerVisibility(input, "class_review");
       if (review.answers) visibility = review;
     }
-    const graded = rows.filter((r) => DONE.has(r.status));
+    // A Module 2 closed unopened has no answers to print (lib/module2-not-taken).
+    const graded = rows.filter((r) => DONE.has(r.status) && !isModule2NotTaken(r));
     const shows = { answers: visibility.answers, explanations: visibility.answers && visibility.explanations && opts.explanations };
 
     const two = rows.length > 1;
@@ -402,7 +405,7 @@ export async function loadResultPrintouts(
   return out;
 }
 
-const SUB_COLS = "id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions, module_id";
+const SUB_COLS = `id, test_id, student_id, status, session_id, adaptive_track, attempt_number, started_at, submitted_at, correct_count, total_questions, module_id, ${M2_NOT_TAKEN_COLUMN}`;
 const byModuleOrder = (a: SubRow, b: SubRow) =>
   (a.adaptive_track === "module_1" ? 0 : 1) - (b.adaptive_track === "module_1" ? 0 : 1) || (a.started_at ?? "").localeCompare(b.started_at ?? "");
 
@@ -490,8 +493,8 @@ async function loadFullLengthPrintouts(
     const shows = { answers: visibility.answers, explanations: visibility.answers && visibility.explanations && opts.explanations };
     const label = (prefix: string, sub: SubRow) => `${prefix} · ${TRACK_LABEL[sub.adaptive_track ?? ""] ?? "Module"}`;
     const graded = [
-      ...(scope.rw ? rw : []).filter((r) => DONE.has(r.status)).map((sub) => ({ sub, label: label("Reading and Writing", sub), section: "rw" as const })),
-      ...(scope.math ? math : []).filter((r) => DONE.has(r.status)).map((sub) => ({ sub, label: label("Math", sub), section: "math" as const })),
+      ...(scope.rw ? rw : []).filter((r) => DONE.has(r.status) && !isModule2NotTaken(r)).map((sub) => ({ sub, label: label("Reading and Writing", sub), section: "rw" as const })),
+      ...(scope.math ? math : []).filter((r) => DONE.has(r.status) && !isModule2NotTaken(r)).map((sub) => ({ sub, label: label("Math", sub), section: "math" as const })),
     ];
     const { modules, grid } = await buildModules(db, graded, shows, opts, contentHidden);
     const ordered = [...rw, ...math];

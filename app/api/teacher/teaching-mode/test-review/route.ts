@@ -6,6 +6,7 @@ import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { teacherQaContentHidden } from "@/lib/teacher-qa";
+import { NOT_M2_NOT_TAKEN_OR } from "@/lib/module2-not-taken";
 
 // GET /api/teacher/teaching-mode/test-review?testId=optional
 // Returns the latest (or specified) published/closed test that the teacher's
@@ -67,7 +68,9 @@ export async function GET(req: Request) {
     .from("submissions")
     .select("id, session_id, test_id, student_id, status, attempt_number, adaptive_track")
     .in("test_id", await expandFullLength(db, [selected.id]))
-    .in("status", ["Submitted", "Late"]);
+    .in("status", ["Submitted", "Late"])
+    // A Module 2 closed unopened has blank "wrong" answers: not data.
+    .or(NOT_M2_NOT_TAKEN_OR);
   if (!seesAllStudents(scope, selected.id)) {
     submissionsQuery = submissionsQuery.in(
       "student_id",

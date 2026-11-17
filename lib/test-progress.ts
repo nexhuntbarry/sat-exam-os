@@ -1,4 +1,5 @@
 import { isModule2Track } from "@/lib/student-exam";
+import { isModule2NotTaken } from "@/lib/module2-not-taken";
 
 export interface ProgressSubmission {
   id?: string;
@@ -12,6 +13,9 @@ export interface ProgressSubmission {
   total_questions?: number | null;
   /** The module served; a Custom test's stage module changes how the score shows (lib/score-display). */
   module_id?: string | null;
+  /** Module 2 closed unopened (lib/module2-not-taken): select metadata or M2_NOT_TAKEN_COLUMN. */
+  metadata?: unknown;
+  m2_not_taken?: unknown;
 }
 
 export interface TestProgress {
@@ -24,7 +28,9 @@ export interface TestProgress {
 }
 
 export interface StudentTestProgress {
-  status: "Not started" | "In progress" | "Submitted";
+  /** Incomplete = Module 1 graded, Module 2 closed without ever being
+   *  opened (lib/module2-not-taken): no total score, Module 1 shown alone. */
+  status: "Not started" | "In progress" | "Submitted" | "Incomplete";
   /** Percent correct across the graded modules of a finished attempt. */
   score: number | null;
   /** Row to open for a finished attempt's detail (the Module 2 row when there is one). */
@@ -44,6 +50,8 @@ export interface ModuleResult {
   correct: number | null;
   /** Questions actually scored (Needs Review questions are left out). */
   total: number | null;
+  /** Module 2 closed without being opened: not a result, shown as "not taken". */
+  notTaken?: boolean;
 }
 
 const graded = (s: string) => s === "Submitted" || s === "Late";
@@ -80,6 +88,23 @@ export function studentTestProgress(
       ? { number: n, graded: true, correct: r.correct_count ?? 0, total: r.total_questions ?? 0 }
       : { number: n, graded: false, correct: null, total: null };
   });
+  // Module 2 closed without ever being opened: Incomplete, Module 1 only.
+  const m2NotTaken = moduleCount === 2 && attempt.find((s) => isModule2NotTaken(s));
+  if (m2NotTaken) {
+    const m1 = moduleRow(1);
+    return {
+      status: "Incomplete",
+      score: null,
+      // The Module 1 result is the only real result of this attempt.
+      detailSubmissionId: m1?.id ?? m2NotTaken.id ?? null,
+      currentModule: null,
+      moduleCount,
+      modules: [
+        modules[0],
+        { number: 2, graded: false, correct: null, total: null, notTaken: true },
+      ],
+    };
+  }
   if (!done) {
     const started = attempt.some((s) => s.status === "In Progress") || gradedRows.length > 0;
     // On Module 2 once its row exists or Module 1 is graded (handoff pending).

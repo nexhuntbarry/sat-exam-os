@@ -16,6 +16,7 @@ import ProgressReport from "@/components/analytics/ProgressReport";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import {
   DataTable,
   HeadRow,
@@ -38,6 +39,7 @@ type ResultRow = {
   session_id: string | null;
   adaptive_track: string | null;
   attempt_number: number | null;
+  m2_not_taken?: unknown;
   tests: {
     test_name: string;
     modules: { module_name: string; section: string } | null;
@@ -63,7 +65,7 @@ async function getStudentResults(studentId: string) {
     .from("submissions")
     .select(`
       id, test_id, student_id, status, correct_count, total_questions,
-      submitted_at, session_id, adaptive_track, attempt_number,
+      submitted_at, session_id, adaptive_track, attempt_number, ${M2_NOT_TAKEN_COLUMN},
       tests!inner(test_name, modules!module_id(module_name, section))
     `)
     .eq("student_id", studentId)

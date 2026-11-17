@@ -15,6 +15,7 @@ import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
 import type { StudentResultRow } from "@/components/analytics/StudentResultsTable";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { attemptScore, averageSat } from "@/lib/score-display";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { fullLengthLinksOrNone, type FullLengthChildren } from "@/lib/full-length";
 import { averageFullLength, flFinished, flSectionScope } from "@/lib/full-length-score";
 import { fullLengthTableRows, loadFullLengthResults } from "@/lib/full-length-results";
@@ -59,7 +60,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, attempt_number,
       scaled_score, scaled_section, session_id, adaptive_track, module_id,
-      tab_switches:metadata->tab_switches,
+      tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
       users!inner(display_name, email, student_profiles(grade, class_group))
     `)
     .eq("test_id", testId), isQa, "users.email")
@@ -86,6 +87,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     session_id: string | null;
     adaptive_track: string | null;
     tab_switches: unknown;
+    m2_not_taken?: unknown;
     users: {
       display_name: string;
       email: string;

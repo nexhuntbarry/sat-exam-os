@@ -5,6 +5,7 @@ import { expandWithChildren, fullLengthLinks } from "@/lib/full-length";
 import { getQaUserIds, onSide } from "@/lib/qa";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { NOT_M2_NOT_TAKEN_OR } from "@/lib/module2-not-taken";
 
 // GET /api/teacher/teaching-mode/skill-stats?domain=Algebra
 // Returns top weakest skills (by error rate) within the requested domain,
@@ -38,7 +39,9 @@ export async function GET(req: Request) {
     .from("submissions")
     .select("id, student_id, test_id")
     .in("test_id", expandWithChildren(testIds, flLinks))
-    .in("status", ["Submitted", "Late"]);
+    .in("status", ["Submitted", "Late"])
+    // A Module 2 closed unopened has blank "wrong" answers: not data.
+    .or(NOT_M2_NOT_TAKEN_OR);
   const { data: subsRaw } = await subsQuery;
   const subs = (subsRaw ?? []).filter((s) => {
     if (!onSide(s.student_id as string, qaUsers, user.isQa)) return false;

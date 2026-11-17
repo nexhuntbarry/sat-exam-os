@@ -20,6 +20,7 @@ import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { getTestSections, inSubjects } from "@/lib/teacher-access";
 import { shapeGradebook, type GradebookSubRow } from "@/lib/class-gradebook-shape";
 import type { Gradebook } from "@/lib/class-gradebook-view";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 
 const SECTIONS = ["Math", "Reading & Writing"] as const;
 
@@ -166,7 +167,7 @@ export async function loadClassGradebook(
           db
             .from("submissions")
             .select(
-              "id, test_id, student_id, status, session_id, adaptive_track, started_at, submitted_at, correct_count, total_questions, attempt_number, module_id",
+              `id, test_id, student_id, status, session_id, adaptive_track, started_at, submitted_at, correct_count, total_questions, attempt_number, module_id, ${M2_NOT_TAKEN_COLUMN}`,
             )
             .in("test_id", expandWithChildren(testIds, links))
             .in("student_id", studentIds)

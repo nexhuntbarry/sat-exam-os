@@ -13,6 +13,7 @@ import {
 } from "@/components/analytics/CrossTestResultsTable";
 import PageIntro from "@/components/shared/PageIntro";
 import { averageSat } from "@/lib/score-display";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
 import {
   attemptGroupKey,
@@ -68,7 +69,7 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
       `
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, scaled_score, scaled_section, submitted_at, time_spent_seconds,
-      session_id, adaptive_track, attempt_number,
+      session_id, adaptive_track, attempt_number, ${M2_NOT_TAKEN_COLUMN},
       users!inner(display_name, email)
     `
     )

@@ -33,6 +33,8 @@ export interface SessionGroupModuleData {
   correct: number;
   total: number;
   percentage: number | null;
+  /** Module 2 closed without being opened: shown as "not taken", not 0/N. */
+  notTaken?: boolean;
 }
 
 export interface VisibilityRowData {
@@ -47,7 +49,7 @@ export interface VisibilityRowData {
   updaterName: string | null;
 }
 
-export type TestRowStatus = "Not started" | "In progress" | "Submitted" | "Late";
+export type TestRowStatus = "Not started" | "In progress" | "Submitted" | "Late" | "Incomplete";
 
 export interface TestRow {
   key: string;
@@ -93,6 +95,7 @@ const STATUS_KEY: Record<TestRowStatus, string> = {
   Late: "statusLate",
   "In progress": "statusInProgress",
   "Not started": "statusNotStarted",
+  Incomplete: "statusIncomplete",
 };
 
 function formatDuration(seconds: number | null): string {
@@ -310,7 +313,8 @@ export default function TestsTable({
           const dueText = g.dueDate ? `${t("due")} ${formatShortDate(g.dueDate)}` : null;
           const assignedText = `${t("assigned")} ${g.assignedAt ? formatShortDate(g.assignedAt) : "—"}`;
           const sectionLabel = sectionShort(g.section);
-          const isDone = g.status === "Submitted" || g.status === "Late";
+          // Incomplete (Module 2 not taken) is closed too: its Module 1 detail is viewable.
+          const isDone = g.status === "Submitted" || g.status === "Late" || g.status === "Incomplete";
 
           return (
             <Fragment key={g.key}>
@@ -484,8 +488,8 @@ export default function TestsTable({
                       {g.modules.map((m) => (
                         <div key={m.submissionId} className="text-xs text-mid-gray">
                           <span className="font-medium">{m.label}:</span>{" "}
-                          {m.correct}/{m.total}
-                          {m.percentage != null
+                          {m.notTaken ? t("moduleNotTaken") : `${m.correct}/${m.total}`}
+                          {!m.notTaken && m.percentage != null
                             ? ` (${m.percentage.toFixed(1)}%)`
                             : ""}
                         </div>

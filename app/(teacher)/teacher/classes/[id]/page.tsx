@@ -7,6 +7,7 @@ import { getTestSections, inSubjects, reachableTestIds } from "@/lib/teacher-acc
 import { getServiceClient } from "@/lib/supabase";
 import { formatShortDateTime } from "@/lib/datetime";
 import { averageSat } from "@/lib/score-display";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey, flFinished, listedTestId, loadFlAttemptMeta, scoreAttemptGroup } from "@/lib/full-length-score";
 import { loadClassGradebook } from "@/lib/class-gradebook";
@@ -87,7 +88,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
           db
             .from("submissions")
             .select(
-              "id, student_id, status, correct_count, total_questions, submitted_at, session_id, adaptive_track, attempt_number, started_at, test_id, tests!inner(test_name)",
+              `id, student_id, status, correct_count, total_questions, submitted_at, session_id, adaptive_track, attempt_number, started_at, test_id, ${M2_NOT_TAKEN_COLUMN}, tests!inner(test_name)`,
             )
             .in("student_id", studentIds)
             .order("id")

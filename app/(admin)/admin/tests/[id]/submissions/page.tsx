@@ -3,7 +3,9 @@ import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
-import GrantRetakeButton from "./GrantRetakeButton";
+import AttemptActionsMenu from "../AttemptActionsMenu";
+import { ATTEMPT_ACTION_COLUMNS, attemptFacts, type AttemptActionRow, type AttemptFacts } from "@/lib/attempt-actions";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
 import { formatDateTimeSeconds, formatShortDate } from "@/lib/datetime";
 import { type AttemptScore } from "@/lib/score-display";
@@ -43,7 +45,7 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
 
   const { data: test } = await db
     .from("tests")
-    .select("id, test_name, status")
+    .select("id, test_name, status, due_date")
     .eq("id", testId)
     .single();
 
@@ -82,6 +84,7 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, attempt_number,
       adaptive_track, module_id, session_id, tab_switches:metadata->tab_switches,
+      answers, m2_started:metadata->module_2_started_at, ${M2_NOT_TAKEN_COLUMN},
       users!inner(display_name, email),
       modules!module_id(module_name)
     `)
@@ -91,7 +94,7 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
     query = query.in("student_id", Array.from(classFilterStudentIds));
   } else if (classFilterStudentIds && classFilterStudentIds.size === 0) {
     // Class exists but has no members — return empty
-    return { test, submissions: [], pendingByStudent: new Set<string>(), classFilterName, classFilterId: classFilter ?? null, classFilterStudentIds, flLinks, flKids, flMeta: null };
+    return { test, submissions: [], pendingByStudent: new Set<string>(), individual: new Set<string>(), groupsOf: new Map<string, string[]>(), classFilterName, classFilterId: classFilter ?? null, classFilterStudentIds, flLinks, flKids, flMeta: null };
   }
 
   const { data: submissions } = await query.order("submitted_at", { ascending: false });
@@ -105,8 +108,29 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
     .is("consumed_at", null);
   const pendingByStudent = new Set((grants ?? []).map((g) => g.student_id as string));
 
+  // Who is assigned individually (the row menu's "Remove from this test…")
+  // and through which classes (a class assignment can't be undone per student).
+  const { data: assignment } = await db
+    .from("test_assignments")
+    .select("student_ids, class_group_ids")
+    .eq("test_id", testId)
+    .maybeSingle();
+  const individual = new Set(((assignment?.student_ids as string[] | null) ?? []));
+  const groupIds = (assignment?.class_group_ids as string[] | null) ?? [];
+  const groupsOf = new Map<string, string[]>();
+  if (groupIds.length > 0) {
+    const [{ data: members }, { data: groupRows }] = await Promise.all([
+      db.from("class_group_members").select("class_group_id, student_id").in("class_group_id", groupIds),
+      db.from("class_groups").select("id, name").in("id", groupIds),
+    ]);
+    const nameOf = new Map(((groupRows ?? []) as { id: string; name: string }[]).map((g) => [g.id, g.name]));
+    for (const m of (members ?? []) as { class_group_id: string; student_id: string }[]) {
+      groupsOf.set(m.student_id, [...(groupsOf.get(m.student_id) ?? []), nameOf.get(m.class_group_id) ?? "Class"]);
+    }
+  }
+
   const flMeta = flKids ? await loadFlAttemptMeta(db, [testId]) : null;
-  return { test, submissions: submissions ?? [], pendingByStudent, classFilterName, classFilterId: classFilter ?? null, classFilterStudentIds, flLinks, flKids, flMeta };
+  return { test, submissions: submissions ?? [], pendingByStudent, individual, groupsOf, classFilterName, classFilterId: classFilter ?? null, classFilterStudentIds, flLinks, flKids, flMeta };
 }
 
 const TRACK_LABEL: Record<string, string> = {
@@ -140,7 +164,7 @@ export default async function TestSubmissionsPage({
   const data = await getSubmissions(id, user.isQa, classParam);
   if (!data) notFound();
 
-  const { test, submissions, pendingByStudent, classFilterName, classFilterId, classFilterStudentIds, flLinks, flKids, flMeta } = data;
+  const { test, submissions, pendingByStudent, individual, groupsOf, classFilterName, classFilterId, classFilterStudentIds, flLinks, flKids, flMeta } = data;
   // Live progress of unfinished attempts + the not-started roster, kept
   // current on the client by polling the same loader's endpoint.
   // A failure here must not take the page down: render without live data
@@ -180,6 +204,10 @@ export default async function TestSubmissionsPage({
     // When the attempt is still in progress but a module is already
     // graded, point the admin at it so they can inspect what's done.
     partialDetailSubmissionId: string | null;
+    /** The row's "…" menu (lib/attempt-actions). */
+    actions: AttemptFacts | null;
+    /** Full-length: the attempt in words for the menu's dialogs. */
+    fullLengthSummary?: string;
   };
 
   // Two-module attempts produce two submission rows sharing one
@@ -237,6 +265,14 @@ export default async function TestSubmissionsPage({
         detailSubmissionId: rwDetail ?? mathDetail ?? sorted[sorted.length - 1].id,
         detailTestId: rwDetail ? flKids.rw! : flKids.math ?? test.id,
         partialDetailSubmissionId: attempt.status === "In progress" ? rwDetail ?? mathDetail : null,
+        actions: {
+          state: attempt.status === "In progress" || attempt.status === "Not started" ? "in_progress" : "finished",
+          twoModules: true,
+          attemptNumber: head.attempt_number ?? 1,
+          modules: [],
+          rowIds: sorted.map((r) => r.id),
+        },
+        fullLengthSummary: [fl.total != null ? `Total ${fl.total}` : badge.label ?? fl.status, fl.score?.modules].filter(Boolean).join(" · "),
       });
       continue;
     }
@@ -270,10 +306,23 @@ export default async function TestSubmissionsPage({
         attempt.status === "In progress"
           ? sorted.find((r) => r.status === "Submitted" || r.status === "Late")?.id ?? null
           : null,
+      actions: attemptFacts(sorted as unknown as AttemptActionRow[]),
     });
   }
 
-  const isDone = (a: Attempt) => a.attempt.status === "Submitted" || a.attempt.status === "Late";
+  // Each student's latest attempt (highest attempt number), the only one
+  // "Reopen Module 2…" is offered on (lib/module2-reopen refuses older ones).
+  const latestKey = new Map<string, Attempt>();
+  for (const a of attempts) {
+    const cur = latestKey.get(a.studentId);
+    if (!cur || a.attemptNumber > cur.attemptNumber || (a.attemptNumber === cur.attemptNumber && (a.startedAt ?? "") > (cur.startedAt ?? ""))) {
+      latestKey.set(a.studentId, a);
+    }
+  }
+
+  // Incomplete (Module 2 closed unopened) is closed too: listed with the finished ones.
+  const isDone = (a: Attempt) =>
+    a.attempt.status === "Submitted" || a.attempt.status === "Late" || a.attempt.status === "Incomplete";
   // Students taking the test right now first (latest start first), then
   // finished attempts, newest submission first.
   attempts.sort((a, b) => {
@@ -403,14 +452,18 @@ export default async function TestSubmissionsPage({
                     <RowActions>
                     <ExpandToggle label={`More about ${a.studentDisplayName}`} />
                     {primary && <RowButton label={primary.label} icon={<Eye size={13} />} href={primary.href} />}
-                    {done && (
-                      <GrantRetakeButton
-                        testId={test.id}
-                        studentId={a.studentId}
-                        studentName={a.studentDisplayName ?? a.studentEmail}
-                        alreadyPending={pendingByStudent.has(a.studentId)}
-                      />
-                    )}
+                    <AttemptActionsMenu
+                      testId={test.id}
+                      studentId={a.studentId}
+                      studentName={a.studentDisplayName ?? a.studentEmail}
+                      attempt={a.actions}
+                      isLatest={latestKey.get(a.studentId)?.key === a.key}
+                      fullLength={a.fullLengthSummary !== undefined}
+                      fullLengthSummary={a.fullLengthSummary}
+                      dueDate={(test.due_date as string | null) ?? null}
+                      retakePending={pendingByStudent.has(a.studentId)}
+                      remove={null}
+                    />
                     </RowActions>
                   </Td>
                 </DataRow>
@@ -431,7 +484,25 @@ export default async function TestSubmissionsPage({
                 <Td priority="md" className="text-soft-mute">—</Td>
                 <Td priority="lg" className="text-soft-mute">—</Td>
                 <Td priority="2xl" className="text-soft-mute">—</Td>
-                <Td kind="actions" sticky="right"><span className="sr-only">No actions</span></Td>
+                <Td kind="actions" sticky="right">
+                  <RowActions>
+                    <AttemptActionsMenu
+                      testId={test.id}
+                      studentId={s.studentId}
+                      studentName={s.name}
+                      attempt={null}
+                      isLatest={false}
+                      dueDate={(test.due_date as string | null) ?? null}
+                      retakePending={false}
+                      remove={
+                        individual.has(s.studentId)
+                          ? { submissionCount: 0, hasGradedSubmission: false, visibleViaGroup: (groupsOf.get(s.studentId) ?? []).length > 0 }
+                          : null
+                      }
+                      classOnly={individual.has(s.studentId) ? undefined : groupsOf.get(s.studentId)}
+                    />
+                  </RowActions>
+                </Td>
               </DataRow>
             ))}
           </tbody>

@@ -39,7 +39,9 @@ export type FullLengthStatus =
   | "Submitted"
   | "Late"
   | "Closed — Math not taken"
-  | "Closed";
+  | "Closed"
+  /** A section's Module 2 was closed without being opened (lib/module2-not-taken). */
+  | "Incomplete";
 
 export interface FullLengthScore {
   /** R&W + Math (400–1600); null until both sections are finished. */
@@ -94,6 +96,7 @@ export function fullLengthAttemptScore(
   let status: FullLengthStatus;
   let current: string | null = null;
   if (rwDone && mathDone) status = rw.status === "Late" || math.status === "Late" ? "Late" : "Submitted";
+  else if (rw.status === "Incomplete" || math.status === "Incomplete") status = "Incomplete";
   else if (isClosed(attempt, mathRows)) status = attempt?.closed_reason === "math_not_started" ? "Closed — Math not taken" : "Closed";
   else if (rwRows.length === 0 && mathRows.length === 0) status = "Not started";
   else if (rwDone && mathRows.length === 0) {
@@ -138,7 +141,8 @@ export function fullLengthAttemptScore(
 
 /** Module 1 / Module 2 cells of a section: "22/27", "—" (open) or "" (not reached). */
 export function flModuleCells(a: AttemptScore): [string, string] {
-  const cell = (m: ScoreModule | undefined) => (!m ? "" : m.graded ? `${m.correct ?? 0}/${m.total ?? 0}` : "—");
+  const cell = (m: ScoreModule | undefined) =>
+    !m ? "" : m.graded ? `${m.correct ?? 0}/${m.total ?? 0}` : m.notTaken ? "not taken" : "—";
   return [cell(a.modules[0]), cell(a.modules[1])];
 }
 
@@ -157,8 +161,13 @@ export function flStatusText(s: FullLengthScore): string {
  * status: "On break" is an in-progress attempt, a closed one is shown in
  * the Late (warning) tone with its own label.
  */
-export function flBadge(s: FullLengthScore): { status: "Not started" | "In progress" | "Submitted" | "Late"; label?: string } {
+export function flBadge(s: FullLengthScore): { status: "Not started" | "In progress" | "Submitted" | "Late" | "Incomplete"; label?: string } {
   switch (s.status) {
+    case "Incomplete":
+      return {
+        status: "Incomplete",
+        label: `Incomplete · ${s.rw.status === "Incomplete" ? "R&W" : "Math"} Module 2 not taken`,
+      };
     case "On break":
       return { status: "In progress", label: "On break" };
     case "Closed — Math not taken":

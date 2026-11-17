@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { attemptScore } from "@/lib/score-display";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { studentClassNames } from "@/lib/result-printout";
 import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
@@ -129,7 +130,7 @@ export async function GET(
     .select(`
       id, student_id, status, correct_count, total_questions, percentage,
       scaled_score, submitted_at, time_spent_seconds, attempt_number,
-      session_id, adaptive_track, module_id, tab_switches:metadata->tab_switches,
+      session_id, adaptive_track, module_id, tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
       users!inner(display_name, email, student_profiles(grade))
     `)
     .eq("test_id", testId)
@@ -162,6 +163,7 @@ export async function GET(
     adaptive_track: string | null;
     module_id: string | null;
     tab_switches: unknown;
+    m2_not_taken?: unknown;
     users: {
       display_name: string;
       email: string;
@@ -242,7 +244,7 @@ export async function GET(
     const { status, score, modules } = attemptScore(sorted, section);
     const moduleCells = (twoModules ? [1, 2] : [1]).map((n) => {
       const m = modules[n - 1];
-      return m && m.graded ? `${m.correct ?? 0} / ${m.total ?? 0}` : "";
+      return m && m.graded ? `${m.correct ?? 0} / ${m.total ?? 0}` : m?.notTaken ? "not taken" : "";
     });
     const submittedAt = sorted
       .map((r) => r.submitted_at)
@@ -256,7 +258,7 @@ export async function GET(
       sp?.grade ?? "",
       classOf.get(head.student_id) ?? "",
       head.attempt_number ?? 1,
-      status,
+      status === "Incomplete" ? "Incomplete (Module 2 not taken)" : status,
       score?.sat ?? "",
       ...moduleCells,
       score?.pct ?? "",

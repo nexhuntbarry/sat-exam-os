@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinks, hideChildTests } from "@/lib/full-length";
 import { getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { getQaUserIds, onSide, scopeIds } from "@/lib/qa";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 
 // GET /api/teacher/tests
 export async function GET() {
@@ -91,7 +92,7 @@ export async function GET() {
   // A full-length SAT's rows are on its children: one attempt under the parent.
   const { data: subData, error: subError } = await scopeIds(db
     .from("submissions")
-    .select("id, test_id, student_id, status, correct_count, total_questions, percentage, session_id, attempt_number, adaptive_track")
+    .select(`id, test_id, student_id, status, correct_count, total_questions, percentage, session_id, attempt_number, adaptive_track, ${M2_NOT_TAKEN_COLUMN}`)
     .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa);
   if (subError) {
     console.error("[teacher/tests/get submissions]", subError);
@@ -109,6 +110,7 @@ export async function GET() {
     session_id: string | null;
     attempt_number: number | null;
     adaptive_track: string | null;
+    m2_not_taken?: unknown;
   };
   const attemptsByTest = new Map<string, Map<string, SubRow[]>>();
   for (const s of asParentRows((subData ?? []) as SubRow[], flLinks, await closedFullLengthAttemptKeys(db, flLinks))) {
@@ -134,6 +136,8 @@ export async function GET() {
     const pcts: number[] = [];
     for (const rows of (attemptsByTest.get(t.id) ?? new Map<string, SubRow[]>()).values()) {
       if (!rows.every((r) => r.status === "Submitted" || r.status === "Late")) continue;
+      // Module 2 closed unopened: Incomplete, not a finished score (lib/module2-not-taken).
+      if (rows.some(isModule2NotTaken)) continue;
       submittedCount++;
       const correct = rows.reduce((n, r) => n + (r.correct_count ?? 0), 0);
       const total = rows.reduce((n, r) => n + (r.total_questions ?? 0), 0);

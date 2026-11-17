@@ -6,6 +6,7 @@ import { getTeacherBankSubjects, getTeacherTestScope, seesAllStudents } from "@/
 import { STUDENT_VISIBLE_QUESTION_STATUS } from "@/lib/student-exam";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { teacherQaOffQuestions } from "@/lib/teacher-qa";
+import { NOT_M2_NOT_TAKEN_OR } from "@/lib/module2-not-taken";
 
 // GET /api/teacher/teaching-mode/skill-questions?skill=Linear+equations&limit=10
 // Returns candidate practice questions for that skill, sorted by class error
@@ -76,7 +77,9 @@ export async function GET(req: Request) {
   let subsQuery = db
     .from("submissions")
     .select("id, test_id, student_id")
-    .in("status", ["Submitted", "Late"]);
+    .in("status", ["Submitted", "Late"])
+    // A Module 2 closed unopened has blank "wrong" answers: not data.
+    .or(NOT_M2_NOT_TAKEN_OR);
   const { data: allSubs } = await subsQuery;
   const [qaUsers, qaTests] = await Promise.all([getQaUserIds(), getQaTestIds()]);
   const subs = (allSubs ?? []).filter((s) => {

@@ -14,7 +14,8 @@ const TONE: Record<Tone, string> = {
   dark: "bg-charcoal/[0.07] text-charcoal border-charcoal/15",
 };
 
-export type AttemptStatus = "Not started" | "In progress" | "Submitted" | "Late";
+/** Incomplete = Module 2 closed without being opened (lib/module2-not-taken). */
+export type AttemptStatus = "Not started" | "In progress" | "Submitted" | "Late" | "Incomplete";
 export type TestStatus = "Draft" | "Published" | "Closed";
 export type ModuleStatus = "Draft" | "In review" | "Ready";
 export type StudentStatus = "Pending" | "Active" | "Suspended";
@@ -28,6 +29,7 @@ const ATTEMPT: Record<AttemptStatus, Tone> = {
   "In progress": "active",
   Submitted: "success",
   Late: "warning",
+  Incomplete: "warning",
 };
 const TEST: Record<TestStatus, Tone> = { Draft: "neutral", Published: "success", Closed: "dark" };
 const MODULE: Record<ModuleStatus, Tone> = { Draft: "neutral", "In review": "warning", Ready: "success" };
@@ -60,6 +62,7 @@ export function attemptStatusLabel(status: string): AttemptStatus {
   if (status === "In Progress" || status === "In progress") return "In progress";
   if (status === "Late") return "Late";
   if (status === "Not started") return "Not started";
+  if (status === "Incomplete") return "Incomplete";
   return "Submitted";
 }
 
@@ -83,7 +86,9 @@ export function StatusBadge(props: Props) {
       text =
         props.status === "In progress" && props.module && props.module.of > 1
           ? `In progress (Module ${props.module.n} of ${props.module.of})`
-          : props.status;
+          : props.status === "Incomplete"
+            ? "Incomplete · Module 2 not taken"
+            : props.status;
       break;
     case "test":
       tone = TEST[props.status] ?? "neutral";

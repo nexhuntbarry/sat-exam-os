@@ -198,7 +198,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
             <EmptyRow colSpan={COL_COUNT}>No students match the current filters.</EmptyRow>
           )}
           {sorted.map((row) => {
-            const canView = row.status === "Submitted" || row.status === "Late";
+            const canView = row.status === "Submitted" || row.status === "Late" || row.status === "Incomplete";
 
             // Rule 4: View results is the visible action (and the row
             // link); Allow retake is in ⋯.

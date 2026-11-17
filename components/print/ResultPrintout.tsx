@@ -82,7 +82,9 @@ export default function ResultPrintout({
               </div>
             )}
             {fl.status !== "Submitted" && fl.status !== "Late" && (
-              <div className="text-sm font-semibold">Not finished ({fl.status})</div>
+              <div className="text-sm font-semibold">
+                {fl.status === "Incomplete" ? "Incomplete · Module 2 not taken" : `Not finished (${fl.status})`}
+              </div>
             )}
           </div>
         ) : (
@@ -95,7 +97,9 @@ export default function ResultPrintout({
               <div className="text-xs uppercase tracking-wide text-mid-gray">Correct</div>
               <div className="text-xl font-semibold">{score?.modules ?? "—"}</div>
             </div>
-            {p.attempt.status !== "Submitted" && p.attempt.status !== "Late" && (
+            {p.attempt.status === "Incomplete" ? (
+              <div className="text-sm font-semibold">Incomplete · Module 2 not taken</div>
+            ) : p.attempt.status !== "Submitted" && p.attempt.status !== "Late" && (
               <div className="text-sm font-semibold">Not finished ({p.attempt.status})</div>
             )}
           </div>

@@ -134,7 +134,7 @@ export function FullLengthResultsTable({
         <tbody>
           {shown.length === 0 && <EmptyRow colSpan={colCount}>No attempts yet.</EmptyRow>}
           {shown.map((row) => {
-            const finished = row.status === "Submitted" || row.status === "Late";
+            const finished = row.status === "Submitted" || row.status === "Late" || row.status === "Incomplete";
             const actions: (RowAction | false)[] = [
               finished && !row.retakePending && {
                 label: grantingFor === row.studentId ? "Granting…" : "Allow retake",

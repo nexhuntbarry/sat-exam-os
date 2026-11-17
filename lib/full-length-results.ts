@@ -25,6 +25,7 @@ import {
   type FlScoreRow,
   type FullLengthScore,
 } from "@/lib/full-length-score";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 
 export type FlResultRow = FlScoreRow & {
   id: string;
@@ -43,6 +44,8 @@ export type FlResultRow = FlScoreRow & {
   module_id: string | null;
   /** metadata.tab_switches of the module row (lib/tab-switches). */
   tab_switches?: unknown;
+  /** lib/module2-not-taken M2_NOT_TAKEN_COLUMN. */
+  m2_not_taken?: unknown;
   users: {
     display_name: string | null;
     email: string;
@@ -95,7 +98,7 @@ export async function loadFullLengthResults(
       .select(`
         id, test_id, student_id, status, correct_count, total_questions, percentage,
         submitted_at, time_spent_seconds, attempt_number, session_id, adaptive_track, started_at, module_id,
-        tab_switches:metadata->tab_switches,
+        tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
         users!inner(display_name, email, student_profiles(grade))
       `)
       .in("test_id", childIds);

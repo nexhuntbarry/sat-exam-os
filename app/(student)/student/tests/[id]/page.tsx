@@ -16,6 +16,8 @@ import {
 } from "@/lib/student-exam";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
 import { module2RecoveryBlock } from "@/lib/module2-handoff";
+import { isModule2NotTaken } from "@/lib/module2-not-taken";
+import { getTranslations } from "next-intl/server";
 import { loadTimeMultiplier } from "@/lib/full-length-admin";
 
 async function getTestInfo(testId: string, studentId: string) {
@@ -122,6 +124,7 @@ async function getTestInfo(testId: string, studentId: string) {
       }
     | null = null;
   let combinedPct: number | null = null;
+  let m2NotTaken = false;
   // Module 1 graded but no Module 2 row (the handoff failed or the
   // student crashed before it was created): the attempt is NOT finished.
   let needsModule2 = false;
@@ -140,9 +143,12 @@ async function getTestInfo(testId: string, studentId: string) {
       !sessionRows.some((s) => isModule2Track(s.adaptive_track));
     module1SubmittedAt =
       (sessionRows.find((s) => s.adaptive_track === "module_1")?.submitted_at as string | null) ?? null;
+    // Module 2 closed before it was opened: Module 1 is the only result.
+    m2NotTaken = sessionRows.some(isModule2NotTaken);
     if (sessionRows.length > 1 && allSubmitted) {
-      const correct = sessionRows.reduce((a, s) => a + (s.correct_count ?? 0), 0);
-      const total = sessionRows.reduce((a, s) => a + (s.total_questions ?? 0), 0);
+      const counted = sessionRows.filter((s) => !isModule2NotTaken(s));
+      const correct = counted.reduce((a, s) => a + (s.correct_count ?? 0), 0);
+      const total = counted.reduce((a, s) => a + (s.total_questions ?? 0), 0);
       combinedPct = total > 0 ? Math.round((correct / total) * 1000) / 10 : 0;
     }
     // Headline row: any In Progress module wins (a submitted Module 1
@@ -193,6 +199,7 @@ async function getTestInfo(testId: string, studentId: string) {
     module2Meta,
     isTwoModule,
     combinedPct,
+    m2NotTaken,
     needsModule2,
     // Past the due date a missing Module 2 can only be opened within 24 h
     // of Module 1 (same rule as the server's recovery).
@@ -224,8 +231,9 @@ export default async function StudentTestLandingPage({
   }
   const data = await getTestInfo(id, user.userId);
   if (!data) notFound();
+  const tm = await getTranslations("m2NotTaken");
 
-  const { test, isAssigned, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, needsModule2, module2Closed, hasRetakeGrant, attemptMultiplier } = data;
+  const { test, isAssigned, canOpenClassReview, questionCount, submission, module2Meta, isTwoModule, combinedPct, m2NotTaken, needsModule2, module2Closed, hasRetakeGrant, attemptMultiplier } = data;
   const mod = test.modules as unknown as
     | { module_name: string; section: string; module_number: number | null }
     | null;
@@ -312,7 +320,7 @@ export default async function StudentTestLandingPage({
           <div className="space-y-3">
             <div className="p-4 bg-warm-amber/10 border border-warm-amber/20 rounded-xl text-center">
               <div className="text-warm-amber font-semibold mb-1">
-                Test Submitted{combinedPct != null ? " · combined" : ""}
+                {m2NotTaken ? tm("badge") : <>Test Submitted{combinedPct != null ? " · combined" : ""}</>}
               </div>
               <div className="text-charcoal text-2xl font-bold">
                 {combinedPct != null

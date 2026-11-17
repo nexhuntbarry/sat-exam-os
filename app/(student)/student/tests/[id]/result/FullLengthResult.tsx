@@ -7,6 +7,7 @@ import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
 import { loadFlContext } from "@/lib/full-length-attempt";
 import {
+  flBadge,
   flFinished,
   flStatusText,
   fullLengthAttemptScore,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/full-length-score";
 import { isCustomRows, type AttemptScore } from "@/lib/score-display";
 import { officialBreakdownRow } from "@/lib/sat-skills";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import AnswerReviewItem, { type AnswerDetail } from "./AnswerReviewItem";
 
 // Result of a full-length SAT (plan Phase 3): Total /1600, R&W and Math
@@ -92,7 +94,7 @@ export default async function FullLengthResult({
     .from("submissions")
     .select(
       "id, test_id, student_id, status, correct_count, total_questions, percentage, adaptive_track, session_id, " +
-        "attempt_number, started_at, submitted_at, time_spent_seconds, module_id",
+        `attempt_number, started_at, submitted_at, time_spent_seconds, module_id, ${M2_NOT_TAKEN_COLUMN}`,
     )
     .in("test_id", [ctx.rw.id, ctx.math.id])
     .eq("student_id", studentId);
@@ -126,7 +128,7 @@ export default async function FullLengthResult({
 
   const section: "rw" | "math" = sectionParam === "math" ? "math" : "rw";
   const sectionRows = (section === "rw" ? rwRows : mathRows)
-    .filter((r) => DONE.has(r.status))
+    .filter((r) => DONE.has(r.status) && !isModule2NotTaken(r))
     .sort((a, b) => (a.adaptive_track === "module_1" ? 0 : 1) - (b.adaptive_track === "module_1" ? 0 : 1));
   const sectionTestId = section === "rw" ? ctx.rw.id : ctx.math.id;
   const href = (s: "rw" | "math") => `/student/tests/${testId}/result?attempt=${attemptNumber}&section=${s}`;
@@ -206,7 +208,9 @@ export default async function FullLengthResult({
           <Clock size={20} className="text-warm-amber shrink-0 mt-0.5" />
           <div className="space-y-1">
             <div className="text-charcoal font-semibold text-sm">
-              {score.status === "Closed — Math not taken"
+              {score.status === "Incomplete"
+                ? `${flBadge(score).label} — no total score for this attempt`
+                : score.status === "Closed — Math not taken"
                 ? "Math wasn't taken — no total score for this attempt"
                 : score.status.startsWith("Closed")
                 ? "This attempt is closed — no total score"

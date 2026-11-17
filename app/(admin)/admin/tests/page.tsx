@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { getServiceClient } from "@/lib/supabase";
 import { summarizeTestProgress } from "@/lib/test-progress";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import Link from "next/link";
 import { Plus, ClipboardList } from "lucide-react";
 import PageIntro from "@/components/shared/PageIntro";
@@ -30,7 +31,7 @@ async function getTests(viewerIsQa: boolean): Promise<{ rows: TestRow[]; schedul
 
   const [{ data: assignments }, { data: submissions }] = await Promise.all([
     db.from("test_assignments").select("test_id, teacher_ids, student_ids, class_group_ids").in("test_id", testIds),
-    db.from("submissions").select("test_id, student_id, status, session_id, adaptive_track, started_at, attempt_number").in("test_id", expandWithChildren(testIds, flLinks)),
+    db.from("submissions").select(`test_id, student_id, status, session_id, adaptive_track, started_at, attempt_number, ${M2_NOT_TAKEN_COLUMN}`).in("test_id", expandWithChildren(testIds, flLinks)),
   ]);
   // A full-length SAT's rows are on its children: one attempt under the parent.
   const progressRows = asParentRows(submissions ?? [], flLinks, await closedFullLengthAttemptKeys(db, flLinks));

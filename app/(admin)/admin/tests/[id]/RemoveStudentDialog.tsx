@@ -2,9 +2,8 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { UserMinus, X } from "lucide-react";
+import { X } from "lucide-react";
 import { Portal } from "@/components/ui/Portal";
-import { RowActionsMenu } from "@/components/ui/data-table";
 
 interface Props {
   testId: string;
@@ -16,18 +15,21 @@ interface Props {
   hasGradedSubmission: boolean;
   /** Still sees the test through an assigned class group after removal. */
   visibleViaGroup: boolean;
+  /** Closes the dialog (the row's "…" menu opened it). */
+  onClose: () => void;
 }
 
-export default function RemoveStudentButton({
+/** "Remove from this test…" confirmation, opened from the row's "…" menu (AttemptActionsMenu). */
+export default function RemoveStudentDialog({
   testId,
   studentId,
   studentName,
   submissionCount,
   hasGradedSubmission,
   visibleViaGroup,
+  onClose,
 }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   // An unfinished attempt is almost always junk once the test is taken
   // away, so default to deleting it; graded results default to kept.
   // A student who still sees the test via a class group keeps their work
@@ -64,7 +66,7 @@ export default function RemoveStudentButton({
         setDone(true);
         return;
       }
-      setOpen(false);
+      onClose();
       startTransition(() => router.refresh());
     } catch {
       setMessage("Network error");
@@ -74,19 +76,11 @@ export default function RemoveStudentButton({
   }
 
   function close() {
-    setOpen(false);
+    onClose();
     if (done) startTransition(() => router.refresh());
   }
 
   return (
-    <>
-      {/* Row ⋯ menu (table standard rule 4: risky actions live in ⋯). */}
-      <RowActionsMenu
-        label={`Actions for ${studentName}`}
-        items={[{ label: "Remove from test…", icon: <UserMinus size={14} />, tone: "danger", onSelect: () => setOpen(true) }]}
-      />
-
-      {open && (
         <Portal>
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4">
           <div className="bg-surface border border-divider rounded-2xl w-full max-w-md shadow-2xl">
@@ -150,7 +144,5 @@ export default function RemoveStudentButton({
           </div>
         </div>
         </Portal>
-      )}
-    </>
   );
 }

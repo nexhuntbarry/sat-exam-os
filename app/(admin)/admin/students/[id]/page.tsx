@@ -8,6 +8,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, isQaEmail, onSide, scopeIds } from "@/lib/qa";
 import { getStudentAssignments } from "@/lib/student-exam";
 import { studentTestProgress } from "@/lib/test-progress";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { getTestSections } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import { isCustomRows, scoreDisplay, type ScoreModule } from "@/lib/score-display";
@@ -77,7 +78,7 @@ async function getStudentSubmissions(studentId: string) {
     .select(
       `id, test_id, student_id, status, score, correct_count, total_questions, percentage,
        started_at, submitted_at, time_spent_seconds, attempt_number,
-       scaled_score, scaled_section, session_id, adaptive_track, module_id,
+       scaled_score, scaled_section, session_id, adaptive_track, module_id, ${M2_NOT_TAKEN_COLUMN},
        tests!inner(test_name),
        modules!module_id(module_name, section, module_number)`,
     )
@@ -104,6 +105,7 @@ type SubmissionRow = {
   session_id: string | null;
   adaptive_track: string | null;
   module_id: string | null;
+  m2_not_taken?: unknown;
   tests: { test_name: string };
   modules: { module_name: string; section: string; module_number: number | null } | null;
 };
@@ -128,6 +130,8 @@ type SessionGroupModule = {
   total: number;
   percentage: number | null;
   scaledScore: number | null;
+  /** Module 2 closed without being opened (lib/module2-not-taken). */
+  notTaken: boolean;
 };
 
 type SessionGroup = {
@@ -179,7 +183,8 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
 
   const toModuleView = (r: SubmissionRow): SessionGroupModule => ({
     label: MODULE_LABEL[r.adaptive_track ?? ""] ?? "Module",
-    graded: r.status === "Submitted" || r.status === "Late",
+    graded: (r.status === "Submitted" || r.status === "Late") && !isModule2NotTaken(r),
+    notTaken: isModule2NotTaken(r),
     submissionId: r.id,
     correct: r.correct_count ?? 0,
     total: r.total_questions ?? 0,
@@ -228,16 +233,22 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
       if (ra !== rb) return ra - rb;
       return (a.started_at ?? "").localeCompare(b.started_at ?? "");
     });
-    const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
-    const time = sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
+    // A Module 2 closed without being opened is not a result: the attempt
+    // is Incomplete, counted on Module 1 alone, with no SAT score.
+    const incomplete = sorted.some(isModule2NotTaken);
+    const counted = sorted.filter((r) => !isModule2NotTaken(r));
+    const correct = counted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
+    const total = counted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
+    const time = counted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
     const pct =
       total > 0 ? Math.round((correct / total) * 100 * 10) / 10 : null;
-    const scaled = pct != null ? scaleSectionScore(pct) : null;
+    const scaled = pct != null && !incomplete ? scaleSectionScore(pct) : null;
     // Headline status: if any row is still In Progress, the attempt is
     // mid-flight. Otherwise Late if any Late, else Submitted.
     const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
+    const status = incomplete
+      ? "Incomplete"
+      : statuses.includes("In Progress")
       ? "In Progress"
       : statuses.includes("Late")
       ? "Late"
@@ -524,7 +535,7 @@ export default async function AdminStudentDetailPage({
   const scoreOfGroup = (g: SessionGroup) => {
     const count = g.track ? progressOf.get(g.testId)?.moduleCount ?? 1 : 1;
     const mods: ScoreModule[] = g.isMultiModule
-      ? g.modules.map((m, i) => ({ number: i + 1, graded: m.graded, correct: m.correct, total: m.total }))
+      ? g.modules.map((m, i) => ({ number: i + 1, graded: m.graded, correct: m.correct, total: m.total, notTaken: m.notTaken }))
       : [{ number: 1, graded: g.status !== "In Progress", correct: g.correct, total: g.total }];
     for (let n = mods.length + 1; n <= count; n++) mods.push({ number: n, graded: false, correct: null, total: null });
     return scoreDisplay(mods, g.section, { custom: customTestIds.has(g.testId) });
@@ -552,7 +563,13 @@ export default async function AdminStudentDetailPage({
     const progress = progressOf.get(g.testId);
     const isLatest = latestGroupKey.get(g.testId) === g.key;
     let status: TestRowStatus =
-      g.status === "In Progress" ? "In progress" : g.status === "Late" ? "Late" : "Submitted";
+      g.status === "In Progress"
+        ? "In progress"
+        : g.status === "Incomplete"
+          ? "Incomplete"
+          : g.status === "Late"
+            ? "Late"
+            : "Submitted";
     if (isLatest && progress && progress.status !== "Submitted") status = progress.status;
     return {
       key: g.key,
@@ -580,6 +597,7 @@ export default async function AdminStudentDetailPage({
         correct: m.correct,
         total: m.total,
         percentage: m.percentage,
+        notTaken: m.notTaken,
       })),
       visibility,
       score: scoreOfGroup(g),
@@ -610,13 +628,15 @@ export default async function AdminStudentDetailPage({
       };
     }
     const rows = [...g.rw, ...g.math];
-    const graded = rows.filter((r) => r.status === "Submitted" || r.status === "Late");
+    const graded = rows.filter((r) => (r.status === "Submitted" || r.status === "Late") && !isModule2NotTaken(r));
     const correct = graded.reduce((n, r) => n + (r.correct_count ?? 0), 0);
     const total = graded.reduce((n, r) => n + (r.total_questions ?? 0), 0);
     const [rwM1, rwM2] = flModuleCells(g.score.rw);
     const [mathM1, mathM2] = flModuleCells(g.score.math);
     const status: TestRowStatus = flFinished(g.score)
       ? (g.score.status as TestRowStatus)
+      : g.score.status === "Incomplete"
+      ? "Incomplete"
       : g.score.status.startsWith("Closed")
       ? "Late"
       : "In progress";
@@ -654,6 +674,7 @@ export default async function AdminStudentDetailPage({
         correct: r.correct_count ?? 0,
         total: r.total_questions ?? 0,
         percentage: r.percentage != null ? Number(r.percentage) : null,
+        notTaken: isModule2NotTaken(r),
       })),
       visibility,
       score: g.score.score,

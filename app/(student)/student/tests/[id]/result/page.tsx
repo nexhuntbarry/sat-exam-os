@@ -13,6 +13,8 @@ import { studentReportsEnabledFor } from "@/lib/student-reports";
 import { getAnswerVisibility } from "@/lib/answer-visibility";
 import AnswerReviewItem from "./AnswerReviewItem";
 import FullLengthResult from "./FullLengthResult";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
+import { getTranslations } from "next-intl/server";
 
 const TRACK_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -33,6 +35,7 @@ type SessionRow = {
   time_spent_seconds: number | null;
   started_at: string | null;
   module_id?: string | null;
+  m2_not_taken?: unknown;
 };
 
 async function getResult(testId: string, studentId: string, submissionId?: string) {
@@ -43,7 +46,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     .select(`
       id, status, score, correct_count, total_questions, percentage,
       started_at, submitted_at, time_spent_seconds, attempt_number,
-      scaled_score, scaled_section, session_id, adaptive_track, module_id,
+      scaled_score, scaled_section, session_id, adaptive_track, module_id, ${M2_NOT_TAKEN_COLUMN},
       tests!inner(
         test_name, module_id, module_2_id, is_adaptive, question_ids,
         modules!module_id(module_name, section)
@@ -90,7 +93,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     const { data: rows } = await db
       .from("submissions")
       .select(
-        "id, status, percentage, correct_count, total_questions, scaled_score, session_id, adaptive_track, time_spent_seconds, started_at, module_id",
+        `id, status, percentage, correct_count, total_questions, scaled_score, session_id, adaptive_track, time_spent_seconds, started_at, module_id, ${M2_NOT_TAKEN_COLUMN}`,
       )
       .eq("session_id", submissionWithSession.session_id)
       .order("started_at", { ascending: true });
@@ -127,7 +130,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
     if (!visibility.answers) return [];
     if (sessionRows && sessionRows.length > 1) {
       return sessionRows
-        .filter((r) => r.status === "Submitted" || r.status === "Late")
+        .filter((r) => (r.status === "Submitted" || r.status === "Late") && !isModule2NotTaken(r))
         .map((r) => r.id);
     }
     return [submission.id];
@@ -178,7 +181,7 @@ async function getResult(testId: string, studentId: string, submissionId?: strin
   // when per-question answers are hidden.
   const breakdownSubmissionIds =
     sessionRows && sessionRows.length > 0
-      ? sessionRows.filter((r) => r.status === "Submitted" || r.status === "Late").map((r) => r.id)
+      ? sessionRows.filter((r) => (r.status === "Submitted" || r.status === "Late") && !isModule2NotTaken(r)).map((r) => r.id)
       : [submission.id];
   const { data: breakdownRecords } = await db
     .from("answer_records")
@@ -300,6 +303,7 @@ export default async function StudentResultPage({
     total: number;
     timeSeconds: number;
     isCurrent: boolean;
+    notTaken: boolean;
   };
   let combined: {
     correct: number;
@@ -309,10 +313,15 @@ export default async function StudentResultPage({
     module2: SessionRowView | null;
   } | null = null;
 
+  // Module 2 closed before the student opened it (lib/module2-not-taken):
+  // no total, Module 1 alone, Module 2 shown as "Not taken".
+  const m2NotTaken = (sessionRows ?? []).some(isModule2NotTaken);
+  const tm = await getTranslations("m2NotTaken");
   if (isAdaptiveSession && sessionRows) {
-    const totalCorrect = sessionRows.reduce((s, r) => s + (r.correct_count ?? 0), 0);
-    const totalQs = sessionRows.reduce((s, r) => s + (r.total_questions ?? 0), 0);
-    const combinedTime = sessionRows.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
+    const counted = sessionRows.filter((r) => !isModule2NotTaken(r));
+    const totalCorrect = counted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
+    const totalQs = counted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
+    const combinedTime = counted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
     const view = (r: SessionRow): SessionRowView => ({
       id: r.id,
       label: TRACK_LABEL[r.adaptive_track ?? ""] ?? "Module",
@@ -320,6 +329,7 @@ export default async function StudentResultPage({
       total: r.total_questions ?? 0,
       timeSeconds: r.time_spent_seconds ?? 0,
       isCurrent: r.id === submission.id,
+      notTaken: isModule2NotTaken(r),
     });
     const m1 = sessionRows.find((r) => r.adaptive_track === "module_1") ?? null;
     // Non-adaptive two-module tests tag the second submission as
@@ -373,6 +383,16 @@ export default async function StudentResultPage({
         </div>
       )}
 
+      {m2NotTaken && (
+        <div className="bg-warm-amber/10 border border-warm-amber/30 rounded-2xl p-5 flex items-start gap-3">
+          <Clock size={20} className="text-warm-amber shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="text-charcoal font-semibold text-sm">{tm("studentTitle")}</div>
+            <div className="text-mid-gray text-xs leading-relaxed">{tm("studentBody")}</div>
+          </div>
+        </div>
+      )}
+
       {/* Score card — SAT section score once every module is in, then
           per-module correct counts; % correct is secondary. Two-module
           sessions also link to each module's own answers. */}
@@ -411,7 +431,7 @@ export default async function StudentResultPage({
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-charcoal font-semibold text-sm">{m.label}</span>
                   <span className="text-mid-gray text-sm">
-                    {m.correct}/{m.total} correct
+                    {m.notTaken ? tm("moduleNotTaken") : `${m.correct}/${m.total} correct`}
                   </span>
                 </div>
               </Link>

@@ -11,6 +11,7 @@ import { formatShortDate } from "@/lib/datetime";
 import { getAssignedTestIds, getInProgressOrPendingM2TestIds, isModule2Track } from "@/lib/student-exam";
 import { getTestSections } from "@/lib/teacher-access";
 import { attemptScore } from "@/lib/score-display";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { fullLengthAttemptScore } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
@@ -44,6 +45,7 @@ type TestSubmissionRow = {
   attempt_number: number | null;
   session_id: string | null;
   adaptive_track: string | null;
+  m2_not_taken?: unknown;
 };
 
 type TestAttemptModule = {
@@ -216,7 +218,7 @@ async function getStudentTests(studentId: string) {
       .order("due_date", { ascending: true }),
     db.from("submissions")
       .select(
-        "test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track, module_id",
+        `test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track, module_id, ${M2_NOT_TAKEN_COLUMN}`,
       )
       .eq("student_id", studentId)
       .in("test_id", expandWithChildren(testIds, flLinks))
@@ -281,7 +283,12 @@ async function getStudentTests(studentId: string) {
       : latestRows.length > 0
       ? attemptScore(latestRows.map((r) => ({ ...r, student_id: studentId })), sectionOf.get(t.id)).score
       : null;
-    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score, resumeOnly: resumeOnlyIds.has(t.id) };
+    // Module 2 closed before the student opened it: closed, but Incomplete
+    // (no total; lib/module2-not-taken). Full-length: either section's.
+    const incomplete =
+      testStatus === "Submitted" &&
+      (flKids ? flAttempt : latestRows).some((r) => isModule2NotTaken(r));
+    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score, incomplete, resumeOnly: resumeOnlyIds.has(t.id) };
   });
 }
 
@@ -403,7 +410,9 @@ export default async function StudentTestsPage() {
 
               // Status string (never wraps)
               const statusLabel =
-                test.testStatus === "Submitted"
+                test.incomplete
+                  ? t("status.incomplete")
+                  : test.testStatus === "Submitted"
                   ? t("status.submitted")
                   : test.testStatus === "In Progress"
                   ? isTwoModule
@@ -414,7 +423,9 @@ export default async function StudentTestsPage() {
                   : t("status.notStarted");
 
               const badgeStatus: AttemptStatus =
-                test.testStatus === "Submitted"
+                test.incomplete
+                  ? "Incomplete"
+                  : test.testStatus === "Submitted"
                   ? "Submitted"
                   : test.testStatus === "In Progress"
                   ? "In progress"

@@ -11,6 +11,7 @@ import {
 import { getServiceClient } from "@/lib/supabase";
 import { getStudentAssignments } from "@/lib/student-exam";
 import { studentTestProgress } from "@/lib/test-progress";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { attemptScore, averageSat, type ScoreDisplay } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { flStatusText, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, scopedFlScore } from "@/lib/full-length-score";
@@ -89,7 +90,7 @@ async function loadStudent(
     .from("submissions")
     .select(
       `id, test_id, student_id, status, score, percentage, correct_count, total_questions,
-       started_at, submitted_at, session_id, adaptive_track, attempt_number, module_id,
+       started_at, submitted_at, session_id, adaptive_track, attempt_number, module_id, ${M2_NOT_TAKEN_COLUMN},
        tests!inner(id, test_name, due_date, is_adaptive, module_2_id)`,
     )
     .eq("student_id", studentId)
@@ -212,6 +213,9 @@ async function loadStudent(
     );
     const progress = progressOf(head.test_id);
     if (isLatest && progress.status !== "Submitted") status = progress.status;
+    // Module 2 closed unopened (lib/module2-not-taken): Incomplete, also on an older attempt.
+    const attempt = attemptScore(sorted, sectionOf.get(head.test_id));
+    if (attempt.status === "Incomplete") status = "Incomplete";
     return {
       // Detail page stitches both modules via session_id from the last one.
       id: last.id,
@@ -227,7 +231,7 @@ async function loadStudent(
       assignedVia: assignedVia(head.test_id),
       assignedAt: assignments.get(head.test_id)?.assignedAt ?? null,
       hasSubmission: true,
-      score: attemptScore(sorted, sectionOf.get(head.test_id)).score,
+      score: attempt.score,
       submittedAt: sorted.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
       href: undefined as string | undefined,
       fullLength: false,
@@ -274,7 +278,7 @@ async function loadStudent(
       testName: p?.test_name ?? "—",
       dueDate: p?.due_date ?? null,
       section: "Full-length SAT",
-      status: done ? fl.status : fl.status === "Not started" ? "Not started" : fl.status.startsWith("Closed") ? flStatusText(fl) : "In progress",
+      status: done || fl.status === "Incomplete" ? fl.status : fl.status === "Not started" ? "Not started" : fl.status.startsWith("Closed") ? flStatusText(fl) : "In progress",
       module: null,
       assignedVia: assignedVia(parent),
       assignedAt: assignments.get(parent)?.assignedAt ?? null,
@@ -436,7 +440,7 @@ export default async function TeacherStudentResultsPage({
               </EmptyRow>
             )}
             {tests.map((s) => {
-              const isDone = s.status === "Submitted" || s.status === "Late";
+              const isDone = s.status === "Submitted" || s.status === "Late" || s.status === "Incomplete";
               const dueStr = s.dueDate ? formatShortDate(s.dueDate) : null;
               const assignedStr = s.assignedAt ? formatShortDate(s.assignedAt) : "—";
               const submittedStr = s.submittedAt

@@ -3,6 +3,7 @@ import type { AnswerRow, Occasion } from "@/lib/score-analysis";
 import { attemptScore } from "@/lib/score-display";
 import type { ProgressSubmission } from "@/lib/test-progress";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 
 // Every graded answer for a student, flattened for the strengths/weaknesses
 // breakdown (is_correct + the question's section/domain/skill).
@@ -10,10 +11,13 @@ export async function getStudentBreakdownRows(studentId: string): Promise<Answer
   const db = getServiceClient();
   const { data: subs } = await db
     .from("submissions")
-    .select("id")
+    .select(`id, status, adaptive_track, ${M2_NOT_TAKEN_COLUMN}`)
     .eq("student_id", studentId)
     .in("status", ["Submitted", "Late"]);
-  const ids = (subs ?? []).map((s) => s.id);
+  // A Module 2 closed unopened has blank "wrong" answers: not data.
+  const ids = ((subs ?? []) as { id: string; status: string; adaptive_track: string | null; m2_not_taken?: unknown }[])
+    .filter((s) => !isModule2NotTaken(s))
+    .map((s) => s.id);
   if (ids.length === 0) return [];
   // Every test the student took: easily past the 1000-row page cap.
   const { data } = await fetchAllRows((from, to) =>
@@ -41,7 +45,7 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
   const db = getServiceClient();
   const { data: subs } = await db
     .from("submissions")
-    .select("id, student_id, status, session_id, adaptive_track, module_id, correct_count, total_questions, submitted_at, tests!inner(test_name)")
+    .select(`id, student_id, status, session_id, adaptive_track, module_id, correct_count, total_questions, submitted_at, ${M2_NOT_TAKEN_COLUMN}, tests!inner(test_name)`)
     .eq("student_id", studentId)
     .in("status", ["Submitted", "Late"]);
   const rows = (subs ?? []) as unknown as (ProgressSubmission & {
@@ -55,7 +59,7 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
     db
       .from("answer_records")
       .select("submission_id, is_correct, questions!inner(section, domain, skill)")
-      .in("submission_id", rows.map((r) => r.id))
+      .in("submission_id", rows.filter((r) => !isModule2NotTaken(r)).map((r) => r.id))
       .order("id")
       .range(from, to),
   );

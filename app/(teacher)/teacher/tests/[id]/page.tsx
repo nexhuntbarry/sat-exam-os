@@ -12,6 +12,7 @@ import ClassReviewButton from "@/components/tests/ClassReviewButton";
 import { teacherQaOffIds } from "@/lib/teacher-qa";
 import { formatDate, formatDateTime, formatShortDate } from "@/lib/datetime";
 import { averageSat, type AttemptScore } from "@/lib/score-display";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { expandFullLength, fullLengthLinksOrNone, type FullLengthLinks } from "@/lib/full-length";
 import {
   attemptGroupKey,
@@ -87,7 +88,7 @@ async function getTeacherTest(
     .select(`
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, session_id, adaptive_track, attempt_number,
-      tab_switches:metadata->tab_switches,
+      tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
       users!inner(display_name, email)
     `)
     .in("test_id", isFullLength ? await expandFullLength(db, [testId]) : [testId]), user.isQa, "users.email")
@@ -142,6 +143,8 @@ type RawSubmission = {
   session_id: string | null;
   adaptive_track: string | null;
   tab_switches: unknown;
+  /** lib/module2-not-taken M2_NOT_TAKEN_COLUMN. */
+  m2_not_taken?: unknown;
   users: { display_name: string; email: string };
 };
 
@@ -157,7 +160,9 @@ type SubmissionAttempt = {
   tabSwitches: number | null;
 };
 
-const attemptDone = (a: SubmissionAttempt) => a.attempt.status === "Submitted" || a.attempt.status === "Late";
+// Incomplete (Module 2 closed unopened) is closed too, just without a total.
+const attemptDone = (a: SubmissionAttempt) =>
+  a.attempt.status === "Submitted" || a.attempt.status === "Late" || a.attempt.status === "Incomplete";
 
 // Two-module attempts produce two submission rows sharing one
 // session_id; collapse them into one attempt scored with the shared

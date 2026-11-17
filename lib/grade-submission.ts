@@ -144,7 +144,7 @@ export interface FinalizeSubmissionInput {
   answersOverride?: Record<string, string>;
   /** Extra columns written in the same claiming UPDATE (e.g. metadata). */
   extraUpdates?: Record<string, unknown>;
-  /** Cron closing a Module 2 that was never opened: no time was spent, and
+  /** Cron (or admin force-submit) closing a Module 2 that was never opened: no time was spent, and
    *  metadata.auto_closed_unopened marks it so analytics can skip it. */
   autoClosedUnopened?: boolean;
   db: SupabaseClient;

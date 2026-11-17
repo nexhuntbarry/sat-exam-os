@@ -4,6 +4,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { forbidCrossSide } from "@/lib/qa";
 import { finalizeSubmission } from "@/lib/grade-submission";
 import { ensureModule2, HANDOFF_TEST_COLUMNS } from "@/lib/module2-handoff";
+import { isModule2Track, moduleStartedAtIso } from "@/lib/student-exam";
 
 // POST /api/admin/submissions/[id]/force-submit
 //
@@ -91,6 +92,14 @@ export async function POST(
         time_limit_minutes_module_2: test.time_limit_minutes_module_2,
         is_untimed: test.is_untimed,
       },
+      // A Module 2 the student never opened (no clock, no answers) is
+      // closed as "not taken", like the cron does: 0 time spent and
+      // metadata.auto_closed_unopened, so it shows as Incomplete and stays
+      // out of scores and analytics (lib/module2-not-taken).
+      autoClosedUnopened:
+        isModule2Track(submission.adaptive_track) &&
+        !moduleStartedAtIso(submission) &&
+        Object.keys((submission.answers as Record<string, unknown> | null) ?? {}).length === 0,
       db,
     });
   } catch (e) {

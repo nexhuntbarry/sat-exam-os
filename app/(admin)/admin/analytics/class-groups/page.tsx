@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getServiceClient } from "@/lib/supabase";
 import { childTestIds, fullLengthLinksOrNone, hideChildTests, type FullLengthLinks } from "@/lib/full-length";
 import { averageSat } from "@/lib/score-display";
+import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { attemptGroupKey, flFinished, listedTestId, scoreAttemptGroup } from "@/lib/full-length-score";
 import { getTestSections } from "@/lib/teacher-access";
 import { getCurrentUser } from "@/lib/auth";
@@ -131,7 +132,7 @@ async function getClassGroupAnalytics(viewerIsQa: boolean): Promise<GroupStat[]>
     scopeIds(db
       .from("submissions")
       .select(
-        "id, student_id, test_id, status, correct_count, total_questions, session_id, adaptive_track, attempt_number",
+        `id, student_id, test_id, status, correct_count, total_questions, session_id, adaptive_track, attempt_number, ${M2_NOT_TAKEN_COLUMN}`,
       )
       .in("status", ["Submitted", "Late"]), "student_id", qaUsers, viewerIsQa),
   ]);

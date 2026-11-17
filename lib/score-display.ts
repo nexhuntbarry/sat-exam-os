@@ -16,6 +16,9 @@ export interface ScoreModule {
   graded: boolean;
   correct: number | null;
   total: number | null;
+  /** Module 2 closed without being opened (lib/module2-not-taken): the
+   *  attempt is Incomplete — no SAT score, only the other module's counts. */
+  notTaken?: boolean;
 }
 
 export interface ScoreDisplay {
@@ -66,7 +69,9 @@ export function scoreDisplay(
   // missing questions, so no "in review" notes.
   const full = section && !opts.custom ? FULL_MODULE[section] : undefined;
   const notes: string[] = [];
-  const parts = modules.map((m) => {
+  // A Module 2 that was never taken isn't shown as "M2 —": the status
+  // badge already says so; only Module 1's counts are a result.
+  const parts = modules.filter((m) => !m.notTaken).map((m) => {
     const tag = two ? `M${m.number} ` : "";
     if (!m.graded) return `${tag}—`;
     const missing = full != null && m.total != null ? full - m.total : 0;
@@ -109,7 +114,7 @@ export function averageSat(scores: (number | null | undefined)[]): number | null
 
 export interface AttemptScore {
   score: ScoreDisplay | null;
-  status: "Not started" | "In progress" | "Submitted" | "Late";
+  status: "Not started" | "In progress" | "Submitted" | "Late" | "Incomplete";
   /** Module being taken while In progress, for the status badge. */
   module: { n: number; of: number } | null;
   /** Per-module counts behind `score` (CSV columns). */
