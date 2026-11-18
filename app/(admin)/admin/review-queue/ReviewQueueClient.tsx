@@ -22,7 +22,7 @@ import {
   type QueueFilters,
   type UndoPlan,
 } from "@/lib/review-queue-view";
-import type { GroupId, GroupSummary, QueueItem, QueuePageData } from "./types";
+import type { GroupId, GroupSummary, QueueFixProposal, QueueItem, QueuePageData } from "./types";
 
 type Preview = KeyChangePreview & { keyChanged: boolean; stillMismatched: string | null; live: boolean };
 
@@ -606,6 +606,8 @@ const ACTION_LABEL: Record<string, string> = {
   approve: "approved",
   confirm_live_fix: "live-test change confirmed",
   undo_live_fix: "live-test change undone",
+  fix_choice: "fix accepted",
+  reject: "question rejected",
 };
 
 function LoadMore({ hasMore, loading, onMore, shown, total }: { hasMore: boolean; loading: boolean; onMore: () => void; shown: number; total: number }) {
@@ -1038,7 +1040,11 @@ function QueueCard({
   // Question and PDF page side by side by default (a figure comparison has its own).
   const [showPdf, setShowPdf] = useState(focus || (!(decision === "figure" && item.proposal) && item.primary !== "live_fix"));
   const [editKey, setEditKey] = useState<string | null>(null);
-  const [preview, setPreview] = useState<{ key: string; data: Preview; undo?: boolean } | null>(null);
+  /** `fix`: the fix_choice body to send on Confirm (instead of set_key). */
+  const [preview, setPreview] = useState<{ key: string; data: Preview; undo?: boolean; fix?: Record<string, unknown> } | null>(null);
+  const fp = decision === "fix" ? item.fixProposal : null;
+  /** [Edit] on a fix proposal: the inline editor, prefilled with the proposal. */
+  const [fixDraft, setFixDraft] = useState<{ fix: QueueFixProposal["fix"]; key: string } | null>(null);
   const [reread, setReread] = useState<string | null>(null);
   const [nearRef, near] = useNearScreen(eager);
   const isLiveFix = item.primary === "live_fix" && !!item.liveFix;
@@ -1052,12 +1058,13 @@ function QueueCard({
     if (ok) {
       setPreview(null);
       setEditKey(null);
+      setFixDraft(null);
       onDecided(item, body, json);
     }
   }
 
-  /** A new key: preview who gets rescored, then confirm (never silent). */
-  async function startKeyChange(key: string, undo = false) {
+  /** A new key: preview who gets rescored, then confirm (never silent). `fix`: a fix_choice body that changes the key. */
+  async function startKeyChange(key: string, undo = false, fix?: Record<string, unknown>) {
     const k = key.trim();
     if (!k) return;
     setBusy("preview");
@@ -1079,11 +1086,12 @@ function QueueCard({
         return;
       }
       if (data.attempts > 0 || data.live || undo) {
-        setPreview({ key: k, data, undo });
+        setPreview({ key: k, data, undo, fix });
         return;
       }
       // No graded answers: nothing to rescore.
-      await run({ action: "set_key", key: k, expected_key: item.key, rescore: true }, "set_key");
+      if (fix) await run({ ...fix, expected_key: item.key, rescore: true }, "fix_choice");
+      else await run({ action: "set_key", key: k, expected_key: item.key, rescore: true }, "set_key");
     } catch {
       setResult({ text: "Couldn't load the preview.", ok: false });
     } finally {
@@ -1110,6 +1118,42 @@ function QueueCard({
   const sugg = item.suggestion && item.suggestion.answer !== item.key ? item.suggestion : null;
   const pdfBlocked = !!item.proposal && (!!item.proposal.checkMarkLeak || !!item.proposal.stale);
 
+  /** Accept the fix (the stored one, or the edited draft); a key change goes through the rescore preview first. */
+  const acceptFix = (draft?: { fix: QueueFixProposal["fix"]; key: string }) => {
+    if (!fp) return;
+    const key = (draft?.key ?? fp.keyAfterFix).trim();
+    if (!key) return;
+    const body: Record<string, unknown> = { action: "fix_choice", ...(draft ? { fix: draft.fix, key_after_fix: key } : {}) };
+    if (key !== (item.key ?? "")) void startKeyChange(key, false, body);
+    else void run(body, "fix_choice");
+  };
+
+  /** [Reject question]: the existing reject route (the question leaves the bank). */
+  async function rejectQuestion() {
+    const reason = window.prompt("Reject this question? It leaves the question bank. Reason (optional):", fp ? `${fp.kindLabel}: ${fp.summary}` : "");
+    if (reason === null) return;
+    setBusy("reject");
+    setResult(null);
+    try {
+      const res = await fetch(`/api/admin/questions/${item.id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() || null }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setResult({ text: json.error ?? "Reject failed.", ok: false });
+        return;
+      }
+      setResult({ text: "Rejected.", ok: true });
+      onDecided(item, { action: "reject" }, { approved: false, updated_at: null });
+    } catch {
+      setResult({ text: "Reject failed.", ok: false });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const keepKey = () => {
     // Keeping a key that differs from the official one overrules it.
     if (item.keyOverrulesOfficial && !window.confirm(`Keep ${item.key ?? "∅"}? This clears the official answer ${item.official} — the kept key overrules it.`)) return;
@@ -1121,7 +1165,9 @@ function QueueCard({
   const actions: CardActions = {};
   if (!disabled) {
     if (isLiveFix) actions.two = () => void run({ action: "confirm_live_fix" }, "confirm");
-    else if (decision === "key") {
+    else if (decision === "fix") {
+      if (fp) actions.one = () => acceptFix();
+    } else if (decision === "key") {
       if (sugg) actions.one = () => void startKeyChange(sugg.answer);
       actions.two = keepKey;
     } else if (decision === "figure") {
@@ -1135,7 +1181,11 @@ function QueueCard({
     } else if (decision === "explanation") actions.one = () => void run({ action: "regen_explanation" }, "regen");
     else if (decision === "approve") actions.two = () => void run({ action: "approve" }, "approve");
   }
-  actions.edit = !isLiveFix && decision === "key" && !disabled ? () => setEditKey("") : decision === "key_format" ? () => window.open("/admin/questions/key-check", "_blank", "noopener") : openEditor;
+  actions.edit = !isLiveFix && decision === "key" && !disabled
+    ? () => setEditKey("")
+    : !isLiveFix && decision === "fix" && fp && !disabled
+      ? () => setFixDraft({ fix: fp.fix.map((f) => ({ ...f })), key: fp.keyAfterFix })
+      : decision === "key_format" ? () => window.open("/admin/questions/key-check", "_blank", "noopener") : openEditor;
   useEffect(() => {
     if (active && actionsRef) actionsRef.current = actions;
   });
@@ -1174,7 +1224,10 @@ function QueueCard({
         </p>
       )}
       {decision === "key" && <p className="mt-0.5 text-xs text-soft-mute" title={item.keySource.detail}>Saved key: {item.keySource.label}</p>}
-      {decision !== "key" && !isLiveFix && item.plainReasons.length > 1 && (
+      {decision === "fix" && !isLiveFix && (fp ? <FixProposalBox fp={fp} currentKey={item.key} near={near} /> : (
+        <p className="mt-1 text-sm text-status-warning">No stored fix for this question. Edit it by hand or reject it.</p>
+      ))}
+      {decision !== "key" && decision !== "fix" && !isLiveFix && item.plainReasons.length > 1 && (
         <ul className="mt-1 list-disc pl-5 text-sm text-mid-gray">
           {item.plainReasons.slice(1, 4).map((r) => (
             <li key={r}>{r}</li>
@@ -1249,6 +1302,36 @@ function QueueCard({
           )}
         </>
       )}
+      {!isLiveFix && decision === "fix" && (
+        <>
+          {fp && (
+            <button type="button" className={btnPrimary} disabled={disabled} onClick={() => acceptFix()} title={fp.decisionLine}>
+              {busy === "fix_choice" || busy === "preview" ? "Saving…" : "Accept"}
+              {hint("1")}
+            </button>
+          )}
+          {fp ? (
+            <button type="button" className={btn} disabled={disabled} onClick={() => setFixDraft({ fix: fp.fix.map((f) => ({ ...f })), key: fp.keyAfterFix })}>
+              Edit
+              {hint("E")}
+            </button>
+          ) : (
+            <Link href={`/admin/questions/${item.id}`} className={btn} target={focus ? "_blank" : undefined}>
+              Edit
+              {hint("E")}
+            </Link>
+          )}
+          <button
+            type="button"
+            className={btn}
+            disabled={disabled || item.live}
+            title={item.live ? "In a live test: fix it instead of rejecting it" : "Reject the question (it leaves the bank)"}
+            onClick={() => void rejectQuestion()}
+          >
+            {busy === "reject" ? "Rejecting…" : "Reject question"}
+          </button>
+        </>
+      )}
       {!isLiveFix && decision === "key_format" && (
         <Link href="/admin/questions/key-check" className={btnPrimary}>
           Open answer key check
@@ -1278,7 +1361,7 @@ function QueueCard({
           {hint("2")}
         </button>
       )}
-      {(decision !== "key" || isLiveFix) && (
+      {((decision !== "key" && decision !== "fix") || isLiveFix) && (
         <Link href={`/admin/questions/${item.id}`} className={btn} target={focus ? "_blank" : undefined}>
           Edit
           {hint("E")}
@@ -1330,6 +1413,52 @@ function QueueCard({
         ) : (
           <p className="text-sm text-soft-mute">Figure comparison loads when you scroll here.</p>
         )
+      )}
+
+      {fp && fixDraft && (
+        <form
+          className="space-y-2 rounded-xl border border-status-info/30 bg-status-info/5 p-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            acceptFix(fixDraft);
+          }}
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-soft-mute">Edit the fix</p>
+          {fixDraft.fix.map((f, i) => (
+            <label key={f.field} className="block text-sm">
+              <span className="text-soft-mute">
+                {f.field === "questionText" ? "Question text" : `Choice ${f.field}`}: <span className="font-mono line-through">{f.from || "(empty)"}</span> →
+              </span>
+              <textarea
+                aria-label={`New text for ${f.field === "questionText" ? "the question text" : `choice ${f.field}`}`}
+                value={f.to}
+                onChange={(e) => setFixDraft((d) => (d ? { ...d, fix: d.fix.map((x, j) => (j === i ? { ...x, to: e.target.value } : x)) } : d))}
+                rows={f.field === "questionText" ? 4 : 1}
+                className="mt-1 w-full rounded-lg border border-divider px-2 py-1 font-mono text-sm"
+              />
+            </label>
+          ))}
+          <label className="flex items-center gap-2 text-sm">
+            <span className="text-soft-mute">Key after the fix</span>
+            <input
+              aria-label="Key after the fix"
+              value={fixDraft.key}
+              onChange={(e) => setFixDraft((d) => (d ? { ...d, key: e.target.value } : d))}
+              className="w-24 rounded-lg border border-divider px-2 py-1 font-mono text-sm"
+            />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="submit" className={btnPrimary} disabled={disabled || !fixDraft.key.trim() || fixDraft.fix.some((f) => f.to === f.from)}>
+              {busy === "fix_choice" || busy === "preview" ? "Saving…" : "Accept edited fix"}
+            </button>
+            <button type="button" className={btn} onClick={() => setFixDraft(null)}>
+              Cancel
+            </button>
+            <Link href={`/admin/questions/${item.id}`} className="text-xs text-soft-mute underline hover:text-charcoal" target="_blank">
+              Open the question editor
+            </Link>
+          </div>
+        </form>
       )}
 
       {reread !== null && (
@@ -1419,13 +1548,15 @@ function QueueCard({
           newKey={preview.key}
           preview={preview.data}
           undo={!!preview.undo}
-          busy={busy === "set_key" || busy === "undo"}
+          busy={busy === "set_key" || busy === "undo" || busy === "fix_choice"}
           canWrite={canWrite}
           onCancel={() => setPreview(null)}
           onConfirm={() =>
             preview.undo
               ? void run({ action: "undo_live_fix", restore_key: preview.key, rescore: true }, "undo")
-              : void run({ action: "set_key", key: preview.key, expected_key: item.key, rescore: true }, "set_key")
+              : preview.fix
+                ? void run({ ...preview.fix, expected_key: item.key, rescore: true }, "fix_choice")
+                : void run({ action: "set_key", key: preview.key, expected_key: item.key, rescore: true }, "set_key")
           }
         />
       )}
@@ -1443,6 +1574,48 @@ const FIELD_LABEL: Record<string, string> = {
   has_image: "Has a figure",
   question_type: "Question type",
 };
+
+const FIX_ORIGIN: Record<QueueFixProposal["origin"], string> = {
+  source: "a typo in the source PDF",
+  extraction: "an extraction error",
+  unclear: "unclear",
+};
+
+/** "No correct choice" group: the problem, each fix (from → to) and the key after it. */
+function FixProposalBox({ fp, currentKey, near }: { fp: QueueFixProposal; currentKey: string | null; near: boolean }) {
+  const keyChanges = fp.keyAfterFix !== (currentKey ?? "");
+  return (
+    <div className="mt-2 space-y-2 rounded-xl border border-status-warning/30 bg-status-warning/5 p-3 text-sm" data-testid="fix-proposal">
+      <p className="font-semibold text-charcoal">{fp.decisionLine}</p>
+      {(fp.closestChoice || fp.whatDiffers) && (
+        <p className="text-mid-gray">
+          {fp.closestChoice && <>Closest choice: <strong className="font-mono">{fp.closestChoice}</strong>. </>}
+          {fp.whatDiffers}
+        </p>
+      )}
+      <ul className="space-y-1">
+        {fp.fix.map((f) => (
+          <li key={f.field} className="grid gap-1 sm:grid-cols-[7rem_minmax(0,1fr)]">
+            <span className="text-soft-mute">{f.field === "questionText" ? "Question text" : `Choice ${f.field}`}</span>
+            <span className="min-w-0 space-y-0.5">
+              <span className="block rounded bg-status-error/10 px-2 py-0.5 line-through decoration-status-error/60">
+                <Text near={near} className="text-sm">{f.from || "(empty)"}</Text>
+              </span>
+              <span className="block rounded bg-status-success/10 px-2 py-0.5">
+                <Text near={near} className="text-sm">{f.to || "(empty)"}</Text>
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-mid-gray">
+        Key after the fix: <strong className={cn("font-mono", keyChanges ? "text-status-error" : "text-status-success")}>{fp.keyAfterFix}</strong>
+        {keyChanges ? ` (now ${currentKey ?? "∅"}: you'll see who gets rescored before it is saved)` : " (unchanged)"}
+        <span className="text-soft-mute"> · likely {FIX_ORIGIN[fp.origin]}</span>
+      </p>
+    </div>
+  );
+}
 
 /** Before / after of a live-test change. */
 function LiveFixDiff({ fix }: { fix: NonNullable<QueueItem["liveFix"]> }) {

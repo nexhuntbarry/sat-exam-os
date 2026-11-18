@@ -17,7 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseBlobUrl } from "@/lib/blob-url";
 import { getServiceClient } from "@/lib/supabase";
 import { keyIsOfficial, type AutoFixRow } from "@/lib/explanation-autofix";
-import { autoFixedGroup, figureProposalUrl, GROUP_BY_ID, groupRow, parseKeyDispute, REVIEW_GROUPS, type ReviewGroupId, type RowGrouping } from "@/lib/review-queue";
+import { autoFixedGroup, figureProposalUrl, FIX_KIND_LABEL, GROUP_BY_ID, groupRow, parseKeyDispute, REVIEW_GROUPS, type ReviewGroupId, type RowGrouping } from "@/lib/review-queue";
 import { currentStored, loadProposal, proposalIsCurrent, type FigureProposal } from "@/lib/figure-compare";
 import { DECIDE_SELECT } from "@/lib/review-decide";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
@@ -26,6 +26,7 @@ import { groupHeadline, keyCard, plainReason } from "@/lib/review-evidence";
 import { realStudentsAnswered } from "@/lib/review-auto";
 import { liveQuestionIds, LIVE_FIX_TAG } from "@/lib/live-questions";
 import { changedFields, liveFixWhat, loadLiveFixSnapshots, snapshotValid } from "@/lib/live-fix";
+import { fixDecisionLine, loadFixProposals, type FixProposal } from "@/lib/fix-proposal";
 import { spotCheckStats, spotCheckLine } from "@/lib/spot-check";
 import {
   applyFilters,
@@ -42,7 +43,7 @@ import {
   type QueueIndexEntry,
 } from "@/lib/review-queue-view";
 import { tryBuildLock, releaseBuildLock } from "@/lib/review-queue-build-lock";
-import type { GroupSummary, QueueItem, QueuePageData, QueueProposal } from "./types";
+import type { GroupSummary, QueueFixProposal, QueueItem, QueuePageData, QueueProposal } from "./types";
 
 type Row = AutoFixRow & { page_number: number | null; source_pdf_url: string | null; reviewed_by: string | null; reviewed_at: string | null };
 const CARD_SELECT = `${DECIDE_SELECT}, page_number, reviewed_by, reviewed_at`;
@@ -466,9 +467,10 @@ export async function buildCards(
   const proposalUrls = rows
     .map((x) => ({ id: x.r.id, url: x.g.primary === "figure" ? figureProposalUrl(x.r.parsing_notes) : null }))
     .filter((x): x is { id: string; url: string } => !!x.url);
+  const fixIds = rows.filter((x) => x.g.primary === "typo_fix").map((x) => x.r.id);
   const lookupErrors: string[] = [];
   const pageIds = rows.map((x) => x.r.id);
-  const [keyFacts, reviewers, snapshots, proposals, liveNow, studentsNow] = await Promise.all([
+  const [keyFacts, reviewers, snapshots, proposals, liveNow, studentsNow, fixProposals] = await Promise.all([
     keyMods.length ? loadKeyFacts(db, keyMods) : Promise.resolve(new Map<string, ModuleKeyFacts>()),
     reviewerIds.length
       ? db
@@ -496,6 +498,12 @@ export async function buildCards(
     // leans on. A failed lookup falls back to the index's values.
     pageIds.length ? liveQuestionIds(db, pageIds).catch(() => null) : Promise.resolve(new Set<string>()),
     pageIds.length ? realStudentsAnswered(db, pageIds).catch(() => null) : Promise.resolve(new Map<string, number>()),
+    fixIds.length
+      ? loadFixProposals(db, fixIds).catch(() => {
+          lookupErrors.push("fix proposals");
+          return new Map<string, FixProposal>();
+        })
+      : Promise.resolve(new Map<string, FixProposal>()),
   ]);
 
   return rows.map(({ r, e, g }) => {
@@ -535,9 +543,29 @@ export async function buildCards(
           snapshotAt: snap?.at ?? null,
         }
       : null;
+    const fp = g.primary === "typo_fix" ? fixProposals.get(r.id) ?? null : null;
+    const fixProposal: QueueFixProposal | null = fp
+      ? {
+          kind: fp.kind,
+          kindLabel: FIX_KIND_LABEL[fp.kind],
+          summary: fp.summary,
+          closestChoice: fp.closestChoice,
+          whatDiffers: fp.whatDiffers,
+          fix: fp.fix,
+          keyAfterFix: fp.keyAfterFix,
+          origin: fp.origin,
+          decisionLine: fixDecisionLine(fp, r.correct_answer),
+        }
+      : null;
     return {
       id: r.id,
-      headline: isKey ? card.headline : g.primary === "live_fix" && liveFix ? liveFix.what : groupHeadline(g.primary, g.reasons),
+      headline: fixProposal
+        ? `${fixProposal.kindLabel}: ${fixProposal.summary}`
+        : isKey
+          ? card.headline
+          : g.primary === "live_fix" && liveFix
+            ? liveFix.what
+            : groupHeadline(g.primary, g.reasons),
       evidence: isKey ? card.evidence : [],
       suggestion: isKey ? card.suggestion : null,
       plainReasons: [...new Set(g.reasons.map((x) => plainReason(x.text)))],
@@ -574,6 +602,7 @@ export async function buildCards(
       hasPdf: !!index.modulePdf[r.module_id ?? ""],
       updatedAt: r.updated_at ?? null,
       proposal,
+      fixProposal,
     };
   });
 }

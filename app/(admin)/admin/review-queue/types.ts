@@ -2,6 +2,7 @@
 // functions, no server imports).
 
 export type GroupId =
+  | "typo_fix"
   | "key_dispute"
   | "module_key"
   | "key_format"
@@ -14,7 +15,7 @@ export type GroupId =
   | "ready"
   | "note";
 
-export type Decision = "key" | "key_format" | "stem" | "figure" | "render" | "explanation" | "approve";
+export type Decision = "fix" | "key" | "key_format" | "stem" | "figure" | "render" | "explanation" | "approve";
 
 export interface QueueChoice {
   label: string;
@@ -32,6 +33,21 @@ export interface QueueProposal {
   checkMarkLeak?: boolean;
   /** The row changed since the comparison ("Use PDF version" is off). */
   stale?: boolean;
+}
+
+/** A stored fix proposal (lib/fix-proposal.ts), "No correct choice" group. */
+export interface QueueFixProposal {
+  kind: "no_correct_choice" | "two_correct" | "merged" | "missing_text";
+  /** The problem kind in plain words. */
+  kindLabel: string;
+  summary: string;
+  closestChoice: string | null;
+  whatDiffers: string;
+  fix: { field: "questionText" | "A" | "B" | "C" | "D"; from: string; to: string }[];
+  keyAfterFix: string;
+  origin: "source" | "extraction" | "unclear";
+  /** "Fix choice D to … and keep key D". */
+  decisionLine: string;
 }
 
 export interface EvidenceChip {
@@ -99,6 +115,8 @@ export interface QueueItem {
   hasPdf: boolean;
   updatedAt: string | null;
   proposal: QueueProposal | null;
+  /** "No correct choice" group: the stored fix (null: none stored). */
+  fixProposal: QueueFixProposal | null;
 }
 
 export interface GroupSummary {

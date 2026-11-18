@@ -103,6 +103,10 @@ export const RAMBLE = new RegExp(
     String.raw`\bactually,? (?:wait\b|no[,.!]|let me|let's|I (?:made|was wrong|mis\w+))`,
     // Process words only as a sentence of their own ("Re-examining the graph, …").
     String.raw`(?:^|[.!?]\s+|\n\s*)(?:re-?examining|reconsidering|re-?checking|double-checking)\b`,
+    // Arguing a choice that doesn't match as written ([Test #13] L Test 1 Math
+    // M1 Q2, Premier 3e0af153: "D only if the terms are reordered"). "… wait —
+    // no …" is caught by the "wait —" patterns above.
+    String.raw`\bonly if (?:the |its |we )?(?:terms|factors|expressions?) (?:are|is|were|get) (?:re-?ordered|rearranged|swapped)`,
   ].join("|"),
   "i",
 );

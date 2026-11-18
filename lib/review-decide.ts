@@ -42,9 +42,14 @@ import {
   stripAllLiveFix,
   type SnapshotField,
 } from "@/lib/live-fix";
+import { applyFixEdits, clearFixProposal, loadFixProposals, type FixEdit } from "@/lib/fix-proposal";
 import {
   approvalBlockers,
   dropFigureNotes,
+  FIX_APPLIED_PREFIX,
+  FIX_EXPLANATION_NOTE,
+  FIX_KIND_LABEL,
+  isFixProposalNote,
   dropSettledNotes,
   EXPLANATION_CHECK_NOTE,
   STEM_REPLACED_PREFIX,
@@ -71,6 +76,13 @@ export type DecideAction =
   | { action: "regen_explanation" }
   | { action: "approve" }
   | { action: "confirm_live_fix" }
+  /**
+   * Apply the stored fix proposal (lib/fix-proposal.ts, "typo_fix" group).
+   * `fix` / `keyAfterFix`: the person's edited version. A fix that changes
+   * the key needs the rescore preview first (rescore true, expectedKey = the
+   * key shown on it).
+   */
+  | { action: "fix_choice"; fix?: FixEdit[]; keyAfterFix?: string; expectedKey?: string | null; rescore?: boolean }
   /** `restoreKey`: the key before the live fix, after the rescore preview (rescore must be true). */
   | {
       action: "undo_live_fix";
@@ -168,7 +180,7 @@ async function refreshExplanation(row: Row, userId?: string, explain: ExplainFn 
   const explanation = res.explanation;
   const notesFor = (r: Row) => {
     const ctx = { officialKey: keyIsOfficial(r), failingChecks: failingChecks(r, explanation) };
-    return removeNotes(r.parsing_notes, (s) => classifyNote(s, ctx) === "explanation" || EXPLANATION_CHECK_NOTE.test(s)).notes;
+    return removeNotes(r.parsing_notes, (s) => classifyNote(s, ctx) === "explanation" || EXPLANATION_CHECK_NOTE.test(s) || s.startsWith(FIX_EXPLANATION_NOTE)).notes;
   };
   return { explanation, notes: notesFor(row), outcome: "regenerated", notesFor };
 }
@@ -236,6 +248,23 @@ async function finish(
   return { ok: true, approved, blockers, nextGroup: approved ? null : groupRow(after).primary, ...extra };
 }
 
+/**
+ * The person settled the key: drop the notes that disputed it. A key other
+ * than the official one overrules it (as resolve-mismatch does).
+ */
+function keySettledPatch(r: Row): Record<string, unknown> {
+  const patch: Record<string, unknown> = { parsing_notes: removeNotes(r.parsing_notes, (s) => isKeyQuestionNote(s, r.correct_answer)).notes };
+  if (r.official_answer && !keyIsOfficial(r)) patch.official_answer = null;
+  if (r.mismatch_with_official) patch.mismatch_with_official = false;
+  return patch;
+}
+
+/** Who applied a key change, for its history note (no separators / brackets: lib/key-source.ts parses it). */
+function reviewerSource(userName: string | null | undefined): string {
+  const name = (userName ?? "").replace(/[;()[\]]/g, " ").replace(/\s+/g, " ").trim();
+  return name ? `${name} (review queue)` : "a reviewer (review queue)";
+}
+
 export async function decide(
   db: SupabaseClient,
   id: string,
@@ -252,14 +281,7 @@ export async function decide(
     case "keep_key":
     case "set_key": {
       const live = await isLive(db, row);
-      // The person settled the key: drop the notes that disputed it. A key
-      // other than the official one overrules it (as resolve-mismatch does).
-      const keyPatch = (r: Row): Record<string, unknown> => {
-        const patch: Record<string, unknown> = { parsing_notes: removeNotes(r.parsing_notes, (s) => isKeyQuestionNote(s, r.correct_answer)).notes };
-        if (r.official_answer && !keyIsOfficial(r)) patch.official_answer = null;
-        if (r.mismatch_with_official) patch.mismatch_with_official = false;
-        return patch;
-      };
+      const keyPatch = keySettledPatch;
 
       if (!(act.action === "set_key" && act.key.trim() !== (row.correct_answer ?? "").trim())) {
         const patch = keyPatch(row);
@@ -299,8 +321,7 @@ export async function decide(
         expectedKey: act.expectedKey,
         rescore: act.rescore,
         userId: opts.userId,
-        // The name goes into a note: no separators / brackets (lib/key-source.ts parses it).
-        source: opts.userName && opts.userName.replace(/[;()[\]]/g, " ").trim() ? `${opts.userName.replace(/[;()[\]]/g, " ").replace(/\s+/g, " ").trim()} (review queue)` : "a reviewer (review queue)",
+        source: reviewerSource(opts.userName),
         explain: opts.explain,
       });
       if (!keyRes.ok) return { ok: false, status: keyRes.status, error: keyRes.error, key: keyRes };
@@ -367,6 +388,97 @@ export async function decide(
       if (ex.explanation) patch.explanation = ex.explanation;
       if (ex.notes !== undefined) patch.parsing_notes = ex.notes;
       return finish(db, row, patch, opts.userId, { explanation: ex.outcome }, await isLive(db, row));
+    }
+
+    case "fix_choice": {
+      const stored = (await loadFixProposals(db, [id])).get(id) ?? null;
+      if (!stored) return { ok: false, status: 400, error: "There is no stored fix for this question. Edit it by hand." };
+      const edits = act.fix ?? stored.fix;
+      const newKey = (act.keyAfterFix ?? stored.keyAfterFix).trim();
+      if (!newKey) return { ok: false, status: 400, error: "Enter the key after the fix." };
+      const oldKey = row.correct_answer ?? null;
+      const keyChanged = newKey !== (oldKey ?? "").trim();
+      // A new key is never saved (nor answers rescored) before the person saw who gets rescored.
+      if (keyChanged && (act.rescore !== true || (act.expectedKey ?? null) !== oldKey)) {
+        return { ok: false, status: 409, error: `This fix changes the key ${oldKey ?? "∅"} → ${newKey}: confirm the rescoring preview first.` };
+      }
+      const { patch: content, conflicts } = applyFixEdits(row, edits);
+      if (conflicts.length) return { ok: false, status: 409, error: `The question changed since this fix was proposed (${conflicts[0]}). Edit it by hand.` };
+      const live = await isLive(db, row);
+      const who = (opts.userName ?? "a reviewer").replace(/[;()[\]]/g, " ").replace(/\s+/g, " ").trim() || "a reviewer";
+      const fields = edits.map((e) => (e.field === "questionText" ? "question text" : `choice ${e.field}`)).join(", ");
+      const history = `${FIX_APPLIED_PREFIX} by ${who} (${new Date().toISOString().slice(0, 10)}): ${FIX_KIND_LABEL[stored.kind]}, fixed ${fields}, key ${keyChanged ? `${oldKey ?? "∅"} → ${newKey}` : `${newKey} kept`}`;
+      const settled = (notes: string | null | undefined) => [removeNotes(notes, isFixProposalNote).notes, history].filter(Boolean).join("; ");
+
+      if (!keyChanged) {
+        // The key stands (confirmed): its dispute notes go, as with "Keep key".
+        const patch: Record<string, unknown> = { ...content, ...keySettledPatch(row) };
+        patch.parsing_notes = settled(patch.parsing_notes as string | null);
+        // New content: the explanation is rewritten and checked for it; a
+        // text that fails the checks is never saved.
+        const ex = await refreshExplanation({ ...row, ...patch } as Row, opts.userId, opts.explain);
+        if (ex.explanation) patch.explanation = ex.explanation;
+        if (ex.notes !== undefined) patch.parsing_notes = ex.notes;
+        if (ex.outcome === "failed") patch.parsing_notes = [patch.parsing_notes, FIX_EXPLANATION_NOTE].filter(Boolean).join("; ");
+        const exOk = ex.outcome === "regenerated";
+        const res = await finish(db, row, patch, opts.userId, { explanation: ex.outcome }, live, exOk);
+        if (!res.ok) return res;
+        await clearFixProposal(db, id).catch(() => undefined);
+        if (exOk) return res;
+        return {
+          ...res,
+          approved: false,
+          warning:
+            ex.outcome === "ai_disagrees"
+              ? "Fix saved, but solving the fixed question without the key the AI got another answer, so no explanation was written. Check the key."
+              : "Fix saved, but the explanation couldn't be rewritten and checked. Rewrite it from the queue or edit it by hand.",
+        };
+      }
+
+      // 1. The content fix (never approves on its own; the proposal stays
+      // until the key is done, and a repeat Accept skips edits already made).
+      if (Object.keys(content).length > 0) {
+        const res = await finish(db, row, { ...content }, opts.userId, {}, live, false);
+        if (!res.ok) return res;
+      }
+      // 2. The key, through the key-change path: explanation written for the
+      // fixed question and checked, answers rescored (preview confirmed above).
+      const keyRes = await applyKeyCorrection(db, {
+        id,
+        correct_answer: newKey,
+        expectedKey: oldKey,
+        rescore: true,
+        userId: opts.userId,
+        source: reviewerSource(opts.userName),
+        explain: opts.explain,
+      });
+      if (!keyRes.ok) {
+        const saved = Object.keys(content).length > 0 ? "The text fix was saved, but the key wasn't changed: " : "";
+        return { ok: false, status: keyRes.status, error: `${saved}${keyRes.error}`, key: keyRes };
+      }
+      // 3. Notes: proposal and key disputes settled (stale AI notes about the
+      // old key already went with dropStaleKeyNotes in applyKeyCorrection).
+      const exOk = keyRes.explanationOk;
+      const extra: Partial<DecideResult> = { key: keyRes, live: keyRes.live, explanation: keyRes.explanation?.outcome ?? "failed" };
+      const exWarning = keyExplanationWarning(keyRes.live, keyRes.explanation);
+      const notUpdated = "Fix applied, key changed and answers rescored, but the notes weren't updated. Reload and check the question.";
+      // After an explanation failure the notes the key step wrote stay.
+      const patchFor = (r: Row): Record<string, unknown> => {
+        const patch = keySettledPatch(r);
+        patch.parsing_notes = settled(exOk ? (patch.parsing_notes as string | null) : r.parsing_notes);
+        return patch;
+      };
+      let fresh = await loadRow(db, id);
+      if (!fresh) return { ok: true, approved: false, ...extra, warning: exWarning ?? notUpdated };
+      let res = await finish(db, fresh, patchFor(fresh), opts.userId, extra, keyRes.live, exOk);
+      if (!res.ok && res.status === 409) {
+        fresh = await loadRow(db, id);
+        if (fresh) res = await finish(db, fresh, patchFor(fresh), opts.userId, extra, keyRes.live, exOk);
+      }
+      if (!res.ok) return { ok: true, approved: false, ...extra, warning: exWarning ?? notUpdated };
+      await clearFixProposal(db, id).catch(() => undefined);
+      if (!exOk) return { ...res, approved: false, warning: exWarning ?? undefined };
+      return res;
     }
 
     case "keep_figure": {

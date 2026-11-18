@@ -3,17 +3,20 @@ import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { decide, type DecideAction } from "@/lib/review-decide";
+import { parseFixEdits, type FixEdit } from "@/lib/fix-proposal";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
 
 // One AI explanation call (with a retry), plus rescoring on a key change.
 export const maxDuration = 300;
 
 // POST /api/admin/review-queue/decide
-// Body: { id, action, updated_at?, key?, expected_key?, rescore?, question_text? }
+// Body: { id, action, updated_at?, key?, expected_key?, rescore?, question_text?, fix?, key_after_fix? }
 //
 // Applies the one decision the review queue asked for (lib/review-decide.ts):
 //   keep_key | set_key (after the rescore preview) | use_pdf | keep_figure |
 //   use_pdf_text | regen_explanation | approve |
+//   fix_choice (the stored fix proposal, or the edited `fix` / `key_after_fix`;
+//   a key change needs rescore + expected_key after the preview) |
 //   confirm_live_fix | undo_live_fix (restore_key + rescore after the preview;
 //   expected_key / updated_at: refused with 409 when the row moved since)
 // then regenerates the explanation when needed, clears the settled notes and
@@ -50,6 +53,24 @@ async function handlePOST(req: Request) {
       const key = typeof body.key === "string" ? body.key.trim() : "";
       if (!key) return NextResponse.json({ error: "Enter the new key." }, { status: 400 });
       act = { action: "set_key", key, expectedKey: body.expected_key ?? null, rescore: body.rescore === true };
+      break;
+    }
+    case "fix_choice": {
+      // Optional edited version of the stored proposal ([Edit]); a new key
+      // needs rescore (after the preview) + expected_key.
+      let fix: FixEdit[] | undefined;
+      if ("fix" in body) {
+        const parsed = parseFixEdits(body.fix);
+        if (!parsed) return NextResponse.json({ error: "The edited fix is malformed." }, { status: 400 });
+        fix = parsed;
+      }
+      act = {
+        action: "fix_choice",
+        fix,
+        keyAfterFix: typeof body.key_after_fix === "string" ? body.key_after_fix : undefined,
+        expectedKey: typeof body.expected_key === "string" ? body.expected_key : null,
+        rescore: body.rescore === true,
+      };
       break;
     }
     case "use_pdf_text": {

@@ -3,6 +3,7 @@ import { requireQuestionReviewer } from "@/lib/rbac";
 import { getServiceClient } from "@/lib/supabase";
 import { forbidQa } from "@/lib/qa";
 import { withQueueInvalidation } from "@/lib/review-queue-cache";
+import { clearFixProposal } from "@/lib/fix-proposal";
 
 // POST /api/admin/questions/[id]/reject
 async function handlePOST(
@@ -39,6 +40,8 @@ async function handlePOST(
     console.error("[questions/reject] error:", error);
     return NextResponse.json({ error: "Reject failed" }, { status: 500 });
   }
+  // A stored fix proposal (review queue "No correct choice") is moot now.
+  await clearFixProposal(db, id).catch(() => undefined);
 
   return NextResponse.json({ data });
 }

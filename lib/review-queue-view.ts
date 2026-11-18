@@ -320,6 +320,10 @@ export function undoPlan(r: DecisionRecord): UndoPlan {
     case "regen_explanation":
       if (r.live) return { kind: "undo_live_fix", restoreKey: null };
       return { kind: "none", why: "The earlier content is only recorded for questions in a live test, so it can't be put back. Edit the question by hand." };
+    case "fix_choice":
+      // Live: the recorded earlier version (and the old key, after the rescore preview).
+      if (r.live) return { kind: "undo_live_fix", restoreKey: r.keyChanged ? r.oldKey ?? null : null };
+      return { kind: "none", why: "The earlier content is only recorded for questions in a live test, so it can't be put back. Edit the question by hand." };
     case "keep_key":
     case "keep_figure":
     case "approve":

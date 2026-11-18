@@ -34,8 +34,11 @@ import {
 } from "@/lib/pdf-text-choices";
 
 export class ReplacePdfError extends Error {
-  constructor(message: string, readonly status: number) {
+  // Plain field (not a parameter property): unit tests load lib/ with Node's strip-only TypeScript.
+  readonly status: number;
+  constructor(message: string, status: number) {
     super(message);
+    this.status = status;
   }
 }
 
