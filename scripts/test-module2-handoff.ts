@@ -18,7 +18,8 @@
 //   7. recovery rules: only the latest session (onlySessionId), Published,
 //      past the due date only within 24 h of Module 1 → else { blocked }
 //   8. the duplicate clean-up never deletes an opened / answered row
-//   9. cron closing an unopened Module 2 after 24 h: 0 s spent, flagged
+//   9. cron closing an unopened Module 2 (no due date → kept open; past the
+//      due date and the 24 h window → closed): 0 s spent, flagged
 //      auto_closed_unopened, and the analytics filter leaves it out
 //  10. Late: M1 straddling the due date + normal handoff → not Late;
 //      Module 2 created by past-due recovery (created_after_due) → Late
@@ -257,13 +258,16 @@ async function main() {
     const fresh = await mkM2({}, { device: { platform: "Mac" } });
     check("clean-up deletes an untouched duplicate", ((await guardDelete(fresh)).data ?? []).length === 1);
 
-    // 9. cron auto-closes an unopened Module 2 after 24 h
+    // 9. cron: no due date → an unopened Module 2 stays open; past the due
+    // date and the 24 h window → closed (ticket 969e0414)
     const stale = await mkM2({}, {});
     await db.from("submissions").update({ started_at: new Date(now - 25 * H).toISOString() }).eq("id", stale);
     const { data: staleRow } = await db.from("submissions").select(STALE_SUBMISSION_COLUMNS).eq("id", stale).single();
-    const r9 = await finalizeStaleSubmission(db, staleRow as unknown as StaleSubmission, linear);
+    const r9open = await finalizeStaleSubmission(db, staleRow as unknown as StaleSubmission, { ...linear, due_date: null });
+    check("no due date: unopened Module 2 stays open", r9open.action === "skipped", r9open);
+    const r9 = await finalizeStaleSubmission(db, staleRow as unknown as StaleSubmission, { ...linear, due_date: new Date(now - H).toISOString() });
     const { data: closed9 } = await db.from("submissions").select("status, time_spent_seconds, metadata").eq("id", stale).single();
-    check("unopened Module 2 closed after 24 h", r9.action === "finalized" && closed9?.status !== "In Progress", r9);
+    check("past due + 24 h window: unopened Module 2 closed", r9.action === "finalized" && closed9?.status !== "In Progress", r9);
     check("…with 0 s spent and auto_closed_unopened", closed9?.time_spent_seconds === 0 && (closed9?.metadata as Record<string, unknown>)?.auto_closed_unopened === true, closed9);
     const { data: ar9 } = await db.from("answer_records").select("time_spent_seconds").eq("submission_id", stale);
     check("…and its answer records carry 0 s", (ar9 ?? []).every((r) => r.time_spent_seconds === 0), (ar9 ?? []).length);

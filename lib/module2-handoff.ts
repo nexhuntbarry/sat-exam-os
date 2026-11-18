@@ -94,8 +94,8 @@ export const RECOVERY_TEST_COLUMNS = `status, due_date, ${HANDOFF_TEST_COLUMNS}`
 
 /**
  * After the due date, a missing Module 2 may still be created this long
- * after Module 1 was graded (same window the cron gives an unopened
- * Module 2). Later than that the attempt is closed.
+ * after Module 1 was graded. An unopened Module 2 is closed by the cron
+ * only after this window, and only on a test with a due date.
  */
 export const MODULE_2_LATE_RECOVERY_HOURS = 24;
 
