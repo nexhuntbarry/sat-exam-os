@@ -159,7 +159,9 @@ assert.equal(draftRejection({ ...question(), choices: applied.patch.choices } as
   assert.equal(q.parsing_status, "Needs Review");
   assert.equal(q.explanation, question().explanation, "no new text saved");
   assert.ok((q.parsing_notes as string).includes(rq.FIX_EXPLANATION_NOTE));
-  assert.equal(rq.groupRow(q as never).primary, "explanation", "next: the explanation group");
+  // No independent agreement: the "AI's own answer is A" note stays (key decision), the explanation is next too.
+  assert.equal(rq.groupRow(q as never).primary, "key_dispute");
+  assert.ok(rq.groupRow(q as never).groups.includes("explanation"), "and the explanation group");
   assert.equal(db.tables.app_settings.length, 0, "the fix itself is applied: proposal cleared");
   // A checked rewrite later settles the note.
   const again = await decide(client, QID, { action: "regen_explanation" }, { explain: explainOk() });
@@ -203,6 +205,124 @@ const KEY_B = { ...PROPOSAL, kind: "two_correct" as const, fix: [{ field: "D" as
   const none = await decide(client, QID, { action: "fix_choice" }, { explain: explainOk() });
   assert.equal(none.status, 400, "no stored proposal");
 }
+
+// ── Accept is not a key decision: unrelated disputes and the official answer stay ──
+{
+  const keySays = "Needs review: key says D, AI says A (from the PDF key page)";
+  const { db, client } = fakeDb({ questions: [question({ parsing_notes: keySays, official_answer: "C", mismatch_with_official: true })], app_settings: [], answer_records: [] });
+  await fp.saveFixProposal(client, QID, PROPOSAL);
+  const res = await decide(client, QID, { action: "fix_choice" }, { explain: explainOk() });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(res.approved, false);
+  const q = db.tables.questions[0];
+  assert.ok((q.parsing_notes as string).includes(keySays), "the key dispute stays for the key decision");
+  assert.equal(q.official_answer, "C", "official answer not overruled");
+  assert.equal(q.mismatch_with_official, true);
+  assert.equal(rq.groupRow(q as never).primary, "key_dispute", "next: the key decision");
+  assert.equal((q.choices as { text: string }[])[3].text, "$\\pi r^3 + 4\\pi r^2$", "the fix itself is applied");
+}
+
+// ── key change validated before any write; a failing key write leaves nothing behind ──
+{
+  const { db, client } = fakeDb({ questions: [question()], app_settings: [], answer_records: [] });
+  await fp.saveFixProposal(client, QID, { ...PROPOSAL, keyAfterFix: "E" });
+  db.log.length = 0;
+  const bad = await decide(client, QID, { action: "fix_choice", rescore: true, expectedKey: "D" }, { explain: explainOk("E") });
+  assert.equal(bad.ok, false);
+  assert.equal(bad.status, 400, JSON.stringify(bad));
+  assert.ok(!db.log.includes("questions:update"), "a key that doesn't fit the fixed choices: nothing written");
+}
+{
+  const before = question({ choices: [...choices().slice(0, 1), { label: "B", text: "$\\pi r^3 + 4\\pi r^2$" }, ...choices().slice(2)] });
+  const { db, client } = fakeDb({ questions: [structuredClone(before)], app_settings: [], answer_records: [] });
+  await fp.saveFixProposal(client, QID, KEY_B);
+  const snap = structuredClone(db.tables.questions[0]);
+  // The key step's write fails (a concurrent change, a DB error…).
+  const realFrom = db.from.bind(db);
+  db.from = (table: string) => {
+    const q = realFrom(table);
+    if (table === "questions") {
+      const upd = q.update.bind(q);
+      q.update = (p: Record<string, unknown>) => {
+        db.errors.questions = { message: "write failed" };
+        return upd(p);
+      };
+    }
+    return q;
+  };
+  db.log.length = 0;
+  const res = await decide(client, QID, { action: "fix_choice", rescore: true, expectedKey: "D" }, { explain: explainOk("B") });
+  delete db.errors.questions;
+  assert.equal(res.ok, false, JSON.stringify(res));
+  assert.match(res.error!, /Nothing was saved/);
+  assert.deepEqual(db.tables.questions[0], snap, "no fixed text with the old key, no stale explanation");
+  assert.ok(!db.log.includes("answer_records:select"), "nothing rescored");
+  assert.equal(db.tables.app_settings.length, 1, "proposal kept for another try");
+  db.from = realFrom;
+}
+
+// ── live test: [live-fix] note, snapshot across both writes, Undo holds the old key ──
+const { snapshotValid } = await import("../../../lib/live-fix.ts");
+const liveWorld = (q: Record<string, unknown>) =>
+  fakeDb({
+    questions: [q],
+    app_settings: [],
+    answer_records: [],
+    tests: [{ id: "T", status: "Published", is_adaptive: false, module_id: "m1", module_1_id: null, module_2_id: null, module_2_easy_id: null, module_2_hard_id: null, question_ids: null, parent_test_id: null, section_order: null }],
+    test_assignments: [{ test_id: "T", student_ids: ["s1"], class_group_ids: [] }],
+  });
+{
+  const { db, client } = liveWorld(question({ parsing_status: "Approved" }));
+  await fp.saveFixProposal(client, QID, PROPOSAL);
+  const res = await decide(client, QID, { action: "fix_choice" }, { userName: "Premier", explain: explainOk() });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal(res.live, true);
+  const q = db.tables.questions[0];
+  assert.equal(q.parsing_status, "Approved", "never demoted");
+  assert.ok((q.parsing_notes as string).startsWith("[live-fix]"), q.parsing_notes as string);
+  const snapRow = db.tables.app_settings.find((r) => r.key === `live_fix_before:${QID}`);
+  assert.ok(snapRow, "earlier version recorded");
+  const snap = snapRow!.value as { fields: Record<string, unknown> };
+  assert.equal((snap.fields.choices as { text: string }[])[3].text, "$4\\pi r^3 + 4\\pi r^2$", "what students saw before");
+  assert.ok(snapshotValid(snap as never, q.parsing_notes as string));
+  assert.equal(undoPlan({ action: "fix_choice", live: true, keyChanged: undefined, keyAfter: "D", updatedAt: "x" }).kind, "undo_live_fix");
+}
+{
+  const { db, client } = liveWorld(question({ parsing_status: "Approved", choices: [...choices().slice(0, 1), { label: "B", text: "$\\pi r^3 + 4\\pi r^2$" }, ...choices().slice(2)] }));
+  await fp.saveFixProposal(client, QID, KEY_B);
+  const res = await decide(client, QID, { action: "fix_choice", rescore: true, expectedKey: "D" }, { userName: "Premier", explain: explainOk("B") });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const q = db.tables.questions[0];
+  assert.equal(q.correct_answer, "B");
+  assert.equal(q.parsing_status, "Approved");
+  assert.ok((q.parsing_notes as string).startsWith("[live-fix]"));
+  assert.ok(!(q.parsing_notes as string).includes(rq.FIX_PROPOSAL_NOTE));
+  const snap = db.tables.app_settings.find((r) => r.key === `live_fix_before:${QID}`)!.value as { fields: Record<string, unknown> };
+  assert.equal(snap.fields.correct_answer, "D", "old key recorded");
+  assert.equal((snap.fields.choices as { text: string }[])[3].text, "$4\\pi r^3 + 4\\pi r^2$", "old choices recorded");
+  assert.ok(snapshotValid(snap as never, q.parsing_notes as string), "the snapshot still belongs to the change after the notes write");
+  const rec = { action: "fix_choice", live: !!(res.live ?? (res.key && res.key.ok && res.key.live)), keyChanged: res.key && res.key.ok ? res.key.keyChanged : undefined, oldKey: res.key && res.key.ok ? res.key.oldKey : null, newKey: "B", keyAfter: "B", updatedAt: "x" };
+  assert.deepEqual(undoPlan(rec), { kind: "undo_live_fix", restoreKey: "D" });
+}
+
+// ── Dismiss: the note and the stored row go, nothing else changes ──
+{
+  const { db, client } = fakeDb({ questions: [question({ parsing_notes: fp.fixProposalNote(PROPOSAL) })], app_settings: [] });
+  const res = await decide(client, QID, { action: "dismiss_fix" }, {});
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const q = db.tables.questions[0];
+  assert.ok(!((q.parsing_notes as string | null) ?? "").includes(rq.FIX_PROPOSAL_NOTE), "stuck note (no stored row) cleared");
+  assert.equal(q.parsing_status, "Needs Review", "never approved by a dismiss");
+  assert.equal((q.choices as { text: string }[])[3].text, "$4\\pi r^3 + 4\\pi r^2$");
+  await fp.saveFixProposal(client, QID, PROPOSAL);
+  await decide(client, QID, { action: "dismiss_fix" }, {});
+  assert.equal(db.tables.app_settings.length, 0);
+}
+
+// ── edit limits ──
+assert.equal(fp.parseFixEdits([{ field: "D", from: "a", to: "" }]), null, "a choice is never emptied");
+assert.equal(fp.parseFixEdits([{ field: "questionText", from: "a", to: "x".repeat(fp.MAX_FIX_TEXT + 1) }]), null, "too long");
+assert.ok(fp.parseFixEdits([{ field: "questionText", from: "a", to: "" }]), "text may be cut");
 
 // ── Undo plan ──
 assert.equal(undoPlan({ action: "fix_choice", live: false, keyAfter: "D", updatedAt: "x" }).kind, "none");

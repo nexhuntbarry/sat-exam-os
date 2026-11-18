@@ -42,6 +42,9 @@ export interface FixProposal {
   createdAt: string;
 }
 
+/** Longest `to` text accepted (characters). */
+export const MAX_FIX_TEXT = 4000;
+
 const KINDS = new Set<FixKind>(["no_correct_choice", "two_correct", "merged", "missing_text"]);
 const FIELDS = new Set<FixField>(["questionText", "A", "B", "C", "D"]);
 const ORIGINS = new Set(["source", "extraction", "unclear"]);
@@ -77,6 +80,8 @@ export function parseFixEdits(v: unknown): FixEdit[] | null {
     const { field, from, to } = e as Record<string, unknown>;
     if (!FIELDS.has(field as FixField) || typeof from !== "string" || typeof to !== "string") return null;
     if (from === to || out.some((x) => x.field === field)) return null;
+    // A choice is never emptied; nothing longer than a question.
+    if (to.length > MAX_FIX_TEXT || (field !== "questionText" && !to.trim())) return null;
     out.push({ field: field as FixField, from, to });
   }
   return out;

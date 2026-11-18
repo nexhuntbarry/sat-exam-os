@@ -7,7 +7,8 @@ import { approveBlockedMessage, findApproveBlocker } from "@/lib/parse-guards";
 import { MAX_KEY_LENGTH, keyTypeProblem } from "@/lib/answer-key";
 import { liveQuestionIds } from "@/lib/live-questions";
 import { clearReviewTags, hasReviewTags } from "@/lib/key-doubt";
-import { dropStaleKeyNotes } from "@/lib/review-queue";
+import { dropStaleKeyNotes, isFixProposalNote, removeNotes } from "@/lib/review-queue";
+import { clearFixProposal } from "@/lib/fix-proposal";
 import { isLiveQuestion, KEY_ROW_SELECT, keyExplanationWarning, prepareKeyChange, type PreparedKeyChange } from "@/lib/key-change";
 import type { AutoFixRow } from "@/lib/explanation-autofix";
 import { editedExplanationProblem, staleSave } from "@/lib/question-save-guard";
@@ -155,6 +156,22 @@ async function handlePATCH(
     if (cleaned.removed.length > 0) update.parsing_notes = cleaned.notes;
   }
 
+  // Editing the text, choices or key by hand settles a stored fix proposal
+  // (review queue "No correct choice"): its note goes, the stored row after the save.
+  const priorRec = prior as unknown as Record<string, unknown>;
+  const contentEdited = (["question_text", "choices", "correct_answer"] as const).some(
+    (k) => k in body && JSON.stringify(body[k] ?? null) !== JSON.stringify(priorRec[k] ?? null),
+  );
+  let fixProposalDropped = false;
+  if (contentEdited) {
+    const base = "parsing_notes" in update ? (update.parsing_notes as string | null) : (prior.parsing_notes ?? null);
+    const res = removeNotes(base, isFixProposalNote);
+    if (res.removed.length > 0) {
+      update.parsing_notes = res.notes;
+      fixProposalDropped = true;
+    }
+  }
+
   // A new key is saved only together with a checked explanation for it
   // (lib/key-change.ts). The reviewer's own edited explanation is kept when
   // it passes the checks for the new key; one that doesn't is refused.
@@ -228,6 +245,7 @@ async function handlePATCH(
   if (!data) return stale;
 
   const result = data;
+  if (fixProposalDropped) await clearFixProposal(db, id).catch(() => undefined);
 
   // Re-grade already-submitted work so scores/score reports reflect the
   // corrected key instead of the old one.

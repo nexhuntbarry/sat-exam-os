@@ -263,6 +263,15 @@ export interface KeyCorrectionInput {
   correct_answer?: string;
   question_type?: string;
   clear_choices?: boolean;
+  /**
+   * Content saved in the SAME write as the key (review queue fix proposal:
+   * the fixed choice / text). The type check and the new explanation use it,
+   * so a refused or failed key change writes nothing.
+   */
+  question_text?: string | null;
+  choices?: unknown[];
+  /** Why the content changed, for the [live-fix] sentence (default: key/type). */
+  contentNote?: string;
   /** The key shown on the preview. */
   expectedKey: string | null;
   /** Optional compare-and-set on the whole row (automatic callers: the row they planned on). */
@@ -311,8 +320,9 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
   const oldKey = q.correct_answer ?? null;
   const nextType = typeof input.question_type === "string" ? input.question_type : q.question_type;
   const nextKey = typeof input.correct_answer === "string" ? input.correct_answer.trim() : oldKey;
-  const nextChoices = input.clear_choices || nextType === "Student Produced Response" ? [] : q.choices;
-  const problem = keyTypeProblem({ question_type: nextType, correct_answer: nextKey, question_text: q.question_text, choices: nextChoices });
+  const nextText = input.question_text !== undefined ? input.question_text : q.question_text;
+  const nextChoices = input.clear_choices || nextType === "Student Produced Response" ? [] : input.choices ?? q.choices;
+  const problem = keyTypeProblem({ question_type: nextType, correct_answer: nextKey, question_text: nextText, choices: nextChoices });
   if (problem) return { ok: false, status: 400, error: `This correction still doesn't fit: ${problem.reason}.` };
   const keyChanged = (oldKey ?? "") !== (nextKey ?? "");
   if (keyChanged && input.rescore !== true) {
@@ -342,7 +352,7 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
     .filter((s, i, all) => s && all.indexOf(s) === i)
     .join("; ");
   const notes = live
-    ? `${LIVE_FIX_TAG} Key/type corrected while this question is in a live test; kept Approved — please re-check. ${noteBody}`
+    ? `${LIVE_FIX_TAG} ${input.contentNote ?? "Key/type corrected"} while this question is in a live test; kept Approved — please re-check. ${noteBody}`
     : noteBody;
 
   const update: Record<string, unknown> = {
@@ -351,13 +361,14 @@ export async function applyKeyCorrection(db: SupabaseClient, input: KeyCorrectio
     choices: nextChoices,
     parsing_notes: notes || null,
   };
+  if (input.question_text !== undefined) update.question_text = nextText;
   // The old explanation argued the old key: the new key is saved only
   // together with a checked explanation for it (or none at all).
   let prepared: PreparedKeyChange | null = null;
   if (keyChanged) {
     prepared = await prepareKeyChange(
       db,
-      { ...q, question_type: nextType, correct_answer: nextKey, choices: nextChoices, parsing_notes: notes || null },
+      { ...q, question_text: nextText, question_type: nextType, correct_answer: nextKey, choices: nextChoices, parsing_notes: notes || null },
       { live, userId: input.userId, route: "key-change", explain: input.explain },
     );
     Object.assign(update, prepared.patch);

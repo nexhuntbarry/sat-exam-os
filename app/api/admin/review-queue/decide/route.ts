@@ -16,7 +16,7 @@ export const maxDuration = 300;
 //   keep_key | set_key (after the rescore preview) | use_pdf | keep_figure |
 //   use_pdf_text | regen_explanation | approve |
 //   fix_choice (the stored fix proposal, or the edited `fix` / `key_after_fix`;
-//   a key change needs rescore + expected_key after the preview) |
+//   a key change needs rescore + expected_key after the preview) | dismiss_fix |
 //   confirm_live_fix | undo_live_fix (restore_key + rescore after the preview;
 //   expected_key / updated_at: refused with 409 when the row moved since)
 // then regenerates the explanation when needed, clears the settled notes and
@@ -39,6 +39,7 @@ async function handlePOST(req: Request) {
     case "regen_explanation":
     case "approve":
     case "confirm_live_fix":
+    case "dismiss_fix":
       act = { action: body.action };
       break;
     case "undo_live_fix":

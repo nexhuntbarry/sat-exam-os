@@ -607,6 +607,7 @@ const ACTION_LABEL: Record<string, string> = {
   confirm_live_fix: "live-test change confirmed",
   undo_live_fix: "live-test change undone",
   fix_choice: "fix accepted",
+  dismiss_fix: "fix proposal dismissed",
   reject: "question rejected",
 };
 
@@ -1225,8 +1226,18 @@ function QueueCard({
       )}
       {decision === "key" && <p className="mt-0.5 text-xs text-soft-mute" title={item.keySource.detail}>Saved key: {item.keySource.label}</p>}
       {decision === "fix" && !isLiveFix && (fp ? <FixProposalBox fp={fp} currentKey={item.key} near={near} /> : (
-        <p className="mt-1 text-sm text-status-warning">No stored fix for this question. Edit it by hand or reject it.</p>
+        <p className="mt-1 text-sm text-status-warning">No stored fix for this question. Edit it by hand, dismiss the proposal or reject the question.</p>
       ))}
+      {decision === "fix" && !isLiveFix && item.plainReasons.length > 1 && (
+        <div className="mt-2 rounded-lg border border-status-error/30 bg-status-error/5 px-3 py-2 text-sm" data-testid="fix-other-reasons">
+          <p className="font-medium text-charcoal">Still open after the fix (Accept doesn&apos;t settle these):</p>
+          <ul className="mt-1 list-disc pl-5 text-mid-gray">
+            {item.plainReasons.slice(1).map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {decision !== "key" && decision !== "fix" && !isLiveFix && item.plainReasons.length > 1 && (
         <ul className="mt-1 list-disc pl-5 text-sm text-mid-gray">
           {item.plainReasons.slice(1, 4).map((r) => (
@@ -1329,6 +1340,15 @@ function QueueCard({
             onClick={() => void rejectQuestion()}
           >
             {busy === "reject" ? "Rejecting…" : "Reject question"}
+          </button>
+          <button
+            type="button"
+            className="text-xs text-soft-mute underline hover:text-charcoal disabled:opacity-50"
+            disabled={disabled}
+            title="Drop the proposal without changing the question"
+            onClick={() => window.confirm("Dismiss this fix proposal? The question isn't changed.") && void run({ action: "dismiss_fix" }, "dismiss_fix")}
+          >
+            {busy === "dismiss_fix" ? "Dismissing…" : "Dismiss proposal"}
           </button>
         </>
       )}

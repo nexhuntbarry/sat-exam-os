@@ -28,6 +28,7 @@ import {
 } from "@/lib/ai/solve-question";
 import { clearReviewTags } from "@/lib/key-doubt";
 import { findApproveBlocker } from "@/lib/parse-guards";
+import { keyTypeProblem } from "@/lib/answer-key";
 import { applyKeyCorrection, keyExplanationWarning, type ExplainFn, type KeyCorrectionResult } from "@/lib/key-change";
 import { loadProposal, proposalIsCurrent, replaceTableBlock, tableBlockCount } from "@/lib/figure-compare";
 import { LIVE_FIX_TAG, liveQuestionIds } from "@/lib/live-questions";
@@ -83,6 +84,8 @@ export type DecideAction =
    * key shown on it).
    */
   | { action: "fix_choice"; fix?: FixEdit[]; keyAfterFix?: string; expectedKey?: string | null; rescore?: boolean }
+  /** Drop the fix proposal (its note and stored row) without changing the question. */
+  | { action: "dismiss_fix" }
   /** `restoreKey`: the key before the live fix, after the rescore preview (rescore must be true). */
   | {
       action: "undo_live_fix";
@@ -147,6 +150,8 @@ type Refresh = {
   explanation?: string;
   notes?: string | null;
   outcome: DecideResult["explanation"];
+  /** An independent solve (one that never saw the key) reached the key. */
+  agreed?: boolean;
   /** The same note change applied to another copy of the row (a retry on a fresh row). */
   notesFor: (r: Row) => string | null | undefined;
 };
@@ -182,7 +187,7 @@ async function refreshExplanation(row: Row, userId?: string, explain: ExplainFn 
     const ctx = { officialKey: keyIsOfficial(r), failingChecks: failingChecks(r, explanation) };
     return removeNotes(r.parsing_notes, (s) => classifyNote(s, ctx) === "explanation" || EXPLANATION_CHECK_NOTE.test(s) || s.startsWith(FIX_EXPLANATION_NOTE)).notes;
   };
-  return { explanation, notes: notesFor(row), outcome: "regenerated", notesFor };
+  return { explanation, notes: notesFor(row), outcome: "regenerated", agreed: !!res.aiAnswer && res.agrees && res.independent === true, notesFor };
 }
 
 /** Why the row can't be approved yet (approvalBlockers + an unchecked explanation). */
@@ -404,21 +409,25 @@ export async function decide(
       }
       const { patch: content, conflicts } = applyFixEdits(row, edits);
       if (conflicts.length) return { ok: false, status: 409, error: `The question changed since this fix was proposed (${conflicts[0]}). Edit it by hand.` };
-      const live = await isLive(db, row);
       const who = (opts.userName ?? "a reviewer").replace(/[;()[\]]/g, " ").replace(/\s+/g, " ").trim() || "a reviewer";
       const fields = edits.map((e) => (e.field === "questionText" ? "question text" : `choice ${e.field}`)).join(", ");
       const history = `${FIX_APPLIED_PREFIX} by ${who} (${new Date().toISOString().slice(0, 10)}): ${FIX_KIND_LABEL[stored.kind]}, fixed ${fields}, key ${keyChanged ? `${oldKey ?? "∅"} → ${newKey}` : `${newKey} kept`}`;
       const settled = (notes: string | null | undefined) => [removeNotes(notes, isFixProposalNote).notes, history].filter(Boolean).join("; ");
 
       if (!keyChanged) {
-        // The key stands (confirmed): its dispute notes go, as with "Keep key".
-        const patch: Record<string, unknown> = { ...content, ...keySettledPatch(row) };
-        patch.parsing_notes = settled(patch.parsing_notes as string | null);
+        // Accepting a fix is not a key decision: other key disputes (and an
+        // official answer that differs) stay, so the row stays in the queue
+        // for them after the fix.
+        const live = await isLive(db, row);
+        const patch: Record<string, unknown> = { ...content, parsing_notes: settled(row.parsing_notes) };
         // New content: the explanation is rewritten and checked for it; a
         // text that fails the checks is never saved.
         const ex = await refreshExplanation({ ...row, ...patch } as Row, opts.userId, opts.explain);
         if (ex.explanation) patch.explanation = ex.explanation;
         if (ex.notes !== undefined) patch.parsing_notes = ex.notes;
+        // Only the explanation writer's own "AI's own answer is …" note is
+        // superseded: an independent solve of the fixed question reached the key.
+        if (ex.agreed) patch.parsing_notes = removeNotes(patch.parsing_notes as string | null, (s) => s.startsWith(REGEN_DISAGREE_PREFIX)).notes;
         if (ex.outcome === "failed") patch.parsing_notes = [patch.parsing_notes, FIX_EXPLANATION_NOTE].filter(Boolean).join("; ");
         const exOk = ex.outcome === "regenerated";
         const res = await finish(db, row, patch, opts.userId, { explanation: ex.outcome }, live, exOk);
@@ -435,28 +444,30 @@ export async function decide(
         };
       }
 
-      // 1. The content fix (never approves on its own; the proposal stays
-      // until the key is done, and a repeat Accept skips edits already made).
-      if (Object.keys(content).length > 0) {
-        const res = await finish(db, row, { ...content }, opts.userId, {}, live, false);
-        if (!res.ok) return res;
-      }
-      // 2. The key, through the key-change path: explanation written for the
-      // fixed question and checked, answers rescored (preview confirmed above).
+      // Checked before anything is written: the new key against the FIXED choices.
+      const fixedText = content.question_text ?? row.question_text;
+      const fixedChoices = content.choices ?? row.choices;
+      const problem = keyTypeProblem({ question_type: row.question_type, correct_answer: newKey, question_text: fixedText, choices: fixedChoices });
+      if (problem) return { ok: false, status: 400, error: `The key after the fix doesn't fit: ${problem.reason}.` };
+      // 1. Fixed content + key + an explanation written for both and checked,
+      // in ONE write (compare-and-set on the key and on the row as validated),
+      // through the key-change path; then answers are rescored. A refused or
+      // failed key change writes nothing.
       const keyRes = await applyKeyCorrection(db, {
         id,
         correct_answer: newKey,
+        ...(content.question_text !== undefined ? { question_text: content.question_text } : {}),
+        ...(content.choices ? { choices: content.choices } : {}),
+        contentNote: `Fix proposal (${FIX_KIND_LABEL[stored.kind]}) applied with key ${oldKey ?? "∅"} → ${newKey}`,
         expectedKey: oldKey,
+        expectedUpdatedAt: row.updated_at ?? null,
         rescore: true,
         userId: opts.userId,
         source: reviewerSource(opts.userName),
         explain: opts.explain,
       });
-      if (!keyRes.ok) {
-        const saved = Object.keys(content).length > 0 ? "The text fix was saved, but the key wasn't changed: " : "";
-        return { ok: false, status: keyRes.status, error: `${saved}${keyRes.error}`, key: keyRes };
-      }
-      // 3. Notes: proposal and key disputes settled (stale AI notes about the
+      if (!keyRes.ok) return { ok: false, status: keyRes.status, error: `Nothing was saved: ${keyRes.error}`, key: keyRes };
+      // 2. Notes: proposal and key disputes settled (stale AI notes about the
       // old key already went with dropStaleKeyNotes in applyKeyCorrection).
       const exOk = keyRes.explanationOk;
       const extra: Partial<DecideResult> = { key: keyRes, live: keyRes.live, explanation: keyRes.explanation?.outcome ?? "failed" };
@@ -479,6 +490,14 @@ export async function decide(
       await clearFixProposal(db, id).catch(() => undefined);
       if (!exOk) return { ...res, approved: false, warning: exWarning ?? undefined };
       return res;
+    }
+
+    case "dismiss_fix": {
+      const removed = removeNotes(row.parsing_notes, isFixProposalNote);
+      await clearFixProposal(db, id).catch(() => undefined);
+      if (removed.removed.length === 0) return { ok: true, approved: row.parsing_status === "Approved", blockers: decideBlockers(row), nextGroup: groupRow(row).primary };
+      // Nothing else changes; the question moves on to its next reason (never approved here).
+      return finish(db, row, { parsing_notes: removed.notes }, opts.userId, {}, false, false);
     }
 
     case "keep_figure": {
