@@ -96,6 +96,7 @@ export async function POST(
       // closed as "not taken", like the cron does: 0 time spent and
       // metadata.auto_closed_unopened, so it shows as Incomplete and stays
       // out of scores and analytics (lib/module2-not-taken).
+      // Also guarded in the claim itself (finalizeSubmission).
       autoClosedUnopened:
         isModule2Track(submission.adaptive_track) &&
         !moduleStartedAtIso(submission) &&
@@ -110,6 +111,14 @@ export async function POST(
     );
   }
   if (!graded) {
+    // An unopened Module 2 the student started while this ran: not closed.
+    const { data: now } = await db.from("submissions").select("status").eq("id", id).maybeSingle();
+    if (now?.status === "In Progress") {
+      return NextResponse.json(
+        { error: "The student just started this module. Refresh and try again." },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { error: "Submission was already finalized" },
       { status: 400 },

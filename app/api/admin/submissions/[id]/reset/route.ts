@@ -56,6 +56,26 @@ export async function POST(
   const crossSide = await forbidCrossSide(auth, { userIds: [sub.student_id], testIds: [sub.test_id] });
   if (crossSide) return crossSide;
 
+  // Only the student's latest attempt: resetting an older one would put it
+  // back in progress (started now) in front of the newer attempt's result.
+  const { data: newer, error: newerErr } = await db
+    .from("submissions")
+    .select("id")
+    .eq("test_id", sub.test_id)
+    .eq("student_id", sub.student_id)
+    .gt("attempt_number", sub.attempt_number ?? 1)
+    .limit(1);
+  if (newerErr) {
+    console.error("[admin/submissions/reset] newer attempt check", newerErr);
+    return NextResponse.json({ error: newerErr.message }, { status: 500 });
+  }
+  if ((newer ?? []).length > 0) {
+    return NextResponse.json(
+      { error: "The student has a newer attempt on this test; only the latest attempt can be reset. Delete this one instead." },
+      { status: 409 },
+    );
+  }
+
   try {
     await resetFullLengthEffects(db, sub);
   } catch (e) {

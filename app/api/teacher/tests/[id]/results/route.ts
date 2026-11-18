@@ -8,6 +8,7 @@ import { loadFullLengthResults } from "@/lib/full-length-results";
 import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-access";
 import { scaleSectionScore } from "@/lib/scoring";
 import { studentClassNames } from "@/lib/result-printout";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -120,7 +121,7 @@ export async function GET(
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
-      percentage, submitted_at, time_spent_seconds, scaled_score, session_id, adaptive_track,
+      percentage, submitted_at, time_spent_seconds, scaled_score, session_id, adaptive_track, ${M2_NOT_TAKEN_COLUMN},
       users!inner(display_name, email, student_profiles(grade))
     `)
     .in("test_id", await expandFullLength(db, [testId]))
@@ -147,6 +148,7 @@ export async function GET(
     scaled_score: number | null;
     session_id: string | null;
     adaptive_track: string | null;
+    m2_not_taken?: unknown;
     users: {
       display_name: string;
       email: string;
@@ -232,12 +234,18 @@ export async function GET(
       });
       continue;
     }
-    const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
-    const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
-    const time = sorted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
+    // Module 2 closed unopened (lib/module2-not-taken): Incomplete, counted
+    // on Module 1 alone, no SAT score, not "submitted" in the stats below.
+    const incomplete = sorted.some(isModule2NotTaken);
+    const counted = sorted.filter((r) => !isModule2NotTaken(r));
+    const correct = counted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
+    const total = counted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
+    const time = counted.reduce((s, r) => s + (r.time_spent_seconds ?? 0), 0);
     const pct = total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
     const statuses = sorted.map((r) => r.status);
-    const status = statuses.includes("In Progress")
+    const status = incomplete
+      ? "Incomplete"
+      : statuses.includes("In Progress")
       ? "In Progress"
       : statuses.includes("Late")
       ? "Late"
@@ -260,7 +268,7 @@ export async function GET(
       status,
       score: null,
       percentage: pct,
-      scaledScore: pct != null ? scaleSectionScore(pct) : null,
+      scaledScore: pct != null && !incomplete ? scaleSectionScore(pct) : null,
       correctCount: correct,
       totalQuestions: total,
       timeSpentSeconds: time,
@@ -273,7 +281,8 @@ export async function GET(
           correctCount: r.correct_count ?? 0,
           totalQuestions: r.total_questions ?? 0,
           percentage: p,
-          scaledScore: r.scaled_score ?? (p != null ? scaleSectionScore(p) : null),
+          scaledScore: isModule2NotTaken(r) ? null : r.scaled_score ?? (p != null ? scaleSectionScore(p) : null),
+          notTaken: isModule2NotTaken(r),
         };
       }),
     });

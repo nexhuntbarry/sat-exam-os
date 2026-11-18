@@ -28,7 +28,14 @@ import { isModule2Track, resetSubmissionMetadata } from "@/lib/student-exam";
 import { isFullLengthRow } from "@/lib/full-length-attempt";
 
 export const REOPEN_SUBMISSION_COLUMNS =
-  "id, test_id, student_id, status, session_id, adaptive_track, module_id, metadata, attempt_number";
+  "id, test_id, student_id, status, session_id, adaptive_track, module_id, metadata, attempt_number, " +
+  "answers, submitted_at, score, correct_count, total_questions, percentage, scaled_score, scaled_section, time_spent_seconds, started_at";
+
+/** The graded columns the reopen overwrites (restored if it can't finish). */
+const GRADED_COLUMNS = [
+  "status", "answers", "metadata", "submitted_at", "score", "correct_count", "total_questions",
+  "percentage", "scaled_score", "scaled_section", "time_spent_seconds", "started_at",
+] as const;
 
 export interface ReopenRow {
   id: string;
@@ -49,7 +56,8 @@ export type ReopenRefusal =
   | "full_length"
   | "module_1_not_graded"
   | "newer_attempt"
-  | "changed";
+  | "changed"
+  | "records_failed";
 
 export type ReopenResult =
   | { ok: true; submissionId: string; track: string }
@@ -66,6 +74,7 @@ const REFUSAL: Record<ReopenRefusal, { error: string; status: number }> = {
   module_1_not_graded: { error: "Module 1 of this attempt isn't submitted", status: 409 },
   newer_attempt: { error: "The student has a newer attempt on this test; only the latest attempt can be reopened", status: 409 },
   changed: { error: "This submission changed in the meantime. Refresh and try again.", status: 409 },
+  records_failed: { error: "Couldn't clear the old Module 2 answers, so nothing was changed. Try again.", status: 500 },
 };
 
 function refuse(reason: ReopenRefusal): ReopenResult {
@@ -160,11 +169,29 @@ export async function reopenModule2(
   if (upErr) throw new Error(`reopen: ${upErr.message}`);
   if (!claimed || claimed.length === 0) return refuse("changed");
 
-  // The graded records of the old result. finalizeSubmission rewrites
-  // them on the next grade anyway; clearing now keeps the In Progress row
-  // out of anything that reads answer_records.
-  const { error: arErr } = await db.from("answer_records").delete().eq("submission_id", row.id);
-  if (arErr) console.error("[module2-reopen] answer_records", row.id, arErr.message);
+  // The graded records of the old result go too (an In Progress row must
+  // not keep answer_records). One retry; if they still can't be deleted the
+  // row is put back exactly as it was (only while nobody touched it since:
+  // still In Progress with our started_at), so the result stays consistent.
+  let arErr: { message: string } | null = null;
+  for (let i = 0; i < 2; i++) {
+    ({ error: arErr } = await db.from("answer_records").delete().eq("submission_id", row.id));
+    if (!arErr) break;
+  }
+  if (arErr) {
+    console.error("[module2-reopen] answer_records", row.id, arErr.message);
+    const restore: Record<string, unknown> = {};
+    const orig = row as unknown as Record<string, unknown>;
+    for (const c of GRADED_COLUMNS) if (c in orig) restore[c] = orig[c];
+    const { error: rbErr } = await db
+      .from("submissions")
+      .update(restore)
+      .eq("id", row.id)
+      .eq("status", "In Progress")
+      .eq("started_at", nowIso);
+    if (rbErr) console.error("[module2-reopen] rollback", row.id, rbErr.message);
+    return refuse("records_failed");
+  }
 
   return { ok: true, submissionId: row.id, track: row.adaptive_track as string };
 }

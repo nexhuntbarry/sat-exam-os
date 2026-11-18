@@ -5,6 +5,7 @@ import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { scaleSectionScore } from "@/lib/scoring";
 import { getAssignedTestIds, getInProgressOrPendingM2TestIds } from "@/lib/student-exam";
 import { asParentRows, closedFullLengthAttemptKeys, expandWithChildren, fullLengthLinksOrNone } from "@/lib/full-length";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -74,7 +75,7 @@ export async function GET() {
   const { data: rawSubmissions } = await db
     .from("submissions")
     .select(
-      "test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track",
+      `test_id, student_id, id, status, score, correct_count, total_questions, percentage, submitted_at, attempt_number, session_id, adaptive_track, ${M2_NOT_TAKEN_COLUMN}`,
     )
     .eq("student_id", user.userId)
     .in("test_id", expandWithChildren(testIds, flLinks))
@@ -93,6 +94,7 @@ export async function GET() {
     attempt_number: number | null;
     session_id: string | null;
     adaptive_track: string | null;
+    m2_not_taken?: unknown;
   };
 
   // Group submissions per test, then collapse two-module session
@@ -151,11 +153,17 @@ export async function GET() {
           const rank = (t: string | null) => (t === "module_1" ? 0 : 1);
           return rank(a.adaptive_track) - rank(b.adaptive_track);
         });
-        const correct = sorted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
-        const total = sorted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
+        // Module 2 closed unopened (lib/module2-not-taken): "Incomplete",
+        // Module 1 alone, no SAT score.
+        const incomplete = sorted.some(isModule2NotTaken);
+        const counted = sorted.filter((r) => !isModule2NotTaken(r));
+        const correct = counted.reduce((s, r) => s + (r.correct_count ?? 0), 0);
+        const total = counted.reduce((s, r) => s + (r.total_questions ?? 0), 0);
         const pct = total > 0 ? Math.round((correct / total) * 1000) / 10 : null;
         const statuses = sorted.map((r) => r.status);
-        const status = statuses.includes("In Progress")
+        const status = incomplete
+          ? "Incomplete"
+          : statuses.includes("In Progress")
           ? "In Progress"
           : statuses.includes("Late")
           ? "Late"
@@ -171,7 +179,7 @@ export async function GET() {
           status,
           score: null,
           percentage: pct,
-          scaledScore: pct != null ? scaleSectionScore(pct) : null,
+          scaledScore: pct != null && !incomplete ? scaleSectionScore(pct) : null,
           correctCount: correct,
           totalQuestions: total,
           submittedAt: lastSubmittedAt,
@@ -185,7 +193,8 @@ export async function GET() {
               correctCount: r.correct_count ?? 0,
               totalQuestions: r.total_questions ?? 0,
               percentage: p,
-              scaledScore: p != null ? scaleSectionScore(p) : null,
+              scaledScore: p != null && !isModule2NotTaken(r) ? scaleSectionScore(p) : null,
+              notTaken: isModule2NotTaken(r),
             };
           }),
         };
@@ -215,7 +224,9 @@ export async function GET() {
     let testStatus = "Not Started";
     if (attempt) {
       if (attempt.status === "In Progress") testStatus = "In Progress";
-      else if (attempt.status === "Submitted" || attempt.status === "Late")
+      // Incomplete keeps the legacy "Submitted" test status (closed), with
+      // `incomplete` and attempt.status saying why.
+      else if (attempt.status === "Submitted" || attempt.status === "Late" || attempt.status === "Incomplete")
         testStatus = "Submitted";
     }
     // Preserve legacy `submission` shape so existing API consumers keep
@@ -234,6 +245,7 @@ export async function GET() {
         : null,
       attempt,
       testStatus,
+      incomplete: attempt?.status === "Incomplete",
       resumeOnly: resumeOnlyIds.has(t.id),
     };
   });

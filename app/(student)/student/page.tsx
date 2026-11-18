@@ -10,6 +10,8 @@ import { sectionTitleClass } from "@/lib/section-color";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
+import { getTranslations } from "next-intl/server";
 
 async function getStudentProfile(userId: string) {
   const db = getServiceClient();
@@ -48,7 +50,7 @@ async function getUpcomingTests(userId: string) {
   const flLinks = await fullLengthLinksOrNone(db);
   const { data: rawSubmissions } = await db
     .from("submissions")
-    .select("test_id, student_id, status, attempt_number, adaptive_track")
+    .select(`test_id, student_id, status, attempt_number, adaptive_track, ${M2_NOT_TAKEN_COLUMN}`)
     .eq("student_id", userId)
     .in("test_id", expandWithChildren(testIds, flLinks))
     .order("attempt_number", { ascending: false });
@@ -59,6 +61,8 @@ async function getUpcomingTests(userId: string) {
   // Module 1 with no Module 2 row yet (failed handoff) is still in
   // progress — the test page offers "Continue to Module 2".
   const subMap: Record<string, string> = {};
+  // Module 2 closed before it was opened (lib/module2-not-taken).
+  const incomplete = new Set<string>();
   const byTest = new Map<string, NonNullable<typeof submissions>>();
   for (const s of submissions ?? []) {
     const list = byTest.get(s.test_id) ?? [];
@@ -75,11 +79,13 @@ async function getUpcomingTests(userId: string) {
       latest.some((r) => r.status === "In Progress") || (m1Done && !hasM2)
         ? "In Progress"
         : latest[0].status;
+    if (subMap[testId] !== "In Progress" && latest.some(isModule2NotTaken)) incomplete.add(testId);
   }
 
   return (tests ?? []).map((t) => ({
     ...t,
     testStatus: subMap[t.id] ?? "Not Started",
+    incomplete: incomplete.has(t.id),
   }));
 }
 
@@ -93,6 +99,7 @@ export default async function StudentDashboardPage() {
     getStudentProfile(user.userId),
     getUpcomingTests(user.userId),
   ]);
+  const tm = await getTranslations("m2NotTaken");
 
   const hasCompleteProfile = profile?.grade && profile?.school;
 
@@ -179,6 +186,11 @@ export default async function StudentDashboardPage() {
                       {t.due_date ? ` · Due ${formatDate(t.due_date)}` : ""}
                     </p>
                   </div>
+                  {isSubmitted && t.incomplete && (
+                    <span className="shrink-0 px-2 py-0.5 rounded-full border border-status-warning/25 bg-status-warning/10 text-status-warning text-xs font-medium whitespace-nowrap">
+                      {tm("badge")}
+                    </span>
+                  )}
                   {isSubmitted ? (
                     <Link
                       href={`/student/tests/${t.id}/result`}

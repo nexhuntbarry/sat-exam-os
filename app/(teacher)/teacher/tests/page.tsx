@@ -9,6 +9,7 @@ import PageIntro from "@/components/shared/PageIntro";
 import { getQaTestIds, getQaUserIds, scopeIds } from "@/lib/qa";
 import { getAssignedStudentIds, getTeacherTestScope, seesAllStudents } from "@/lib/teacher-access";
 import { manageDecision, type ManageUser } from "@/lib/test-manage";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import TeacherTestsTable, { type TeacherTestRow } from "./TeacherTestsTable";
 
 async function getTeacherTests(user: ManageUser & { role: string | null }): Promise<TeacherTestRow[]> {
@@ -36,7 +37,7 @@ async function getTeacherTests(user: ManageUser & { role: string | null }): Prom
       .in("test_id", testIds),
     scopeIds(db.from("submissions")
       .select(
-        "test_id, student_id, status, correct_count, total_questions, percentage, session_id, attempt_number, adaptive_track",
+        `test_id, student_id, status, correct_count, total_questions, percentage, session_id, attempt_number, adaptive_track, ${M2_NOT_TAKEN_COLUMN}`,
       )
       .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", await getQaUserIds(), user.isQa),
   ]);
@@ -62,6 +63,7 @@ async function getTeacherTests(user: ManageUser & { role: string | null }): Prom
     session_id: string | null;
     attempt_number: number | null;
     adaptive_track: string | null;
+    m2_not_taken?: unknown;
   };
   // Two-module attempts produce two submission rows sharing one
   // session_id; avg over raw submission rows would double-count each
@@ -90,6 +92,8 @@ async function getTeacherTests(user: ManageUser & { role: string | null }): Prom
       list.push(r);
       sessions.set(key, list);
     }
+    // Module 2 closed unopened: Incomplete, not a finished score (lib/module2-not-taken).
+    for (const [k, group] of sessions) if (group.some(isModule2NotTaken)) sessions.delete(k);
     const pcts: number[] = [];
     for (const group of sessions.values()) {
       const correct = group.reduce((s, r) => s + (r.correct_count ?? 0), 0);

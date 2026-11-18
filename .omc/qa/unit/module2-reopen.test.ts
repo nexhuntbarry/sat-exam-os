@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import "./_resolve.ts";
 import { fakeDb } from "./_fake-db.ts";
 const { reopenModule2, reopenModule2Metadata, reopenRowRefusal } = await import("../../../lib/module2-reopen.ts");
-const { attemptFacts, latestAttemptOf, moduleSummary, reopenedModule2ClosesAt } = await import("../../../lib/attempt-actions.ts");
+const { attemptFacts, latestAttemptOf, moduleSummary, reopenedModule2ClosesAt, withOpenAnswers } = await import("../../../lib/attempt-actions.ts");
 const { isModule2NotTaken } = await import("../../../lib/module2-not-taken.ts");
 const { moduleStartedAtIso } = await import("../../../lib/student-exam.ts");
 
@@ -22,7 +22,7 @@ const m1 = {
 const m2 = {
   id: "m2", test_id: "t1", student_id: "s1", status: "Submitted", session_id: "sess", adaptive_track: "module_2_hard",
   module_id: "mod2h", attempt_number: 1, started_at: "2026-11-07T15:31:04.000Z", submitted_at: "2026-11-08T15:35:31.000Z",
-  answers: {}, correct_count: 0, total_questions: 22, percentage: 0, scaled_score: 200, scaled_section: "Math", time_spent_seconds: 0,
+  answers: {}, score: 0, correct_count: 0, total_questions: 22, percentage: 0, scaled_score: 200, scaled_section: "Math", time_spent_seconds: 0,
   metadata: { auto_closed_unopened: true, time_multiplier: 1.5, device: { platform: "Mac" }, answers_version: 3, flagged: ["q9"], created_after_due: true },
 };
 function setup(extra: Record<string, unknown>[] = [], m2Patch: Record<string, unknown> = {}) {
@@ -81,6 +81,21 @@ const row = (db: { tables: Record<string, Record<string, unknown>[]> }, id: stri
   const r = await reopenModule2(client, "m2", NOW);
   assert.equal(r.ok, true);
   assert.deepEqual(row(db, "m2").metadata, { answers_version: 10, module_2_reopened_at: NOW.toISOString() });
+}
+
+// answer_records can't be deleted (even after a retry): the row is put back
+// exactly as it was and the call fails — never an In Progress row with the
+// old graded records.
+{
+  const { db, client } = setup();
+  const before = structuredClone(row(db, "m2"));
+  db.errors.answer_records = { message: "boom" };
+  const r = await reopenModule2(client, "m2", NOW);
+  assert.equal(r.ok, false);
+  assert.equal(!r.ok && r.reason, "records_failed");
+  assert.equal(!r.ok && r.status, 500);
+  assert.deepEqual(row(db, "m2"), before, "row restored");
+  assert.equal(db.log.filter((l) => l === "answer_records:delete").length, 2, "one retry");
 }
 
 // ── refusals (nothing written) ───────────────────────────────────────────
@@ -151,6 +166,22 @@ assert.deepEqual(reopenModule2Metadata(undefined, "T"), { answers_version: 1, mo
   // latestAttemptOf: the session of the most recently started row.
   const older = { ...m1, id: "o1", session_id: "old", started_at: "2026-10-01T10:00:00Z" };
   assert.deepEqual(latestAttemptOf([older, m1, m2]).map((r) => r.id), ["m1", "m2"]);
+}
+
+// withOpenAnswers: answers loaded for In Progress rows only.
+{
+  const { db, client } = fakeDb({
+    submissions: [
+      { id: "a", status: "In Progress", answers: { q1: "A", q2: "B" } },
+      { id: "b", status: "Submitted", answers: { q1: "C" } },
+    ],
+  });
+  const out = await withOpenAnswers(client, [{ id: "a", status: "In Progress" }, { id: "b", status: "Submitted" }]);
+  assert.deepEqual(out, [{ id: "a", status: "In Progress", answers: { q1: "A", q2: "B" } }, { id: "b", status: "Submitted" }]);
+  assert.equal(attemptFacts([{ ...m1, status: "In Progress", answers: out[0].answers }])!.modules[0].answered, 2);
+  db.log.length = 0;
+  await withOpenAnswers(client, [{ id: "b", status: "Submitted" }]);
+  assert.deepEqual(db.log, [], "no query when nothing is open");
 }
 
 // ── when a reopened, unopened Module 2 is closed again (cron rule) ────────

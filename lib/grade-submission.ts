@@ -321,12 +321,16 @@ export async function finalizeSubmission(
     };
   }
 
-  const { data: claimed, error: upErr } = await db
+  let claim = db
     .from("submissions")
     .update(updates)
     .eq("id", submissionId)
-    .eq("status", "In Progress")
-    .select("id");
+    .eq("status", "In Progress");
+  // Closing as "not taken" only while it is still unopened: a student who
+  // pressed Start meanwhile (module_2_started_at stamped) makes this a
+  // no-op instead of flagging a started Module 2 as not taken.
+  if (input.autoClosedUnopened) claim = claim.is("metadata->module_2_started_at", null);
+  const { data: claimed, error: upErr } = await claim.select("id");
   if (upErr) throw new Error(`update submission: ${upErr.message}`);
   if (!claimed || claimed.length === 0) return null;
 

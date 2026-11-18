@@ -11,9 +11,30 @@ import { isModule2Track } from "@/lib/student-exam";
 import { isModule2NotTaken, type Module2NotTakenRow } from "@/lib/module2-not-taken";
 import { MODULE_2_LATE_RECOVERY_HOURS } from "@/lib/module2-handoff";
 
-/** Submission columns the menu needs (add M2_NOT_TAKEN_COLUMN too). */
+/**
+ * Submission columns the menu needs (add M2_NOT_TAKEN_COLUMN too). Saved
+ * answers are only counted for open modules: load them for the In Progress
+ * rows alone with withOpenAnswers().
+ */
 export const ATTEMPT_ACTION_COLUMNS =
-  "id, status, adaptive_track, session_id, started_at, attempt_number, correct_count, total_questions, answers, m2_started:metadata->module_2_started_at";
+  "id, status, adaptive_track, session_id, started_at, attempt_number, correct_count, total_questions, m2_started:metadata->module_2_started_at";
+
+/**
+ * Adds `answers` to the In Progress rows only (one small query), so a page
+ * listing every attempt doesn't pull every graded row's answers just to
+ * count them. Graded rows keep `answers` undefined (their count isn't used).
+ */
+export async function withOpenAnswers<T extends { id: string; status: string }>(
+  db: { from: (t: string) => any }, // eslint-disable-line @typescript-eslint/no-explicit-any
+  rows: T[],
+): Promise<(T & { answers?: unknown })[]> {
+  const open = rows.filter((r) => r.status === "In Progress").map((r) => r.id);
+  if (open.length === 0) return rows;
+  const { data, error } = await db.from("submissions").select("id, answers").in("id", open);
+  if (error) throw new Error(`open answers lookup failed: ${error.message}`);
+  const byId = new Map(((data ?? []) as { id: string; answers: unknown }[]).map((r) => [r.id, r.answers]));
+  return rows.map((r) => (byId.has(r.id) ? { ...r, answers: byId.get(r.id) } : r));
+}
 
 export interface AttemptActionRow extends Module2NotTakenRow {
   id: string;

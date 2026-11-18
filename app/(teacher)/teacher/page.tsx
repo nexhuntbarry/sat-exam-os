@@ -3,6 +3,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getAssignedStudentIds, getTeacherTestScope, getTestSections, seesAllStudents } from "@/lib/teacher-access";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
+import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { clsx } from "clsx";
@@ -48,7 +49,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     fetchAllRows((from, to) =>
       scopeIds(db
         .from("submissions")
-        .select("id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, users!inner(display_name, email)")
+        .select(`id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, ${M2_NOT_TAKEN_COLUMN}, users!inner(display_name, email)`)
         .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa)
         .order("id")
         .range(from, to),
@@ -92,6 +93,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     adaptive_track: string | null;
     attempt_number: number | null;
     started_at: string | null;
+    m2_not_taken?: unknown;
     users: unknown;
   };
   const attemptRows = new Map<string, SubRow[]>();
@@ -104,9 +106,15 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     const correct = rows.reduce((n, r) => n + (r.correct_count ?? 0), 0);
     const total = rows.reduce((n, r) => n + (r.total_questions ?? 0), 0);
     const fl = scoreAttemptGroup(rows, flLinks, null, flMeta).fullLength;
-    const done = fl
-      ? flFinished(fl)
-      : rows.every((r) => r.status === "Submitted" || r.status === "Late");
+    // Module 2 closed unopened (lib/module2-not-taken): Incomplete — not
+    // done, so it stays out of submitted counts, "this week", averages and
+    // the needs-attention list.
+    const incomplete = rows.some(isModule2NotTaken);
+    const done = incomplete
+      ? false
+      : fl
+        ? flFinished(fl)
+        : rows.every((r) => r.status === "Submitted" || r.status === "Late");
     const percentage = total > 0
       ? (correct / total) * 100
       : rows[0].percentage != null ? Number(rows[0].percentage) : null;
@@ -115,7 +123,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
       id: key,
       testId: listedTestId(rows[0].test_id, flLinks),
       studentId: rows[0].student_id,
-      status: done ? (rows.some((r) => r.status === "Late") ? "Late" : "Submitted") : "In Progress",
+      status: incomplete ? "Incomplete" : done ? (rows.some((r) => r.status === "Late") ? "Late" : "Submitted") : "In Progress",
       done,
       percentage,
       submitted_at: submittedAt,

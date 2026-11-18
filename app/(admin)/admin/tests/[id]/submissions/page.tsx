@@ -4,7 +4,7 @@ import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import AttemptActionsMenu from "../AttemptActionsMenu";
-import { ATTEMPT_ACTION_COLUMNS, attemptFacts, type AttemptActionRow, type AttemptFacts } from "@/lib/attempt-actions";
+import { attemptFacts, withOpenAnswers, type AttemptActionRow, type AttemptFacts } from "@/lib/attempt-actions";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import ResultsDownloadPanel from "@/components/print/ResultsDownloadPanel";
 import { formatDateTimeSeconds, formatShortDate } from "@/lib/datetime";
@@ -84,7 +84,7 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, attempt_number,
       adaptive_track, module_id, session_id, tab_switches:metadata->tab_switches,
-      answers, m2_started:metadata->module_2_started_at, ${M2_NOT_TAKEN_COLUMN},
+      m2_started:metadata->module_2_started_at, ${M2_NOT_TAKEN_COLUMN},
       users!inner(display_name, email),
       modules!module_id(module_name)
     `)
@@ -97,7 +97,9 @@ async function getSubmissions(testId: string, viewerIsQa: boolean, classFilter?:
     return { test, submissions: [], pendingByStudent: new Set<string>(), individual: new Set<string>(), groupsOf: new Map<string, string[]>(), classFilterName, classFilterId: classFilter ?? null, classFilterStudentIds, flLinks, flKids, flMeta: null };
   }
 
-  const { data: submissions } = await query.order("submitted_at", { ascending: false });
+  const { data: rawSubmissions } = await query.order("submitted_at", { ascending: false });
+  // Saved answers only for open modules (the row menu's dialogs count them).
+  const submissions = await withOpenAnswers(db, rawSubmissions ?? []);
 
   // Pending retake grants — keyed by student so the row can show
   // either a "Grant retake" button or an existing "Retake granted" pill.

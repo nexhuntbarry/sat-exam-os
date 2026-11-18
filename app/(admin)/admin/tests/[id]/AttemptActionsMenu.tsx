@@ -131,9 +131,14 @@ export default function AttemptActionsMenu(props: AttemptActionsMenuProps) {
       { label: t("deleteAttempt"), icon: <Trash2 size={14} />, tone: "danger", onSelect: () => setOpen({ kind: "delete" }) },
     );
   } else if (attempt?.state === "in_progress") {
+    // Resets only on the latest attempt: resetting an older one would bring
+    // it back (started now) in front of the newer result (the reset route
+    // refuses it too).
     items.push(
       openRow && { label: t("forceSubmit"), icon: <Send size={14} />, onSelect: () => setOpen({ kind: "force" }) },
-      openRow
+      !isLatest
+        ? null
+        : openRow
         ? { label: t("resetThisModule"), icon: <RotateCcw size={14} />, onSelect: () => setOpen({ kind: "resetOpen" }) }
         : m1 && { label: t("resetAModule"), icon: <RotateCcw size={14} />, onSelect: () => { setPick(1); setOpen({ kind: "resetPick" }); } },
       { label: t("deleteAttempt"), icon: <Trash2 size={14} />, tone: "danger", onSelect: () => setOpen({ kind: "delete" }) },
@@ -144,8 +149,9 @@ export default function AttemptActionsMenu(props: AttemptActionsMenuProps) {
       retakePending
         ? { label: t("retakeGranted"), icon: <RefreshCw size={14} />, disabled: true }
         : { label: t("grantRetake"), icon: <RefreshCw size={14} />, onSelect: () => setOpen({ kind: "retake" }) },
-      {
-        label: two && m2 && isLatest ? t("resetAModule") : t("resetThisModule"),
+      // Older attempts: Grant retake + Delete only (see above).
+      isLatest && {
+        label: two && m2 ? t("resetAModule") : t("resetThisModule"),
         icon: <RotateCcw size={14} />,
         onSelect: () => {
           setPick(1);

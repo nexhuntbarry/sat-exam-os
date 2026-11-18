@@ -16,7 +16,7 @@ import TestDetailActions from "./TestDetailActions";
 import PrintTestMenu from "./PrintTestMenu";
 import EditTestButton from "./EditTestButton";
 import AttemptActionsMenu from "./AttemptActionsMenu";
-import { ATTEMPT_ACTION_COLUMNS, attemptFacts, latestAttemptOf, type AttemptActionRow, type AttemptFacts } from "@/lib/attempt-actions";
+import { ATTEMPT_ACTION_COLUMNS, attemptFacts, latestAttemptOf, withOpenAnswers, type AttemptActionRow, type AttemptFacts } from "@/lib/attempt-actions";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import AssignDialog from "./AssignDialog";
 import ScheduleNote from "../ScheduleNote";
@@ -100,7 +100,7 @@ async function getTest(id: string, viewerIsQa: boolean) {
 
   // Full-length SAT parent: its submissions are on its two section children.
   const flKids = (await fullLengthLinksOrNone(db)).childrenOf.get(id) ?? null;
-  const [{ data: assignment }, { data: submissions }, flMeta, { data: grants }] = await Promise.all([
+  const [{ data: assignment }, { data: rawSubmissions }, flMeta, { data: grants }] = await Promise.all([
     db.from("test_assignments").select("teacher_ids, student_ids, class_group_ids").eq("test_id", id).single(),
     db
       .from("submissions")
@@ -111,6 +111,8 @@ async function getTest(id: string, viewerIsQa: boolean) {
     db.from("test_retake_grants").select("student_id").eq("test_id", id).is("consumed_at", null),
   ]);
   const retakePending = new Set(((grants ?? []) as { student_id: string }[]).map((g) => g.student_id));
+  // Saved answers only for open modules (the menu's dialogs count them).
+  const submissions = await withOpenAnswers(db, rawSubmissions ?? []);
 
   const teacherIds: string[] = assignment?.teacher_ids ?? [];
   const studentIds: string[] = assignment?.student_ids ?? [];
