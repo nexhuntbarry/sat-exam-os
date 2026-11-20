@@ -30,6 +30,7 @@ import {
 
 // Chinese glyphs for the server's PDF (its Chromium has no CJK fonts):
 // self-hosted by next/font, so it loads from our own origin.
+// CJK glyphs load on demand via unicode-range; "latin" is the only named subset Google Fonts exposes for this family.
 const notoTc = Noto_Sans_TC({ subsets: ["latin"], preload: false, display: "block", variable: "--font-noto-tc" });
 
 export type ReportLang = "en" | "zh";

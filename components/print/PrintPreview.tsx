@@ -224,7 +224,8 @@ export default function PrintPreview({
         const paged = await waitForImages(targetRef.current!, { timeoutMs: 8000, retries: 1 });
         // Web fonts the laid-out pages use (e.g. the report's Chinese font)
         // are in before the server's PDF is taken.
-        await document.fonts?.ready;
+        // Bounded: a font that never loads must not hold up every printout.
+        await Promise.race([document.fonts?.ready, new Promise((r) => setTimeout(r, 5000))]);
         const allFailed = paged.failed;
         setFailed(allFailed);
         setBlanks(labelStudentPages(targetRef.current!));
