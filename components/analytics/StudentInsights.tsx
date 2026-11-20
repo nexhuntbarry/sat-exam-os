@@ -1,3 +1,4 @@
+import { getTranslations } from "next-intl/server";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import ProgressReport from "@/components/analytics/ProgressReport";
 import InsightsWindowToggle from "@/components/analytics/InsightsWindowToggle";
@@ -10,7 +11,7 @@ import type { Occasion } from "@/lib/score-analysis";
  * each section by default, "All tests" on the toggle. When no section has
  * more tests than that, the two windows are the same and no toggle is shown.
  */
-export default function StudentInsights({
+export default async function StudentInsights({
   occasions,
   strengthsTitle = "Strengths & Focus Areas",
   progressTitle = "Progress Over Time",
@@ -24,11 +25,12 @@ export default function StudentInsights({
 }) {
   const recent = insightsForWindow(occasions, "recent");
   if (recent.rows.length === 0) return null;
+  const t = await getTranslations("studentInsights");
   const blocks = (w: WindowInsights) => {
     const scope =
       w.window === "recent" && w.hasMore
-        ? `Last ${INSIGHTS_RECENT_TESTS} tests per section · ${w.tests} of ${w.totalTests} tests`
-        : `All ${w.totalTests} tests`;
+        ? t("scopeRecent", { n: INSIGHTS_RECENT_TESTS, used: w.tests, total: w.totalTests })
+        : t("scopeAll", { n: w.totalTests });
     return (
       <div className="space-y-6">
         <ScoreBreakdown rows={w.rows} title={strengthsTitle} subtitle={scope} notStrengths={w.declining} />

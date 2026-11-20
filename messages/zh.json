@@ -1032,6 +1032,8 @@
     "windowLabel": "下方強弱項與進步趨勢的範圍",
     "recent": "每科最近 {n} 次測驗",
     "all": "全部測驗（{n}）",
+    "scopeRecent": "每科最近 {n} 次測驗 · 共 {total} 次中的 {used} 次",
+    "scopeAll": "全部 {n} 次測驗",
     "inWindow": "使用的測驗：{list}"
   }
 }

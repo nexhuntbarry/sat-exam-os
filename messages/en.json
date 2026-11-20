@@ -1032,6 +1032,8 @@
     "windowLabel": "Strengths and progress below use",
     "recent": "Last {n} tests per section",
     "all": "All tests ({n})",
+    "scopeRecent": "Last {n} tests per section · {used} of {total} tests",
+    "scopeAll": "All {n} tests",
     "inWindow": "Tests used: {list}"
   }
 }
