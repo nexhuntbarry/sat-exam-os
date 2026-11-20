@@ -22,8 +22,13 @@ import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/date
 import StudentInsights from "@/components/analytics/StudentInsights";
 import RecentPracticeTests from "@/components/analytics/RecentPracticeTests";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
-import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
+import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
+import StudentConclusions from "@/components/analytics/StudentConclusions";
+import StudentTabs from "@/components/students/StudentTabs";
+import StudentProfileCard from "@/components/students/StudentProfileCard";
 import { getStudentProgressOccasions } from "@/lib/student-analytics";
+import type { Occasion } from "@/lib/score-analysis";
+import { getTranslations } from "next-intl/server";
 import {
   DataRow,
   DataTable,
@@ -71,7 +76,8 @@ async function loadStudent(
 
   const [{ data: group }, { data: student }] = await Promise.all([
     db.from("class_groups").select("id, name, campus, grade").eq("id", classGroupId).maybeSingle(),
-    db.from("users").select("id, email, display_name").eq("id", studentId).maybeSingle(),
+    // Grade only: teachers already see it on results; no parent contact / notes.
+    db.from("users").select("id, email, display_name, student_profiles(grade)").eq("id", studentId).maybeSingle(),
   ]);
   if (!group || !student) return null;
 
@@ -242,6 +248,7 @@ async function loadStudent(
     return {
       // Detail page stitches both modules via session_id from the last one.
       id: last.id,
+      submissionIds: sorted.map((r) => r.id),
       testId: head.test_id,
       testName: t?.test_name ?? "—",
       dueDate: t?.due_date ?? null,
@@ -318,6 +325,7 @@ async function loadStudent(
     }
     submissions.push({
       id: last.id,
+      submissionIds: list.map((r) => r.id),
       testId: parent,
       testName: p?.test_name ?? "—",
       dueDate: p?.due_date ?? null,
@@ -341,6 +349,7 @@ async function loadStudent(
       const t = testById.get(a.testId);
       return {
         id: `assigned-${a.testId}`,
+        submissionIds: [] as string[],
         testId: a.testId,
         testName: t?.test_name ?? "—",
         dueDate: t?.due_date ?? null,
@@ -395,9 +404,23 @@ export default async function TeacherStudentResultsPage({
   if (!data) notFound();
   const { group, student, submissions, tests, subjects, assignedCount, recentItems } = data;
   // Only the subject(s) this teacher teaches the class.
-  const occasions = (await getStudentProgressOccasions(studentId))
+  // (The takeaways read these too, so a single-subject teacher's conclusions
+  // only use their section.)
+  const [allOccasions, tt] = await Promise.all([
+    getStudentProgressOccasions(studentId, { habits: true }),
+    getTranslations("studentTabs"),
+  ]);
+  const occasions = allOccasions
     .map((o) => ({ ...o, rows: o.rows.filter((r) => inSubjects(r.section, subjects)) }))
     .filter((o) => o.rows.length > 0 && inSubjects(o.section, subjects));
+  const occBySubmission = new Map<string, Occasion>();
+  for (const o of occasions) for (const sid of o.submissionIds ?? []) occBySubmission.set(sid, o);
+  const breakdownRows = (submissionIds: string[]) =>
+    Array.from(new Set(submissionIds.map((sid) => occBySubmission.get(sid)).filter((o): o is Occasion => Boolean(o))))
+      .flatMap((o) => o.rows);
+  const profileRow = (student as { student_profiles?: { grade?: string | null } | { grade?: string | null }[] | null })
+    .student_profiles;
+  const grade = (Array.isArray(profileRow) ? profileRow[0] : profileRow)?.grade ?? null;
 
   const completed = submissions.filter(
     (s) => s.status === "Submitted" || s.status === "Late",
@@ -441,26 +464,33 @@ export default async function TeacherStudentResultsPage({
         )}
       </div>
 
-      {/* Lead with the real practice-test scores. */}
-      <RecentPracticeTests items={recentItems} />
-
-      <div className="grid grid-cols-3 gap-4">
-        <Stat label="Tests assigned" value={String(assignedCount)} />
-        <Stat label="Completed" value={String(new Set(completed.map((s) => s.testId)).size)} />
-        <Stat
-          label="Avg SAT"
-          value={avgSat == null ? "—" : String(avgSat)}
-          detail={avgPct == null ? undefined : `${avgPct.toFixed(1)}% correct`}
-        />
-      </div>
-
-      {/* Strengths/weaknesses + progress for this student, one window for both. */}
-      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
-      <StudentInsights occasions={occasions} name={student.display_name ?? student.email} />
-      {occasions.length > 0 && (
-        <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
-      )}
-
+      <StudentTabs
+        panels={[
+          {
+            id: "overview",
+            label: tt("overview"),
+            content: (
+              <>
+                {/* Lead with the real practice-test scores. */}
+                <RecentPracticeTests items={recentItems} />
+                {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
+                <StudentConclusions occasions={occasions} studentId={studentId} displayName={student.display_name} />
+                <div className="grid grid-cols-3 gap-4">
+                  <Stat label="Tests assigned" value={String(assignedCount)} />
+                  <Stat label="Completed" value={String(new Set(completed.map((s) => s.testId)).size)} />
+                  <Stat
+                    label="Avg SAT"
+                    value={avgSat == null ? "—" : String(avgSat)}
+                    detail={avgPct == null ? undefined : `${avgPct.toFixed(1)}% correct`}
+                  />
+                </div>
+              </>
+            ),
+          },
+          {
+            id: "tests",
+            label: tt("tests"),
+            content: (
       <section>
         <div className="flex items-center gap-2 mb-3">
           <ClipboardList size={15} className="text-charcoal" />
@@ -493,12 +523,15 @@ export default async function TeacherStudentResultsPage({
               const submittedFull = s.submittedAt
                 ? formatDateTime(s.submittedAt)
                 : null;
+              // This test's domain breakdown (was "Score Report — By Test"):
+              // in the details row, which then opens at every width.
+              const bRows = breakdownRows(s.submissionIds);
 
               return (
                 <DataRow
                   key={s.id}
                   href={s.href ?? (isDone && s.hasSubmission ? `/teacher/tests/${s.testId}/results/${s.id}` : `/teacher/tests/${s.testId}`)}
-                  expandBelow="lg"
+                  expandBelow={bRows.length > 0 ? "never" : "lg"}
                   colSpan={6}
                   details={
                     <>
@@ -508,6 +541,11 @@ export default async function TeacherStudentResultsPage({
                       <DetailItem label="Assigned via" priority="lg">
                         {s.assignedVia}
                       </DetailItem>
+                      {bRows.length > 0 && (
+                        <div className="sm:col-span-2 -mx-1">
+                          <ScoreBreakdown rows={bRows} title={tt("breakdownTitle")} />
+                        </div>
+                      )}
                     </>
                   }
                 >
@@ -549,6 +587,32 @@ export default async function TeacherStudentResultsPage({
           </tbody>
         </DataTable>
       </section>
+            ),
+          },
+          {
+            id: "skills",
+            label: tt("skills"),
+            content: occasions.length === 0
+              ? <p className="text-sm text-soft-mute">{tt("skillsEmpty")}</p>
+              : <StudentInsights occasions={occasions} name={student.display_name ?? student.email} />,
+          },
+          {
+            id: "profile",
+            label: tt("profileTab"),
+            // What a teacher may see: no parent contact or notes.
+            content: (
+              <StudentProfileCard
+                fields={[
+                  ["email", student.email],
+                  ["grade", grade],
+                  ["classGroup", group.name],
+                  ["campus", group.campus],
+                ]}
+              />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

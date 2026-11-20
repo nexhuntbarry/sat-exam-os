@@ -250,12 +250,15 @@ export default function TestsTable({
   studentId,
   studentName,
   emptyActions,
+  breakdowns,
 }: {
   rows: TestRow[];
   studentId: string;
   studentName: string;
   /** Buttons under the empty state (Assign test / Add to class). */
   emptyActions?: ReactNode;
+  /** Per-row domain breakdown (row key → server-rendered ScoreBreakdown), shown when the row is expanded. */
+  breakdowns?: Record<string, ReactNode>;
 }) {
   const t = useTranslations("studentDetail");
   const tv = useTranslations("answerVisibility");
@@ -302,7 +305,11 @@ export default function TestsTable({
       <tbody>
         {rows.map((g) => {
           const isExpanded = expanded.has(g.key);
-          const canExpand = g.isMultiModule && g.modules.length > 0;
+          // Module names, per-module scores and the test's domain breakdown
+          // sit collapsed under the row.
+          const breakdown = breakdowns?.[g.key];
+          const showModules = g.isMultiModule && g.modules.length > 0;
+          const canExpand = showModules || g.moduleNames.length > 1 || Boolean(breakdown);
           const submittedLabel = g.submittedAt ? formatShortDate(g.submittedAt) : null;
           const submittedTitle = g.submittedAt ? formatShortDateTime(g.submittedAt) : undefined;
           const assignedVia = [
@@ -377,12 +384,6 @@ export default function TestsTable({
                         </ClampText>
                       </Link>
                       {sectionLabel && <SubjectTag section={g.section} className="mt-0.5" />}
-                      {g.moduleNames.length > 1 &&
-                        g.moduleNames.map((m) => (
-                          <div key={m.label} className="text-[11px] text-soft-mute leading-snug break-words">
-                            {m.label}: {m.name}
-                          </div>
-                        ))}
                     </div>
                   </div>
                 </Td>
@@ -480,20 +481,34 @@ export default function TestsTable({
                   />
                 </Td>
               </DataRow>
-              {/* Expandable module breakdown */}
+              {/* Expandable: module names, module scores, domain breakdown */}
               {canExpand && isExpanded && (
                 <tr className="border-b border-divider bg-light-bg/40">
                   <td colSpan={COLS} className="px-3 py-2.5">
-                    <div className="ml-[22px] space-y-0.5">
-                      {g.modules.map((m) => (
-                        <div key={m.submissionId} className="text-xs text-mid-gray">
-                          <span className="font-medium">{m.label}:</span>{" "}
-                          {m.notTaken ? t("moduleNotTaken") : `${m.correct}/${m.total}`}
-                          {!m.notTaken && m.percentage != null
-                            ? ` (${m.percentage.toFixed(1)}%)`
-                            : ""}
+                    <div className="ml-[22px] space-y-2">
+                      {g.moduleNames.length > 1 && (
+                        <div className="space-y-0.5">
+                          {g.moduleNames.map((m) => (
+                            <div key={m.label} className="text-[11px] text-soft-mute leading-snug break-words">
+                              {m.label}: {m.name}
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
+                      {showModules && (
+                        <div className="space-y-0.5">
+                          {g.modules.map((m) => (
+                            <div key={m.submissionId} className="text-xs text-mid-gray">
+                              <span className="font-medium">{m.label}:</span>{" "}
+                              {m.notTaken ? t("moduleNotTaken") : `${m.correct}/${m.total}`}
+                              {!m.notTaken && m.percentage != null
+                                ? ` (${m.percentage.toFixed(1)}%)`
+                                : ""}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {breakdown}
                     </div>
                   </td>
                 </tr>

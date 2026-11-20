@@ -6,6 +6,8 @@ import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey } from "@/lib/full-length-score";
+import { moduleTimeLimitSeconds, type ModuleTiming } from "@/lib/student-exam";
+import { parseActivity, type ActivityMap } from "@/lib/question-activity";
 
 // Every graded answer for a student, flattened for the strengths/weaknesses
 // breakdown (is_correct + the question's section/domain/skill).
@@ -42,12 +44,21 @@ export async function getStudentBreakdownRows(studentId: string): Promise<Answer
 }
 
 // One "occasion" per test attempt (adaptive sessions grouped into one), each
-// with its date + answer rows, for the progress-over-time trend.
-export async function getStudentProgressOccasions(studentId: string): Promise<Occasion[]> {
+// with its date + answer rows, for the progress-over-time trend. With
+// { habits: true } each row also carries what the test-habit summary needs
+// (answered / measured seconds / changed answer / module track) and each
+// occasion its module clocks (lib/conclusions). Read-only.
+export async function getStudentProgressOccasions(
+  studentId: string,
+  opts: { habits?: boolean } = {},
+): Promise<Occasion[]> {
   const db = getServiceClient();
+  const extraCols = opts.habits
+    ? "time_spent_seconds, qa:metadata->question_activity, mult:metadata->time_multiplier, tests!inner(test_name, time_limit_minutes, time_limit_minutes_module_2, is_untimed)"
+    : "tests!inner(test_name)";
   const { data: subs } = await db
     .from("submissions")
-    .select(`id, test_id, student_id, status, session_id, adaptive_track, attempt_number, module_id, correct_count, total_questions, submitted_at, ${M2_NOT_TAKEN_COLUMN}, tests!inner(test_name)`)
+    .select(`id, test_id, student_id, status, session_id, adaptive_track, attempt_number, module_id, correct_count, total_questions, submitted_at, ${M2_NOT_TAKEN_COLUMN}, ${extraCols}`)
     .eq("student_id", studentId)
     .in("status", ["Submitted", "Late"]);
   const rows = (subs ?? []) as unknown as (ProgressSubmission & {
@@ -55,7 +66,10 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
     test_id: string;
     attempt_number: number | null;
     submitted_at: string | null;
-    tests: { test_name: string };
+    time_spent_seconds?: number | null;
+    qa?: unknown;
+    mult?: unknown;
+    tests: { test_name: string } & ModuleTiming;
   })[];
   if (rows.length === 0) return [];
   // A full-length SAT's two sections are one test when windowing insights.
@@ -64,19 +78,41 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
   const { data: recs } = await fetchAllRows((from, to) =>
     db
       .from("answer_records")
-      .select("submission_id, is_correct, questions!inner(section, domain, skill)")
+      .select(
+        opts.habits
+          ? "submission_id, question_id, is_correct, student_answer, questions!inner(section, domain, skill)"
+          : "submission_id, is_correct, questions!inner(section, domain, skill)",
+      )
       .in("submission_id", rows.filter((r) => !isModule2NotTaken(r)).map((r) => r.id))
       .order("id")
       .range(from, to),
   );
+  const subById = new Map(rows.map((r) => [r.id, r]));
+  // Real per-question activity only: older attempts stored an even split of
+  // the module time in answer_records.time_spent_seconds, which isn't data.
+  const activityOf = new Map<string, ActivityMap>();
+  if (opts.habits) for (const r of rows) activityOf.set(r.id, parseActivity(r.qa));
   const bySub = new Map<string, AnswerRow[]>();
   for (const r of (recs ?? []) as unknown as {
     submission_id: string;
+    question_id?: string;
     is_correct: boolean;
+    student_answer?: string | null;
     questions: { section: string | null; domain: string | null; skill: string | null };
   }[]) {
     const arr = bySub.get(r.submission_id) ?? [];
-    arr.push({ is_correct: r.is_correct, section: r.questions?.section ?? null, domain: r.questions?.domain ?? null, skill: r.questions?.skill ?? null });
+    const row: AnswerRow = { is_correct: r.is_correct, section: r.questions?.section ?? null, domain: r.questions?.domain ?? null, skill: r.questions?.skill ?? null };
+    if (opts.habits) {
+      const answered = r.student_answer != null && String(r.student_answer).trim() !== "";
+      row.answered = answered;
+      row.track = subById.get(r.submission_id)?.adaptive_track ?? null;
+      const act = r.question_id ? activityOf.get(r.submission_id)?.[r.question_id] : undefined;
+      if (act) {
+        row.seconds = Math.round(act.t / 1000);
+        row.changed = answered && act.h.length > 1 && act.h[0] !== r.student_answer;
+      }
+    }
+    arr.push(row);
     bySub.set(r.submission_id, arr);
   }
 
@@ -86,11 +122,22 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
     const key = r.session_id ?? r.id;
     let occ = occMap.get(key);
     if (!occ) {
-      occ = { date: r.submitted_at ?? "", label: r.tests.test_name, rows: [], testKey: attemptGroupKey(r, flLinks) };
+      occ = { date: r.submitted_at ?? "", label: r.tests.test_name, rows: [], testKey: attemptGroupKey(r, flLinks), key, submissionIds: [] };
       occMap.set(key, occ);
     }
     if (r.submitted_at && r.submitted_at > occ.date) occ.date = r.submitted_at;
     occ.rows.push(...(bySub.get(r.id) ?? []));
+    occ.submissionIds?.push(r.id);
+    if (opts.habits && !isModule2NotTaken(r)) {
+      occ.clocks = [
+        ...(occ.clocks ?? []),
+        {
+          track: r.adaptive_track ?? null,
+          usedSeconds: r.time_spent_seconds ?? null,
+          limitSeconds: moduleTimeLimitSeconds(r.tests, r.adaptive_track, { time_multiplier: r.mult }),
+        },
+      ];
+    }
     occSubs.set(occ, [...(occSubs.get(occ) ?? []), r]);
   }
   const list = [...occMap.values()].filter((o) => o.rows.length > 0);

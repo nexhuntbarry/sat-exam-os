@@ -13,6 +13,24 @@ export interface AnswerRow {
   section: string | null;
   domain: string | null;
   skill?: string | null;
+  // Test-habit data (getStudentProgressOccasions with { habits: true }):
+  /** The student gave an answer (false = left blank). */
+  answered?: boolean;
+  /** Seconds on screen; only set when the take page measured it (not the even split). */
+  seconds?: number;
+  /** Final answer differs from the first one given (only when measured). */
+  changed?: boolean;
+  /** The submission's adaptive_track ("module_1", "module_2", "module_2_hard", …). */
+  track?: string | null;
+}
+
+/** One module's clock (getStudentProgressOccasions with { habits: true }). */
+export interface ModuleClock {
+  track: string | null;
+  /** Seconds the module took (submissions.time_spent_seconds). */
+  usedSeconds: number | null;
+  /** The module's limit incl. extended time; null when untimed. */
+  limitSeconds: number | null;
 }
 
 export interface SkillStat {
@@ -310,6 +328,12 @@ export interface Occasion {
    * key, so the attempt counts as one test when windowing.
    */
   testKey?: string;
+  /** The attempt's session_id (or its one submission id). */
+  key?: string;
+  /** Submission rows the occasion was built from. */
+  submissionIds?: string[];
+  /** Per-module clocks (only with { habits: true }). */
+  clocks?: ModuleClock[];
 }
 
 export interface DomainTrendPoint { date: string; pct: number; correct: number; total: number }

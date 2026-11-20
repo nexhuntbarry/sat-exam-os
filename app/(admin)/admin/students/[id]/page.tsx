@@ -1,4 +1,6 @@
+import type { ReactNode } from "react";
 import { notFound } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { ArrowLeft, Mail } from "lucide-react";
 import { clsx } from "clsx";
@@ -32,7 +34,11 @@ import StudentInsights from "@/components/analytics/StudentInsights";
 import RecentPracticeTests from "@/components/analytics/RecentPracticeTests";
 import type { RecentScoreItem } from "@/lib/recent-scores";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
-import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
+import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
+import StudentConclusions from "@/components/analytics/StudentConclusions";
+import StudentTabs from "@/components/students/StudentTabs";
+import StudentProfileCard from "@/components/students/StudentProfileCard";
+import type { Occasion } from "@/lib/score-analysis";
 import { getStudentProgressOccasions } from "@/lib/student-analytics";
 import {
   loadAnswerVisibilityInputs,
@@ -504,7 +510,10 @@ export default async function AdminStudentDetailPage({
   // test just show the effective state.
   const controlRowKey = new Map<string, string>();
   for (const g of groups) if (!controlRowKey.has(g.testId)) controlRowKey.set(g.testId, g.key);
-  const occasions = await getStudentProgressOccasions(id);
+  const [occasions, tt] = await Promise.all([
+    getStudentProgressOccasions(id, { habits: true }),
+    getTranslations("studentTabs"),
+  ]);
   const assignedCount = assignments.size;
   // A full-length SAT counts as completed when its latest attempt has a total.
   const flLatest = new Map<string, (typeof flScored)[number]>();
@@ -780,6 +789,79 @@ export default async function AdminStudentDetailPage({
       })),
   ];
 
+  // Summary stats (Overview tab).
+  const stats = (
+    <div className={clsx("grid grid-cols-2 gap-4", latestFl ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
+      <div className="bg-surface border border-divider rounded-2xl p-5">
+        <p className="text-soft-mute text-xs">Latest Math</p>
+        <p className="text-3xl font-bold text-charcoal mt-1">
+          {latestMathScore ?? "—"}
+        </p>
+      </div>
+      <div className="bg-surface border border-divider rounded-2xl p-5">
+        <p className="text-soft-mute text-xs">Latest R&amp;W</p>
+        <p className="text-3xl font-bold text-charcoal mt-1">
+          {latestRWScore ?? "—"}
+        </p>
+      </div>
+      {/* A real one-sitting total only; no estimate from adding up section tests. */}
+      {latestFl && (
+        <div className="bg-surface border border-divider rounded-2xl p-5">
+          <p className="text-soft-mute text-xs">Total · Full-length SAT</p>
+          <p className="text-3xl font-bold text-charcoal mt-1">{latestFl.total}</p>
+        </div>
+      )}
+      <div className="bg-surface border border-divider rounded-2xl p-5">
+        <p className="text-soft-mute text-xs">Tests</p>
+        <p className="text-charcoal mt-1 whitespace-nowrap">
+          <span className="text-xs text-soft-mute">Assigned</span>{" "}
+          <span className="text-3xl font-bold">{assignedCount}</span>
+        </p>
+        <p className="text-charcoal whitespace-nowrap">
+          <span className="text-xs text-soft-mute">Completed</span>{" "}
+          <span className="text-xl font-bold">{completedCount}</span>
+        </p>
+      </div>
+    </div>
+  );
+
+  // Tests tab: one table; each finished attempt expands to its module names,
+  // module scores and that test's domain breakdown (was "Score Report — By Test").
+  const occBySubmission = new Map<string, Occasion>();
+  for (const o of occasions) for (const sid of o.submissionIds ?? []) occBySubmission.set(sid, o);
+  const breakdowns: Record<string, ReactNode> = {};
+  for (const r of testRows) {
+    const ids = [r.detailSubmissionId, ...r.modules.map((m) => m.submissionId)].filter((x): x is string => Boolean(x));
+    const occs = Array.from(new Set(ids.map((sid) => occBySubmission.get(sid)).filter((o): o is Occasion => Boolean(o))));
+    const rows = occs.flatMap((o) => o.rows);
+    if (rows.length > 0) breakdowns[r.key] = <ScoreBreakdown rows={rows} title={tt("breakdownTitle")} />;
+  }
+  const testsPanel = (
+    <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
+      <div className="px-5 py-4 border-b border-divider flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-charcoal font-semibold">{tt("tests")}</h2>
+        {testRows.length > 0 && testsActions(true)}
+      </div>
+      <TestsTable
+        rows={testRows}
+        studentId={id}
+        studentName={student.display_name ?? student.email}
+        emptyActions={testsActions(false)}
+        breakdowns={breakdowns}
+      />
+    </div>
+  );
+
+  // Overview tab: recent scores, the score chart, three takeaways, summary stats.
+  const overview = (
+    <>
+      <RecentPracticeTests items={recentItems} />
+      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
+      <StudentConclusions occasions={occasions} studentId={student.id} displayName={student.display_name} />
+      {stats}
+    </>
+  );
+
   const checkProfileMeta = student.metadata?.check_profile as
     | { reason: string; at: string }
     | undefined;
@@ -846,103 +928,50 @@ export default async function AdminStudentDetailPage({
         </div>
       )}
 
-      {/* Lead with the real practice-test scores. */}
-      <RecentPracticeTests items={recentItems} />
-
-      {/* Profile card */}
-      <div className="bg-surface border border-divider rounded-2xl p-6 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-        {[
-          ["Grade", profile?.grade ?? "—"],
-          ["School", profile?.school ?? "—"],
-          ["Campus", profile?.campus ?? "—"],
-          [
-            memberships.length > 1 ? "Classes" : "Class group",
-            memberships.length === 0
-              ? "—"
-              : memberships.map((m, i) => (
-                  <span key={m.id}>
-                    {i > 0 && ", "}
-                    <Link href={`/admin/classes/${m.id}`} className="hover:text-warm-coral transition-colors">
-                      {m.name}
-                    </Link>
-                  </span>
-                )),
-          ],
-          ["Target score", profile?.target_score?.toString() ?? "—"],
-          ["Level", profile?.current_level ?? "—"],
-          ["Parent", profile?.parent_name ?? "—"],
-          ["Parent contact", profile?.parent_email ?? profile?.parent_phone ?? "—"],
-        ].map(([label, value]) => (
-          <div key={label as string}>
-            <p className="text-soft-mute text-xs mb-0.5">{label}</p>
-            <p className="text-charcoal font-medium">{value}</p>
-          </div>
-        ))}
-      </div>
-
-      {profile?.notes && (
-        <div className="bg-warm-amber/10 border border-warm-amber/20 rounded-xl px-4 py-3 text-sm text-charcoal">
-          <p className="text-xs uppercase tracking-wider text-warm-amber font-semibold mb-1">
-            Notes
-          </p>
-          {profile.notes}
-        </div>
-      )}
-
-      {/* Summary stats */}
-      <div className={clsx("grid grid-cols-2 gap-4", latestFl ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
-        <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Latest Math</p>
-          <p className="text-3xl font-bold text-charcoal mt-1">
-            {latestMathScore ?? "—"}
-          </p>
-        </div>
-        <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Latest R&amp;W</p>
-          <p className="text-3xl font-bold text-charcoal mt-1">
-            {latestRWScore ?? "—"}
-          </p>
-        </div>
-        {/* A real one-sitting total only; no estimate from adding up section tests. */}
-        {latestFl && (
-          <div className="bg-surface border border-divider rounded-2xl p-5">
-            <p className="text-soft-mute text-xs">Total · Full-length SAT</p>
-            <p className="text-3xl font-bold text-charcoal mt-1">{latestFl.total}</p>
-          </div>
-        )}
-        <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Tests</p>
-          <p className="text-charcoal mt-1 whitespace-nowrap">
-            <span className="text-xs text-soft-mute">Assigned</span>{" "}
-            <span className="text-3xl font-bold">{assignedCount}</span>
-          </p>
-          <p className="text-charcoal whitespace-nowrap">
-            <span className="text-xs text-soft-mute">Completed</span>{" "}
-            <span className="text-xl font-bold">{completedCount}</span>
-          </p>
-        </div>
-      </div>
-
-      {/* Submissions table */}
-      <div className="bg-surface border border-divider rounded-2xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-divider flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-charcoal font-semibold">Tests</h2>
-          {testRows.length > 0 && testsActions(true)}
-        </div>
-        <TestsTable
-          rows={testRows}
-          studentId={id}
-          studentName={student.display_name ?? student.email}
-          emptyActions={testsActions(false)}
-        />
-      </div>
-
-      {/* Strengths/weaknesses + progress for this student, one window for both. */}
-      {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
-      <StudentInsights occasions={occasions} name={student.display_name ?? student.email} />
-      {occasions.length > 0 && (
-        <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
-      )}
+      <StudentTabs
+        panels={[
+          { id: "overview", label: tt("overview"), content: overview },
+          { id: "tests", label: tt("tests"), content: testsPanel },
+          {
+            id: "skills",
+            label: tt("skills"),
+            content: occasions.length === 0
+              ? <p className="text-sm text-soft-mute">{tt("skillsEmpty")}</p>
+              : <StudentInsights occasions={occasions} name={student.display_name ?? student.email} />,
+          },
+          {
+            id: "profile",
+            label: tt("profileTab"),
+            content: (
+              <StudentProfileCard
+                fields={[
+                  ["grade", profile?.grade],
+                  ["school", profile?.school],
+                  ["campus", profile?.campus],
+                  [
+                    memberships.length > 1 ? "classes" : "classGroup",
+                    memberships.length === 0
+                      ? null
+                      : memberships.map((m, i) => (
+                          <span key={m.id}>
+                            {i > 0 && ", "}
+                            <Link href={`/admin/classes/${m.id}`} className="hover:text-warm-coral transition-colors">
+                              {m.name}
+                            </Link>
+                          </span>
+                        )),
+                  ],
+                  ["targetScore", profile?.target_score?.toString()],
+                  ["level", profile?.current_level],
+                  ["parent", profile?.parent_name],
+                  ["parentContact", profile?.parent_email || profile?.parent_phone],
+                ]}
+                notes={profile?.notes}
+              />
+            ),
+          },
+        ]}
+      />
     </div>
   );
 }

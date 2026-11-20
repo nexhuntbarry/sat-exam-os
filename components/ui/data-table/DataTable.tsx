@@ -40,8 +40,9 @@ export type Priority = "always" | "md" | "lg" | "xl" | "2xl";
  *  - actions: the ⋯ menu column. Shrinks to content, right-aligned. */
 export type Kind = "main" | "short" | "long" | "actions";
 
-/** Breakpoint from which every column of a table is visible. */
-export type Breakpoint = "md" | "lg" | "xl" | "2xl";
+/** Breakpoint from which every column of a table is visible. "never": the
+ *  details row can always be opened (it holds more than the hidden columns). */
+export type Breakpoint = "md" | "lg" | "xl" | "2xl" | "never";
 
 // Literal class strings so Tailwind's scanner picks them up.
 const PRIORITY_CELL: Record<Priority, string> = {
@@ -66,6 +67,7 @@ const BELOW: Record<Breakpoint, string> = {
   lg: "lg:hidden",
   xl: "xl:hidden",
   "2xl": "2xl:hidden",
+  never: "",
 };
 
 const ROW_CLICKABLE_BELOW: Record<Breakpoint, string> = {
@@ -73,6 +75,7 @@ const ROW_CLICKABLE_BELOW: Record<Breakpoint, string> = {
   lg: "cursor-pointer lg:cursor-auto",
   xl: "cursor-pointer xl:cursor-auto",
   "2xl": "cursor-pointer 2xl:cursor-auto",
+  never: "cursor-pointer",
 };
 
 // max-w-0 stops the cell's content from forcing the table wider; the
