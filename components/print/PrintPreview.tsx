@@ -222,6 +222,9 @@ export default function PrintPreview({
         // Short and one retry: the copies are cached by now, and the server
         // PDF render gives up at 50 s (source pass ≤ 32 s + this ≤ 14 s).
         const paged = await waitForImages(targetRef.current!, { timeoutMs: 8000, retries: 1 });
+        // Web fonts the laid-out pages use (e.g. the report's Chinese font)
+        // are in before the server's PDF is taken.
+        await document.fonts?.ready;
         const allFailed = paged.failed;
         setFailed(allFailed);
         setBlanks(labelStudentPages(targetRef.current!));

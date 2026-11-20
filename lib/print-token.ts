@@ -30,8 +30,8 @@ export function mintPrintTicket(t: Omit<PrintTicket, "exp">, ttlMs = 120_000): s
   return `${body}.${sign(body)}`;
 }
 
-/** The ticket, or null when it is forged, malformed or expired. */
-export function readPrintTicket(token: string | null | undefined): PrintTicket | null {
+/** The signed body of a ticket, or null when it is forged, malformed or expired. */
+function verified(token: string | null | undefined): (Record<string, unknown> & { exp: number }) | null {
   if (!token) return null;
   const [body, mac] = token.split(".");
   if (!body || !mac) return null;
@@ -39,9 +39,39 @@ export function readPrintTicket(token: string | null | undefined): PrintTicket |
   const got = Buffer.from(mac);
   if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
   try {
-    const t = JSON.parse(Buffer.from(body, "base64url").toString("utf-8")) as PrintTicket;
-    return typeof t.exp === "number" && t.exp > Date.now() ? t : null;
+    const t = JSON.parse(Buffer.from(body, "base64url").toString("utf-8"));
+    return t && typeof t.exp === "number" && t.exp > Date.now() ? t : null;
   } catch {
     return null;
   }
+}
+
+/** The ticket, or null when it is forged, malformed or expired (or a report ticket). */
+export function readPrintTicket(token: string | null | undefined): PrintTicket | null {
+  const t = verified(token);
+  return t && t.kind === undefined ? (t as unknown as PrintTicket) : null;
+}
+
+// The one-page parent report (/print/students/<id>/report) gets its own
+// kind of ticket, minted by /api/print/students/<id>/report/pdf after the
+// access check, bound to the viewer, student, language and watermark.
+export interface ReportTicket {
+  kind: "student-report";
+  viewer: Viewer;
+  studentId: string;
+  lang: "en" | "zh";
+  /** false = no watermark (an admin turned it off). */
+  wm: boolean;
+  exp: number;
+}
+
+export function mintReportTicket(t: Omit<ReportTicket, "exp" | "kind">, ttlMs = 120_000): string {
+  const body = Buffer.from(JSON.stringify({ ...t, kind: "student-report", exp: Date.now() + ttlMs })).toString("base64url");
+  return `${body}.${sign(body)}`;
+}
+
+/** The report ticket, or null when it is forged, malformed, expired or another kind. */
+export function readReportTicket(token: string | null | undefined): ReportTicket | null {
+  const t = verified(token);
+  return t && t.kind === "student-report" ? (t as unknown as ReportTicket) : null;
 }

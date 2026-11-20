@@ -823,6 +823,11 @@ export default async function AdminStudentDetailPage({
             Download PDF report
           </Link>
         )}
+        {occasions.length > 0 && (
+          <Link href={`/print/students/${student.id}/report`} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-sm font-medium text-charcoal hover:bg-light-bg transition-colors">
+            Download one-page report
+          </Link>
+        )}
         <StudentActionsMenu
           studentId={student.id}
           studentName={student.display_name ?? student.email}

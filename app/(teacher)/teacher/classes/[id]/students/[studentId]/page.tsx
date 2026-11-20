@@ -434,6 +434,11 @@ export default async function TeacherStudentResultsPage({
             Download PDF report
           </Link>
         )}
+        {occasions.length > 0 && (
+          <Link href={`/print/students/${studentId}/report`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-divider text-sm font-semibold text-charcoal hover:bg-light-bg transition-colors whitespace-nowrap">
+            Download one-page report
+          </Link>
+        )}
       </div>
 
       {/* Lead with the real practice-test scores. */}
