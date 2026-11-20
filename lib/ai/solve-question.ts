@@ -124,9 +124,7 @@ UNDERLINED PORTION (CRITICAL for SAT R&W):
 NEEDS_DRAWING (MANDATORY):
 If the problem genuinely requires you to construct or sketch a figure from scratch — e.g. ruler-and-compass geometry construction, sketching a graph from an equation when no graph is provided, freehand drawing a triangle to scale — DO NOT guess an answer. Set needs_drawing=true, leave correct_answer as "", and put a one-sentence reason in explanation (e.g. "Requires constructing the angle bisector — please verify by hand."). The reviewer will solve and enter the answer manually.
 
-This rule does NOT apply when the figure is already provided in the question image; in that case treat the figure as known and solve normally.
-
-Return JSON only matching the schema. No prose outside the JSON.`;
+This rule does NOT apply when the figure is already provided in the question image; in that case treat the figure as known and solve normally.`;
 
 /**
  * Graph / figure questions: read exact points, fit, verify, transform — never
@@ -311,7 +309,8 @@ function buildPromptText(q: ParsedQuestion, section: string): string {
       ? "Student Produced Response — give the exact value to grid in (no units)."
       : "Multiple Choice — give the single correct letter A/B/C/D.";
 
-  return `Section: ${section}
+  // Typographic quotes: the model copies quoted words into its answer.
+  return curlyQuotes(`Section: ${section}
 Question type: ${typeText}
 
 Question:
@@ -319,7 +318,7 @@ ${q.question_text}${choicesText}
 
 ${q.image_regions && q.image_regions.length > 0 ? "Refer to the attached image(s) for the visual." : ""}
 
-Solve it. Provide correct_answer, a clear step-by-step explanation, and your confidence (0..1).`;
+Solve it. Provide correct_answer, a clear step-by-step explanation, and your confidence (0..1).`);
 }
 
 /**
@@ -381,24 +380,68 @@ async function solveOneQuestion(
 
   const promptText = buildPromptText(q, section);
 
-  try {
-    const result = await generateObject({
-      model: anthropic("claude-sonnet-4-6"),
-      schema: SolverSchema,
-      system: SOLVER_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: [
-            ...imageBlocks,
-            { type: "text", text: promptText },
-          ],
-        },
-      ],
-      // Headroom so a long worked solution never gets clipped mid-sentence.
-      maxOutputTokens: 3000,
-      maxRetries: 2,
+  // Plain text in tags, not generateObject: a straight " inside a JSON
+  // explanation string ends it and silently cuts the explanation.
+  // Every call's usage is logged, the retry's too.
+  const callSolver = async (text: string, attempt: number) => {
+    const res = await generateTagged(
+      {
+        model: anthropic("claude-sonnet-4-6"),
+        system: SOLVER_SYSTEM_PROMPT,
+        messages: [
+          {
+            role: "user",
+            content: [
+              ...imageBlocks,
+              { type: "text", text },
+            ],
+          },
+        ],
+        // Headroom so a long worked solution never gets clipped mid-sentence.
+        maxOutputTokens: 3000,
+        maxRetries: 2,
+      },
+      SOLVER_FIELDS,
+      // Nothing required here, so a reply without tags still has its usage
+      // logged; parseSolverOutput decides whether it is usable.
+      SOLVER_FIELDS,
+    );
+    const object = parseSolverOutput(res.text);
+    await logSolverUsage(res.usage, object?.confidence ?? null, attempt);
+    if (!object) throw new Error("solver output had no usable <correct_answer>/<explanation>");
+    return { object };
+  };
+  async function logSolverUsage(
+    usage: { inputTokens?: number; outputTokens?: number } | undefined,
+    confidence: number | null,
+    attempt: number,
+  ) {
+    if (!usage) return;
+    const inputTokens = usage.inputTokens ?? 0;
+    const outputTokens = usage.outputTokens ?? 0;
+    // Claude Sonnet 4.6: $3/M input, $15/M output
+    const costCents = Math.round(
+      (inputTokens / 1_000_000) * 300 + (outputTokens / 1_000_000) * 1500,
+    );
+    await logUsage({
+      userId: callerUserId,
+      route: "solve-question",
+      tokensInput: inputTokens,
+      tokensOutput: outputTokens,
+      model: "claude-sonnet-4-6",
+      costCents,
+      metadata: {
+        question_number: q.original_question_number,
+        section,
+        confidence,
+        had_images: imageBlocks.length > 0,
+        attempt,
+      },
     });
+  }
+
+  try {
+    const result = await callSolver(promptText, 0);
 
     const declared = result.object.correct_answer;
     let explanationText = result.object.explanation;
@@ -426,25 +469,15 @@ async function solveOneQuestion(
 
     // Truncation guard: retry once if the explanation looks cut off.
     let truncatedExplanation = false;
-    if (looksTruncated(explanationText)) {
+    // An unmatched quote copied from the question/choices isn't a cut.
+    const source = `${q.question_text ?? ""}\n${(q.choices ?? []).map((c) => c.text ?? "").join("\n")}`;
+    if (looksTruncated(explanationText, source)) {
       try {
-        const retry = await generateObject({
-          model: anthropic("claude-sonnet-4-6"),
-          schema: SolverSchema,
-          system: SOLVER_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: "user",
-              content: [
-                ...imageBlocks,
-                { type: "text", text: promptText },
-              ],
-            },
-          ],
-          maxOutputTokens: 3000,
-          maxRetries: 2,
-        });
-        if (!looksTruncated(retry.object.explanation)) {
+        const retry = await callSolver(
+          `${promptText}\n\nREMINDER: your previous explanation was cut off. Write the WHOLE explanation inside the <explanation> tag and close the tag.`,
+          1,
+        );
+        if (!looksTruncated(retry.object.explanation, source)) {
           explanationText = retry.object.explanation;
         } else {
           truncatedExplanation = true;
@@ -459,30 +492,6 @@ async function solveOneQuestion(
     console.log(
       `[solve-question] q${q.original_question_number} section=${section} hadImages=${imageBlocks.length > 0} declared=${declared} explained=${inferredAnswer ?? "<none>"} mismatch=${consistencyMismatch} confidence=${result.object.confidence}`,
     );
-
-    const usage = result.usage;
-    if (usage) {
-      const inputTokens = usage.inputTokens ?? 0;
-      const outputTokens = usage.outputTokens ?? 0;
-      // Claude Sonnet 4.6: $3/M input, $15/M output
-      const costCents = Math.round(
-        (inputTokens / 1_000_000) * 300 + (outputTokens / 1_000_000) * 1500,
-      );
-      await logUsage({
-        userId: callerUserId,
-        route: "solve-question",
-        tokensInput: inputTokens,
-        tokensOutput: outputTokens,
-        model: "claude-sonnet-4-6",
-        costCents,
-        metadata: {
-          question_number: q.original_question_number,
-          section,
-          confidence: result.object.confidence,
-          had_images: imageBlocks.length > 0,
-        },
-      });
-    }
 
     // Fill-in: evaluate the model's computation in code, apply the stem's
     // rounding in code, plug the value back in, and compare with both the
@@ -574,6 +583,26 @@ export async function solveQuestions(
 }
 
 /**
+ * solveQuestionsAndPersist (also the manual run-solver route, which re-solves
+ * every question): never save a solver explanation that still looks cut off
+ * over the explanation an Approved question already has — keep the old one.
+ * Only when the answer stays the same; a new answer needs its own
+ * explanation (and a live row never takes a new answer: applyLiveHold). Pure.
+ */
+export function keepApprovedExplanation(
+  cur: { parsing_status: string | null; explanation?: string | null; correct_answer?: string | null } | undefined,
+  solved: Pick<SolvedAnswer, "explanation" | "truncatedExplanation">,
+  savedAnswer: string | null,
+  q: Pick<ParsedQuestion, "question_text" | "choices">,
+): boolean {
+  if (!cur || cur.parsing_status !== "Approved" || !(cur.explanation ?? "").trim()) return false;
+  const source = `${q.question_text ?? ""}\n${(q.choices ?? []).map((c) => c.text ?? "").join("\n")}`;
+  if (!solved.truncatedExplanation && !looksTruncated(solved.explanation, source)) return false;
+  const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+  return norm(savedAnswer) === norm(cur.correct_answer);
+}
+
+/**
  * Background-solve helper: solve all pending questions and UPDATE each
  * question row in Supabase as the answer arrives. Used by the parse route's
  * `after()` callback so the UI can show questions immediately while answers
@@ -602,10 +631,10 @@ export async function solveQuestionsAndPersist(
   // (lib/live-questions.ts) even when the solver would demote it.
   const { data: currentRows } = await db
     .from("questions")
-    .select("id, original_question_number, parsing_status, parsing_notes, correct_answer")
+    .select("id, original_question_number, parsing_status, parsing_notes, correct_answer, explanation")
     .eq("module_id", moduleId);
   const currentByNumber = new Map(
-    ((currentRows ?? []) as (LiveHoldRow & { original_question_number: number })[]).map((r) => [r.original_question_number, r]),
+    ((currentRows ?? []) as (LiveHoldRow & { original_question_number: number; explanation: string | null })[]).map((r) => [r.original_question_number, r]),
   );
   const live = await liveQuestionIds(
     db,
@@ -694,12 +723,15 @@ export async function solveQuestionsAndPersist(
         }
 
         const cur = currentByNumber.get(q.original_question_number);
+        // An Approved row keeps its explanation over one that came out cut off.
+        const keepOldExplanation = keepApprovedExplanation(cur, solved, savedAnswer, q);
+        const truncatedExplanation = solved.truncatedExplanation && !keepOldExplanation;
         const needsReview =
           solved.consistencyMismatch ||
           sprLetterAnswer ||
           blindImage ||
           needsDrawing ||
-          solved.truncatedExplanation ||
+          truncatedExplanation ||
           computeProblems.length > 0 ||
           !!keyProblem ||
           // A reason found at insert (e.g. choices moved across a page break) still stands.
@@ -745,7 +777,7 @@ export async function solveQuestionsAndPersist(
             `Solver self-contradicted (declared ${declared}, explained ${solved.explainedAnswer ?? "<unparsed>"}); stored the explained answer${savedAnswer !== declared ? ` "${savedAnswer}"` : ""}. Please verify.`,
           );
         }
-        if (solved.truncatedExplanation) {
+        if (truncatedExplanation) {
           noteParts.push(TRUNCATION_NOTE);
         }
         const notes =
@@ -763,6 +795,7 @@ export async function solveQuestionsAndPersist(
           parsing_notes: notes,
           parsing_status: status,
         };
+        if (keepOldExplanation) delete update.explanation;
         if (cur) update = applyLiveHold(cur, update, "Re-solved by the AI solver", live).update;
         const { error } = await db
           .from("questions")
@@ -803,9 +836,25 @@ export async function solveQuestionsAndPersist(
 // explanation (2026-11-07: Test #20 Aug 2024 ENG M1 Q27, even with
 // QUOTE_RULE and curly-quoted input). So explanation calls ask for plain text
 // in XML-style tags instead, which needs no escaping at all.
-type TaggedField = "explanation" | "independent_answer" | "figure_values";
+// The pipeline solver (solveOneQuestion) uses the same format for every
+// SolverSchema field (2026-11-20: it had been missed and kept cutting R&W
+// explanations at `The word "correlate"`).
+type TaggedField =
+  | "explanation"
+  | "independent_answer"
+  | "figure_values"
+  | "correct_answer"
+  | "answer_expression"
+  | "check_equation"
+  | "confidence"
+  | "needs_drawing";
 
 const TAG_HINTS: Record<TaggedField, string> = {
+  correct_answer: `<correct_answer>${SolverSchema.shape.correct_answer.description}</correct_answer>`,
+  answer_expression: `<answer_expression>${SolverSchema.shape.answer_expression.description}</answer_expression>`,
+  check_equation: `<check_equation>${SolverSchema.shape.check_equation.description}</check_equation>`,
+  confidence: "<confidence>Your self-confidence as a single number between 0 and 1 (e.g. 0.9).</confidence>",
+  needs_drawing: `<needs_drawing>true or false. ${SolverSchema.shape.needs_drawing.description}</needs_drawing>`,
   independent_answer:
     "<independent_answer>Solve the question yourself first, IGNORING the given answer. Multiple Choice: the single letter A/B/C/D only. Student Produced Response: the value only (no units, no $). Leave it empty if it cannot be determined.</independent_answer>",
   explanation:
@@ -814,14 +863,25 @@ const TAG_HINTS: Record<TaggedField, string> = {
     "<figure_values>BEFORE solving: the exact points / values you read from the attached figure(s), one per line as \"label: value\" (e.g. \"grid point: (4, 1)\", \"y-intercept: (0, -3)\", \"minimum: (2, -4)\", \"row 2019: 145\"), then one line \"fit: <the function fitted from those points>\" when there is a curve or line. Only values the figure shows exactly.</figure_values>",
 };
 
-export function parseTagged<F extends TaggedField>(text: string, fields: readonly F[]): Record<F, string> | null {
+/** `optional` fields may be missing from the reply: they parse as "". */
+export function parseTagged<F extends TaggedField>(
+  text: string,
+  fields: readonly F[],
+  optional: readonly F[] = [],
+): Record<F, string> | null {
   const out = {} as Record<F, string>;
   for (const f of fields) {
     const m = text.match(new RegExp(`<${f}>([\\s\\S]*?)</${f}>`));
     // An unclosed final tag means the output itself was cut (token limit):
     // keep what's there so the cut-off check can judge it.
     const open = m ? null : text.match(new RegExp(`<${f}>([\\s\\S]*)$`));
-    if (!m && !open) return null;
+    if (!m && !open) {
+      if (optional.includes(f)) {
+        out[f] = "";
+        continue;
+      }
+      return null;
+    }
     out[f] = (m ? m[1] : open![1]).trim();
   }
   return out;
@@ -830,7 +890,8 @@ export function parseTagged<F extends TaggedField>(text: string, fields: readonl
 async function generateTagged<F extends TaggedField>(
   params: { model: Parameters<typeof generateText>[0]["model"]; system: string; maxOutputTokens: number; maxRetries: number; messages: Parameters<typeof generateText>[0]["messages"] },
   fields: readonly F[],
-): Promise<{ object: Record<F, string>; usage: Awaited<ReturnType<typeof generateText>>["usage"] }> {
+  optional: readonly F[] = [],
+): Promise<{ object: Record<F, string>; usage: Awaited<ReturnType<typeof generateText>>["usage"]; text: string }> {
   const res = await generateText({
     model: params.model,
     system: `${params.system}
@@ -842,9 +903,39 @@ Inside the tags write normal text — quotation marks need no escaping.`,
     maxRetries: params.maxRetries,
     messages: params.messages!,
   });
-  const object = parseTagged(res.text, fields);
-  if (!object) throw new Error("explanation output had no <explanation> tag");
-  return { object, usage: res.usage };
+  const object = parseTagged(res.text, fields, optional);
+  if (!object) throw new Error(`output is missing a required tag (${fields.filter((f) => !optional.includes(f)).join(", ")})`);
+  return { object, usage: res.usage, text: res.text };
+}
+
+/** The solver's tags, in SolverSchema order. Only <explanation> must be present. */
+export const SOLVER_FIELDS = ["correct_answer", "explanation", "answer_expression", "check_equation", "confidence", "needs_drawing"] as const;
+const SOLVER_OPTIONAL = SOLVER_FIELDS.filter((f) => f !== "explanation");
+export type SolverOutput = z.infer<typeof SolverSchema>;
+
+/**
+ * Tagged solver reply → the SolverSchema shape. Pure. null when unusable:
+ * no <explanation>, or no <correct_answer> tag on a reply that isn't
+ * needs_drawing (an answer must be stated; an empty tag is fine).
+ * Missing optional tags default to "" / 0 / false.
+ */
+export function parseSolverOutput(text: string): SolverOutput | null {
+  const t = parseTagged(text, SOLVER_FIELDS, SOLVER_OPTIONAL);
+  if (!t) return null;
+  const needsDrawing = /^(?:true|yes|1)\b/i.test(t.needs_drawing);
+  if (!needsDrawing && !/<correct_answer>/.test(text)) return null;
+  // A JSON habit: `""` for an empty value; or the expression in backticks.
+  const plain = (s: string) => (/^(?:""|“”|''|n\/a|none)$/i.test(s) ? "" : s.replace(/^`+|`+$/g, "").trim());
+  const conf = Number.parseFloat(t.confidence.match(/-?\d*\.?\d+/)?.[0] ?? "");
+  return {
+    correct_answer: plain(t.correct_answer),
+    explanation: t.explanation,
+    answer_expression: plain(t.answer_expression),
+    check_equation: plain(t.check_equation),
+    // "85" / "85%" → 0.85
+    confidence: Number.isFinite(conf) ? Math.min(1, Math.max(0, conf > 1 && conf <= 100 ? conf / 100 : conf)) : 0,
+    needs_drawing: needsDrawing,
+  };
 }
 
 
@@ -912,6 +1003,30 @@ export function officialDraftProblem(res: RegenExplanationResult, rejection: str
   if (res.independent === false) return "the answer did not come from a solve that never saw the key";
   if (rejection) return `the new explanation failed its check: ${rejection}`;
   return null;
+}
+
+/**
+ * explainOfficialAndPersist: the notes a row carries forward. A rewritten
+ * explanation that passed its checks replaces the old text, so an earlier
+ * TRUNCATION_NOTE (e.g. from the solver) no longer applies and must not keep
+ * the row in review. Every other note stays. Pure.
+ */
+export function notesAfterCheckedRewrite(notes: string | null, rewrittenAndChecked: boolean): string | null {
+  if (!notes || !rewrittenAndChecked || !notes.includes(TRUNCATION_NOTE)) return notes;
+  const rest = notes
+    .split(TRUNCATION_NOTE)
+    .map((s) => s.replace(/^[\s;]+|[\s;]+$/g, ""))
+    .filter(Boolean)
+    .join("; ");
+  return rest || null;
+}
+
+/** explainOfficialAndPersist: does the row stay Needs Review? Pure. */
+export function officialKeepsReview(
+  notes: string | null,
+  flags: { offStoredKey: boolean; blindFigure: boolean; placeholder: boolean; truncatedOfficial: boolean; conflict: boolean; draftProblem: boolean; keyProblem: boolean },
+): boolean {
+  return EXPLAIN_HARD_ISSUE.test(notes || "") || Object.values(flags).some(Boolean);
 }
 
 export const OFFICIAL_EXPLANATION_FAILED_PREFIX = "Needs review: no checked explanation for the official key";
@@ -1007,22 +1122,25 @@ export async function explainOfficialAndPersist(
           // Re-parse in place: the row isn't on its stored key (the put-back
           // after the solver failed, or someone changed it) → never approve.
           const offStoredKey = !!storedKey && q.correct_answer !== storedKey;
-          const keep =
-            offStoredKey ||
-            EXPLAIN_HARD_ISSUE.test(q.parsing_notes || "") ||
-            blindFigure ||
-            placeholder !== null ||
-            truncatedOfficial ||
-            !!conflict ||
-            !!draftProblem ||
-            !!keyProblem;
+          const rewritten = res.ok && !conflict && !draftProblem;
+          // A checked rewrite drops a stale "looks cut off" note (the solver's).
+          const priorNotes = notesAfterCheckedRewrite(q.parsing_notes, rewritten);
+          const keep = officialKeepsReview(priorNotes, {
+            offStoredKey,
+            blindFigure,
+            placeholder: placeholder !== null,
+            truncatedOfficial,
+            conflict: !!conflict,
+            draftProblem: !!draftProblem,
+            keyProblem: !!keyProblem,
+          });
           if (keep) keptReview++; else approved++;
           const parts: string[] = [];
-          if (keep && q.parsing_notes) parts.push(q.parsing_notes);
-          if (placeholder && !(q.parsing_notes || "").includes("parser placeholder text")) parts.push(placeholderNote(placeholder));
+          if (keep && priorNotes) parts.push(priorNotes);
+          if (placeholder && !(priorNotes || "").includes("parser placeholder text")) parts.push(placeholderNote(placeholder));
           // Don't repeat a note the row already carries (re-runs).
           const addNote = (n: string) => {
-            if (!(q.parsing_notes || "").includes(n) && !parts.includes(n)) parts.push(n);
+            if (!(priorNotes || "").includes(n) && !parts.includes(n)) parts.push(n);
           };
           if (truncatedOfficial) addNote(TRUNCATION_NOTE);
           if (conflict) {
@@ -1045,7 +1163,7 @@ export async function explainOfficialAndPersist(
                 ].join("; "),
             updated_at: new Date().toISOString(),
           };
-          if (res.ok && !conflict && !draftProblem) {
+          if (rewritten) {
             update.explanation = res.explanation;
             rewrote++;
           } else if (!currentFits) {
