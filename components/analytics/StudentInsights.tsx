@@ -6,9 +6,9 @@ import type { Occasion } from "@/lib/score-analysis";
 
 /**
  * "Strengths & Focus Areas" + "Progress Over Time", both read from the same
- * window of tests (lib/insights-window): the last INSIGHTS_RECENT_TESTS by
- * default, "All tests" on the toggle. With no more tests than that, the two
- * windows are the same and no toggle is shown.
+ * window of tests (lib/insights-window): the last INSIGHTS_RECENT_TESTS of
+ * each section by default, "All tests" on the toggle. When no section has
+ * more tests than that, the two windows are the same and no toggle is shown.
  */
 export default function StudentInsights({
   occasions,
@@ -25,7 +25,10 @@ export default function StudentInsights({
   const recent = insightsForWindow(occasions, "recent");
   if (recent.rows.length === 0) return null;
   const blocks = (w: WindowInsights) => {
-    const scope = w.window === "recent" && w.tests < w.totalTests ? `Last ${w.tests} of ${w.totalTests} tests` : `All ${w.totalTests} tests`;
+    const scope =
+      w.window === "recent" && w.hasMore
+        ? `Last ${INSIGHTS_RECENT_TESTS} tests per section · ${w.tests} of ${w.totalTests} tests`
+        : `All ${w.totalTests} tests`;
     return (
       <div className="space-y-6">
         <ScoreBreakdown rows={w.rows} title={strengthsTitle} subtitle={scope} notStrengths={w.declining} />
@@ -37,11 +40,11 @@ export default function StudentInsights({
       </div>
     );
   };
-  if (recent.totalTests <= INSIGHTS_RECENT_TESTS) return blocks(recent);
+  if (!recent.hasMore) return blocks(recent);
   const list = Array.from(new Set(recent.occasions.map((o) => o.label ?? "Test"))).join(", ");
   return (
     <InsightsWindowToggle
-      recentTests={recent.tests}
+      recentTests={INSIGHTS_RECENT_TESTS}
       totalTests={recent.totalTests}
       recentList={list}
       recent={blocks(recent)}

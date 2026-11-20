@@ -1030,7 +1030,7 @@
   },
   "studentInsights": {
     "windowLabel": "Strengths and progress below use",
-    "recent": "Last {n} tests",
+    "recent": "Last {n} tests per section",
     "all": "All tests ({n})",
     "inWindow": "Tests used: {list}"
   }

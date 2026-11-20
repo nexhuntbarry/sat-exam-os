@@ -1030,7 +1030,7 @@
   },
   "studentInsights": {
     "windowLabel": "下方強弱項與進步趨勢的範圍",
-    "recent": "最近 {n} 次測驗",
+    "recent": "每科最近 {n} 次測驗",
     "all": "全部測驗（{n}）",
     "inWindow": "使用的測驗：{list}"
   }

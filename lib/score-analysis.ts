@@ -258,7 +258,7 @@ export function narrative(b: Breakdown, opts: { notStrengths?: ReadonlySet<strin
   const canPraise = (d: DomainStat) => !opts.notStrengths?.has(d.domain);
   const strengths = b.domains.filter((d) => d.pct >= 70 && canPraise(d));
   const focus = [...b.domains].reverse().filter((d) => d.pct < 70);
-  const best = b.domains.find(canPraise) ?? b.domains[0];
+  const best = b.domains.find(canPraise);
   const worst = b.domains[b.domains.length - 1];
 
   const paras: string[] = [];
@@ -270,11 +270,12 @@ export function narrative(b: Breakdown, opts: { notStrengths?: ReadonlySet<strin
   if (strengths.length) {
     sLines.push(fill(pick(STRENGTH_LINES, seed + 2), strengths[0]));
     if (strengths.length > 1) sLines.push(fill(pick(SECOND_STRENGTH_LINES, seed + 3), strengths[1]));
-  } else {
+  } else if (best) {
     // No domain ≥70% — frame the relative best as the emerging strength.
     sLines.push(fill(pick(STRENGTH_LINES, seed + 2), best));
   }
-  paras.push(sLines.join(" "));
+  // Every domain is slipping: no strength line at all.
+  if (sLines.length) paras.push(sLines.join(" "));
 
   // Focus paragraph + tip
   const fLines: string[] = [];
