@@ -805,8 +805,8 @@
     "colSubmitted": "交卷時間",
     "twoModules": "2 模組",
     "attemptN": "第 {n} 次",
-    "expandModules": "展開模組明細",
-    "collapseModules": "收起模組明細",
+    "expandModules": "展開模組與各領域分析",
+    "collapseModules": "收起模組與各領域分析",
     "viewDetail": "查看詳情",
     "noTests": "此學生尚未被指派任何測驗。",
     "colAssignedVia": "指派方式",
@@ -1074,5 +1074,35 @@
       "Expression of Ideas": "觀點表達",
       "Standard English Conventions": "標準英文規範"
     }
+  },
+  "studentTabs": {
+    "overview": "總覽",
+    "tests": "測驗",
+    "skills": "能力分析",
+    "profileTab": "基本資料",
+    "profile": {
+      "email": "Email",
+      "grade": "年級",
+      "school": "學校",
+      "campus": "校區",
+      "classGroup": "班級",
+      "classes": "班級",
+      "targetScore": "目標分數",
+      "level": "程度",
+      "parent": "家長",
+      "parentContact": "家長聯絡方式",
+      "notes": "備註"
+    },
+    "takeawaysTitle": "三個重點",
+    "takeawaysSubtitle": "依每科最近 3 次測驗 · 規則產生，非 AI",
+    "thisStudent": "這位同學",
+    "segment": {
+      "strength": "最強項",
+      "focus": "加強重點",
+      "habit": "作答習慣"
+    },
+    "breakdownTitle": "本次測驗各領域分析",
+    "moduleNames": "模組",
+    "skillsEmpty": "還沒有已計分的作答，完成第一次測驗後就會顯示能力分析。"
   }
 }

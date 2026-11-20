@@ -805,8 +805,8 @@
     "colSubmitted": "Submitted",
     "twoModules": "2 modules",
     "attemptN": "Attempt {n}",
-    "expandModules": "Show module breakdown",
-    "collapseModules": "Hide module breakdown",
+    "expandModules": "Show modules & breakdown",
+    "collapseModules": "Hide modules & breakdown",
     "viewDetail": "View detail",
     "noTests": "No tests assigned to this student yet.",
     "colAssignedVia": "Assigned via",
@@ -1074,5 +1074,35 @@
       "Expression of Ideas": "Expression of Ideas",
       "Standard English Conventions": "Standard English Conventions"
     }
+  },
+  "studentTabs": {
+    "overview": "Overview",
+    "tests": "Tests",
+    "skills": "Skills",
+    "profileTab": "Profile",
+    "profile": {
+      "email": "Email",
+      "grade": "Grade",
+      "school": "School",
+      "campus": "Campus",
+      "classGroup": "Class group",
+      "classes": "Classes",
+      "targetScore": "Target score",
+      "level": "Level",
+      "parent": "Parent",
+      "parentContact": "Parent contact",
+      "notes": "Notes"
+    },
+    "takeawaysTitle": "Key takeaways",
+    "takeawaysSubtitle": "From the last 3 tests per section · rule-based, no AI",
+    "thisStudent": "This student",
+    "segment": {
+      "strength": "Top strength",
+      "focus": "Focus area",
+      "habit": "Test habit"
+    },
+    "breakdownTitle": "Breakdown for this test",
+    "moduleNames": "Modules",
+    "skillsEmpty": "No graded answers yet. Skills show up after the first finished test."
   }
 }
