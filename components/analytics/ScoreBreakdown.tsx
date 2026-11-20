@@ -94,24 +94,32 @@ function DomainRow({ d, tag }: { d: DomainStat; tag?: "strength" | "focus" }) {
 export default function ScoreBreakdown({
   rows,
   title = "Score Breakdown by Area",
+  subtitle,
+  notStrengths,
 }: {
   rows: AnswerRow[];
   title?: string;
+  subtitle?: string;
+  /** Domains slipping in the same window (lib/insights-window): never tagged or written up as a strength. */
+  notStrengths?: ReadonlySet<string>;
 }) {
   const b = computeBreakdown(rows);
   if (!b.domains.length) return null;
 
-  const report = narrative(b);
-  const best = b.domains[0];
+  const report = narrative(b, { notStrengths });
+  const best = b.domains.find((d) => !notStrengths?.has(d.domain));
   const worst = b.domains[b.domains.length - 1];
-  const strengthDomain = best.pct >= 70 ? best.domain : null;
+  const strengthDomain = best && best.pct >= 70 ? best.domain : null;
   const focusDomain = worst.pct < 70 && worst.domain !== strengthDomain ? worst.domain : null;
 
   return (
     <section className="rounded-2xl border border-divider bg-surface p-5 md:p-6 space-y-5">
       <div className="flex items-center gap-2">
         <Sparkles size={18} className="text-warm-coral-text" />
-        <h2 className="text-base font-semibold text-charcoal">{title}</h2>
+        <div>
+          <h2 className="text-base font-semibold text-charcoal">{title}</h2>
+          {subtitle && <p className="text-xs text-soft-mute">{subtitle}</p>}
+        </div>
       </div>
 
       {/* Written report */}

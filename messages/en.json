@@ -1008,5 +1008,30 @@
     "confirmDelete": "Delete attempt",
     "failed": "Couldn't do that: {error}",
     "networkError": "Network error. Check your connection and try again."
+  },
+  "recentScores": {
+    "title": "Recent practice tests",
+    "subtitle": "Newest first · finished tests only",
+    "colDate": "Date",
+    "colTest": "Test",
+    "colScore": "Score",
+    "colModules": "Correct",
+    "colChange": "Change",
+    "total": "Total",
+    "rw": "R&W",
+    "math": "Math",
+    "fullLength": "Full-length SAT",
+    "estimated": "Est.",
+    "vs": "{delta} vs {date}",
+    "first": "First one",
+    "showAll": "Show all ({n})",
+    "showLess": "Show fewer",
+    "empty": "No finished practice tests yet."
+  },
+  "studentInsights": {
+    "windowLabel": "Strengths and progress below use",
+    "recent": "Last {n} tests",
+    "all": "All tests ({n})",
+    "inWindow": "Tests used: {list}"
   }
 }

@@ -14,15 +14,16 @@ import { studentTestProgress } from "@/lib/test-progress";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { attemptScore, averageSat, type ScoreDisplay } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
-import { flStatusText, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, scopedFlScore } from "@/lib/full-length-score";
+import { flModuleCells, flStatusText, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, scopedFlScore } from "@/lib/full-length-score";
+import type { RecentScoreItem } from "@/lib/recent-scores";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
-import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
-import ProgressReport from "@/components/analytics/ProgressReport";
+import StudentInsights from "@/components/analytics/StudentInsights";
+import RecentPracticeTests from "@/components/analytics/RecentPracticeTests";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
-import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import { getStudentProgressOccasions } from "@/lib/student-analytics";
 import {
   DataRow,
   DataTable,
@@ -184,6 +185,9 @@ async function loadStudent(
     ].join(", ");
   };
 
+  // "Recent practice tests": finished attempts, same scores as the table.
+  const recentItems: RecentScoreItem[] = [];
+
   // One row per attempt: two-module attempts are two submissions sharing
   // a session_id.
   const attempts = new Map<string, SubRow[]>();
@@ -216,6 +220,25 @@ async function loadStudent(
     // Module 2 closed unopened (lib/module2-not-taken): Incomplete, also on an older attempt.
     const attempt = attemptScore(sorted, sectionOf.get(head.test_id));
     if (attempt.status === "Incomplete") status = "Incomplete";
+    const submittedAt = sorted.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
+    if ((status === "Submitted" || status === "Late") && attempt.score?.pct != null && submittedAt) {
+      recentItems.push({
+        key: last.id,
+        date: submittedAt,
+        testName: t?.test_name ?? "—",
+        href: `/teacher/tests/${head.test_id}/results/${last.id}`,
+        kind: "section",
+        sections: [
+          {
+            section: sectionOf.get(head.test_id) ?? "",
+            sat: attempt.score.sat,
+            modules: attempt.modules.filter((m) => !m.notTaken).map((m) => `${m.correct ?? 0}/${m.total ?? 0}`),
+          },
+        ],
+        total: null,
+        estimated: attempt.score.estimated,
+      });
+    }
     return {
       // Detail page stitches both modules via session_id from the last one.
       id: last.id,
@@ -232,7 +255,7 @@ async function loadStudent(
       assignedAt: assignments.get(head.test_id)?.assignedAt ?? null,
       hasSubmission: true,
       score: attempt.score,
-      submittedAt: sorted.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
+      submittedAt,
       href: undefined as string | undefined,
       fullLength: false,
     };
@@ -272,6 +295,27 @@ async function loadStudent(
     const ordered = [...list].sort((a, b) => (a.started_at ?? "").localeCompare(b.started_at ?? ""));
     const last = ordered[ordered.length - 1];
     const p = flParentById.get(parent);
+    const flSubmittedAt = ordered.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null;
+    if (done && flSubmittedAt) {
+      recentItems.push({
+        key: `fl:${k}`,
+        date: flSubmittedAt,
+        testName: p?.test_name ?? "—",
+        href: `/teacher/tests/${parent}/results`,
+        kind: "full",
+        // The total plus only the section(s) this teacher may see.
+        sections: [
+          ...(inSubjects("Reading & Writing", subjects)
+            ? [{ section: "Reading & Writing", sat: fl.rw.score?.sat ?? null, modules: flModuleCells(fl.rw) }]
+            : []),
+          ...(inSubjects("Math", subjects)
+            ? [{ section: "Math", sat: fl.math.score?.sat ?? null, modules: flModuleCells(fl.math) }]
+            : []),
+        ],
+        total: fl.total,
+        estimated: fl.score?.estimated,
+      });
+    }
     submissions.push({
       id: last.id,
       testId: parent,
@@ -284,7 +328,7 @@ async function loadStudent(
       assignedAt: assignments.get(parent)?.assignedAt ?? null,
       hasSubmission: true,
       score: fl.score,
-      submittedAt: ordered.map((r) => r.submitted_at).filter((d): d is string => !!d).sort().pop() ?? null,
+      submittedAt: flSubmittedAt,
       href: `/teacher/tests/${parent}/results`,
       fullLength: true,
     });
@@ -330,7 +374,7 @@ async function loadStudent(
   // plus any they took, in the teacher's subject(s).
   const assigned = new Set<string>([...assignments.keys(), ...subsByTest.keys(), ...flTested]);
 
-  return { group, student, submissions, tests, subjects, assignedCount: assigned.size };
+  return { group, student, submissions, tests, subjects, assignedCount: assigned.size, recentItems };
 }
 
 export default async function TeacherStudentResultsPage({
@@ -349,11 +393,8 @@ export default async function TeacherStudentResultsPage({
   ) notFound();
   const data = await loadStudent(id, studentId, me.userId, me.role === "admin", me.isQa);
   if (!data) notFound();
-  const { group, student, submissions, tests, subjects, assignedCount } = data;
+  const { group, student, submissions, tests, subjects, assignedCount, recentItems } = data;
   // Only the subject(s) this teacher teaches the class.
-  const breakdownRows = (await getStudentBreakdownRows(studentId)).filter((r) =>
-    inSubjects(r.section, subjects),
-  );
   const occasions = (await getStudentProgressOccasions(studentId))
     .map((o) => ({ ...o, rows: o.rows.filter((r) => inSubjects(r.section, subjects)) }))
     .filter((o) => o.rows.length > 0 && inSubjects(o.section, subjects));
@@ -395,6 +436,9 @@ export default async function TeacherStudentResultsPage({
         )}
       </div>
 
+      {/* Lead with the real practice-test scores. */}
+      <RecentPracticeTests items={recentItems} />
+
       <div className="grid grid-cols-3 gap-4">
         <Stat label="Tests assigned" value={String(assignedCount)} />
         <Stat label="Completed" value={String(new Set(completed.map((s) => s.testId)).size)} />
@@ -405,14 +449,9 @@ export default async function TeacherStudentResultsPage({
         />
       </div>
 
-      {/* Strengths/weaknesses + progress for this student. */}
-      {breakdownRows.length > 0 && (
-        <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
-      )}
+      {/* Strengths/weaknesses + progress for this student, one window for both. */}
       {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
-      {occasions.length > 0 && (
-        <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
-      )}
+      <StudentInsights occasions={occasions} name={student.display_name ?? student.email} />
       {occasions.length > 0 && (
         <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
       )}

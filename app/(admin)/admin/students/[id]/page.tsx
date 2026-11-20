@@ -19,6 +19,7 @@ import {
   flFinished,
   flModuleCells,
   groupFullLengthAttempts,
+  lastSubmittedAt,
   loadFlAttemptMeta,
   scoreGroups,
 } from "@/lib/full-length-score";
@@ -27,11 +28,12 @@ import EditStudentButton from "./EditStudentButton";
 import StudentActionsMenu from "./StudentActionsMenu";
 import StudentTestsActions, { type ClassChoice } from "./StudentTestsActions";
 import CheckProfileBadge from "./CheckProfileBadge";
-import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
-import ProgressReport from "@/components/analytics/ProgressReport";
+import StudentInsights from "@/components/analytics/StudentInsights";
+import RecentPracticeTests from "@/components/analytics/RecentPracticeTests";
+import type { RecentScoreItem } from "@/lib/recent-scores";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
-import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import { getStudentProgressOccasions } from "@/lib/student-analytics";
 import {
   loadAnswerVisibilityInputs,
   summarizeAnswerVisibility,
@@ -502,7 +504,6 @@ export default async function AdminStudentDetailPage({
   // test just show the effective state.
   const controlRowKey = new Map<string, string>();
   for (const g of groups) if (!controlRowKey.has(g.testId)) controlRowKey.set(g.testId, g.key);
-  const breakdownRows = await getStudentBreakdownRows(id);
   const occasions = await getStudentProgressOccasions(id);
   const assignedCount = assignments.size;
   // A full-length SAT counts as completed when its latest attempt has a total.
@@ -736,12 +737,48 @@ export default async function AdminStudentDetailPage({
     .filter((g) => flFinished(g.score) && g.score.total != null)
     .map((g) => ({ total: g.score.total!, at: [...g.rw, ...g.math].map((r) => r.submitted_at ?? "").sort().pop() ?? "" }))
     .sort((a, b) => b.at.localeCompare(a.at))[0];
-  const estimatedTotal =
-    latestFl
-      ? latestFl.total
-      : latestMathScore != null && latestRWScore != null
-      ? latestMathScore + latestRWScore
-      : null;
+
+  // "Recent practice tests": finished attempts only, with the same scores
+  // as the Tests table (section tests: scoreOfGroup; full-length: its total).
+  const recentItems: RecentScoreItem[] = [
+    ...groups
+      .filter((g) => g.status === "Submitted" || g.status === "Late")
+      .map((g) => ({ g, score: scoreOfGroup(g) }))
+      .filter(({ g, score }) => score?.pct != null && g.submittedAt)
+      .map(({ g, score }) => ({
+        key: g.key,
+        date: g.submittedAt!,
+        testName: g.testName,
+        href: `/teacher/tests/${g.testId}/results/${g.detailSubmissionId}`,
+        kind: "section" as const,
+        sections: [
+          {
+            section: g.section ?? sectionOf.get(g.testId) ?? "",
+            sat: score!.sat,
+            modules: g.isMultiModule
+              ? g.modules.filter((m) => !m.notTaken).map((m) => `${m.correct}/${m.total}`)
+              : [`${g.correct}/${g.total}`],
+          },
+        ],
+        total: null,
+        estimated: score!.estimated,
+      })),
+    ...flScored
+      .filter((g) => flFinished(g.score) && lastSubmittedAt([...g.rw, ...g.math]))
+      .map((g) => ({
+        key: `fl:${g.key}`,
+        date: lastSubmittedAt([...g.rw, ...g.math])!,
+        testName: (testById.get(g.parentId)?.test_name as string | undefined) ?? "—",
+        href: `/teacher/tests/${g.parentId}/results`,
+        kind: "full" as const,
+        sections: [
+          { section: "Reading & Writing", sat: g.score.rw.score?.sat ?? null, modules: flModuleCells(g.score.rw) },
+          { section: "Math", sat: g.score.math.score?.sat ?? null, modules: flModuleCells(g.score.math) },
+        ],
+        total: g.score.total,
+        estimated: g.score.score?.estimated,
+      })),
+  ];
 
   const checkProfileMeta = student.metadata?.check_profile as
     | { reason: string; at: string }
@@ -804,6 +841,9 @@ export default async function AdminStudentDetailPage({
         </div>
       )}
 
+      {/* Lead with the real practice-test scores. */}
+      <RecentPracticeTests items={recentItems} />
+
       {/* Profile card */}
       <div className="bg-surface border border-divider rounded-2xl p-6 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
         {[
@@ -845,7 +885,7 @@ export default async function AdminStudentDetailPage({
       )}
 
       {/* Summary stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className={clsx("grid grid-cols-2 gap-4", latestFl ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
         <div className="bg-surface border border-divider rounded-2xl p-5">
           <p className="text-soft-mute text-xs">Latest Math</p>
           <p className="text-3xl font-bold text-charcoal mt-1">
@@ -858,12 +898,13 @@ export default async function AdminStudentDetailPage({
             {latestRWScore ?? "—"}
           </p>
         </div>
-        <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">{latestFl ? "Total · Full-length SAT" : "Estimated Total"}</p>
-          <p className="text-3xl font-bold text-charcoal mt-1">
-            {estimatedTotal ?? "—"}
-          </p>
-        </div>
+        {/* A real one-sitting total only; no estimate from adding up section tests. */}
+        {latestFl && (
+          <div className="bg-surface border border-divider rounded-2xl p-5">
+            <p className="text-soft-mute text-xs">Total · Full-length SAT</p>
+            <p className="text-3xl font-bold text-charcoal mt-1">{latestFl.total}</p>
+          </div>
+        )}
         <div className="bg-surface border border-divider rounded-2xl p-5">
           <p className="text-soft-mute text-xs">Tests</p>
           <p className="text-charcoal mt-1 whitespace-nowrap">
@@ -891,14 +932,9 @@ export default async function AdminStudentDetailPage({
         />
       </div>
 
-      {/* Strengths/weaknesses + progress for this student. */}
-      {breakdownRows.length > 0 && (
-        <ScoreBreakdown rows={breakdownRows} title="Strengths & Focus Areas" />
-      )}
+      {/* Strengths/weaknesses + progress for this student, one window for both. */}
       {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
-      {occasions.length > 0 && (
-        <ProgressReport occasions={occasions} title="Progress Over Time" subtitle={`${student.display_name ?? student.email} · across ${occasions.length} tests`} />
-      )}
+      <StudentInsights occasions={occasions} name={student.display_name ?? student.email} />
       {occasions.length > 0 && (
         <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />
       )}

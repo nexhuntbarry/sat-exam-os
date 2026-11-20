@@ -4,6 +4,8 @@ import { attemptScore } from "@/lib/score-display";
 import type { ProgressSubmission } from "@/lib/test-progress";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
+import { fullLengthLinksOrNone } from "@/lib/full-length";
+import { attemptGroupKey } from "@/lib/full-length-score";
 
 // Every graded answer for a student, flattened for the strengths/weaknesses
 // breakdown (is_correct + the question's section/domain/skill).
@@ -45,15 +47,19 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
   const db = getServiceClient();
   const { data: subs } = await db
     .from("submissions")
-    .select(`id, student_id, status, session_id, adaptive_track, module_id, correct_count, total_questions, submitted_at, ${M2_NOT_TAKEN_COLUMN}, tests!inner(test_name)`)
+    .select(`id, test_id, student_id, status, session_id, adaptive_track, attempt_number, module_id, correct_count, total_questions, submitted_at, ${M2_NOT_TAKEN_COLUMN}, tests!inner(test_name)`)
     .eq("student_id", studentId)
     .in("status", ["Submitted", "Late"]);
   const rows = (subs ?? []) as unknown as (ProgressSubmission & {
     id: string;
+    test_id: string;
+    attempt_number: number | null;
     submitted_at: string | null;
     tests: { test_name: string };
   })[];
   if (rows.length === 0) return [];
+  // A full-length SAT's two sections are one test when windowing insights.
+  const flLinks = await fullLengthLinksOrNone(db);
 
   const { data: recs } = await fetchAllRows((from, to) =>
     db
@@ -80,7 +86,7 @@ export async function getStudentProgressOccasions(studentId: string): Promise<Oc
     const key = r.session_id ?? r.id;
     let occ = occMap.get(key);
     if (!occ) {
-      occ = { date: r.submitted_at ?? "", label: r.tests.test_name, rows: [] };
+      occ = { date: r.submitted_at ?? "", label: r.tests.test_name, rows: [], testKey: attemptGroupKey(r, flLinks) };
       occMap.set(key, occ);
     }
     if (r.submitted_at && r.submitted_at > occ.date) occ.date = r.submitted_at;

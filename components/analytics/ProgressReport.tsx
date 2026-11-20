@@ -56,12 +56,17 @@ function DomainTrendRow({ t }: { t: DomainTrend }) {
       </div>
       <Sparkline points={t.series.map((p) => p.pct)} stroke={stroke} />
       <div className="flex-1 text-xs text-mid-gray tabular-nums">
-        <span className="text-soft-mute">{t.earlyPct}%</span>
+        <span className="text-soft-mute" title={`${t.earlyCorrect}/${t.earlyTotal} correct`}>{t.earlyPct}%</span>
         <span className="mx-1 text-faint">→</span>
-        <span className="font-semibold text-charcoal">{t.recentPct}%</span>
+        <span className="font-semibold text-charcoal" title={`${t.recentCorrect}/${t.recentTotal} correct`}>{t.recentPct}%</span>
+        <span className="ml-1.5 text-soft-mute">({t.earlyCorrect}/{t.earlyTotal} → {t.recentCorrect}/{t.recentTotal})</span>
       </div>
-      <div className="w-24 text-right">
-        <TrendBadge delta={t.delta} />
+      <div className="w-28 text-right">
+        {t.comparable ? (
+          <TrendBadge delta={t.delta} />
+        ) : (
+          <span className="text-[11px] leading-tight text-soft-mute">Too few questions to compare</span>
+        )}
       </div>
     </div>
   );
@@ -83,14 +88,18 @@ export default function ProgressReport({
   subtitle?: string;
 }) {
   const p = computeProgress(occasions);
-  if (!p) {
+  // A full-length SAT alone is two occasions of different sections: no domain trends yet.
+  if (!p || p.domains.length === 0) {
     return (
       <section className="rounded-2xl border border-divider bg-surface p-5 md:p-6">
         <div className="flex items-center gap-2 mb-2">
           <LineChart size={18} className="text-warm-coral-text" />
-          <h2 className="text-base font-semibold text-charcoal">{title}</h2>
+          <div>
+            <h2 className="text-base font-semibold text-charcoal">{title}</h2>
+            {subtitle && <p className="text-xs text-soft-mute">{subtitle}</p>}
+          </div>
         </div>
-        <p className="text-sm text-soft-mute">Complete at least two tests to see how each area is trending over time.</p>
+        <p className="text-sm text-soft-mute">Complete at least two tests of the same section to see how each area is trending over time.</p>
       </section>
     );
   }

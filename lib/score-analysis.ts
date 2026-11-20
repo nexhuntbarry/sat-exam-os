@@ -249,14 +249,16 @@ const CLOSERS: string[] = [
  * Build a written strengths/weaknesses report from the breakdown using only
  * templates — no AI. Returns an array of paragraphs.
  */
-export function narrative(b: Breakdown): string[] {
+export function narrative(b: Breakdown, opts: { notStrengths?: ReadonlySet<string> } = {}): string[] {
   if (!b.domains.length || b.total === 0) return [];
   const seed = b.correct * 7 + b.total * 3 + b.domains.length;
   const fill = (t: string, d: DomainStat) => t.replace("{domain}", d.domain).replace("{pct}", String(d.pct));
 
-  const strengths = b.domains.filter((d) => d.pct >= 70);
+  // A domain that is clearly slipping in the same window isn't called a strength.
+  const canPraise = (d: DomainStat) => !opts.notStrengths?.has(d.domain);
+  const strengths = b.domains.filter((d) => d.pct >= 70 && canPraise(d));
   const focus = [...b.domains].reverse().filter((d) => d.pct < 70);
-  const best = b.domains[0];
+  const best = b.domains.find(canPraise) ?? b.domains[0];
   const worst = b.domains[b.domains.length - 1];
 
   const paras: string[] = [];
@@ -301,6 +303,12 @@ export interface Occasion {
   score?: ScoreDisplay | null;
   /** "Math" | "Reading & Writing" — the section this attempt scores. */
   section?: string | null;
+  /**
+   * The test attempt this occasion belongs to (lib/full-length-score
+   * attemptGroupKey): a full-length SAT's R&W and Math occasions share one
+   * key, so the attempt counts as one test when windowing.
+   */
+  testKey?: string;
 }
 
 export interface DomainTrendPoint { date: string; pct: number; correct: number; total: number }
@@ -308,28 +316,43 @@ export interface DomainTrend {
   section: string;
   domain: string;
   series: DomainTrendPoint[];
+  /** Pooled accuracy of the earlier half of the tests this domain appears in. */
   earlyPct: number;
+  earlyCorrect: number;
+  earlyTotal: number;
+  /** Pooled accuracy of the later half. */
   recentPct: number;
-  delta: number; // recentPct - earlyPct
+  recentCorrect: number;
+  recentTotal: number;
+  /** false when either end has fewer than MIN_QUESTIONS_TO_COMPARE questions: no +/- is shown. */
+  comparable: boolean;
+  delta: number; // recentPct - earlyPct; 0 when not comparable
   trend: "up" | "down" | "flat";
 }
 export interface Progress {
   occasions: number;
   overall: { date: string; pct: number }[];
   overallDelta: number;
-  domains: DomainTrend[]; // most-improved → least (by delta)
-}
-
-function avg(nums: number[]): number {
-  if (!nums.length) return 0;
-  return Math.round(nums.reduce((a, b) => a + b, 0) / nums.length);
+  domains: DomainTrend[]; // comparable ones most-improved → least (by delta), then the rest
 }
 
 /**
- * Turn a chronological list of test occasions into per-domain accuracy trends.
- * Returns null when there's fewer than 2 occasions (no trend to show yet).
+ * Fewest questions a domain needs at EACH end (earlier tests / later tests)
+ * before a +/- change is shown. Below it a swing like 2/2 → 1/2 (100% → 50%)
+ * is noise, so the row says "too few questions to compare" instead.
  */
-export function computeProgress(occasions: Occasion[]): Progress | null {
+export const MIN_QUESTIONS_TO_COMPARE = 5;
+
+/**
+ * Turn a chronological list of test occasions into per-domain accuracy trends.
+ * Each domain compares the earlier half of the tests it appears in with the
+ * later half (2 or 3 tests: first vs last), pooling each half's question
+ * counts. Returns null when there's fewer than 2 occasions (no trend yet).
+ */
+export function computeProgress(
+  occasions: Occasion[],
+  minQuestions: number = MIN_QUESTIONS_TO_COMPARE,
+): Progress | null {
   const ordered = [...occasions].filter((o) => o.rows.length > 0).sort((a, b) => a.date.localeCompare(b.date));
   if (ordered.length < 2) return null;
 
@@ -350,24 +373,35 @@ export function computeProgress(occasions: Occasion[]): Progress | null {
     }
   }
 
+  const pool = (pts: DomainTrendPoint[]) => {
+    const correct = pts.reduce((n, p) => n + p.correct, 0);
+    const total = pts.reduce((n, p) => n + p.total, 0);
+    return { correct, total, pct: total ? Math.round((correct / total) * 100) : 0 };
+  };
   const domains: DomainTrend[] = [];
   for (const e of domainSeries.values()) {
     if (e.series.length < 2) continue; // need at least two data points to trend
     const half = Math.max(1, Math.floor(e.series.length / 2));
-    const earlyPct = avg(e.series.slice(0, half).map((p) => p.pct));
-    const recentPct = avg(e.series.slice(-half).map((p) => p.pct));
-    const delta = recentPct - earlyPct;
+    const early = pool(e.series.slice(0, half));
+    const recent = pool(e.series.slice(-half));
+    const comparable = early.total >= minQuestions && recent.total >= minQuestions;
+    const delta = comparable ? recent.pct - early.pct : 0;
     domains.push({
       section: e.section,
       domain: e.domain,
       series: e.series,
-      earlyPct,
-      recentPct,
+      earlyPct: early.pct,
+      earlyCorrect: early.correct,
+      earlyTotal: early.total,
+      recentPct: recent.pct,
+      recentCorrect: recent.correct,
+      recentTotal: recent.total,
+      comparable,
       delta,
       trend: delta >= 5 ? "up" : delta <= -5 ? "down" : "flat",
     });
   }
-  domains.sort((a, b) => b.delta - a.delta);
+  domains.sort((a, b) => Number(b.comparable) - Number(a.comparable) || b.delta - a.delta);
 
   const overallDelta = overall.length >= 2 ? overall[overall.length - 1].pct - overall[0].pct : 0;
   return { occasions: ordered.length, overall, overallDelta, domains };

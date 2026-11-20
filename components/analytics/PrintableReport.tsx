@@ -4,6 +4,7 @@ import ProgressReport from "@/components/analytics/ProgressReport";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import PrintButton from "@/components/analytics/PrintButton";
 import type { AnswerRow, Occasion } from "@/lib/score-analysis";
+import { insightsForWindow } from "@/lib/insights-window";
 
 // A full, print-optimized score report for one student: score progression,
 // overall strengths/weaknesses, progress trend, and every test's own report.
@@ -20,6 +21,8 @@ export default function PrintableReport({
   occasions: Occasion[];
   generatedOn: string;
 }) {
+  // Both blocks read every test; a domain slipping across them isn't called a strength.
+  const declining = insightsForWindow(occasions, "all").declining;
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-6 print:p-0 print:max-w-none">
       {/* Header */}
@@ -33,7 +36,7 @@ export default function PrintableReport({
       </div>
 
       {occasions.length > 0 && <ScoreProgressChart occasions={occasions} />}
-      {breakdownRows.length > 0 && <ScoreBreakdown rows={breakdownRows} title="Overall Strengths & Focus Areas" />}
+      {breakdownRows.length > 0 && <ScoreBreakdown rows={breakdownRows} title="Overall Strengths & Focus Areas" notStrengths={declining} />}
       {occasions.length > 0 && <ProgressReport occasions={occasions} title="Progress Over Time" />}
       {occasions.length > 0 && <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />}
 

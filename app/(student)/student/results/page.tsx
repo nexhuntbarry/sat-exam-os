@@ -11,11 +11,10 @@ import { type AttemptScore } from "@/lib/score-display";
 import { attemptGroupKey, flBadge, listedTestId, scoreAttemptGroup } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
-import ProgressReport from "@/components/analytics/ProgressReport";
+import StudentInsights from "@/components/analytics/StudentInsights";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
-import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
+import { getStudentProgressOccasions } from "@/lib/student-analytics";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import {
   DataTable,
@@ -170,7 +169,6 @@ export default async function StudentResultsPage() {
 
   const { rows, sectionOf, flLinks, parentName } = await getStudentResults(user.userId);
   const results = buildResultGroups(rows, sectionOf, flLinks, parentName);
-  const breakdownRows = await getStudentBreakdownRows(user.userId);
   const occasions = await getStudentProgressOccasions(user.userId);
 
   return (
@@ -185,14 +183,9 @@ export default async function StudentResultsPage() {
         )}
       </div>
 
-      {/* Overall strengths/weaknesses across every test taken. */}
-      {breakdownRows.length > 0 && (
-        <ScoreBreakdown rows={breakdownRows} title="Your Strengths & Focus Areas — Overall" />
-      )}
-
-      {/* Progress over time — are the weak areas improving? */}
+      {/* Progress over time, then strengths/weaknesses + per-area trends from one window of tests. */}
       {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
-      {occasions.length > 0 && <ProgressReport occasions={occasions} title="Your Progress Over Time" />}
+      <StudentInsights occasions={occasions} strengthsTitle="Your Strengths & Focus Areas" progressTitle="Your Progress Over Time" />
 
       {/* Per-test score report — each test's own breakdown, expandable. */}
       {occasions.length > 0 && <PerTestBreakdown occasions={occasions} title="Score Report — By Test" />}

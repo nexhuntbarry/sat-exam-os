@@ -1008,5 +1008,30 @@
     "confirmDelete": "刪除此次作答",
     "failed": "操作失敗：{error}",
     "networkError": "網路錯誤，請檢查連線後再試一次。"
+  },
+  "recentScores": {
+    "title": "最近的模擬測驗",
+    "subtitle": "由新到舊 · 僅列已完成的測驗",
+    "colDate": "日期",
+    "colTest": "測驗",
+    "colScore": "分數",
+    "colModules": "答對題數",
+    "colChange": "變化",
+    "total": "總分",
+    "rw": "閱讀與寫作",
+    "math": "數學",
+    "fullLength": "完整 SAT",
+    "estimated": "估計",
+    "vs": "比 {date} {delta}",
+    "first": "第一次",
+    "showAll": "顯示全部（{n}）",
+    "showLess": "收起",
+    "empty": "尚無已完成的模擬測驗。"
+  },
+  "studentInsights": {
+    "windowLabel": "下方強弱項與進步趨勢的範圍",
+    "recent": "最近 {n} 次測驗",
+    "all": "全部測驗（{n}）",
+    "inWindow": "使用的測驗：{list}"
   }
 }
