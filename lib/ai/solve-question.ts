@@ -534,6 +534,8 @@ async function solveOneQuestion(
       `[solve-question] solver failed for q${q.original_question_number}:`,
       err,
     );
+    // An unparseable reply was already logged with its real usage by callSolver.
+    if (err instanceof Error && err.message.startsWith("solver output had no usable")) return null;
     await logUsage({
       userId: callerUserId,
       route: "solve-question",
