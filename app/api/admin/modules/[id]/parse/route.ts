@@ -10,7 +10,7 @@ import {
   classifyPdfIsSat,
   fetchPdfAsBase64,
   extractAnswerKey,
-  expectedQuestionCount,
+  questionTarget,
 } from "@/lib/ai/parse-pdf";
 import { extractAndUploadQuestionImages, isRedundantTableRegion } from "@/lib/ai/extract-images";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
@@ -402,10 +402,11 @@ async function handlePOST(
     // Step B — Extract questions (AI parse, unless the printout parser already did)
     let parsedQuestions;
     try {
-      // The key's entry count tells the parser how many questions to keep
-      // extracting until (it continues past an early stop).
-      const keyCount = answerKey ? Object.keys(answerKey).length : null;
-      parsedQuestions = printoutQuestions ?? (await parsePdfToQuestions(mod.pdf_url, moduleMeta, authResult.userId, keyCount));
+      // The key's question numbers (printed numbering, not yet shifted) tell
+      // the parser which questions to keep looking for past an early stop; a
+      // full-test key is ignored there (lib/ai/parse-pdf moduleKeyNumbers).
+      const keyNumbers = answerKey ? Object.keys(answerKey).map(Number) : null;
+      parsedQuestions = printoutQuestions ?? (await parsePdfToQuestions(mod.pdf_url, moduleMeta, authResult.userId, keyNumbers));
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       console.error("[modules/parse] parsePdfToQuestions failed:", err);
@@ -1115,19 +1116,25 @@ async function handlePOST(
 
     // Phase 5e — question-number contiguity: flag the module if the parser
     // dropped a numbered question — a gap OR a missing tail against the
-    // expected count (answer key / fixed SAT module size), so a short module
-    // is never silently "parsed" (shown on the module page).
+    // expected set (this module's answer-key numbers, else the fixed SAT
+    // module size), so a short module is never silently "parsed" (shown on
+    // the module page). Numbers here are the stored 1..N ones (key shifted too).
     try {
       const contig = await checkNumberContiguity(
         id,
         db,
-        expectedQuestionCount(mod.section, answerKey ? Object.keys(answerKey).length : null),
+        questionTarget(
+          mod.section,
+          answerKey ? Object.keys(answerKey).map(Number) : null,
+          parsedQuestions.map((q) => q.original_question_number),
+        ),
       );
       if (contig.missing.length > 0) {
-        await db.from("modules").update({
-          parsing_error: `Missing question numbers after parse: ${contig.missing.join(", ")} (${contig.count} of ${contig.expectedMax} saved) — re-parse recommended.`,
+        const { error: flagError } = await db.from("modules").update({
+          parsing_error: `Missing question numbers after parse: ${contig.missing.join(", ")} (${contig.count} of ${contig.count + contig.missing.length} saved) — re-parse recommended.`,
           updated_at: new Date().toISOString(),
         }).eq("id", id);
+        if (flagError) console.error("[modules/parse] could not record missing questions on the module:", flagError);
       }
     } catch (err) {
       console.error("[modules/parse] contiguity-check crashed:", err);

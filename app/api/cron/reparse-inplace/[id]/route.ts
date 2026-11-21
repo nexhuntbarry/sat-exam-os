@@ -5,7 +5,7 @@ import {
   simpleEmbedding,
   extractAnswerKey,
   fetchPdfAsBase64,
-  expectedQuestionCount,
+  questionTarget,
 } from "@/lib/ai/parse-pdf";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { autoFixModuleExplanations } from "@/lib/explanation-autofix";
@@ -123,7 +123,7 @@ async function handlePOST(
       section: mod.section as "Math" | "Reading & Writing",
       difficulty_hint: (mod.difficulty ?? "Mixed") as "Easy" | "Medium" | "Hard" | "Mixed",
       moduleNumber: mod.module_number ?? null,
-    }, undefined, Object.keys(probeKey).length || null);
+    }, undefined, Object.keys(probeKey).map(Number));
   } catch (err) {
     return NextResponse.json(
       { error: "Parse failed", detail: err instanceof Error ? err.message : String(err) },
@@ -193,7 +193,9 @@ async function handlePOST(
     seen.add(q.original_question_number);
     const decision = keyByNum.get(q.original_question_number);
     const official = decision?.official ?? null;
-    const review = decision?.review ?? [];
+    // Reasons the parser found (e.g. read only by a continuation pass) — same
+    // "Needs review: …" notes as the parse route, so the row isn't promoted.
+    const review = [...(decision?.review ?? []), ...(q.review_reasons ?? []).map((r) => `Needs review: ${r}`)];
     const fields: Record<string, unknown> = {
       section: mod.section,
       question_text: q.question_text,
@@ -426,14 +428,20 @@ async function handlePOST(
   }
   let missingQnums: number[] = [];
   try {
-    const contig = await checkNumberContiguity(id, db, expectedQuestionCount(mod.section, Object.keys(probeKey).length || null));
+    // probeKey and parsed are both in stored 1..N numbering by now.
+    const contig = await checkNumberContiguity(
+      id,
+      db,
+      questionTarget(mod.section, Object.keys(probeKey).map(Number), parsed.map((q) => q.original_question_number)),
+    );
     missingQnums = contig.missing;
-    await db.from("modules").update({
+    const { error: flagError } = await db.from("modules").update({
       parsing_error: contig.missing.length
-        ? `Missing question numbers after parse: ${contig.missing.join(", ")} (${contig.count} of ${contig.expectedMax} saved) — re-parse recommended.`
+        ? `Missing question numbers after parse: ${contig.missing.join(", ")} (${contig.count} of ${contig.count + contig.missing.length} saved) — re-parse recommended.`
         : null,
       updated_at: new Date().toISOString(),
     }).eq("id", id);
+    if (flagError) console.error("[reparse-inplace] could not record missing questions on the module:", flagError);
   } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
   if (skipPromote) promote = { skipped: "stored-key restore didn't finish — not auto-promoted" };
   else try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
