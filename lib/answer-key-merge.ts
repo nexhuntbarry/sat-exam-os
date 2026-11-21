@@ -316,3 +316,14 @@ export function reparseRowReview(
     notes: ["Re-parsed in place", decision?.note, ...keyReview, ...parserReview].filter(Boolean).join("; "),
   };
 }
+
+/**
+ * Add a note to a row's current parsing_notes ("; "-separated), never
+ * replacing them — a reason already there (e.g. "Needs review: …" from the
+ * parser) must survive so the approve passes still see it. No duplicates.
+ */
+export function appendNote(prior: string | null | undefined, note: string): string {
+  const parts = (prior ?? "").split(/;\s*/).map((s) => s.trim()).filter(Boolean);
+  if (!parts.includes(note.trim())) parts.push(note.trim());
+  return parts.join("; ");
+}

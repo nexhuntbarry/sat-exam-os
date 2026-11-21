@@ -33,6 +33,7 @@ import {
   deterministicTicks,
   reparseKeyDecision,
   reparseRowReview,
+  appendNote,
   type ReparseKeyDecision,
   type TickEvidence,
 } from "@/lib/answer-key-merge";
@@ -323,7 +324,10 @@ async function handlePOST(
     if (!agree) {
       if (isMc && ai) keyDisagreeNums.push(r.original_question_number as number);
       reconciled++;
-      const notes = `Re-parse: official key=${off}, solver said ${ai ?? "?"} — verify`;
+      // Appended to the row's current notes (read above, after this run's
+      // writes and the solver) — a parser "Needs review: …" reason must stay,
+      // or explain-official could approve the row.
+      const notes = appendNote(r.parsing_notes as string | null, `Re-parse: official key=${off}, solver said ${ai ?? "?"} — verify`);
       const { update, held } = applyLiveHold(
         r as LiveHoldRow,
         { correct_answer: off, parsing_status: "Needs Review", parsing_notes: notes, updated_at: new Date().toISOString() },
