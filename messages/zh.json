@@ -657,6 +657,7 @@
     "uploadNew": "上傳新檔",
     "parsingNow": "AI 解析中…",
     "parsingHint": "需要 1-3 分鐘，頁面會自動更新。",
+    "parseWarning": "解析完成但有問題 — 使用此模組前請先檢查",
     "failed": "解析失敗",
     "approved": "所有題目已核准，此 module 已鎖定。",
     "previewQuestions": "預覽題目",

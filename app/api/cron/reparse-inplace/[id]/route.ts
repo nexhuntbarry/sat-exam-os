@@ -5,6 +5,7 @@ import {
   simpleEmbedding,
   extractAnswerKey,
   fetchPdfAsBase64,
+  expectedQuestionCount,
 } from "@/lib/ai/parse-pdf";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { autoFixModuleExplanations } from "@/lib/explanation-autofix";
@@ -122,7 +123,7 @@ async function handlePOST(
       section: mod.section as "Math" | "Reading & Writing",
       difficulty_hint: (mod.difficulty ?? "Mixed") as "Easy" | "Medium" | "Hard" | "Mixed",
       moduleNumber: mod.module_number ?? null,
-    });
+    }, undefined, Object.keys(probeKey).length || null);
   } catch (err) {
     return NextResponse.json(
       { error: "Parse failed", detail: err instanceof Error ? err.message : String(err) },
@@ -423,7 +424,17 @@ async function handlePOST(
     console.error("[reparse-inplace] rescore:", e);
     await markNotRescored(db, keyChangedIds, `rescoring failed (${e instanceof Error ? e.message.slice(0, 80) : "error"})`);
   }
-  try { await checkNumberContiguity(id, db); } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
+  let missingQnums: number[] = [];
+  try {
+    const contig = await checkNumberContiguity(id, db, expectedQuestionCount(mod.section, Object.keys(probeKey).length || null));
+    missingQnums = contig.missing;
+    await db.from("modules").update({
+      parsing_error: contig.missing.length
+        ? `Missing question numbers after parse: ${contig.missing.join(", ")} (${contig.count} of ${contig.expectedMax} saved) — re-parse recommended.`
+        : null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", id);
+  } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
   if (skipPromote) promote = { skipped: "stored-key restore didn't finish — not auto-promoted" };
   else try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
 
@@ -439,6 +450,7 @@ async function handlePOST(
     updated,
     inserted,
     orphanQnums: orphans,
+    missingQnums,
     solver: solverStats,
     reconciledToOfficial: reconciled,
     rescored,

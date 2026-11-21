@@ -197,9 +197,12 @@ export async function enforceCompleteness(
 // SAT modules number their questions 1..N with no gaps. A gap means the parser
 // dropped a question. This reports the gap so the module can be flagged /
 // re-parsed (it can't invent the missing question, so it doesn't auto-fix).
+// With `expectedCount` a missing TAIL counts too (Q1–9 saved of 27 → 10..27),
+// which a gap check alone never sees.
 export async function checkNumberContiguity(
   moduleId: string,
   db: DbClient,
+  expectedCount?: number | null,
 ): Promise<{ count: number; expectedMax: number; missing: number[] }> {
   const { data } = await db
     .from("questions")
@@ -207,8 +210,8 @@ export async function checkNumberContiguity(
     .eq("module_id", moduleId)
     .order("original_question_number");
   const nums = (data ?? []).map((r) => r.original_question_number).filter((n) => typeof n === "number");
-  if (nums.length === 0) return { count: 0, expectedMax: 0, missing: [] };
-  const max = Math.max(...nums);
+  if (nums.length === 0) return { count: 0, expectedMax: expectedCount ?? 0, missing: [] };
+  const max = Math.max(...nums, expectedCount ?? 0);
   const present = new Set(nums);
   const missing: number[] = [];
   for (let i = 1; i <= max; i++) if (!present.has(i)) missing.push(i);
