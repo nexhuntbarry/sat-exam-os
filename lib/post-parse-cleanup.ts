@@ -369,17 +369,68 @@ async function fixHasTableFlag(
 // you get "950forthefirst3hoursandanadditional 50" instead of
 // "$950 for the first 3 hours and an additional $50".
 //
-// Rule used here: any `$` that is NOT already escaped (`\$`) and
-// is immediately followed by a digit / comma / period / digit-cluster
-// is currency. Escape those, leave anything else alone. This
-// preserves real inline math like `$x$`, `$t > 3$`, `$\frac{1}{2}$`
-// because they start with a letter or backslash, not a digit.
+// Rule used here: an unescaped `$` followed by a digit is currency
+// UNLESS it opens an inline math span that starts with a digit —
+// `$12(w - a) = 4(w + 5)$`, `$49x^{2}(y - 3)$`, `$90n$`. It counts as
+// a math opener when the next unescaped `$` on the same line is a
+// valid closer (not preceded by whitespace, not followed by a digit)
+// and the enclosed span looks like math (=, ^, _, \, {, }, or a digit
+// glued to a letter / paren like `12(` or `49x`) with no ordinary
+// words of 3+ letters. Math spans that open with a letter or
+// backslash (`$x$`, `$t > 3$`) are skipped over whole, so a currency
+// `$` after them is still found. Pure numbers (`$3$`) stay currency
+// — the doubly-escaped + pure-numeric passes below unwrap those.
 
-const CURRENCY_DOLLAR_RE = /(^|[^\\])\$(?=\d)/g;
+// A 3+-letter word outside LaTeX commands / \text{} — prose, not math.
+// Commands whose backslash was eaten by a JSON escape (`\times` stored
+// as TAB + "imes", `\frac` as form-feed + "rac") count as commands too.
+function hasProseWord(span: string): boolean {
+  const words = span.replace(/\\text\{[^}]*\}/g, " ").replace(/[\\\t\f\v\b\r][A-Za-z]+/g, " ");
+  return /[A-Za-z]{3,}/.test(words);
+}
 
-function escapeCurrencyDollars(text: string): string {
+function looksLikeDigitMath(span: string): boolean {
+  return /[=^_\\{}]|\d[A-Za-z(]/.test(span) && !hasProseWord(span);
+}
+
+export function escapeCurrencyDollars(text: string): string {
   if (!text) return text;
-  return text.replace(CURRENCY_DOLLAR_RE, "$1\\$");
+  // Next unescaped `$` at or after `from` on the same line, or -1.
+  const nextDollar = (from: number): number => {
+    for (let j = from; j < text.length && text[j] !== "\n"; j++) {
+      if (text[j] === "$" && text[j - 1] !== "\\") return j;
+    }
+    return -1;
+  };
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const d = text.indexOf("$", i);
+    if (d === -1) break;
+    out += text.slice(i, d);
+    i = d;
+    if (text[d - 1] === "\\") { out += "$"; i = d + 1; continue; }
+    if (text[d + 1] === "$") { out += "$$"; i = d + 2; continue; }
+    const close = nextDollar(d + 1);
+    if (!/\d/.test(text[d + 1] ?? "")) {
+      // Non-digit opener: copy the whole math span untouched. A `$`
+      // followed by a digit can't close it (that's the next currency).
+      const end = close === -1 || /\d/.test(text[close + 1] ?? "") ? d + 1 : close + 1;
+      out += text.slice(d, end);
+      i = end;
+      continue;
+    }
+    const validClose =
+      close !== -1 && !/\s/.test(text[close - 1]) && !/\d/.test(text[close + 1] ?? "");
+    if (validClose && looksLikeDigitMath(text.slice(d + 1, close))) {
+      out += text.slice(d, close + 1);
+      i = close + 1;
+      continue;
+    }
+    out += "\\$";
+    i = d + 1;
+  }
+  return out + text.slice(i);
 }
 
 async function patchCurrencyDollars(
@@ -524,15 +575,29 @@ async function patchBackslashDigits(
 // folded into a single bogus wrap. Doubly-escaped slop never spans
 // long prose in practice — it's always a short token like
 // `\\$7$`, `\\$39$`, `\\$13u = 3u$`.
-const ESCAPED_MATH_WRAP_RE = /(^|[^\\])\\\$([^$\n]{1,25}?)\$/g;
+//
+// The lead excludes `$`: for `$\$90n$` (escaped currency inside a
+// math wrap — "costs $\$90n$ for the first day") the rewrite would
+// produce `$$90n$`, which renders a raw `$`. That form is unwrapped
+// to plain currency `\$90n` first by MATH_WRAPPED_CURRENCY_RE.
+//
+// The closing `$` must be a real closer — not preceded by whitespace
+// or a backslash, not followed by a digit — and the run must hold no
+// 3+-letter words, so two currency amounts (`\$5 and \$10`) or an
+// amount before real math (`a \$20 bill and $t > 3$`) are never
+// folded into one bogus wrap.
+const ESCAPED_MATH_WRAP_RE = /(^|[^\\$])\\\$([^$\n]{0,24}[^$\\\s\n])\$(?!\d)/g;
+const MATH_WRAPPED_CURRENCY_RE = /(^|[^\\$])\$\\\$(\d(?:[^$\n]{0,23}[^$\\\s\n])?)\$/g;
 
-function fixDoublyEscapedMath(text: string): string {
+export function fixDoublyEscapedMath(text: string): string {
   if (!text) return text;
   let prev = "";
-  let out = text;
+  let out = text.replace(MATH_WRAPPED_CURRENCY_RE, "$1\\$$$2");
   while (prev !== out) {
     prev = out;
-    out = out.replace(ESCAPED_MATH_WRAP_RE, "$1$$$2$$");
+    out = out.replace(ESCAPED_MATH_WRAP_RE, (m, lead: string, run: string) =>
+      hasProseWord(run) ? m : `${lead}$${run}$`,
+    );
   }
   return out;
 }
@@ -660,7 +725,7 @@ async function patchStrayBackslashSpace(
 const PURE_NUMERIC_MATH_RE =
   /(^|[^\\])\$\s*(-?\d[\d,]*(?:\{,\}\d+)?(?:\.\d+)?)\s*\$/g;
 
-function unwrapPureNumericMath(text: string): string {
+export function unwrapPureNumericMath(text: string): string {
   if (!text) return text;
   let prev = "";
   let out = text;
