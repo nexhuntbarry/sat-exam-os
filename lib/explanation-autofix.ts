@@ -420,13 +420,12 @@ export function planNotes(r: AutoFixRow, newExplanation: string, now = new Date(
   const removed: string[] = [];
   const blockers: string[] = [];
   // explain-official's summary (it contains a ";") names no defect of its
-  // own — the real reasons are the other notes and the checks below — so a
-  // checked explanation clears it instead of it blocking approval forever.
+  // own — the real reasons are the other notes and the checks below — so it
+  // never blocks by itself. Cleared when nothing else blocks; kept on a row
+  // that stays in review (the figure-compare queue keys on it).
   let notes = r.parsing_notes ?? "";
-  if (notes.includes(OFFICIAL_REVIEW_NOTE)) {
-    notes = notes.split(OFFICIAL_REVIEW_NOTE).join(";");
-    removed.push(OFFICIAL_REVIEW_NOTE);
-  }
+  const hadSummary = notes.includes(OFFICIAL_REVIEW_NOTE);
+  if (hadSummary) notes = notes.split(OFFICIAL_REVIEW_NOTE).join(";");
   for (const seg of splitNotes(notes)) {
     const kind = classifyNote(seg, ctx);
     if (kind === "explanation") { removed.push(seg); continue; }
@@ -438,6 +437,10 @@ export function planNotes(r: AutoFixRow, newExplanation: string, now = new Date(
   if (stemFigureMissing(r)) blockers.push("the question's figure is missing");
   if (r.official_answer && !keyIsOfficial(r)) blockers.push(`key ${r.correct_answer} differs from the official answer ${r.official_answer}`);
   for (const id of failing) blockers.push(`check: ${id}`);
+  if (hadSummary) {
+    if (blockers.length > 0) kept.push(OFFICIAL_REVIEW_NOTE);
+    else removed.push(OFFICIAL_REVIEW_NOTE);
+  }
   kept.push(autoFixNote(now));
   return { notes: kept.join("; "), removed, blockers };
 }
