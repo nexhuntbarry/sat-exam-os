@@ -197,9 +197,13 @@ export async function enforceCompleteness(
 // SAT modules number their questions 1..N with no gaps. A gap means the parser
 // dropped a question. This reports the gap so the module can be flagged /
 // re-parsed (it can't invent the missing question, so it doesn't auto-fix).
+// With `expected` (lib/ai/parse-pdf questionTarget: the key's question numbers,
+// or the fixed module size) a missing TAIL counts too (Q1–9 saved of 27 →
+// 10..27), which a gap check alone never sees.
 export async function checkNumberContiguity(
   moduleId: string,
   db: DbClient,
+  expected?: number | number[] | null,
 ): Promise<{ count: number; expectedMax: number; missing: number[] }> {
   const { data } = await db
     .from("questions")
@@ -207,15 +211,21 @@ export async function checkNumberContiguity(
     .eq("module_id", moduleId)
     .order("original_question_number");
   const nums = (data ?? []).map((r) => r.original_question_number).filter((n) => typeof n === "number");
-  if (nums.length === 0) return { count: 0, expectedMax: 0, missing: [] };
-  const max = Math.max(...nums);
+  const want = Array.isArray(expected) ? expected : expected ? [expected] : [];
+  const top = want.length ? Math.max(...want) : 0;
+  if (nums.length === 0) return { count: 0, expectedMax: top, missing: [] };
   const present = new Set(nums);
-  const missing: number[] = [];
-  for (let i = 1; i <= max; i++) if (!present.has(i)) missing.push(i);
+  // Count: everything 1..max(saved, count). Key numbers: gaps below the highest
+  // saved number plus every key number not saved.
+  const max = Array.isArray(expected) ? Math.max(...nums) : Math.max(...nums, top);
+  const missingSet = new Set<number>();
+  for (let i = 1; i <= max; i++) if (!present.has(i)) missingSet.add(i);
+  if (Array.isArray(expected)) for (const n of expected) if (!present.has(n)) missingSet.add(n);
+  const missing = [...missingSet].sort((a, b) => a - b);
   if (missing.length > 0) {
     console.warn(`[contiguity] module=${moduleId} has gaps — missing question numbers: ${missing.join(", ")}`);
   }
-  return { count: nums.length, expectedMax: max, missing };
+  return { count: nums.length, expectedMax: Math.max(max, top), missing };
 }
 
 // ── Choice-alignment gate ────────────────────────────────────────────

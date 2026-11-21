@@ -70,6 +70,7 @@ export default async function ModuleDetailPage({
     parsingNow: tr("parsingNow"),
     parsingHint: tr("parsingHint"),
     failed: tr("failed"),
+    parseWarning: tr("parseWarning"),
     approved: tr("approved"),
     previewQuestions: tr("previewQuestions"),
     questions: tr("questions"),
@@ -249,6 +250,17 @@ export default async function ModuleDetailPage({
           </div>
         );
       })()}
+
+      {/* Parsed, but the pipeline recorded a problem (e.g. fewer questions than the module should have) */}
+      {(mod.parsing_status === "parsed" || mod.parsing_status === "approved") && mod.parsing_error && (
+        <div className="bg-status-warning/10 border border-status-warning/30 rounded-2xl p-5 flex items-start gap-3">
+          <AlertCircle size={18} className="text-status-warning shrink-0 mt-0.5" />
+          <div className="flex-1 space-y-1">
+            <p className="text-charcoal text-sm font-medium">{t.parseWarning}</p>
+            <p className="text-mid-gray text-xs whitespace-pre-wrap break-words">{mod.parsing_error as string}</p>
+          </div>
+        </div>
+      )}
 
       {/* Approved */}
       {mod.parsing_status === "approved" && (

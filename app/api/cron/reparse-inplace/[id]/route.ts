@@ -5,6 +5,7 @@ import {
   simpleEmbedding,
   extractAnswerKey,
   fetchPdfAsBase64,
+  questionTarget,
 } from "@/lib/ai/parse-pdf";
 import { solveQuestionsAndPersist, explainOfficialAndPersist, regenerateTruncatedExplanations } from "@/lib/ai/solve-question";
 import { autoFixModuleExplanations } from "@/lib/explanation-autofix";
@@ -31,6 +32,8 @@ import { extractChoicesFromPdfText, readLabelTicks } from "@/lib/pdf-text-choice
 import {
   deterministicTicks,
   reparseKeyDecision,
+  reparseRowReview,
+  appendNote,
   type ReparseKeyDecision,
   type TickEvidence,
 } from "@/lib/answer-key-merge";
@@ -122,7 +125,7 @@ async function handlePOST(
       section: mod.section as "Math" | "Reading & Writing",
       difficulty_hint: (mod.difficulty ?? "Mixed") as "Easy" | "Medium" | "Hard" | "Mixed",
       moduleNumber: mod.module_number ?? null,
-    });
+    }, undefined, Object.keys(probeKey).map(Number));
   } catch (err) {
     return NextResponse.json(
       { error: "Parse failed", detail: err instanceof Error ? err.message : String(err) },
@@ -192,7 +195,10 @@ async function handlePOST(
     seen.add(q.original_question_number);
     const decision = keyByNum.get(q.original_question_number);
     const official = decision?.official ?? null;
-    const review = decision?.review ?? [];
+    // Key review (a person decides the key → keyReviewIds) and the parser's
+    // own reasons (e.g. read only by a continuation pass → Needs Review only)
+    // stay separate: only the first changes the key / rescoring flow.
+    const { keyReview: review, status, notes } = reparseRowReview(decision, q.review_reasons);
     const fields: Record<string, unknown> = {
       section: mod.section,
       question_text: q.question_text,
@@ -209,8 +215,8 @@ async function handlePOST(
       has_formula: q.has_formula,
       source_pdf_url: mod.pdf_url,
       page_number: q.page_number,
-      parsing_status: review.length ? "Needs Review" : "Draft",
-      parsing_notes: ["Re-parsed in place", decision?.note, ...review].filter(Boolean).join("; "),
+      parsing_status: status,
+      parsing_notes: notes,
       ai_confidence_score: q.ai_confidence_score,
       question_text_embedding: simpleEmbedding(q.question_text),
       official_answer: official,
@@ -318,7 +324,10 @@ async function handlePOST(
     if (!agree) {
       if (isMc && ai) keyDisagreeNums.push(r.original_question_number as number);
       reconciled++;
-      const notes = `Re-parse: official key=${off}, solver said ${ai ?? "?"} — verify`;
+      // Appended to the row's current notes (read above, after this run's
+      // writes and the solver) — a parser "Needs review: …" reason must stay,
+      // or explain-official could approve the row.
+      const notes = appendNote(r.parsing_notes as string | null, `Re-parse: official key=${off}, solver said ${ai ?? "?"} — verify`);
       const { update, held } = applyLiveHold(
         r as LiveHoldRow,
         { correct_answer: off, parsing_status: "Needs Review", parsing_notes: notes, updated_at: new Date().toISOString() },
@@ -423,7 +432,23 @@ async function handlePOST(
     console.error("[reparse-inplace] rescore:", e);
     await markNotRescored(db, keyChangedIds, `rescoring failed (${e instanceof Error ? e.message.slice(0, 80) : "error"})`);
   }
-  try { await checkNumberContiguity(id, db); } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
+  let missingQnums: number[] = [];
+  try {
+    // probeKey and parsed are both in stored 1..N numbering by now.
+    const contig = await checkNumberContiguity(
+      id,
+      db,
+      questionTarget(mod.section, Object.keys(probeKey).map(Number), parsed.map((q) => q.original_question_number)),
+    );
+    missingQnums = contig.missing;
+    const { error: flagError } = await db.from("modules").update({
+      parsing_error: contig.missing.length
+        ? `Missing question numbers after parse: ${contig.missing.join(", ")} (${contig.count} of ${contig.count + contig.missing.length} saved) — re-parse recommended.`
+        : null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", id);
+    if (flagError) console.error("[reparse-inplace] could not record missing questions on the module:", flagError);
+  } catch (e) { console.error("[reparse-inplace] contiguity:", e); }
   if (skipPromote) promote = { skipped: "stored-key restore didn't finish — not auto-promoted" };
   else try { promote = await autoPromoteModule(id, db, 0.9); } catch (e) { promote = { error: String(e) }; }
 
@@ -439,6 +464,7 @@ async function handlePOST(
     updated,
     inserted,
     orphanQnums: orphans,
+    missingQnums,
     solver: solverStats,
     reconciledToOfficial: reconciled,
     rescored,

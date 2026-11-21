@@ -594,7 +594,9 @@ export async function fetchPdfAsBase64(pdfUrl: string): Promise<string> {
 export async function parsePdfToQuestions(
   pdfUrl: string,
   moduleMetadata: ModuleMetadata,
-  callerUserId?: string
+  callerUserId?: string,
+  /** The answer key's question numbers, in the PDF's printed numbering (see moduleKeyNumbers). */
+  keyNumbers?: number[] | null,
 ): Promise<ParsedQuestion[]> {
   // Fetch PDF as base64. The Blob store is private, so URLs at
   // *.private.blob.vercel-storage.com require Authorization with the
@@ -637,13 +639,13 @@ Module context:
 
 Return all questions in order via the schema. Confirm you have not missed any before responding.${rwAddendum}`;
 
-  // Run extraction; if Sonnet returns way too few questions (sometimes it
-  // treats a single passage cluster as "done" and stops at 2-5), retry
-  // once with an explicit short-count callout so it scans the whole PDF.
-  // SAT modules are reliably a fixed size: Math = 22, Reading & Writing = 27.
-  // Retry the extraction whenever the first pass comes back short (missed a
-  // page / stopped early), not just when it's catastrophically low.
-  const MIN_EXPECTED_QUESTIONS = isReadingWriting ? 27 : 22;
+  // The module's questions are its answer key's numbers (when the key is this
+  // module's alone) or the fixed SAT size (Math 22, Reading & Writing 27). A
+  // pass that comes back short — it stopped early (Oct 2026 C English M2: a
+  // straight " in Q9's passage ended the stem and the whole extraction at Q9,
+  // and a full retry stopped at the same place) or skipped pages — is followed
+  // by continuation passes that look only for the missing numbers, until none
+  // are missing or a pass adds nothing (lib/ai/parse-pdf extractUntilComplete).
   async function runExtraction(extraInstruction: string) {
     return await generateObject({
       model: anthropic("claude-sonnet-4-6"),
@@ -676,27 +678,22 @@ Return all questions in order via the schema. Confirm you have not missed any be
     });
   }
 
-  let result;
+  let extracted: (ParsedQuestionRow & { review_reasons?: string[] })[] = [];
+  let passes = 0;
+  let missing: number[] = [];
+  let expected = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   try {
-    result = await runExtraction("");
-    totalInputTokens += result.usage?.inputTokens ?? 0;
-    totalOutputTokens += result.usage?.outputTokens ?? 0;
-
-    if (result.object.questions.length < MIN_EXPECTED_QUESTIONS) {
-      console.warn(
-        `[parse-pdf] First pass returned only ${result.object.questions.length} questions (< ${MIN_EXPECTED_QUESTIONS}). Retrying with stronger instruction.`,
-      );
-      const retry = await runExtraction(
-        `\n\nIMPORTANT — RETRY: A previous extraction attempt against this same PDF returned only ${result.object.questions.length} questions, but every SAT module reliably contains 22-27 numbered questions. You MUST scan EVERY single page in this PDF from page 1 to the last page and extract ALL numbered questions. Do not stop after the first passage block. Do not skip questions just because their passage is shared with an earlier question. Re-check page ranges you may have skipped: middle pages, the second half of the booklet, and any pages immediately before the answer key. Return the complete set.`,
-      );
-      totalInputTokens += retry.usage?.inputTokens ?? 0;
-      totalOutputTokens += retry.usage?.outputTokens ?? 0;
-      if (retry.object.questions.length > result.object.questions.length) {
-        result = retry;
-      }
-    }
+    ({ questions: extracted, passes, missing, expected } = await extractUntilComplete<ParsedQuestionRow & { review_reasons?: string[] }>(
+      async (extra) => {
+        const r = await runExtraction(extra);
+        totalInputTokens += r.usage?.inputTokens ?? 0;
+        totalOutputTokens += r.usage?.outputTokens ?? 0;
+        return { questions: r.object.questions, finishReason: r.finishReason };
+      },
+      (firstPassNumbers) => questionTarget(moduleMetadata.section, keyNumbers, firstPassNumbers),
+    ));
   } catch (err) {
     console.error("[parse-pdf] generateObject error:", err);
     await logUsage({
@@ -725,11 +722,11 @@ Return all questions in order via the schema. Confirm you have not missed any be
       tokensOutput: totalOutputTokens,
       model: "claude-sonnet-4-6",
       costCents,
-      metadata: { pdfUrl, questionCount: result.object.questions.length },
+      metadata: { pdfUrl, questionCount: extracted.length, expected, passes, ...(missing.length ? { missing } : {}) },
     });
   }
 
-  const questions: ParsedQuestion[] = result.object.questions.map((q) => ({
+  const questions: ParsedQuestion[] = extracted.map((q) => ({
     ...q,
     image_regions: q.image_regions ?? [],
   })) as ParsedQuestion[];
@@ -772,6 +769,178 @@ Return all questions in order via the schema. Confirm you have not missed any be
   if (fixes.length > 0) console.warn(`[parse-pdf] question-type / choice fixes: ${fixes.join(" | ")}`);
 
   return questions;
+}
+
+// ────────────────────────────────────────────
+// Completeness: expected numbers, missing numbers, continuation passes
+// ────────────────────────────────────────────
+
+type ParsedQuestionRow = z.infer<typeof ParsedQuestionSchema>;
+
+/** Continuation passes after the first one, while numbers are still missing. */
+const MAX_CONTINUATION_PASSES = 3;
+
+/**
+ * What a module should contain: an exact set of question numbers (from its
+ * answer key), or a count (the fixed SAT module size) when there's no usable key.
+ */
+export type QuestionTarget = number | number[];
+
+/** Review reason on a question that only a continuation pass extracted. */
+export const CONTINUATION_REVIEW_REASON =
+  "this question was read by a follow-up pass after the first read of the PDF stopped early — compare it with the PDF page before approving";
+
+/** Fixed SAT module size: Math 22, Reading & Writing 27. */
+export function expectedQuestionCount(section: ModuleMetadata["section"] | string | null | undefined): number {
+  return section === "Reading & Writing" ? 27 : 22;
+}
+
+/**
+ * The answer key's question numbers when they can stand as this module's
+ * question set (a short key is widened to the full module range from its
+ * first number), else null (use the fixed size). Not usable when:
+ *  - the key has more entries, or spans more numbers, than one module holds — a
+ *    full-test / both-modules key (~54 entries) would inflate the target;
+ *    guessing which window belongs to this module could pick the wrong one, so
+ *    fall back to the fixed size (exactly the no-key behaviour, never larger);
+ *  - `seen` (numbers the parser read) is given and shares no number with the
+ *    key — the key is numbered differently (1–27 vs a booklet's 137–163).
+ */
+export function moduleKeyNumbers(
+  section: ModuleMetadata["section"] | string | null | undefined,
+  keyNumbers: number[] | null | undefined,
+  seen?: number[] | null,
+): number[] | null {
+  const nums = [...new Set((keyNumbers ?? []).filter((n) => Number.isInteger(n) && n > 0))].sort((a, b) => a - b);
+  if (nums.length === 0) return null;
+  const size = expectedQuestionCount(section);
+  if (nums.length > size || nums[nums.length - 1] - nums[0] + 1 > size) return null;
+  if (seen && seen.length > 0 && !seen.some((n) => nums.includes(n))) return null;
+  // A key with fewer entries than a module may be partly read (the last few
+  // entries are a known miss): also expect the full module range from the
+  // key's first number, so Q21–27 of a 20-entry key are still requested and
+  // flagged. A false "missing" warning beats a silently short module.
+  if (nums.length < size) {
+    console.warn(`[parse-pdf] answer key lists ${nums.length} of the usual ${size} questions — also expecting Q${nums[0]}–Q${nums[0] + size - 1}`);
+    for (let n = nums[0]; n < nums[0] + size; n++) if (!nums.includes(n)) nums.push(n);
+    nums.sort((a, b) => a - b);
+  }
+  return nums;
+}
+
+/** The module's target: its key's numbers when usable, else its fixed size. */
+export function questionTarget(
+  section: ModuleMetadata["section"] | string | null | undefined,
+  keyNumbers: number[] | null | undefined,
+  seen?: number[] | null,
+): QuestionTarget {
+  return moduleKeyNumbers(section, keyNumbers, seen) ?? expectedQuestionCount(section);
+}
+
+/** How many questions a target stands for. */
+export function targetSize(target: QuestionTarget): number {
+  return Array.isArray(target) ? target.length : target;
+}
+
+/**
+ * Question numbers not in `nums` that the module should have. With a key's
+ * number set: exactly those not read (a booklet 137–163 missing its head asks
+ * for 137–139). With a count: gaps AND the missing tail (1..9 of 27 →
+ * 10..27); a booklet slice numbered from above the count (e.g. 137–163)
+ * counts from its lowest number.
+ */
+export function missingQuestionNumbers(nums: number[], expected: QuestionTarget): number[] {
+  const have = new Set(nums.filter((n) => Number.isFinite(n)));
+  if (Array.isArray(expected)) return [...new Set(expected)].filter((n) => !have.has(n)).sort((a, b) => a - b);
+  const lowest = have.size > 0 ? Math.min(...have) : 1;
+  const start = lowest > expected ? lowest : 1;
+  const out: number[] = [];
+  for (let n = start; n < start + expected; n++) if (!have.has(n)) out.push(n);
+  return out;
+}
+
+/** Rough "how complete is this row" — readable choices first, then stem length. */
+function rowCompleteness(q: { question_text?: string | null; choices?: { text?: string | null }[] | null }): number {
+  const choices = Array.isArray(q.choices) ? q.choices.filter((c) => (c?.text ?? "").trim()).length : 0;
+  return choices * 100_000 + (q.question_text ?? "").trim().length;
+}
+
+type MergeableRow = {
+  original_question_number: number;
+  question_text?: string | null;
+  choices?: { text?: string | null }[] | null;
+  review_reasons?: string[];
+};
+
+/**
+ * One row per question number, in number order. When a number appears twice
+ * (in one pass, or across passes) the more complete row wins.
+ */
+export function mergeParsedQuestions<Q extends MergeableRow>(base: Q[], extra: Q[]): Q[] {
+  const byNum = new Map<number, Q>();
+  for (const q of [...base, ...extra]) {
+    const prev = byNum.get(q.original_question_number);
+    if (!prev || rowCompleteness(q) > rowCompleteness(prev)) byNum.set(q.original_question_number, q);
+  }
+  return [...byNum.values()].sort((a, b) => a.original_question_number - b.original_question_number);
+}
+
+/** Extra user-prompt text for a pass that looks only for the missing numbers. */
+export function continuationInstruction(have: number[], missing: number[]): string {
+  return `\n\nCONTINUATION PASS: an earlier pass over this same PDF may have stopped early. Questions ${have.length ? `Q${[...have].sort((a, b) => a - b).join(", Q")}` : "(none)"} are already extracted — do NOT return them again. Look for these question numbers only: Q${missing.join(", Q")} — on the pages after the last one extracted, or on pages that were skipped; read every page to the end of the PDF. If a requested number is not printed in this PDF, leave it out — never write a question that is not on the page. An answer-key page is not a question. Remember: write double quotation marks as “ and ” — a straight " ends the field and may have cut the earlier pass short.`;
+}
+
+/**
+ * First pass, then continuation passes for the missing numbers (up to
+ * MAX_CONTINUATION_PASSES) until none are missing or a pass adds nothing.
+ * `target` may be computed from the first pass's numbers. Rows that only a
+ * continuation pass supplied get CONTINUATION_REVIEW_REASON (→ Needs Review,
+ * never auto-promoted). The first pass's error is thrown; a continuation's
+ * error keeps what was already extracted (the module is then flagged short).
+ */
+export async function extractUntilComplete<Q extends MergeableRow>(
+  runPass: (extraInstruction: string) => Promise<{ questions: Q[]; finishReason?: string }>,
+  target: QuestionTarget | ((firstPassNumbers: number[]) => QuestionTarget),
+  maxContinuations = MAX_CONTINUATION_PASSES,
+): Promise<{ questions: Q[]; passes: number; missing: number[]; expected: number }> {
+  const first = await runPass("");
+  let passes = 1;
+  let finish = first.finishReason;
+  // The model can return the same number twice (a stem cut at a quote, then
+  // the question again); keep one row per number — the DB allows only one.
+  let questions = mergeParsedQuestions<Q>([], first.questions);
+  const nums = () => questions.map((q) => q.original_question_number);
+  const goal = typeof target === "function" ? target(nums()) : target;
+  const expected = targetSize(goal);
+  let missing = missingQuestionNumbers(nums(), goal);
+  for (let round = 0; round < maxContinuations && missing.length > 0; round++) {
+    console.warn(
+      `[parse-pdf] pass ${passes} (finish=${finish}) has ${questions.length}/${expected} questions — continuation pass for Q${missing.join(", Q")}`,
+    );
+    let pass;
+    try {
+      pass = await runPass(continuationInstruction(nums(), missing));
+    } catch (err) {
+      console.error("[parse-pdf] continuation pass failed (keeping what was extracted):", err);
+      break;
+    }
+    passes++;
+    finish = pass.finishReason;
+    const wanted = new Set(missing);
+    const before = questions.length;
+    // Only numbers that were asked for and still missing — never a replacement
+    // for a first-pass row — and each is tagged for a person to check.
+    const added = pass.questions
+      .filter((q) => wanted.has(q.original_question_number))
+      .map((q) => ({ ...q, review_reasons: [...(q.review_reasons ?? []), CONTINUATION_REVIEW_REASON] }));
+    questions = mergeParsedQuestions(questions, added);
+    missing = missingQuestionNumbers(nums(), goal);
+    if (questions.length === before) break; // no progress — don't loop on it
+  }
+  if (missing.length > 0) {
+    console.warn(`[parse-pdf] still missing Q${missing.join(", Q")} after ${passes} passes (${questions.length}/${expected})`);
+  }
+  return { questions, passes, missing, expected };
 }
 
 const ANSWER_PREVIEW = /\banswer\s+preview\b/i;

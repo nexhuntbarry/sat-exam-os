@@ -294,3 +294,36 @@ export function deterministicTicks(
   }
   return { ticks, notes };
 }
+
+/**
+ * Re-parse in place, one row: status + notes from the key decision AND the
+ * parser's own review reasons (e.g. read only by a continuation pass), kept
+ * apart. Only `keyReview` means "a person decides the key" — the caller puts
+ * the row in keyReviewIds (seed key written back, no rescoring) for that
+ * alone. A row with only parser reasons is Needs Review but keeps its solver /
+ * official-key flow and its rescoring.
+ */
+export function reparseRowReview(
+  decision: Pick<ReparseKeyDecision, "review" | "note"> | undefined,
+  parserReasons: string[] | undefined,
+): { keyReview: string[]; parserReview: string[]; status: "Needs Review" | "Draft"; notes: string } {
+  const keyReview = decision?.review ?? [];
+  const parserReview = (parserReasons ?? []).map((r) => `Needs review: ${r}`);
+  return {
+    keyReview,
+    parserReview,
+    status: keyReview.length || parserReview.length ? "Needs Review" : "Draft",
+    notes: ["Re-parsed in place", decision?.note, ...keyReview, ...parserReview].filter(Boolean).join("; "),
+  };
+}
+
+/**
+ * Add a note to a row's current parsing_notes ("; "-separated), never
+ * replacing them — a reason already there (e.g. "Needs review: …" from the
+ * parser) must survive so the approve passes still see it. No duplicates.
+ */
+export function appendNote(prior: string | null | undefined, note: string): string {
+  const parts = (prior ?? "").split(/;\s*/).map((s) => s.trim()).filter(Boolean);
+  if (!parts.includes(note.trim())) parts.push(note.trim());
+  return parts.join("; ");
+}
