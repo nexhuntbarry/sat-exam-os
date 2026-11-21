@@ -796,8 +796,9 @@ export function expectedQuestionCount(section: ModuleMetadata["section"] | strin
 }
 
 /**
- * The answer key's question numbers when they can stand as this module's exact
- * question set, else null (use the fixed size). Not usable when:
+ * The answer key's question numbers when they can stand as this module's
+ * question set (a short key is widened to the full module range from its
+ * first number), else null (use the fixed size). Not usable when:
  *  - the key has more entries, or spans more numbers, than one module holds — a
  *    full-test / both-modules key (~54 entries) would inflate the target;
  *    guessing which window belongs to this module could pick the wrong one, so
@@ -815,6 +816,15 @@ export function moduleKeyNumbers(
   const size = expectedQuestionCount(section);
   if (nums.length > size || nums[nums.length - 1] - nums[0] + 1 > size) return null;
   if (seen && seen.length > 0 && !seen.some((n) => nums.includes(n))) return null;
+  // A key with fewer entries than a module may be partly read (the last few
+  // entries are a known miss): also expect the full module range from the
+  // key's first number, so Q21–27 of a 20-entry key are still requested and
+  // flagged. A false "missing" warning beats a silently short module.
+  if (nums.length < size) {
+    console.warn(`[parse-pdf] answer key lists ${nums.length} of the usual ${size} questions — also expecting Q${nums[0]}–Q${nums[0] + size - 1}`);
+    for (let n = nums[0]; n < nums[0] + size; n++) if (!nums.includes(n)) nums.push(n);
+    nums.sort((a, b) => a - b);
+  }
   return nums;
 }
 

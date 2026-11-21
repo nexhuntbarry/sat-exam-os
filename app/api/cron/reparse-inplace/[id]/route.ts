@@ -32,6 +32,7 @@ import { extractChoicesFromPdfText, readLabelTicks } from "@/lib/pdf-text-choice
 import {
   deterministicTicks,
   reparseKeyDecision,
+  reparseRowReview,
   type ReparseKeyDecision,
   type TickEvidence,
 } from "@/lib/answer-key-merge";
@@ -193,9 +194,10 @@ async function handlePOST(
     seen.add(q.original_question_number);
     const decision = keyByNum.get(q.original_question_number);
     const official = decision?.official ?? null;
-    // Reasons the parser found (e.g. read only by a continuation pass) — same
-    // "Needs review: …" notes as the parse route, so the row isn't promoted.
-    const review = [...(decision?.review ?? []), ...(q.review_reasons ?? []).map((r) => `Needs review: ${r}`)];
+    // Key review (a person decides the key → keyReviewIds) and the parser's
+    // own reasons (e.g. read only by a continuation pass → Needs Review only)
+    // stay separate: only the first changes the key / rescoring flow.
+    const { keyReview: review, status, notes } = reparseRowReview(decision, q.review_reasons);
     const fields: Record<string, unknown> = {
       section: mod.section,
       question_text: q.question_text,
@@ -212,8 +214,8 @@ async function handlePOST(
       has_formula: q.has_formula,
       source_pdf_url: mod.pdf_url,
       page_number: q.page_number,
-      parsing_status: review.length ? "Needs Review" : "Draft",
-      parsing_notes: ["Re-parsed in place", decision?.note, ...review].filter(Boolean).join("; "),
+      parsing_status: status,
+      parsing_notes: notes,
       ai_confidence_score: q.ai_confidence_score,
       question_text_embedding: simpleEmbedding(q.question_text),
       official_answer: official,

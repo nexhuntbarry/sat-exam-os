@@ -1027,14 +1027,20 @@ export async function recoverBrokenChoices(
         // parser placeholder text, which must never be auto-approved.
         const { data: fresh } = await db
           .from("questions")
-          .select("question_text, choices")
+          .select("question_text, choices, parsing_notes")
           .eq("id", q.id)
           .maybeSingle();
         const placeholder = fresh ? findParsePlaceholder(fresh.question_text, fresh.choices) : null;
         if (placeholder) {
+          // Add the placeholder note; keep the row's other review reasons.
+          const note = placeholderNote(placeholder);
+          const base = ((fresh?.parsing_notes as string | null) ?? q.parsing_notes ?? "").trim();
           await db
             .from("questions")
-            .update({ parsing_notes: placeholderNote(placeholder), updated_at: new Date().toISOString() })
+            .update({
+              parsing_notes: !base ? note : base.includes(note) ? base : `${base}; ${note}`,
+              updated_at: new Date().toISOString(),
+            })
             .eq("id", q.id);
         } else if (!OTHER_NOTE.test(q.parsing_notes || "")) {
           approved++;
