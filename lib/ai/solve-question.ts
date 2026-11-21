@@ -322,6 +322,15 @@ Solve it. Provide correct_answer, a clear step-by-step explanation, and your con
 }
 
 /**
+ * solveOneQuestion: retry (then flag with TRUNCATION_NOTE) a solver
+ * explanation that is cut off — or empty: an empty <explanation> tag passes
+ * looksTruncated but is no explanation. Pure.
+ */
+export function solverExplanationCutOff(explanation: string, source: string): boolean {
+  return !explanation.trim() || looksTruncated(explanation, source);
+}
+
+/**
  * Solve a single question. Pulled out of the main loop so the solver can
  * dispatch them in parallel chunks. Returns null on failure (logged + recorded
  * via logUsage); never throws.
@@ -471,13 +480,13 @@ async function solveOneQuestion(
     let truncatedExplanation = false;
     // An unmatched quote copied from the question/choices isn't a cut.
     const source = `${q.question_text ?? ""}\n${(q.choices ?? []).map((c) => c.text ?? "").join("\n")}`;
-    if (looksTruncated(explanationText, source)) {
+    if (solverExplanationCutOff(explanationText, source)) {
       try {
         const retry = await callSolver(
           `${promptText}\n\nREMINDER: your previous explanation was cut off. Write the WHOLE explanation inside the <explanation> tag and close the tag.`,
           1,
         );
-        if (!looksTruncated(retry.object.explanation, source)) {
+        if (!solverExplanationCutOff(retry.object.explanation, source)) {
           explanationText = retry.object.explanation;
         } else {
           truncatedExplanation = true;
@@ -1008,19 +1017,33 @@ export function officialDraftProblem(res: RegenExplanationResult, rejection: str
 }
 
 /**
- * explainOfficialAndPersist: the notes a row carries forward. A rewritten
- * explanation that passed its checks replaces the old text, so an earlier
- * TRUNCATION_NOTE (e.g. from the solver) no longer applies and must not keep
- * the row in review. Every other note stays. Pure.
+ * The summary explainOfficialAndPersist adds to a row it keeps in review. It
+ * names no defect of its own (the real reason is in the other notes or the
+ * row's checks), so every run re-derives it: it is dropped before the row is
+ * judged (its "choices" would otherwise match EXPLAIN_HARD_ISSUE and keep the
+ * row in review forever) and the explanation auto-fix clears it.
+ */
+export const OFFICIAL_REVIEW_NOTE = "Explanation matches official answer; still needs review (figure/choices)";
+
+/**
+ * explainOfficialAndPersist: the notes a row carries forward. Drops the
+ * previous run's OFFICIAL_REVIEW_NOTE. A rewritten explanation that passed
+ * its checks replaces the old text, so an earlier TRUNCATION_NOTE (e.g. from
+ * the solver) no longer applies and must not keep the row in review either.
+ * Every other note stays. Pure.
  */
 export function notesAfterCheckedRewrite(notes: string | null, rewrittenAndChecked: boolean): string | null {
-  if (!notes || !rewrittenAndChecked || !notes.includes(TRUNCATION_NOTE)) return notes;
-  const rest = notes
-    .split(TRUNCATION_NOTE)
-    .map((s) => s.replace(/^[\s;]+|[\s;]+$/g, ""))
-    .filter(Boolean)
-    .join("; ");
-  return rest || null;
+  const drop = [OFFICIAL_REVIEW_NOTE, ...(rewrittenAndChecked ? [TRUNCATION_NOTE] : [])];
+  let rest = notes;
+  for (const n of drop) {
+    if (!rest || !rest.includes(n)) continue;
+    rest = rest
+      .split(n)
+      .map((s) => s.replace(/^[\s;]+|[\s;]+$/g, ""))
+      .filter(Boolean)
+      .join("; ") || null;
+  }
+  return rest;
 }
 
 /** explainOfficialAndPersist: does the row stay Needs Review? Pure. */
@@ -1125,7 +1148,8 @@ export async function explainOfficialAndPersist(
           // after the solver failed, or someone changed it) → never approve.
           const offStoredKey = !!storedKey && q.correct_answer !== storedKey;
           const rewritten = res.ok && !conflict && !draftProblem;
-          // A checked rewrite drops a stale "looks cut off" note (the solver's).
+          // Drops the last run's summary note; a checked rewrite also drops a
+          // stale "looks cut off" note (the solver's).
           const priorNotes = notesAfterCheckedRewrite(q.parsing_notes, rewritten);
           const keep = officialKeepsReview(priorNotes, {
             offStoredKey,
@@ -1157,7 +1181,7 @@ export async function explainOfficialAndPersist(
             // Keep the original defect note on rows staying in review — it
             // names WHAT to fix (e.g. the PDF's real choices).
             parsing_notes: keep
-              ? [...parts, ...(conflict || keyProblem || draftProblem ? [] : ["Explanation matches official answer; still needs review (figure/choices)"])].join("; ")
+              ? [...parts, ...(conflict || keyProblem || draftProblem ? [] : [OFFICIAL_REVIEW_NOTE])].join("; ")
               : [
                   // Where the key came from (the PDF ✓ over the AI probe) outlives approval.
                   ...(q.parsing_notes ?? "").split(";").map((x) => x.trim()).filter((x) => x.startsWith(PROBE_OVERRIDE_PREFIX)),

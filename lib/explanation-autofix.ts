@@ -27,6 +27,7 @@ import {
   REGEN_DISAGREE_PREFIX,
   REGEN_EXPLANATION_NOTE,
   TRUNCATION_NOTE,
+  OFFICIAL_REVIEW_NOTE,
   type RegenExplanationInput,
   type RegenExplanationResult,
 } from "@/lib/ai/solve-question";
@@ -418,7 +419,15 @@ export function planNotes(r: AutoFixRow, newExplanation: string, now = new Date(
   const kept: string[] = [];
   const removed: string[] = [];
   const blockers: string[] = [];
-  for (const seg of splitNotes(r.parsing_notes)) {
+  // explain-official's summary (it contains a ";") names no defect of its
+  // own — the real reasons are the other notes and the checks below — so a
+  // checked explanation clears it instead of it blocking approval forever.
+  let notes = r.parsing_notes ?? "";
+  if (notes.includes(OFFICIAL_REVIEW_NOTE)) {
+    notes = notes.split(OFFICIAL_REVIEW_NOTE).join(";");
+    removed.push(OFFICIAL_REVIEW_NOTE);
+  }
+  for (const seg of splitNotes(notes)) {
     const kind = classifyNote(seg, ctx);
     if (kind === "explanation") { removed.push(seg); continue; }
     kept.push(seg);
