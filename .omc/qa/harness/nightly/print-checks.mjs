@@ -114,7 +114,12 @@ export async function waitPreview(page, timeout = 90000) {
 export async function figureUrlsInAttempt(submissionId) {
   const { data: sub } = await db.from("submissions").select("id, session_id").eq("id", submissionId).single();
   const ids = sub.session_id
-    ? ((await db.from("submissions").select("id, status").eq("session_id", sub.session_id)).data ?? []).filter((r) => ["Submitted", "Late"].includes(r.status)).map((r) => r.id)
+    ? ((await db.from("submissions").select("*").eq("session_id", sub.session_id)).data ?? [])
+        .filter((r) => ["Submitted", "Late"].includes(r.status))
+        // A Module 2 closed before it was opened ("Not taken", lib/module2-not-taken.ts)
+        // is left out of every result view and printout, so its figures aren't expected.
+        .filter((r) => !(/^module_2/.test(r.adaptive_track ?? "") && (r.m2_not_taken === true || r.metadata?.auto_closed_unopened === true)))
+        .map((r) => r.id)
     : [sub.id];
   const { data: recs } = await db.from("answer_records").select("questions!inner(image_urls, choices)").in("submission_id", ids);
   const urls = new Set();

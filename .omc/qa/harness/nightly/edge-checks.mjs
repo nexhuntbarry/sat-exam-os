@@ -17,6 +17,17 @@ export async function runEdgeChecks(h) {
     const s = studentByN(n);
     if (!s) throw new Error(`student ${n} not found`);
     await deleteSubs(s.id, testId);
+    // Pre-flight: verify cleanup worked — deleteSubs silently swallows DB errors.
+    const { data: leftover, error: chkErr } = await db
+      .from("submissions").select("id,status,attempt_number")
+      .eq("student_id", s.id).eq("test_id", testId);
+    if (chkErr) throw new Error(`asStudent pre-flight DB error for s${n}: ${chkErr.message}`);
+    if (leftover?.length) {
+      throw new Error(
+        `asStudent pre-flight: ${leftover.length} stale sub(s) remain for s${n} after deleteSubs — ` +
+        leftover.map((r) => `${r.id.slice(0, 8)}[${r.status} attempt=${r.attempt_number}]`).join(", ")
+      );
+    }
     const orig = C.students[0].id;
     await borrowLogin(s.id, STUDENT1_CLERK);
     const b = await chromium.launch();
@@ -308,7 +319,14 @@ export async function runEdgeChecks(h) {
       const t0 = Date.now();
       await page.goto(`${BASE}/student/tests/${T}`, { waitUntil: "domcontentloaded", timeout: 180000 });
       await page.getByRole("button", { name: /Start Test|Resume Test/ }).click({ timeout: 180000 });
-      await page.getByText(/Question \d+ of \d+/).first().waitFor({ timeout: 180000 });
+      await page.getByText(/Question \d+ of \d+/).first().waitFor({ timeout: 180000 }).catch(async (e) => {
+        // Diagnostic capture on timeout: URL + visible text + screenshot.
+        const diagUrl = page.url();
+        const diagText = await page.evaluate(() => document.body?.innerText ?? "").catch(() => "(eval failed)");
+        const shotPath = `/tmp/edge-slow-net-timeout-${Date.now()}.png`;
+        await page.screenshot({ path: shotPath, fullPage: false }).catch(() => {});
+        throw new Error(`${e.message}\nURL at timeout: ${diagUrl}\nPage text (first 600 chars): ${diagText.slice(0, 600)}\nScreenshot: ${shotPath}`);
+      });
       await page.getByText("Loading…").waitFor({ state: "hidden", timeout: 180000 }).catch(() => {});
       const openSec = Math.round((Date.now() - t0) / 1000);
       const [m1] = await subs(s.id, T);

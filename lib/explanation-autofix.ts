@@ -107,8 +107,8 @@ export const RAMBLE = new RegExp(
     // Re-solving out loud (October 2026 C Math M1 Q17, 1e705970, 2026-11-21: "Re-reading the
     // problem: … Still not matching. … ? No — … So the intended reading is …").
     String.raw`(?:^|[.!?:]\s+|\n\s*)re-?reading\b`,
-    String.raw`\bstill (?:not|doesn't|does not|don't|do not) (?:match|work|fit|agree)`,
-    String.raw`\bthe intended reading\b|\ba common variant\b`,
+    String.raw`\bstill (?:not|doesn['’]t|does not|don['’]t|do not) (?:match|work|fit|agree)`,
+    String.raw`\b(?:so|thus|therefore)[,.]?\s+the intended reading\b|\ba common variant\b`,
     String.raw`\?\s*no\s*[—–]`,
     // Arguing a choice that doesn't match as written ([Test #13] L Test 1 Math
     // M1 Q2, Premier 3e0af153: "D only if the terms are reordered"). "… wait —

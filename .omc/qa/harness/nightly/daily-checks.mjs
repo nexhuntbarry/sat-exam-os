@@ -4120,7 +4120,7 @@ export async function runDailyChecks(h) {
         const res = await page.goto(`${BASE}/teacher/tests/${T}/review`, { waitUntil: "networkidle" }).catch(() => null);
         await sleep(1000);
         const txt = await page.locator("body").innerText().catch(() => "");
-        return { status: res?.status() ?? 0, txt, shown: txt.includes(`${name} — class review`) };
+        return { status: res?.status() ?? 0, txt, shown: [`${name} — class review`, `${name} — Questions & answers (Class Review)`, `${name} — 題目與答案（課堂講解）`].some((h) => txt.includes(h)) };
       };
 
       // 1) Unassigned same-subject test → refused.
@@ -4164,4 +4164,2230 @@ export async function runDailyChecks(h) {
     if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
     return notes.join("; ");
   }, 3 * 60 * 1000);
+
+  // ── D-20261112-1 ─────────────────────────────────────────
+  // cdd8b54 (11-11): per-student extended time (×1.25 / ×1.5 / ×2) now works
+  // on regular section tests; the multiplier is stamped on the attempt at
+  // start and Module 2 inherits it. A student with ×2 on the 2-minute test
+  // must really get 4 minutes per module: landing page, countdown, autosave
+  // (server deadline), auto-submit only at the extended 0:00 (on time,
+  // answers graded), and Module 2. Control: a classmate without extended
+  // time on the same test keeps the normal limit, and the same late save is
+  // refused for them.
+  await check("D-20261112-1", [], "管理員給一位學生「延長時間 ×2」後，學生考一般的兩模組測驗：開始前的頁面、倒數時間都要是加倍的時間；超過原本時間後選的答案還是要存得進去，不能提早自動交卷；加倍的時間到了才自動交卷而且算準時、答案都算分；第二模組也要是加倍的時間。沒有延長時間的同學還是原本的時間", "計時", async () => {
+    const T = TESTS.shortTimer;
+    const ext = studentByN(72), ctl = studentByN(73);
+    if (!ext || !ctl) throw new Error("students 072/073 not found");
+    const tl = (await db.from("tests").select("time_limit_minutes,time_limit_minutes_module_2,is_untimed,is_adaptive,module_2_id").eq("id", T).single()).data;
+    if (!tl || tl.is_untimed || tl.is_adaptive || !tl.module_2_id || !tl.time_limit_minutes) throw new Error("setup: shortTimer must be a timed two-module linear test");
+    const MULT = 2, GRACE = 60;
+    const base1 = tl.time_limit_minutes * 60, base2 = (tl.time_limit_minutes_module_2 ?? tl.time_limit_minutes) * 60;
+    const ext1 = base1 * MULT, ext2 = base2 * MULT;
+    const FF = base1 + GRACE + 15; // past the normal limit + grace, inside the extended time
+    if (base1 > 180 || FF > ext1 - 30) throw new Error(`setup: shortTimer Module 1 is ${base1}s; this check needs a short limit`);
+    const { data: pre } = await db.from("test_time_accommodations").select("student_id").eq("test_id", T);
+    if ((pre ?? []).length) throw new Error(`setup: shortTimer already has ${pre.length} extended-time row(s) (left over?)`);
+    const orig = C.students[0].id;
+    const problems = [], notes = [];
+    for (const st of [ext, ctl]) await deleteSubs(st.id, T);
+    const b = await chromium.launch();
+    let adminReq = null;
+    try {
+      const admin = await login(b, ADMIN_CLERK);
+      adminReq = admin.context.request;
+      const put = await adminReq.put(`${BASE}/api/admin/tests/${T}/accommodations`, { data: { studentId: ext.id, multiplier: MULT } });
+      if (put.status() !== 200) throw new Error(`setup: admin sets ×${MULT} for 072 → HTTP ${put.status()} ${(await put.text()).slice(0, 150)}`);
+      const listed = (await (await adminReq.get(`${BASE}/api/admin/tests/${T}/accommodations`)).json().catch(() => ({}))).data ?? [];
+      if (!listed.some((r) => r.student_id === ext.id && Number(r.time_multiplier) === MULT)) problems.push(`the admin's extended-time list doesn't show ×${MULT} for 072 after saving`);
+
+      // Control: 073 has no extended time. The same late save must be refused.
+      await borrowLogin(ctl.id, STUDENT1_CLERK);
+      {
+        const { context } = await login(b, STUDENT1_CLERK);
+        const R = context.request;
+        const st = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        const cid = (await st.json().catch(() => ({}))).data?.id;
+        if (!cid) throw new Error(`setup: control start → HTTP ${st.status()}`);
+        const crow = (await db.from("submissions").select("metadata,module_id").eq("id", cid).single()).data;
+        if (crow.metadata?.time_multiplier != null) problems.push(`073 (no extended time) got time_multiplier ${crow.metadata.time_multiplier} on the attempt`);
+        const g = (await (await R.get(`${BASE}/api/student/submissions/${cid}`)).json().catch(() => ({}))).data;
+        if (!(typeof g?.timeRemainingSeconds === "number" && g.timeRemainingSeconds <= base1)) problems.push(`073 (no extended time): time remaining ${g?.timeRemainingSeconds}s on a ${base1}s module`);
+        await db.from("submissions").update({ started_at: new Date(Date.now() - FF * 1000).toISOString() }).eq("id", cid).eq("status", "In Progress");
+        const cmc = (await moduleQs(crow.module_id)).find((q) => q.question_type === "Multiple Choice");
+        const p = await R.patch(`${BASE}/api/student/submissions/${cid}`, { data: { answers: { [cmc.id]: "A" }, answersMode: "merge", metadata: {} } });
+        notes.push(`control 073: ${g?.timeRemainingSeconds}s at start, a save ${FF}s in → HTTP ${p.status()}`);
+        if (p.status() !== 409) problems.push(`073 (no extended time): a save ${FF}s into a ${base1}s module → HTTP ${p.status()}, expected 409 time_up (normal students would get extra time)`);
+        await context.close();
+      }
+      await deleteSubs(ctl.id, T);
+
+      // 072 with ×2, in the browser.
+      await borrowLogin(ext.id, STUDENT1_CLERK);
+      const { page } = await login(b, STUDENT1_CLERK);
+      await page.goto(`${BASE}/student/tests/${T}`, { waitUntil: "networkidle" });
+      const land = await page.locator("body").innerText().catch(() => "");
+      const lim = `${ext1 / 60} + ${ext2 / 60} min`;
+      if (!land.includes(`×${MULT}`) || !land.includes(lim)) problems.push(`test page doesn't show the extended limits ("${lim}", ×${MULT}): ${(land.match(/[^\n]*min[^\n]*/) ?? ["?"])[0].slice(0, 80)}`);
+      await startTestBrowser(page, T);
+      const [m1] = await subs(ext.id, T);
+      if (!m1) throw new Error("setup: no Module 1 row after Start");
+      if (m1.metadata?.time_multiplier !== MULT) problems.push(`the attempt was stamped time_multiplier=${m1.metadata?.time_multiplier ?? "none"}, expected ${MULT}`);
+      const t0 = await timerSecsOf(page);
+      if (t0 == null || t0 > ext1 || t0 < ext1 - 25) problems.push(`countdown at the start shows ${t0}s, expected about ${ext1}s (×${MULT} of ${base1}s)`);
+      const qs = await moduleQs(m1.module_id);
+      const mc = qs.map((q, i) => ({ q, i: i + 1 })).filter((x) => x.q.question_type === "Multiple Choice");
+      if (mc.length < 2) throw new Error("setup: fewer than 2 multiple-choice questions in Module 1");
+      await jumpTo(page, mc[0].i); await choice(page, "A").click();
+      if ((await waitRow(m1.id, (r) => r.answers?.[mc[0].q.id] === "A", 20000))?.answers?.[mc[0].q.id] !== "A") throw new Error("setup: first answer didn't save");
+      // Fast-forward past the normal limit + grace (still inside ×2), and reload.
+      const { error: ffErr } = await db.from("submissions").update({ started_at: new Date(Date.now() - FF * 1000).toISOString() }).eq("id", m1.id).eq("status", "In Progress");
+      if (ffErr) throw new Error(`setup: moving started_at: ${ffErr.message}`);
+      await page.reload({ waitUntil: "domcontentloaded" });
+      const inExam = await waitTake(page).then(() => true).catch(() => false);
+      const sNow = async () => Math.round((Date.now() - Date.parse((await db.from("submissions").select("started_at").eq("id", m1.id).single()).data.started_at)) / 1000);
+      if (!inExam) {
+        const st = (await db.from("submissions").select("status").eq("id", m1.id).single()).data?.status;
+        problems.push(`${FF}s into Module 1 (normal limit ${base1}s, extended ${ext1}s) the exam page no longer shows the exam (Module 1 ${st}, ${page.url().replace(BASE, "")}) — the extended time was not honoured`);
+      } else {
+        const t1 = await timerSecsOf(page);
+        const exp1 = ext1 - (await sNow());
+        notes.push(`after the fast-forward to ${FF}s: timer ${t1}s (≈${exp1}s left of ×${MULT})`);
+        if (t1 == null || Math.abs(t1 - exp1) > 15) problems.push(`${FF}s in, the countdown shows ${t1}s, expected about ${exp1}s left of the extended ${ext1}s`);
+        await jumpTo(page, mc[1].i); await choice(page, "B").click();
+        const r2 = await waitRow(m1.id, (r) => r.answers?.[mc[1].q.id] === "B" || r.status !== "In Progress", 20000);
+        if (r2?.answers?.[mc[1].q.id] !== "B") problems.push(`an answer picked ${FF}s in (after the normal ${base1}s + ${GRACE}s grace, inside the extended ${ext1}s) didn't save (Module 1 ${r2?.status})`);
+        // Let the extended clock run out: the page must auto-submit by itself.
+        const left = Math.max(0, ext1 - (await sNow()));
+        const reached = await page.getByText("Module 1 submitted").first().waitFor({ timeout: (left + 50) * 1000 }).then(() => true).catch(() => false);
+        if (!reached) problems.push(`the page didn't auto-submit when the extended time ran out (waited ${left + 50}s)`);
+      }
+      const fin = await waitRow(m1.id, (r) => r.status !== "In Progress", 30000);
+      const usedS = fin?.submitted_at ? Math.round((Date.parse(fin.submitted_at) - Date.parse(fin.started_at)) / 1000) : null;
+      notes.push(`Module 1 ${fin?.status} after ${usedS}s of ${ext1}s`);
+      if (fin?.status !== "Submitted") problems.push(`Module 1 ended "${fin?.status}" (want Submitted, on time) after ${usedS}s of the extended ${ext1}s`);
+      else if (usedS != null && usedS < ext1 - 10) problems.push(`Module 1 was submitted after ${usedS}s, before the extended ${ext1}s ran out`);
+      const { data: recs } = await db.from("answer_records").select("question_id,student_answer").eq("submission_id", m1.id).in("question_id", [mc[0].q.id, mc[1].q.id]);
+      const rec = (id) => (recs ?? []).find((x) => x.question_id === id)?.student_answer ?? null;
+      if (rec(mc[0].q.id) !== "A" || rec(mc[1].q.id) !== "B") problems.push(`graded Module 1 answers: ${rec(mc[0].q.id) ?? "—"}, ${rec(mc[1].q.id) ?? "—"} (want A, B)`);
+
+      // Module 2: inherits ×2.
+      const m2pre = (await subs(ext.id, T)).find((r) => String(r.adaptive_track).startsWith("module_2"));
+      if (!m2pre) problems.push("no Module 2 after Module 1");
+      else {
+        if (m2pre.metadata?.time_multiplier !== MULT) problems.push(`Module 2 carries time_multiplier=${m2pre.metadata?.time_multiplier ?? "none"}, expected ${MULT}`);
+        if (!/Module 1 submitted/.test(await page.locator("body").innerText().catch(() => ""))) await page.goto(`${BASE}/student/tests/${T}/take`, { waitUntil: "networkidle" });
+        await page.getByRole("link", { name: /Start Module 2/ }).click({ timeout: 30000 });
+        await waitTake(page);
+        const t2 = await timerSecsOf(page);
+        notes.push(`Module 2 timer ${t2}s (×${MULT} = ${ext2}s)`);
+        if (t2 == null || t2 > ext2 || t2 < ext2 - 25) problems.push(`Module 2 countdown shows ${t2}s, expected about ${ext2}s (×${MULT} of ${base2}s)`);
+        const q2 = (await moduleQs(m2pre.module_id)).map((q, i) => ({ q, i: i + 1 })).find((x) => x.q.question_type === "Multiple Choice");
+        if (q2) {
+          await jumpTo(page, q2.i); await choice(page, "C").click();
+          if ((await waitRow(m2pre.id, (r) => r.answers?.[q2.q.id] === "C", 20000))?.answers?.[q2.q.id] !== "C") problems.push("Module 2 answer didn't save");
+        }
+        await goToSubmitModal(page, await totalOf(page));
+        await page.getByRole("button", { name: /Submit Test/ }).last().click();
+        await page.waitForURL(/\/result/, { timeout: 45000 }).catch(() => problems.push("Module 2 submit did not open the result page"));
+        const f2 = await waitRow(m2pre.id, (r) => r.status !== "In Progress", 20000);
+        if (f2?.status !== "Submitted") problems.push(`Module 2 ended ${f2?.status}, expected Submitted`);
+      }
+    } finally {
+      if (adminReq) await adminReq.put(`${BASE}/api/admin/tests/${T}/accommodations`, { data: { studentId: ext.id, multiplier: null } }).catch(() => {});
+      await db.from("test_time_accommodations").delete().eq("test_id", T).in("student_id", [ext.id, ctl.id]);
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      for (const st of [ext, ctl]) await deleteSubs(st.id, T).catch(() => {});
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3.5 * 60 * 1000);
+
+  // ── D-20261112-2 ─────────────────────────────────────────
+  // d26dd93 / ae1b7cd (11-11): live progress. Every autosave now stamps
+  // last_seen_at / last_active_at, and the open take page sends a
+  // { keepalive: true } PATCH every 60 s, written best-effort into the same
+  // metadata as flags and cross-outs. Teachers poll a snapshot.
+  // Must hold: (a) keepalives racing real saves never lose an answer or a
+  // flag and never bump answers_version; a keepalive that also carries
+  // answers is still saved; clients can't forge the liveness stamps;
+  // (b) the teacher sees their own student's live row right (question on
+  // screen, answered count, time left, tab switches) and nothing about
+  // another class's student, and no answers; the admin sees both;
+  // (c) after Module 1 is submitted the teacher no longer sees "Module 1",
+  // and a keepalive on the submitted module is refused and changes nothing.
+  await check("D-20261112-2", [], "學生考試時，老師在「即時進度」看全班：學生的存檔和背景「我還在」訊號同時送到時，答案和標記都不能不見；老師看到的題號、已答題數、剩餘時間、離開分頁次數要正確，看不到別班學生、也看不到學生選了什麼；學生交完第一模組後老師不能還看到他在第一模組", "老師/管理員動作", async () => {
+    const T = TESTS.mathLinear;
+    const mine = studentByN(76), other = studentByN(78);
+    if (!mine || !other) throw new Error("students 076/078 not found");
+    const teacher = C.teachers[0];
+    const classA = C.classes.find((k) => k.name === "TEST Class A");
+    const { data: tcls } = await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", teacher.id);
+    const myClasses = (tcls ?? []).map((r) => r.class_group_id);
+    const { data: mem } = await db.from("class_group_members").select("class_group_id,student_id").in("student_id", [mine.id, other.id]);
+    const inMine = (sid) => (mem ?? []).some((m) => m.student_id === sid && myClasses.includes(m.class_group_id));
+    if (!classA || !myClasses.includes(classA.id)) throw new Error("setup: Teacher 01 isn't on class A");
+    if (!inMine(mine.id) || inMine(other.id)) throw new Error("setup: 076 must be in Teacher 01's classes and 078 must not");
+    const { data: asg } = await db.from("test_assignments").select("teacher_ids").eq("test_id", T).single();
+    if ((asg?.teacher_ids ?? []).includes(teacher.id)) throw new Error("setup: Teacher 01 is a direct teacher of mathLinear (sees everyone by design)");
+
+    const orig = C.students[0].id;
+    const problems = [], notes = [];
+    for (const st of [mine, other]) await deleteSubs(st.id, T);
+    const b = await chromium.launch();
+    try {
+      // (a) 078: saves and keepalives at the same moment, through the API.
+      await borrowLogin(other.id, STUDENT1_CLERK);
+      {
+        const { context } = await login(b, STUDENT1_CLERK);
+        const R = context.request;
+        const st = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        const oid = (await st.json().catch(() => ({}))).data?.id;
+        if (!oid) throw new Error(`setup: 078 start → HTTP ${st.status()}`);
+        const orow = (await db.from("submissions").select("module_id,metadata").eq("id", oid).single()).data;
+        const oq = (await moduleQs(orow.module_id)).filter((q) => q.question_type === "Multiple Choice").slice(0, 5);
+        if (oq.length < 5) throw new Error("setup: fewer than 5 multiple-choice questions");
+        const v0 = orow.metadata?.answers_version ?? 0;
+        const url = `${BASE}/api/student/submissions/${oid}`;
+        const save = async (q, letter) => {
+          for (let i = 0; i < 4; i++) {
+            const r = await R.patch(url, { data: { answers: { [q.id]: letter }, answersMode: "merge", metadata: {}, questionMeta: { [q.id]: { flagged: true, crossed: ["D"], annos: null } } } });
+            if (r.status() === 200) return true;
+            await sleep(300 + i * 400);
+          }
+          return false;
+        };
+        const keep = () => R.patch(url, { data: { keepalive: true } }).then((r) => r.status());
+        // Clear the stamp so the keepalives really write (they are throttled to one per 45 s).
+        await db.from("submissions").update({ metadata: { ...orow.metadata, last_seen_at: null } }).eq("id", oid);
+        const results = await Promise.all([
+          keep(), save(oq[0], "A"), keep(), keep(), save(oq[1], "B"), keep(), save(oq[2], "C"), keep(), keep(), save(oq[3], "D"), keep(),
+        ]);
+        const saved = results.filter((x) => x === true).length, kaBad = results.filter((x) => typeof x === "number" && x !== 200);
+        if (saved !== 4) problems.push(`${4 - saved} of 4 answer saves failed (even after retries) while keepalives were arriving`);
+        if (kaBad.length) problems.push(`keepalives during saves answered ${kaBad.join(", ")} (expected 200)`);
+        // Then a keepalive alone (stamp cleared again so it writes), and one that also carries an answer.
+        const mid = (await db.from("submissions").select("metadata").eq("id", oid).single()).data.metadata;
+        await db.from("submissions").update({ metadata: { ...mid, last_seen_at: null } }).eq("id", oid).eq("metadata->answers_version", mid.answers_version);
+        const kaAlone = await keep();
+        const afterKa = (await db.from("submissions").select("metadata").eq("id", oid).single()).data.metadata;
+        if (kaAlone !== 200 || !afterKa.last_seen_at) problems.push(`a keepalive on its own → HTTP ${kaAlone}, last_seen_at ${afterKa.last_seen_at ? "stamped" : "not stamped"}`);
+        if (afterKa.answers_version !== mid.answers_version) problems.push(`a keepalive changed answers_version ${mid.answers_version} → ${afterKa.answers_version} (it must not)`);
+        const mixed = await R.patch(url, { data: { keepalive: true, answers: { [oq[4].id]: "A" }, answersMode: "merge" } });
+        // Forged liveness stamps from the client.
+        await R.patch(url, { data: { answers: {}, answersMode: "merge", metadata: { last_seen_at: "2001-01-01T00:00:00.000Z", last_active_at: "2001-01-01T00:00:00.000Z" } } });
+        const fin = (await db.from("submissions").select("answers,metadata").eq("id", oid).single()).data;
+        const lost = oq.slice(0, 4).filter((q, i) => fin.answers?.[q.id] !== "ABCD"[i]).length;
+        const unflagged = oq.slice(0, 4).filter((q) => !(fin.metadata?.flagged ?? []).includes(q.id)).length;
+        const uncrossed = oq.slice(0, 4).filter((q) => !(fin.metadata?.crossed_out?.[q.id] ?? []).includes("D")).length;
+        if (lost) problems.push(`${lost} of 4 answers saved during the keepalives are missing from the exam`);
+        if (unflagged || uncrossed) problems.push(`flags / cross-outs saved during the keepalives went missing (${unflagged} flags, ${uncrossed} cross-outs)`);
+        if (mixed.status() !== 200 || fin.answers?.[oq[4].id] !== "A") problems.push(`a save that also said keepalive:true → HTTP ${mixed.status()}, its answer ${fin.answers?.[oq[4].id] ? "saved" : "was dropped"}`);
+        if (/^2001/.test(String(fin.metadata?.last_seen_at)) || /^2001/.test(String(fin.metadata?.last_active_at))) problems.push("a student could forge the liveness stamps (last_seen_at / last_active_at = 2001) the teacher sees");
+        const vEnd = fin.metadata?.answers_version ?? 0;
+        notes.push(`078: 4 saves + 8 keepalives at once → ${saved}/4 saved, version ${v0}→${vEnd}`);
+        await context.close();
+      }
+
+      // (b) 076 in the browser: Q a, Q b answered, b flagged, now on Q c; left the tab twice.
+      await borrowLogin(mine.id, STUDENT1_CLERK);
+      const { page } = await login(b, STUDENT1_CLERK);
+      await startTestBrowser(page, T);
+      const [m1] = await subs(mine.id, T);
+      const qs = await moduleQs(m1.module_id);
+      const mc = qs.map((q, i) => ({ q, i: i + 1 })).filter((x) => x.q.question_type === "Multiple Choice");
+      if (mc.length < 3) throw new Error("setup: fewer than 3 multiple-choice questions");
+      await jumpTo(page, mc[0].i); await choice(page, "A").click();
+      await jumpTo(page, mc[1].i); await choice(page, "B").click();
+      await page.getByRole("button", { name: /Mark for Review/ }).first().click();
+      await jumpTo(page, mc[2].i);
+      for (let i = 0; i < 2; i++) {
+        await page.evaluate((state) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+          Object.defineProperty(document, "hidden", { configurable: true, get: () => state === "hidden" });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, "hidden");
+        await sleep(800);
+        await page.evaluate((state) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+          Object.defineProperty(document, "hidden", { configurable: true, get: () => state === "hidden" });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, "visible");
+        await sleep(800);
+      }
+      const row = await waitRow(m1.id, (r) => r.answers?.[mc[1].q.id] === "B" && r.metadata?.current_index === mc[2].i - 1 && r.metadata?.tab_switches === 2, 25000);
+      if (!(row?.answers?.[mc[1].q.id] === "B" && row?.metadata?.current_index === mc[2].i - 1 && row?.metadata?.tab_switches === 2))
+        throw new Error(`setup: 076's row didn't settle (answers ${Object.keys(row?.answers ?? {}).length}, index ${row?.metadata?.current_index}, tab switches ${row?.metadata?.tab_switches})`);
+      const total = await totalOf(page);
+      const tStudent = await timerSecsOf(page);
+      const tRead = Date.now();
+
+      const tch = await login(b, teacher.clerkId);
+      const getSnap = async (req, path) => {
+        const r = await req.get(`${BASE}${path}`);
+        const txt = await r.text();
+        let j = null; try { j = JSON.parse(txt); } catch { /* not JSON */ }
+        return { status: r.status(), txt, snap: j?.data ?? null };
+      };
+      const ts = await getSnap(tch.context.request, `/api/teacher/tests/${T}/live-progress`);
+      if (ts.status === 404) throw new Error("live-progress API not on production (HTTP 404) — not deployed?");
+      if (ts.status !== 200 || !ts.snap?.live) problems.push(`teacher live-progress API → HTTP ${ts.status}`);
+      else {
+        const e = Object.values(ts.snap.live).find((x) => x.studentId === mine.id);
+        if (!e) problems.push("the teacher's live view doesn't show their own student 076, who is mid-exam");
+        else {
+          const lag = Math.round((Date.parse(ts.snap.generatedAt) - tRead) / 1000);
+          const expLeft = tStudent - lag;
+          const wrong = [];
+          if (e.phase !== "module") wrong.push(`phase ${e.phase}`);
+          if (e.questionNumber !== mc[2].i) wrong.push(`on question ${e.questionNumber} (student is on ${mc[2].i})`);
+          if (e.answered !== 2) wrong.push(`${e.answered} answered (student answered 2)`);
+          if (e.total !== total) wrong.push(`total ${e.total} (student sees ${total})`);
+          if (typeof e.remainingSeconds !== "number" || Math.abs(e.remainingSeconds - expLeft) > 30) wrong.push(`${e.remainingSeconds}s left (student's timer ≈${expLeft}s)`);
+          if (e.tabSwitches !== 2) wrong.push(`${e.tabSwitches} tab switches (student left twice)`);
+          const act = e.lastActiveAt ? (Date.parse(ts.snap.generatedAt) - Date.parse(e.lastActiveAt)) / 1000 : null;
+          if (act == null || act > 120) wrong.push(`last active ${act == null ? "unknown" : Math.round(act) + "s ago"} (student acted just now)`);
+          if (wrong.length) problems.push(`teacher's live row for 076 is wrong: ${wrong.join(", ")}`);
+          notes.push(`teacher sees 076: Q${e.questionNumber}, ${e.answered}/${e.total} answered, ${e.remainingSeconds}s left (timer ≈${expLeft}s), ${e.tabSwitches} tab switches`);
+        }
+        if ([other.id, other.email, other.name].some((x) => x && ts.txt.includes(x))) problems.push("the teacher's live view includes 078 from another class");
+        if (/"answers"\s*:|"correct_answer"|"student_answer"/.test(ts.txt) || qs.some((q) => ts.txt.includes(q.id))) problems.push("the teacher's live snapshot carries answer data / question ids");
+      }
+      const tp = await tch.page.goto(`${BASE}/teacher/tests/${T}`, { waitUntil: "networkidle" }).catch(() => null);
+      await sleep(1500);
+      const tpTxt = await tch.page.locator("body").innerText().catch(() => "");
+      if ((tp?.status() ?? 0) >= 400 || /Application error|Something went wrong/i.test(tpTxt)) problems.push(`teacher test page → HTTP ${tp?.status()}${/Application error|Something went wrong/i.test(tpTxt) ? " with an error screen" : ""}`);
+      else {
+        if (!tpTxt.includes(mine.name)) problems.push("the teacher test page doesn't show 076 while 076 is mid-exam");
+        if ([other.name, other.email].some((x) => x && tpTxt.includes(x))) problems.push("the teacher test page shows 078 from another class");
+      }
+      // Admin control: sees both, and 078's answered count after the storm.
+      const adm = await login(b, ADMIN_CLERK);
+      const as = await getSnap(adm.context.request, `/api/admin/tests/${T}/live-progress`);
+      const ae = as.snap?.live ? Object.values(as.snap.live) : [];
+      const a78 = ae.find((x) => x.studentId === other.id), a76 = ae.find((x) => x.studentId === mine.id);
+      if (as.status !== 200 || !a78 || !a76) problems.push(`admin live view: HTTP ${as.status}, 076 ${a76 ? "shown" : "missing"}, 078 ${a78 ? "shown" : "missing"} (both are mid-exam)`);
+      else if (a78.answered !== 5) problems.push(`admin live view shows 078 with ${a78.answered} answered (5 saved)`);
+      await adm.context.close();
+
+      // (c) 076 submits Module 1.
+      await goToSubmitModal(page, total);
+      await page.getByRole("button", { name: /Submit Test/ }).last().click();
+      await page.getByText("Module 1 submitted").first().waitFor({ timeout: 45000 }).catch(() => problems.push("Module 1 submit did not reach the Module 2 screen"));
+      await waitRow(m1.id, (r) => r.status !== "In Progress", 20000);
+      const ts2 = await getSnap(tch.context.request, `/api/teacher/tests/${T}/live-progress`);
+      const e2 = ts2.snap?.live ? Object.values(ts2.snap.live).find((x) => x.studentId === mine.id) : undefined;
+      const stale = e2 && e2.phase === "module" && !/Module 2/.test(e2.moduleLabel ?? "");
+      notes.push(`after Module 1: teacher sees ${e2 ? `${e2.phase} ${e2.moduleLabel ?? ""}${e2.notOpened ? " (not opened)" : ""}` : "no live row"}`);
+      if (stale) problems.push(`after 076 submitted Module 1 the teacher still sees them in "${e2.moduleLabel ?? "Module 1"}" (question ${e2.questionNumber})`);
+      const metaBefore = JSON.stringify((await db.from("submissions").select("metadata").eq("id", m1.id).single()).data.metadata);
+      const kaDone = await page.request.patch(`${BASE}/api/student/submissions/${m1.id}`, { data: { keepalive: true } });
+      await sleep(800);
+      const metaAfter = JSON.stringify((await db.from("submissions").select("metadata").eq("id", m1.id).single()).data.metadata);
+      if (kaDone.status() < 400) problems.push(`a keepalive on the submitted Module 1 → HTTP ${kaDone.status()} (expected refused)`);
+      if (metaAfter !== metaBefore) problems.push("a keepalive changed the submitted Module 1's data");
+      await tch.context.close();
+    } finally {
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      for (const st of [mine, other]) await deleteSubs(st.id, T).catch(() => {});
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
+
+  // ── D-20261112-3 ─────────────────────────────────────────
+  // Extended time is now settable by class teachers on section tests
+  // (cdd8b54, teacher accommodations route). A class teacher may only see
+  // and set it for their own students; a student can't set it at all; only
+  // ×1.5 / ×2 are accepted (×1.25 was dropped 11-12). A teacher clearing it for their own
+  // student must work.
+  await check("D-20261112-3", [], "「延長考試時間」的權限：老師只能看到、設定、取消自己班學生的延長時間，別班學生的不能看也不能改（包括取消）；學生自己不能幫自己加時間；只能設 1.5、2 倍", "安全", async () => {
+    const T = TESTS.mathLinear;
+    const mine = studentByN(76), other = studentByN(78);
+    if (!mine || !other) throw new Error("students 076/078 not found");
+    const teacher = C.teachers[0];
+    const { data: tcls } = await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", teacher.id);
+    const myClasses = (tcls ?? []).map((r) => r.class_group_id);
+    const { data: mem } = await db.from("class_group_members").select("class_group_id,student_id").in("student_id", [mine.id, other.id]);
+    const inMine = (sid) => (mem ?? []).some((m) => m.student_id === sid && myClasses.includes(m.class_group_id));
+    if (!inMine(mine.id) || inMine(other.id)) throw new Error("setup: 076 must be in Teacher 01's classes and 078 must not");
+    const { data: pre } = await db.from("test_time_accommodations").select("student_id").eq("test_id", T);
+    if ((pre ?? []).length) throw new Error(`setup: mathLinear already has ${pre.length} extended-time row(s) (left over?)`);
+    const rowOf = async (sid) => (await db.from("test_time_accommodations").select("time_multiplier,updated_by").eq("test_id", T).eq("student_id", sid).maybeSingle()).data;
+    const orig = C.students[0].id;
+    const problems = [], notes = [];
+    const b = await chromium.launch();
+    try {
+      const adm = await login(b, ADMIN_CLERK);
+      const setup = await adm.context.request.put(`${BASE}/api/admin/tests/${T}/accommodations`, { data: { studentId: other.id, multiplier: 1.5 } });
+      if (setup.status() !== 200) throw new Error(`setup: admin sets ×1.5 for 078 → HTTP ${setup.status()}`);
+      await adm.context.close();
+
+      const tch = await login(b, teacher.clerkId);
+      const R = tch.context.request;
+      const url = `${BASE}/api/teacher/tests/${T}/accommodations`;
+      const g1 = await R.get(url);
+      const g1t = await g1.text();
+      if (g1.status() !== 200) problems.push(`teacher's extended-time list → HTTP ${g1.status()}`);
+      if (g1t.includes(other.id)) problems.push("the teacher's extended-time list shows 078 from another class");
+      const p78 = await R.put(url, { data: { studentId: other.id, multiplier: 2 } });
+      const c78 = await R.put(url, { data: { studentId: other.id, multiplier: null } });
+      const r78 = await rowOf(other.id);
+      notes.push(`078 (other class): set → ${p78.status()}, clear → ${c78.status()}, row ×${r78?.time_multiplier ?? "none"}`);
+      if (p78.status() < 400 || c78.status() < 400 || Number(r78?.time_multiplier) !== 1.5) problems.push(`the teacher changed another class's student's extended time (set → HTTP ${p78.status()}, clear → HTTP ${c78.status()}, now ×${r78?.time_multiplier ?? "none"}, admin had set ×1.5)`);
+      const bad = await R.put(url, { data: { studentId: mine.id, multiplier: 5 } });
+      if (bad.status() !== 400 || (await rowOf(mine.id))) problems.push(`×5 for 076 → HTTP ${bad.status()} (only ×1.5/×2 allowed)`);
+      const old125 = await R.put(url, { data: { studentId: mine.id, multiplier: 1.25 } });
+      if (old125.status() !== 400 || (await rowOf(mine.id))) problems.push(`×1.25 for 076 → HTTP ${old125.status()} (×1.25 was removed; only ×1.5/×2)`);
+      const p76 = await R.put(url, { data: { studentId: mine.id, multiplier: 1.5 } });
+      const r76 = await rowOf(mine.id);
+      const g2t = await (await R.get(url)).text();
+      if (p76.status() !== 200 || Number(r76?.time_multiplier) !== 1.5 || !g2t.includes(mine.id)) problems.push(`own student 076: set ×1.5 → HTTP ${p76.status()}, row ×${r76?.time_multiplier ?? "none"}, ${g2t.includes(mine.id) ? "listed" : "not listed"} (control)`);
+      const c76 = await R.put(url, { data: { studentId: mine.id, multiplier: null } });
+      if (c76.status() !== 200 || (await rowOf(mine.id))) problems.push(`own student 076: clearing → HTTP ${c76.status()}, row ${(await rowOf(mine.id)) ? "still there" : "gone"}`);
+      notes.push(`076 (own): bad ×5 → ${bad.status()}, set → ${p76.status()}, clear → ${c76.status()}`);
+      await tch.context.close();
+
+      // A student tries both routes for themself.
+      await borrowLogin(mine.id, STUDENT1_CLERK);
+      const stu = await login(b, STUDENT1_CLERK);
+      const sTeacher = await stu.context.request.put(url, { data: { studentId: mine.id, multiplier: 2 } });
+      const sAdmin = await stu.context.request.put(`${BASE}/api/admin/tests/${T}/accommodations`, { data: { studentId: mine.id, multiplier: 2 } });
+      const sGet = await stu.context.request.get(`${BASE}/api/admin/tests/${T}/accommodations`);
+      const sGetT = await sGet.text();
+      notes.push(`student: teacher route → ${sTeacher.status()}, admin route → ${sAdmin.status()}, admin list → ${sGet.status()}`);
+      if (sTeacher.status() < 400 || sAdmin.status() < 400 || (await rowOf(mine.id))) problems.push(`a student gave themself extended time (teacher route → HTTP ${sTeacher.status()}, admin route → HTTP ${sAdmin.status()})`);
+      if (sGet.status() < 400 || sGetT.includes(other.id)) problems.push(`a student read the extended-time list (HTTP ${sGet.status()})`);
+      await stu.context.close();
+    } finally {
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      await db.from("test_time_accommodations").delete().eq("test_id", T).in("student_id", [mine.id, other.id]);
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 2 * 60 * 1000);
+
+  // ── D-20261112-4 ─────────────────────────────────────────
+  // Premier ticket bf8a5c52: "Print all" printed double-sided put the next
+  // student's first page on the back of the previous student's last sheet.
+  // Double-sided printing (on by default for several students) must start
+  // every student on an odd page: a "This page intentionally left blank"
+  // page follows a student with an odd page count, and "Page x of y" counts
+  // only that student's pages (the blank page isn't numbered). Checked in the
+  // combined PDF download (assembled in the browser from the per-student
+  // PDFs) and in the Print-all preview (Paged.js, = what Print prints);
+  // control: double-sided off adds no blank page.
+  await check("D-20261112-4", [], "「列印全部學生」和「合併成一個 PDF」雙面列印：每個學生的第一頁都在奇數頁（正面），頁數是單數的學生後面補一張「This page intentionally left blank」空白頁；每頁的「Page x of y」只算那個學生自己的頁數；關掉雙面列印就不補空白頁", "列印", async () => {
+    const { createRequire } = await import("node:module");
+    const rootRequire = createRequire(new URL("../../../../package.json", import.meta.url));
+    const pdfjs = await import(rootRequire.resolve("pdfjs-dist/legacy/build/pdf.mjs"));
+    const BLANK = "This page intentionally left blank";
+    const problems = [], notes = [];
+    const b = await chromium.launch();
+    try {
+      const { page } = await login(b, ADMIN_CLERK);
+      await page.waitForLoadState("networkidle").catch(() => {});
+      // A QA test with 2+ finished QA students (the students API is QA-isolated for the QA admin).
+      let T = null, students = [];
+      for (const id of [TESTS.mathLinear, TESTS.engLinear, TESTS.adaptive, TESTS.untimedEng]) {
+        const r = await page.request.get(`${BASE}/api/print/results/${id}/students`);
+        const list = r.ok() ? ((await r.json()).students ?? []) : [];
+        if (list.length >= 2) { T = id; students = list; break; }
+      }
+      if (!T) throw new Error("setup: no QA test with 2+ finished QA students to print");
+
+      // ── Print-all preview: up to 6 students, double-sided by default.
+      const pool = students.slice(0, 6);
+      const previewPages = async (extra) => {
+        await page.goto(`${BASE}/print/results/${T}?subs=${pool.map((s) => s.submissionId).join(",")}${extra}`, { waitUntil: "domcontentloaded" });
+        await page.waitForFunction(() => document.documentElement.dataset.printReady || document.documentElement.dataset.printFailed, null, { timeout: 120000 });
+        return page.evaluate(() => ({
+          failed: document.documentElement.dataset.printFailed ?? "",
+          status: document.querySelector("[aria-live=polite]")?.textContent ?? "",
+          pages: [...document.querySelectorAll(".print-preview-pages .pagedjs_page")].map((p) => ({
+            blank: p.classList.contains("pagedjs_blank_page"),
+            who: p.querySelector("[data-student]")?.getAttribute("data-student") ?? null,
+            label: p.querySelector(".pagedjs_margin-bottom-right .pagedjs_margin-content")?.getAttribute("data-label") ?? null,
+            note: p.querySelector(".print-blank-note")?.textContent ?? "",
+          })),
+        }));
+      };
+      const duplex = await previewPages("");
+      if (duplex.failed) throw new Error(`setup: preview failed (${duplex.failed})`);
+      const counts = new Map();
+      duplex.pages.forEach((p, i) => {
+        if (p.blank) {
+          const prev = duplex.pages[i - 1];
+          if (p.note !== BLANK) problems.push(`preview: blank page ${i + 1} doesn't say "${BLANK}"`);
+          if (p.label) problems.push(`preview: blank page ${i + 1} is numbered "${p.label}"`);
+          if (!prev || prev.blank) problems.push(`preview: blank page ${i + 1} doesn't follow a student's page`);
+          return;
+        }
+        const n = (counts.get(p.who) ?? 0) + 1;
+        counts.set(p.who, n);
+        if (n === 1 && i % 2 !== 0) problems.push(`preview: ${p.who} starts on page ${i + 1} (even)`);
+        if (!/^Page \d+ of \d+$/.test(p.label ?? "") || !p.label.startsWith(`Page ${n} of `)) problems.push(`preview: page ${i + 1} is labelled "${p.label}", expected "Page ${n} of …"`);
+      });
+      for (const p of duplex.pages) if (!p.blank && p.label && !p.label.endsWith(` of ${counts.get(p.who)}`)) { problems.push(`preview: "${p.label}" but ${p.who} has ${counts.get(p.who)} pages`); break; }
+      const blanks = duplex.pages.filter((p) => p.blank).length;
+      const order = [...counts.keys()];
+      const wantBlanks = order.slice(0, -1).filter((who) => counts.get(who) % 2 === 1).length;
+      // Without an odd-length student (other than the last) no blank page is ever exercised.
+      if (!wantBlanks) problems.push(`preview: no QA student before the last has an odd page count (${order.map((s) => counts.get(s)).join(", ")}), so no blank page was tested`);
+      if (blanks !== wantBlanks) problems.push(`preview: ${blanks} blank pages, expected ${wantBlanks} (page counts ${order.map((s) => counts.get(s)).join(", ")})`);
+      if (!duplex.status.includes(`${blanks} blank page`)) problems.push(`preview status line doesn't say how many blank pages were added ("${duplex.status}")`);
+      await page.emulateMedia({ media: "print" });
+      const printed = (await pdfjs.getDocument({ data: new Uint8Array(await page.pdf({ preferCSSPageSize: true })), verbosity: 0 }).promise);
+      await page.emulateMedia({ media: null });
+      if (printed.numPages !== duplex.pages.length) problems.push(`preview shows ${duplex.pages.length} pages but prints ${printed.numPages}`);
+      notes.push(`preview ${order.length} students, pages ${order.map((s) => counts.get(s)).join("+")} + ${blanks} blank = ${duplex.pages.length}`);
+      // Control: double-sided off.
+      const simplex = await previewPages("&duplex=0");
+      const sBlanks = simplex.pages.filter((p) => p.blank).length;
+      if (sBlanks || simplex.pages.length !== duplex.pages.length - blanks) problems.push(`double-sided off: ${simplex.pages.length} pages, ${sBlanks} blank (expected ${duplex.pages.length - blanks}, 0 blank)`);
+
+      // ── Combined PDF download: 3 students in the panel's order, starting
+      // at an odd-length student so that one needs a blank page after it.
+      const k = pool.findIndex((s) => counts.get(s.studentName) % 2 === 1);
+      const pick = k >= 0 && k < pool.length - 1 ? pool.slice(k, k + 3) : pool.slice(0, 3);
+      await page.goto(`${BASE}/admin/tests/${T}/submissions`, { waitUntil: "networkidle" });
+      const panel = page.locator("details", { hasText: "Print or download all students" }).first();
+      await panel.locator("summary").click();
+      await panel.getByRole("button", { name: "None", exact: true }).click();
+      for (const s of pick) await panel.locator("label", { hasText: s.studentName }).first().locator("input[type=checkbox]").check();
+      await panel.locator("select").filter({ has: page.locator("option[value=combined]") }).selectOption("combined");
+      const dbl = panel.locator("label", { hasText: "Double-sided printing" }).locator("input[type=checkbox]");
+      if (!(await dbl.isChecked())) problems.push("combined PDF: \"Double-sided printing\" is not on by default");
+      await dbl.check();
+      const [dl] = await Promise.all([
+        page.waitForEvent("download", { timeout: 300000 }),
+        panel.getByRole("button", { name: new RegExp(`^Download ${pick.length} results?$`) }).click(),
+      ]);
+      const { readFileSync } = await import("node:fs");
+      const doc = await pdfjs.getDocument({ data: new Uint8Array(readFileSync(await dl.path())), verbosity: 0 }).promise;
+      const firsts = [], blankPages = [];
+      let lastOf = null;
+      for (let i = 1; i <= doc.numPages; i++) {
+        const text = (await (await doc.getPage(i)).getTextContent()).items.map((x) => x.str).join(" ").replace(/\s+/g, " ");
+        const m = /Page (\d+) of (\d+)/.exec(text);
+        if (text.includes(BLANK) && !m) {
+          blankPages.push(i);
+          if (lastOf === null || lastOf % 2 === 0) problems.push(`combined PDF: blank page ${i} after a student with ${lastOf ?? "no"} pages`);
+          continue;
+        }
+        if (!m) { problems.push(`combined PDF: page ${i} has no "Page x of y"`); continue; }
+        if (m[1] === "1") {
+          firsts.push(i);
+          if (i % 2 === 0) problems.push(`combined PDF: a student (${text.slice(0, 40)}) starts on page ${i} (even)`);
+        }
+        lastOf = Number(m[2]);
+      }
+      if (firsts.length !== pick.length) problems.push(`combined PDF: ${firsts.length} students found, ${pick.length} downloaded`);
+      const panelNote = await panel.locator("p", { hasText: "blank page" }).first().textContent().catch(() => "");
+      if (!panelNote.includes(`${blankPages.length} blank page`)) problems.push(`combined PDF: ${blankPages.length} blank pages but the panel says "${panelNote}"`);
+      notes.push(`combined PDF ${pick.length} students, ${doc.numPages} pages, starts on ${firsts.join(",")}, blank ${blankPages.join(",") || "none"}`);
+    } finally {
+      await b.close().catch(() => {});
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 10 * 60 * 1000);
+
+  // ── D-20261112-6 ─────────────────────────────────────────
+  // feat/student-time-multiplier: an admin can set a student's "Testing
+  // time" (Normal / ×1.5 / ×2) on the Edit profile form; it lives in
+  // users.metadata.time_multiplier and applies to every test the student
+  // starts that has no per-test accommodation row (that row wins). Admin
+  // only: a teacher PATCHing it is refused. Only 1 / 1.5 / 2 are accepted.
+  await check("D-20261112-6", [], "管理員在學生資料把「考試時間」設成 1.5 倍後，這位學生開始任何一份沒有單獨設延長時間的測驗，開始前的頁面和倒數都要是 1.5 倍的時間；老師不能改這個設定；只能設正常、1.5 倍、2 倍；改回「正常」後恢復原本時間", "計時", async () => {
+    const T = TESTS.mathLinear;
+    const s = studentByN(75);
+    if (!s) throw new Error("student 075 not found");
+    const tl = (await db.from("tests").select("time_limit_minutes,is_untimed").eq("id", T).single()).data;
+    if (!tl || tl.is_untimed || !tl.time_limit_minutes) throw new Error("setup: mathLinear must be timed");
+    const MULT = 1.5;
+    const base1 = tl.time_limit_minutes * 60;
+    const ext1 = base1 * MULT;
+    const { data: pre } = await db.from("test_time_accommodations").select("student_id").eq("test_id", T).eq("student_id", s.id);
+    if ((pre ?? []).length) throw new Error("setup: 075 already has a per-test extended-time row on mathLinear (left over?)");
+    const profileOf = async () => (await db.from("users").select("metadata").eq("id", s.id).single()).data?.metadata ?? {};
+    if ((await profileOf()).time_multiplier != null) throw new Error("setup: 075 already has a profile testing time (left over?)");
+    const orig = C.students[0].id;
+    const url = `${BASE}/api/admin/students/${s.id}`;
+    const problems = [], notes = [];
+    await deleteSubs(s.id, T);
+    const b = await chromium.launch();
+    let adminReq = null;
+    try {
+      // 1. Admin sets ×1.5 (×1.25 is refused: profile allows only 1 / 1.5 / 2).
+      const adm = await login(b, ADMIN_CLERK);
+      adminReq = adm.context.request;
+      const bad = await adminReq.patch(url, { data: { time_multiplier: 1.25 } });
+      if (bad.status() !== 400 || (await profileOf()).time_multiplier != null) problems.push(`admin sets ×1.25 (not allowed) → HTTP ${bad.status()}, stored ${(await profileOf()).time_multiplier ?? "none"}`);
+      const set = await adminReq.patch(url, { data: { time_multiplier: MULT } });
+      const meta1 = await profileOf();
+      notes.push(`admin ×1.25 → ${bad.status()}, ×${MULT} → ${set.status()}`);
+      if (set.status() !== 200 || Number(meta1.time_multiplier) !== MULT) throw new Error(`admin sets ×${MULT} → HTTP ${set.status()} ${(await set.text()).slice(0, 120)}, stored ${meta1.time_multiplier ?? "none"}`);
+      if (meta1.qa !== true) problems.push("saving the testing time dropped other users.metadata keys (qa)");
+      // The Edit profile form shows it.
+      await adm.page.goto(`${BASE}/admin/students/${s.id}`, { waitUntil: "networkidle" });
+      await adm.page.getByRole("button", { name: "Edit profile" }).click();
+      const shown = await adm.page.locator("select").filter({ has: adm.page.locator("option[value='1.5']") }).first().inputValue().catch(() => null);
+      if (shown !== String(MULT)) problems.push(`the admin's Edit profile form shows Testing time "${shown}", expected ${MULT}`);
+      await adm.page.close().catch(() => {});
+
+      // 2. The student starts a test with no per-test row.
+      await borrowLogin(s.id, STUDENT1_CLERK);
+      const stu = await login(b, STUDENT1_CLERK);
+      await stu.page.goto(`${BASE}/student/tests/${T}`, { waitUntil: "networkidle" });
+      const land = await stu.page.locator("body").innerText().catch(() => "");
+      if (!land.includes(`extended time ×${MULT}`) || !land.includes(`${ext1 / 60}`)) problems.push(`test page doesn't show ×${MULT} / ${ext1 / 60} min: ${(land.match(/[^\n]*min[^\n]*/) ?? ["?"])[0].slice(0, 80)}`);
+      const R = stu.context.request;
+      const st = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+      const sid = (await st.json().catch(() => ({}))).data?.id;
+      if (!sid) throw new Error(`setup: student start → HTTP ${st.status()}`);
+      const row = (await db.from("submissions").select("metadata").eq("id", sid).single()).data;
+      if (Number(row?.metadata?.time_multiplier) !== MULT) problems.push(`the attempt was stamped time_multiplier=${row?.metadata?.time_multiplier ?? "none"}, expected ${MULT} (from the profile)`);
+      const g = (await (await R.get(`${BASE}/api/student/submissions/${sid}`)).json().catch(() => ({}))).data;
+      notes.push(`stamped ×${row?.metadata?.time_multiplier ?? "none"}, ${g?.timeRemainingSeconds}s left of ${ext1}s`);
+      if (!(typeof g?.timeRemainingSeconds === "number" && g.timeRemainingSeconds > base1 && g.timeRemainingSeconds <= ext1)) problems.push(`time remaining ${g?.timeRemainingSeconds}s, expected about ${ext1}s (×${MULT} of ${base1}s)`);
+      await stu.context.close();
+      await deleteSubs(s.id, T);
+
+      // 3. A teacher tries to change it.
+      const tch = await login(b, C.teachers[0].clerkId);
+      const tp = await tch.context.request.patch(url, { data: { time_multiplier: 2 } });
+      const meta2 = await profileOf();
+      notes.push(`teacher ×2 → ${tp.status()}`);
+      if (tp.status() !== 403 || Number(meta2.time_multiplier) !== MULT) problems.push(`a teacher changed the student's testing time (HTTP ${tp.status()}, now ×${meta2.time_multiplier ?? "none"})`);
+      await tch.context.close();
+
+      // 4. Back to Normal: the key is removed.
+      const reset = await adminReq.patch(url, { data: { time_multiplier: 1 } });
+      const meta3 = await profileOf();
+      notes.push(`reset → ${reset.status()}`);
+      if (reset.status() !== 200 || meta3.time_multiplier != null) problems.push(`admin resets to Normal → HTTP ${reset.status()}, stored ${meta3.time_multiplier ?? "none"}`);
+    } finally {
+      if (adminReq) await adminReq.patch(url, { data: { time_multiplier: 1 } }).catch(() => {});
+      try {
+        const { time_multiplier: left, ...rest } = await profileOf();
+        if (left != null) await db.from("users").update({ metadata: rest }).eq("id", s.id);
+      } catch (e) {
+        console.error(`[D-20261112-6] cleanup: resetting 075's testing time failed: ${e.message}`);
+      }
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      await deleteSubs(s.id, T).catch(() => {});
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 2 * 60 * 1000);
+
+  // ── D-20261112-7 ─────────────────────────────────────────
+  // Tests list status actions (support 93e0f09e). A throwaway QA copy of
+  // mathLinear: with no module it is refused with a reason (readiness API and
+  // the publish route agree); with its modules back and assigned to student
+  // 076: publish → close → reopen → back to draft (nobody started) → publish;
+  // once 076 has started, back to draft is refused and the test stays
+  // Published; closing it then still lets 076 save answers mid-test.
+  await check("D-20261112-7", [], "測驗清單的狀態操作：沒有模組的草稿按發布要被拒絕並說明原因；發布→關閉→重新開放都正常；沒人開始前可以退回草稿，有學生開始後退回草稿要被拒絕；關閉後正在考的學生還能繼續作答", "功能", async () => {
+    const admin = C.admins[0];
+    if (!admin) throw new Error("setup: Admin 01 missing from cast");
+    const { data: src, error: srcErr } = await db.from("tests").select("*").eq("id", TESTS.mathLinear).single();
+    if (srcErr || !src) throw new Error(`setup: mathLinear not found (${srcErr?.message})`);
+    const MOD_COLS = ["module_id", "module_2_id", "module_1_id", "module_2_easy_id", "module_2_hard_id"];
+    const name = `QA D-20261112-7 status ${Date.now()}`;
+    const { id: _id, created_at: _c, updated_at: _u, ...copy } = src;
+    void _id; void _c; void _u;
+    const noModules = Object.fromEntries(MOD_COLS.map((c) => [c, null]));
+    const { data: tmp, error: insErr } = await db.from("tests")
+      .insert({ ...copy, ...noModules, test_name: name, status: "Draft", created_by: admin.id }).select("id").single();
+    if (insErr || !tmp) throw new Error(`setup: couldn't create the throwaway test (${insErr?.message})`);
+    const T = tmp.id;
+    const s = studentByN(76);
+    if (!s) throw new Error("setup: student 076 not found");
+    const problems = [], notes = [];
+    const statusOf = async () => (await db.from("tests").select("status").eq("id", T).single()).data?.status;
+    let b = null;
+    try {
+      b = await chromium.launch();
+      const { context } = await login(b, ADMIN_CLERK);
+      const R = context.request;
+      const act = async (a) => {
+        const r = await R.post(`${BASE}/api/admin/tests/${T}/${a}`);
+        return { status: r.status(), j: await r.json().catch(() => ({})) };
+      };
+      const readiness = async () => (await (await R.get(`${BASE}/api/admin/tests/${T}/readiness`)).json().catch(() => ({}))).data;
+
+      // 1) Draft, no module, unassigned → refused with a reason.
+      const r0 = await readiness();
+      if (!r0) throw new Error("readiness API returned no data");
+      if (r0.canPublish !== false || !r0.blockers?.some((x) => x.code === "no_modules")) problems.push(`no-module draft: readiness ${JSON.stringify(r0.blockers)} (expected no_modules)`);
+      if (!r0.warnings?.some((x) => x.code === "unassigned")) problems.push("no-module draft: no 'Not assigned to anyone yet' warning");
+      const p0 = await act("publish");
+      if (p0.status !== 409 || !p0.j.blockers?.some((x) => x.code === "no_modules")) problems.push(`publish without a module → HTTP ${p0.status} ${JSON.stringify(p0.j).slice(0, 120)} (expected 409 no_modules)`);
+      if ((await statusOf()) !== "Draft") problems.push("publish without a module changed the status");
+      notes.push(`no module: publish ${p0.status} "${String(p0.j.error ?? "").slice(0, 40)}"`);
+
+      // 2) Modules back + assigned to 076 → ready, audience counted.
+      const { error: mErr } = await db.from("tests").update(Object.fromEntries(MOD_COLS.map((c) => [c, src[c]]))).eq("id", T);
+      if (mErr) throw new Error(`setup: couldn't restore modules (${mErr.message})`);
+      const { error: aErr } = await db.from("test_assignments").insert({ test_id: T, teacher_ids: [], student_ids: [s.id], class_group_ids: [], created_by: admin.id });
+      if (aErr) throw new Error(`setup: couldn't assign the test (${aErr.message})`);
+      const r1 = await readiness();
+      if (!r1?.canPublish) problems.push(`with modules: readiness still blocked ${JSON.stringify(r1?.blockers)}`);
+      if (r1?.audience !== "1 student") problems.push(`audience "${r1?.audience}" (expected "1 student")`);
+
+      // 3) publish → close → reopen → back to draft (nobody started) → publish.
+      for (const [a, want] of [["publish", "Published"], ["close", "Closed"], ["reopen", "Published"], ["draft", "Draft"], ["publish", "Published"]]) {
+        const r = await act(a);
+        const st = await statusOf();
+        if (r.status !== 200 || st !== want) problems.push(`${a} → HTTP ${r.status} status ${st} (expected 200 ${want}) ${String(r.j.error ?? "")}`);
+      }
+      notes.push("publish/close/reopen/draft/publish ok");
+
+      // 4) 076 starts → back to draft refused, still Published; close keeps the attempt writable.
+      await asStudent(76, T, async ({ context: sc }) => {
+        const start = await sc.request.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        const subId = (await start.json().catch(() => ({}))).data?.id;
+        if (!subId) throw new Error(`student start failed ${start.status()}`);
+        const d = await act("draft");
+        if (d.status !== 409) problems.push(`back to draft with a submission → HTTP ${d.status} (expected 409)`);
+        if ((await statusOf()) !== "Published") problems.push(`after refused back-to-draft the status is ${await statusOf()}`);
+        const rr = await readiness();
+        if (rr?.hasSubmissions !== true) problems.push("readiness.hasSubmissions false with a submission");
+        const c = await act("close");
+        if (c.status !== 200) problems.push(`close with a student mid-test → HTTP ${c.status}`);
+        const row = (await db.from("submissions").select("module_id").eq("id", subId).single()).data;
+        const qs = await moduleQs(row.module_id);
+        const save = await sc.request.patch(`${BASE}/api/student/submissions/${subId}`, { data: { answers: { [qs[0].id]: "A" }, metadata: {} } });
+        if (save.status() >= 400) problems.push(`student mid-test after close: saving an answer → HTTP ${save.status()}`);
+        const saved = (await db.from("submissions").select("status, answers").eq("id", subId).single()).data;
+        if (saved?.status !== "In Progress" || saved?.answers?.[qs[0].id] !== "A") problems.push(`student mid-test after close: row ${JSON.stringify(saved).slice(0, 100)}`);
+        notes.push(`with a submission: draft ${d.status}, close ${c.status}, save after close ${save.status()}`);
+      });
+      await context.close();
+    } finally {
+      if (b) await b.close().catch(() => {});
+      await deleteSubs(s.id, T).catch(() => {});
+      const { error: dAsg } = await db.from("test_assignments").delete().eq("test_id", T);
+      if (dAsg) console.error(`[D-20261112-7] cleanup: test_assignments delete failed for ${T}: ${dAsg.message}`);
+      const { error: dTest } = await db.from("tests").delete().eq("id", T);
+      if (dTest) console.error(`[D-20261112-7] cleanup: throwaway test ${T} delete failed: ${dTest.message}`);
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 4 * 60 * 1000);
+
+
+  // ── D-20261112-5 ─────────────────────────────────────────
+  // fix/submit-stuck (support 18b434c8, b1cf70bf, 687241a1): students stuck on
+  // "Submitting…" at Module 1 → Module 2 and at the final submit. Root cause:
+  // the submit watchdog re-ran location.assign() on every 5 s poll once the
+  // submit had landed, cancelling the page load under way — a next page
+  // slower than ~5 s (cold start, a whole class auto-submitting, a slow
+  // school network) never arrived. Must hold, on prod with a QA student:
+  // (a) Module 1: the submit reaches the server but its reply is dropped, and
+  //     the next page answers 9 s late → the student still reaches the
+  //     Module 2 intro (< 75 s), Module 1 graded once with the answer, one
+  //     Module 2;
+  // (b) Module 2: the server grades the submit but the browser gets a 502,
+  //     and the result page answers 9 s late → the result page opens, Module 2
+  //     graded once (answer_records = questions, not doubled), answer kept.
+  await check("D-20261112-5", [], "交卷時網路出狀況：第一模組交卷的回應在路上掉了、下一頁又要 9 秒才回來，學生還是要自動進到第二模組（不能一直卡在「Submitting…」）；第二模組交卷時伺服器其實已收到、瀏覽器卻收到錯誤，結果頁也很慢，學生還是要看到成績頁。兩個模組都只算分一次、選的答案都有算到", "考試流程", () =>
+    asStudent(78, TESTS.mathLinear, async ({ s, page }) => {
+      const T = TESTS.mathLinear;
+      const problems = [], notes = [];
+      const SLOW_MS = 9000;
+      const isDoc = (route) => route.request().isNavigationRequest();
+      const tl = (await db.from("tests").select("is_adaptive,module_2_id").eq("id", T).single()).data;
+      if (!tl?.module_2_id) throw new Error("setup: mathLinear must have a Module 2");
+
+      // (a) Module 1
+      await startTestBrowser(page, T);
+      const [m1] = await subs(s.id, T);
+      if (!m1) throw new Error("setup: no Module 1 row after Start");
+      const q1 = (await moduleQs(m1.module_id)).map((q, i) => ({ q, i: i + 1 })).find((x) => x.q.question_type === "Multiple Choice");
+      if (!q1) throw new Error("setup: no multiple-choice question in Module 1");
+      await jumpTo(page, q1.i); await choice(page, "B").click();
+      await goToSubmitModal(page, await totalOf(page));
+      let dropped = 0, slowDocs = 0;
+      await page.route("**/submit", async (route) => {
+        if (dropped > 0) return route.continue();
+        dropped++;
+        await route.fetch().catch(() => {}); // the server grades it…
+        await route.abort("connectionreset").catch(() => {}); // …the reply is lost
+      });
+      await page.route(/\/take(\?|$)/, async (route) => {
+        if (!isDoc(route)) return route.continue();
+        slowDocs++;
+        await sleep(SLOW_MS);
+        await route.continue().catch(() => {});
+      });
+      let t0 = Date.now();
+      await page.getByRole("button", { name: /Submit Test/ }).last().click();
+      const gotM2 = await page.getByText("Start Module 2").first().waitFor({ timeout: 75000 }).then(() => true).catch(() => false);
+      const secA = Math.round((Date.now() - t0) / 1000);
+      notes.push(`M1: reply dropped + next page ${SLOW_MS / 1000}s slow → ${gotM2 ? `Module 2 intro after ${secA}s` : "STUCK"} (${slowDocs} page load(s) started)`);
+      if (!gotM2) problems.push(`Module 1 submit with its reply dropped and a ${SLOW_MS / 1000}s next page: no Module 2 intro after ${secA}s (page: ${(await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 120)})`);
+      if (slowDocs > 2) problems.push(`the next page was requested ${slowDocs} times — the navigation was restarted instead of awaited`);
+      await page.unroute("**/submit"); await page.unroute(/\/take(\?|$)/);
+      const rowsA = await subs(s.id, T);
+      const m1f = rowsA.find((r) => r.adaptive_track === "module_1");
+      const m2s = rowsA.filter((r) => String(r.adaptive_track).startsWith("module_2"));
+      if (m1f?.status === "In Progress") problems.push("Module 1 still In Progress");
+      if (m1f?.answers?.[q1.q.id] !== "B") problems.push(`Module 1's answer not kept (${m1f?.answers?.[q1.q.id] ?? "none"})`);
+      if (m2s.length !== 1) problems.push(`${m2s.length} Module 2 rows (want exactly 1)`);
+      const recs1 = (await db.from("answer_records").select("question_id").eq("submission_id", m1.id)).data ?? [];
+      if (m1f?.total_questions && recs1.length !== m1f.total_questions) problems.push(`Module 1 has ${recs1.length} graded answers for ${m1f.total_questions} questions (graded twice?)`);
+
+      // (b) Module 2 → result
+      if (gotM2 && m2s.length === 1) {
+        const m2 = m2s[0];
+        await page.getByRole("link", { name: /Start Module 2/ }).click({ timeout: 30000 });
+        await waitTake(page);
+        const q2 = (await moduleQs(m2.module_id)).map((q, i) => ({ q, i: i + 1 })).find((x) => x.q.question_type === "Multiple Choice");
+        if (!q2) throw new Error("setup: no multiple-choice question in Module 2");
+        await jumpTo(page, q2.i); await choice(page, "C").click();
+        await goToSubmitModal(page, await totalOf(page));
+        let failed = 0, slowResult = 0;
+        await page.route("**/submit", async (route) => {
+          if (failed > 0) return route.continue();
+          failed++;
+          await route.fetch().catch(() => {}); // graded on the server…
+          await route.fulfill({ status: 502, contentType: "text/html", body: "<html>Bad gateway</html>" }); // …but the browser sees an error
+        });
+        await page.route(/\/result(\?|$)/, async (route) => {
+          if (!isDoc(route)) return route.continue();
+          slowResult++;
+          await sleep(SLOW_MS);
+          await route.continue().catch(() => {});
+        });
+        t0 = Date.now();
+        await page.getByRole("button", { name: /Submit Test/ }).last().click();
+        const gotResult = await page.waitForURL(/\/result/, { timeout: 75000, waitUntil: "domcontentloaded" }).then(() => true).catch(() => false);
+        const secB = Math.round((Date.now() - t0) / 1000);
+        notes.push(`M2: server graded, browser got 502 + result page ${SLOW_MS / 1000}s slow → ${gotResult ? `result after ${secB}s` : "STUCK"} (${slowResult} page load(s))`);
+        if (!gotResult) problems.push(`Module 2 submit that the server graded but answered 502, with a ${SLOW_MS / 1000}s result page: still not on the result page after ${secB}s (${(await page.locator("body").innerText().catch(() => "")).replace(/\s+/g, " ").slice(0, 120)})`);
+        if (slowResult > 2) problems.push(`the result page was requested ${slowResult} times — the navigation was restarted instead of awaited`);
+        const m2f = await waitRow(m2.id, (r) => r.status !== "In Progress", 20000);
+        if (m2f?.status === "In Progress") problems.push("Module 2 still In Progress");
+        if (m2f?.answers?.[q2.q.id] !== "C") problems.push(`Module 2's answer not kept (${m2f?.answers?.[q2.q.id] ?? "none"})`);
+        const recs2 = (await db.from("answer_records").select("question_id").eq("submission_id", m2.id)).data ?? [];
+        if (m2f?.total_questions && recs2.length !== m2f.total_questions) problems.push(`Module 2 has ${recs2.length} graded answers for ${m2f.total_questions} questions (graded twice?)`);
+        if (gotResult) {
+          const body = await page.locator("body").innerText().catch(() => "");
+          if (/Submitting/.test(body)) problems.push("result page still shows Submitting…");
+        }
+      }
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 6 * 60 * 1000);
+  // ── D-20261113-1 ─────────────────────────────────────────
+  // Start pressed at the same moment more than once (two tabs, phone +
+  // laptop, a retry while the first request is still in flight). The start
+  // route reads "is there an In Progress attempt?" and then inserts; parallel
+  // requests all read "none", and the unique index lets only one insert
+  // through. Every request must still land the student in that one attempt
+  // (2xx, same id), never a "Failed to create submission" error. Then the
+  // same race on a one-off retake: exactly one new attempt, grant used once,
+  // no third attempt. engLinear (no retakes), student 079, API only.
+  await check("D-20261113-1", [], "學生同時按了好幾次「開始考試」（兩個分頁、手機和筆電同時按、網路慢時重送）：只能開出一份考卷，而且每一次按都要直接進到這份考卷，不能跳出「Failed to create submission」錯誤；管理員給「再考一次」後同時按好幾次開始，也只能多開一份，不能變成多考兩次", "考試流程", () =>
+    asStudent(79, [TESTS.engLinear, TESTS.mathLinear], async ({ s, b, context }) => {
+      const T = TESTS.engLinear;
+      const R = context.request;
+      const N = 6;
+      const t = (await db.from("tests").select("allow_retake").eq("id", T).single()).data;
+      if (t?.allow_retake) throw new Error("setup: engLinear now allows retakes; the retake-race half needs a no-retake test");
+      const clearGrants = () => db.from("test_retake_grants").delete().eq("test_id", T).eq("student_id", s.id);
+      await clearGrants();
+      const problems = [], notes = [];
+      const burst = async (testId = T) => Promise.all(Array.from({ length: N }, async () => {
+        const r = await R.post(`${BASE}/api/student/submissions`, { data: { testId } });
+        const j = await r.json().catch(() => ({}));
+        return { status: r.status(), id: j.data?.id ?? null, err: j.error ?? null };
+      }));
+      const summary = (rs) => {
+        const by = {};
+        for (const r of rs) { const k = r.status < 300 ? `${r.status}` : `${r.status} "${String(r.err).slice(0, 40)}"`; by[k] = (by[k] ?? 0) + 1; }
+        return Object.entries(by).map(([k, v]) => `${v}×${k}`).join(", ");
+      };
+      const admin = await login(b, ADMIN_CLERK);
+      try {
+        // A) first start, N at once.
+        const r1 = await burst();
+        const rows1 = await subs(s.id, T);
+        notes.push(`first start ×${N}: ${summary(r1)}; rows ${rows1.length}`);
+        if (rows1.length !== 1 || rows1[0].adaptive_track !== "module_1" || rows1[0].status !== "In Progress" || rows1[0].attempt_number !== 1) {
+          problems.push(`first start ×${N} left ${rows1.length} rows ${JSON.stringify(rows1.map((r) => [r.attempt_number, r.adaptive_track, r.status]))} (expected one Module 1 In Progress)`);
+        }
+        const id1 = rows1[0]?.id;
+        const bad1 = r1.filter((r) => r.status >= 300 || r.id !== id1);
+        if (bad1.length) problems.push(`first start pressed ${N}× at once: ${bad1.length} of ${N} did not open the attempt (${summary(bad1)}) — that student sees an error instead of the exam`);
+        if (!id1) throw new Error(`no attempt created: ${summary(r1)}`);
+
+        // Finish attempt 1 (start resumes the open Module 1).
+        const a1 = await apiTakeTest(R, s.id, T);
+        if (a1.m1Id !== id1) problems.push(`after the burst a normal Start opened ${a1.m1Id}, not the attempt ${id1}`);
+        if (!a1.m2Id) throw new Error("setup: engLinear attempt 1 has no Module 2");
+        const done = (await subs(s.id, T)).filter((r) => r.attempt_number === 1);
+        if (done.length !== 2 || done.some((r) => r.status === "In Progress")) throw new Error(`setup: attempt 1 not finished ${JSON.stringify(done.map((r) => [r.adaptive_track, r.status]))}`);
+
+        // B) no grant yet: all refused, nothing created.
+        const r2 = await burst();
+        const rows2 = await subs(s.id, T);
+        notes.push(`no grant ×${N}: ${summary(r2)}`);
+        if (r2.some((r) => r.status !== 403) || rows2.length !== 2) problems.push(`without a retake grant, Start ×${N} → ${summary(r2)}, rows ${rows2.length} (expected all 403, still 2 rows)`);
+
+        // C) one grant, N starts at once → exactly one attempt 2.
+        const g = await admin.context.request.post(`${BASE}/api/admin/tests/${T}/grant-retake`, { data: { studentId: s.id, notes: "qa nightly D-20261113-1" } });
+        if (g.status() !== 200) throw new Error(`setup: grant-retake → ${g.status()} ${(await g.text()).slice(0, 120)}`);
+        const r3 = await burst();
+        const rows3 = await subs(s.id, T);
+        const a2 = rows3.filter((r) => r.attempt_number === 2);
+        const extra = rows3.filter((r) => r.attempt_number > 2);
+        notes.push(`one grant ×${N}: ${summary(r3)}; attempt-2 rows ${a2.length}, attempt-3+ rows ${extra.length}`);
+        if (a2.length !== 1 || a2[0].adaptive_track !== "module_1" || a2[0].status !== "In Progress" || extra.length) {
+          problems.push(`one retake grant + Start ×${N} at once: attempt 2 rows ${JSON.stringify(a2.map((r) => [r.adaptive_track, r.status]))}, later attempts ${extra.length} (expected exactly one new Module 1)`);
+        }
+        const id2 = a2[0]?.id;
+        const bad3 = r3.filter((r) => r.status >= 300 || r.id !== id2);
+        if (bad3.length) problems.push(`retake Start pressed ${N}× at once: ${bad3.length} of ${N} did not open the new attempt (${summary(bad3)})`);
+        const gr = (await db.from("test_retake_grants").select("consumed_at").eq("test_id", T).eq("student_id", s.id)).data ?? [];
+        if (gr.length !== 1 || !gr[0].consumed_at) problems.push(`grant after the retake burst: ${JSON.stringify(gr)} (expected one, consumed)`);
+        // Attempt 1 untouched.
+        const after1 = (await subs(s.id, T)).filter((r) => r.attempt_number === 1);
+        if (JSON.stringify(after1.map((r) => [r.id, r.status, r.correct_count])) !== JSON.stringify(done.map((r) => [r.id, r.status, r.correct_count]))) problems.push("the retake burst changed attempt 1");
+
+        // D) a test that allows retakes (mathLinear): a first-start burst
+        // must still open exactly one attempt, not attempts 1 and 2.
+        const ML = TESTS.mathLinear;
+        if (!(await db.from("tests").select("allow_retake").eq("id", ML).single()).data?.allow_retake) notes.push("mathLinear no longer allows retakes (D still run)");
+        const r4 = await burst(ML);
+        const rows4 = await subs(s.id, ML);
+        notes.push(`retakes-allowed first start ×${N}: ${summary(r4)}; rows ${rows4.length}`);
+        if (rows4.length !== 1) problems.push(`on a test that allows retakes, Start ×${N} at once opened ${rows4.length} attempts ${JSON.stringify(rows4.map((r) => [r.attempt_number, r.adaptive_track, r.status]))} (expected one)`);
+        const bad4 = r4.filter((r) => r.status >= 300 || r.id !== rows4[0]?.id);
+        if (bad4.length) problems.push(`retakes-allowed first start: ${bad4.length} of ${N} did not open the attempt (${summary(bad4)})`);
+      } finally {
+        await admin.context.close().catch(() => {});
+        try { await clearGrants(); } catch { /* cleanup best effort */ }
+      }
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 3 * 60 * 1000);
+
+  // ── D-20261113-2 ─────────────────────────────────────────
+  // A student edits the exam's requests by hand (DevTools / a script) to buy
+  // time or points: extended time, a later start, a Module 2 clock in the
+  // future, a fake "Submitted"/score, answers for questions of another
+  // module or test. The server must ignore every one of them: the clock
+  // stays 2 min, time-up still refuses saves, Module 2 inherits no fake
+  // multiplier, and only the module's own questions are graded.
+  // shortTimer (2 + 2 min), student 080, API only.
+  await check("D-20261113-2", [], "學生自己改考試送出的資料想作弊（幫自己加時間、把開始時間改晚、把第二模組的計時改到未來、假裝已交卷或改分數、塞別的模組或別份考卷的答案）：伺服器要全部忽略——時間還是原本的、時間到了一樣存不進去、第二模組也不會多時間、只算這個模組自己的題目", "安全", () =>
+    asStudent(80, TESTS.shortTimer, async ({ s, context }) => {
+      const T = TESTS.shortTimer;
+      const R = context.request;
+      const t = (await db.from("tests").select("module_id,module_2_id,time_limit_minutes,time_limit_minutes_module_2,is_untimed").eq("id", T).single()).data;
+      if (!t || t.is_untimed || !t.module_2_id) throw new Error("setup: shortTimer must be timed with two modules");
+      const L1 = t.time_limit_minutes * 60, L2 = (t.time_limit_minutes_module_2 ?? t.time_limit_minutes) * 60;
+      const { data: pre } = await db.from("test_time_accommodations").select("student_id").eq("test_id", T).eq("student_id", s.id);
+      if ((pre ?? []).length) throw new Error("setup: 080 has a per-test extended-time row on shortTimer (left over?)");
+      const prof = (await db.from("users").select("metadata").eq("id", s.id).single()).data?.metadata ?? {};
+      if (prof.time_multiplier != null) throw new Error("setup: 080 has a profile testing time (left over?)");
+      const q1 = await moduleQs(t.module_id), q2 = await moduleQs(t.module_2_id);
+      const mc1 = q1.find((q) => q.question_type === "Multiple Choice" && /^[A-D]$/.test(String(q.correct_answer).trim()));
+      const mc2 = q2.find((q) => q.question_type === "Multiple Choice" && /^[A-D]$/.test(String(q.correct_answer).trim()));
+      if (!mc1 || !mc2) throw new Error("setup: shortTimer needs a single-letter MC question in each module");
+      const eng = (await db.from("tests").select("module_id").eq("id", TESTS.engLinear).single()).data;
+      const qEng = (await moduleQs(eng.module_id)).find((q) => /^[A-D]$/.test(String(q.correct_answer).trim()));
+      const key = (q) => String(q.correct_answer).trim();
+      const FUTURE = "2099-01-01T00:00:00.000Z", PAST = "2001-01-01T00:00:00.000Z";
+      const fakeMeta = {
+        time_multiplier: 3, module_2_started_at: FUTURE, fl_started_at: FUTURE, fl_attempt_id: crypto.randomUUID(),
+        answers_version: 999, created_after_due: false, auto_closed_unopened: true,
+        device: { ua: "qa-fake-device" }, last_seen_at: PAST, last_active_at: PAST,
+      };
+      const SERVER_KEYS = ["time_multiplier", "module_2_started_at", "fl_started_at", "fl_attempt_id", "created_after_due", "auto_closed_unopened"];
+      const problems = [], notes = [];
+      const row = async (id) => (await db.from("submissions").select("*").eq("id", id).single()).data;
+      const leaked = (m) => SERVER_KEYS.filter((k) => m?.[k] !== undefined);
+      const remaining = async (id) => (await (await R.get(`${BASE}/api/student/submissions/${id}`)).json().catch(() => ({}))).data?.timeRemainingSeconds;
+
+      // 1) Start with a forged multiplier / start time in the body.
+      const st = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T, time_multiplier: 3, started_at: FUTURE, metadata: { time_multiplier: 3 } } });
+      const sid = (await st.json().catch(() => ({}))).data?.id;
+      if (!sid) throw new Error(`setup: start → HTTP ${st.status()}`);
+      const r0 = await row(sid);
+      if (r0.metadata?.time_multiplier !== undefined) problems.push(`start with a forged multiplier stamped time_multiplier=${r0.metadata.time_multiplier}`);
+      if (Math.abs(Date.now() - new Date(r0.started_at).getTime()) > 120000) problems.push(`start with a forged started_at stored ${r0.started_at}`);
+      const rem0 = await remaining(sid);
+      if (!(typeof rem0 === "number" && rem0 <= L1)) problems.push(`after a forged start, time left ${rem0}s (limit ${L1}s)`);
+
+      // 2) Autosave carrying every server-owned key + top-level fields + foreign answers.
+      const foreign = { [mc2.id]: key(mc2), [crypto.randomUUID()]: "A", ...(qEng ? { [qEng.id]: key(qEng) } : {}) };
+      const p1 = await R.patch(`${BASE}/api/student/submissions/${sid}`, { data: {
+        answers: { [mc1.id]: key(mc1), ...foreign }, answersMode: "merge", metadata: fakeMeta,
+        status: "Submitted", score: 99, correct_count: 99, started_at: FUTURE, adaptive_track: "module_2_hard", module_id: t.module_2_id,
+      } });
+      const p1j = await p1.json().catch(() => ({}));
+      const r1 = await row(sid);
+      notes.push(`forged autosave → ${p1.status()}, remaining ${p1j.remainingSeconds}s`);
+      if (p1.status() !== 200) problems.push(`forged autosave → HTTP ${p1.status()} (the real answer in it must still save)`);
+      if (r1.answers?.[mc1.id] !== key(mc1)) problems.push("the real answer in the forged autosave was not saved");
+      if (leaked(r1.metadata).length) problems.push(`autosave let the student write server-only fields: ${leaked(r1.metadata).map((k) => `${k}=${JSON.stringify(r1.metadata[k])}`).join(", ")}`);
+      if (r1.metadata?.answers_version !== (r0.metadata?.answers_version ?? 0) + 1) problems.push(`answers_version ${r1.metadata?.answers_version} after one save (client sent 999)`);
+      if (JSON.stringify(r1.metadata?.device ?? null) !== JSON.stringify(r0.metadata?.device ?? null)) problems.push("the client overwrote the server-recorded device");
+      if (String(r1.metadata?.last_seen_at ?? "").startsWith("2001") || String(r1.metadata?.last_active_at ?? "").startsWith("2001")) problems.push("the client set its own last_seen_at / last_active_at");
+      if (r1.status !== "In Progress" || r1.started_at !== r0.started_at || r1.adaptive_track !== "module_1" || r1.module_id !== r0.module_id || r1.score != null) {
+        problems.push(`top-level fields changed by autosave: ${JSON.stringify({ status: r1.status, started_at: r1.started_at, track: r1.adaptive_track, module: r1.module_id === r0.module_id ? "same" : r1.module_id, score: r1.score })}`);
+      }
+      if (typeof p1j.remainingSeconds === "number" && p1j.remainingSeconds > L1) problems.push(`autosave reports ${p1j.remainingSeconds}s left (> ${L1}s)`);
+      const rem1 = await remaining(sid);
+      if (!(typeof rem1 === "number" && rem1 <= L1)) problems.push(`after the forged autosave, time left ${rem1}s (limit ${L1}s)`);
+
+      // 3) Oversized answer → refused, nothing written.
+      const p2 = await R.patch(`${BASE}/api/student/submissions/${sid}`, { data: { answers: { [mc1.id]: "A".repeat(300) }, answersMode: "merge", metadata: {} } });
+      const r2 = await row(sid);
+      if (p2.status() !== 400 || r2.answers?.[mc1.id] !== key(mc1)) problems.push(`300-char answer → HTTP ${p2.status()}, stored ${String(r2.answers?.[mc1.id]).slice(0, 12)}…`);
+
+      // 4) Time runs out (start moved back past limit + 60 s grace); a save
+      // claiming ×3 is still refused and not written.
+      const back = new Date(Date.now() - (L1 + 75) * 1000).toISOString();
+      await db.from("submissions").update({ started_at: back }).eq("id", sid);
+      const other = q1.find((q) => q.id !== mc1.id);
+      const p3 = await R.patch(`${BASE}/api/student/submissions/${sid}`, { data: { answers: { [other.id]: "B" }, answersMode: "merge", metadata: { time_multiplier: 3 } } });
+      const r3 = await row(sid);
+      const probe = (await (await R.get(`${BASE}/api/student/submissions/${sid}?status=1`)).json().catch(() => ({}))).data;
+      notes.push(`after time-up: save claiming ×3 → ${p3.status()}, status probe ${probe?.remainingSeconds}s`);
+      if (p3.status() !== 409) problems.push(`after time-up, a save claiming ×3 → HTTP ${p3.status()} (expected 409 time_up)`);
+      if (r3.answers?.[other.id] !== undefined) problems.push("after time-up, the save claiming ×3 was written");
+      if (probe?.remainingSeconds !== 0) problems.push(`after time-up the status probe says ${probe?.remainingSeconds}s left`);
+
+      // 5) Submit with forged metadata: graded on Module 1's own questions only.
+      const sb = await R.post(`${BASE}/api/student/submissions/${sid}/submit`, { data: { metadata: { time_multiplier: 3, module_2_started_at: FUTURE, fl_started_at: FUTURE } } });
+      const sbj = await sb.json().catch(() => ({}));
+      const r4 = await row(sid);
+      const recs = (await db.from("answer_records").select("question_id,is_correct").eq("submission_id", sid)).data ?? [];
+      notes.push(`M1 submit → ${sb.status()} ${r4.correct_count}/${r4.total_questions}, ${recs.length} answer records`);
+      if (sb.status() !== 200) problems.push(`Module 1 submit → HTTP ${sb.status()} ${JSON.stringify(sbj).slice(0, 120)}`);
+      if (r4.total_questions !== q1.length || r4.correct_count !== 1) problems.push(`Module 1 graded ${r4.correct_count}/${r4.total_questions}, expected 1/${q1.length} (answers for other modules/tests must not count)`);
+      const q1ids = new Set(q1.map((q) => q.id));
+      if (recs.some((x) => !q1ids.has(x.question_id))) problems.push("answer records written for questions outside Module 1");
+      if (leaked(r4.metadata).length) problems.push(`submit let the student write server-only fields: ${leaked(r4.metadata).join(", ")}`);
+
+      // 6) Module 2: no inherited fake multiplier; a forged clock is ignored;
+      // only Module 2's own questions graded.
+      const m2 = sbj.data?.nextSubmissionId ?? (await subs(s.id, T)).find((r) => r.adaptive_track && r.adaptive_track !== "module_1")?.id;
+      if (!m2) throw new Error(`setup: no Module 2 after the Module 1 submit (${JSON.stringify(sbj).slice(0, 120)})`);
+      const m2r0 = await row(m2);
+      if (m2r0.metadata?.time_multiplier !== undefined) problems.push(`Module 2 inherited time_multiplier=${m2r0.metadata.time_multiplier}`);
+      const tOpen = Date.now();
+      const p4 = await R.patch(`${BASE}/api/student/submissions/${m2}`, { data: {
+        answers: { [mc2.id]: key(mc2), [mc1.id]: key(mc1) }, answersMode: "merge", metadata: { module_2_started_at: FUTURE, time_multiplier: 3 },
+      } });
+      const m2r1 = await row(m2);
+      const stamp = m2r1.metadata?.module_2_started_at;
+      const rem2 = await remaining(m2);
+      notes.push(`M2 forged-clock save → ${p4.status()}, stamp ${String(stamp).slice(11, 19)}, ${rem2}s left`);
+      if (p4.status() !== 200) problems.push(`Module 2 save → HTTP ${p4.status()}`);
+      if (!stamp || Math.abs(new Date(stamp).getTime() - tOpen) > 120000) problems.push(`Module 2 clock stamp is ${stamp} (client sent ${FUTURE}; must be the server's now)`);
+      if (m2r1.metadata?.time_multiplier !== undefined) problems.push(`Module 2 save stored time_multiplier=${m2r1.metadata.time_multiplier}`);
+      if (!(typeof rem2 === "number" && rem2 <= L2)) problems.push(`Module 2 time left ${rem2}s (limit ${L2}s)`);
+      const sb2 = await R.post(`${BASE}/api/student/submissions/${m2}/submit`, { data: { metadata: {} } });
+      const m2r2 = await row(m2);
+      notes.push(`M2 submit → ${sb2.status()} ${m2r2.correct_count}/${m2r2.total_questions}`);
+      if (sb2.status() !== 200 || m2r2.total_questions !== q2.length || m2r2.correct_count !== 1) problems.push(`Module 2 submit → HTTP ${sb2.status()}, graded ${m2r2.correct_count}/${m2r2.total_questions}, expected 1/${q2.length}`);
+
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 2 * 60 * 1000);
+
+  // ── D-20261113-3 ─────────────────────────────────────────
+  // Premier ticket 1e988481: a class teacher couldn't find today's test
+  // questions. The teacher's class page now lists Assigned Tests (above
+  // Scores) with completion counts and a "Questions & answers (Class Review)"
+  // button; the Results page has the same button at the top.
+  // Teacher 01 teaches TEST Class A, Math only. mathLinear (Math) and
+  // engLinear (R&W) are assigned to every QA class. For the run, shortTimer
+  // (Math) is taken off class A so it's "same subject, not assigned"; its
+  // class list is restored exactly in finally. 076 (class A) starts
+  // mathLinear so the row has someone in progress.
+  // Must hold:
+  //   - class A page lists mathLinear with "x / N submitted · y in progress ·
+  //     z not started" (N = class A's QA students, x+y+z = N, y ≥ 1) and the
+  //     row expands to 076 "In progress";
+  //   - its Questions & answers link opens the Class Review page (HTTP 200);
+  //   - engLinear (other subject) and shortTimer (not assigned) aren't listed,
+  //     and engLinear's Class Review stays refused (404) for this teacher;
+  //   - the Scores grid has the Q&A link next to mathLinear;
+  //   - /teacher/tests/<mathLinear>/results has the Q&A button.
+  // added-tests.json entry:
+  //   { "id": "D-20261113-3", "added": "2026-11-13", "area": "老師/管理員動作",
+  //     "zh": "老師打開自己的班級頁就要看得到「已指派測驗」：只列出指派給這個班、而且是老師自己科目的測驗（別的科目、沒指派給這班的都不能出現），每一列要有交卷／作答中／未開始的人數，按「題目與答案（課堂講解）」要能打開題目頁；成績頁上方也要有這個按鈕" }
+  await check("D-20261113-3", [], "老師打開自己的班級頁就要看得到「已指派測驗」：只列出指派給這個班、而且是老師自己科目的測驗（別的科目、沒指派給這班的都不能出現），每一列要有交卷／作答中／未開始的人數，按「題目與答案（課堂講解）」要能打開題目頁；成績頁上方也要有這個按鈕", "老師/管理員動作", async () => {
+    const TM = TESTS.mathLinear, TE = TESTS.engLinear, TS = TESTS.shortTimer;
+    const teacher = C.teachers[0];
+    const classA = C.classes.find((k) => k.name === "TEST Class A");
+    const st = studentByN(76);
+    if (!teacher?.clerkId || !classA || !st) throw new Error("setup: Teacher 01 / TEST Class A / student 076 not found");
+
+    // Setup facts (else the check means nothing).
+    const { data: link } = await db.from("class_group_teachers").select("subject").eq("class_group_id", classA.id).eq("teacher_id", teacher.id).maybeSingle();
+    if (link?.subject !== "Math") throw new Error(`setup: Teacher 01 should teach class A as Math, got ${link?.subject ?? "no link"}`);
+    const { data: asg } = await db.from("test_assignments").select("test_id, class_group_ids, teacher_ids, student_ids").in("test_id", [TM, TE, TS]);
+    const asgOf = (id) => (asg ?? []).find((a) => a.test_id === id);
+    for (const id of [TM, TE]) if (!(asgOf(id)?.class_group_ids ?? []).includes(classA.id)) throw new Error(`setup: ${id} isn't assigned to class A`);
+    for (const id of [TM, TE, TS]) if ((asgOf(id)?.teacher_ids ?? []).includes(teacher.id)) throw new Error(`setup: Teacher 01 is a direct teacher of ${id}`);
+    const { data: mem } = await db.from("class_group_members").select("student_id").eq("class_group_id", classA.id);
+    const classIds = new Set((mem ?? []).map((m) => m.student_id));
+    if (!classIds.has(st.id)) throw new Error("setup: 076 isn't in class A");
+    const qaIds = new Set(C.students.map((s) => s.id));
+    const classSize = [...classIds].filter((id) => qaIds.has(id)).length;
+    const name = async (id) => (await db.from("tests").select("test_name").eq("id", id).single()).data.test_name;
+    const [nameM, nameE, nameS] = [await name(TM), await name(TE), await name(TS)];
+    const tsOrig = asgOf(TS)?.class_group_ids ?? [];
+    if (!tsOrig.includes(classA.id)) throw new Error("setup: shortTimer is expected on class A before the run");
+
+    const orig = C.students[0].id;
+    const problems = [], notes = [];
+    await deleteSubs(st.id, TM);
+    const b = await chromium.launch();
+    try {
+      await db.from("test_assignments").update({ class_group_ids: tsOrig.filter((g) => g !== classA.id) }).eq("test_id", TS);
+
+      // 076 starts mathLinear (stays in progress).
+      await borrowLogin(st.id, STUDENT1_CLERK);
+      const s = await login(b, STUDENT1_CLERK);
+      const start = await s.context.request.post(`${BASE}/api/student/submissions`, { data: { testId: TM } });
+      if (!(await start.json().catch(() => ({}))).data?.id) throw new Error(`setup: 076 couldn't start mathLinear (HTTP ${start.status()})`);
+      await s.context.close();
+      await borrowLogin(orig, STUDENT1_CLERK);
+
+      const { page, context } = await login(b, teacher.clerkId);
+      const res = await page.goto(`${BASE}/teacher/classes/${classA.id}`, { waitUntil: "networkidle" });
+      if (res?.status() !== 200) throw new Error(`class page → HTTP ${res?.status()}`);
+      const section = page.locator("section[aria-labelledby=assigned-tests-heading]");
+      if (!(await section.isVisible().catch(() => false))) {
+        problems.push("class page has no Assigned Tests section");
+      } else {
+        const secText = await section.innerText();
+        const scoresBox = await page.locator("#assigned-tests-heading").boundingBox();
+        const scoresHead = await page.locator("#class-scores-heading").boundingBox();
+        if (scoresBox && scoresHead && scoresBox.y > scoresHead.y) problems.push("Assigned Tests isn't above Scores");
+
+        // Listed: mathLinear, with counts that add up.
+        const row = section.locator("tbody tr", { hasText: nameM }).first();
+        if (!(await row.isVisible().catch(() => false))) problems.push(`mathLinear "${nameM}" not listed`);
+        else {
+          const rowText = await row.innerText();
+          const m = rowText.match(/(\d+)\/(\d+) done(?: · (\d+) in progress)?(?: · (\d+) not started)?/);
+          if (!m) problems.push(`mathLinear row has no completion line: ${rowText.replace(/\s+/g, " ").slice(0, 160)}`);
+          else {
+            const [sub, total, prog, not] = m.slice(1).map((x) => Number(x ?? 0));
+            if (total !== classSize) problems.push(`row total ${total} ≠ class A size ${classSize}`);
+            if (sub + prog + not !== total) problems.push(`counts don't add up: ${m[0]}`);
+            if (prog < 1) problems.push(`076 started but row says ${prog} in progress`);
+            notes.push(`row: ${m[0]}`);
+          }
+          // Expand ("▸ N students"): 076 shows In progress.
+          await row.getByRole("button", { name: /\d+ (students?|名?學生)/ }).click();
+          const list = section.locator(`[id="assigned-students-${TM}"]`);
+          await list.waitFor({ timeout: 10000 }).catch(() => {});
+          const item = list.locator("tbody tr", { hasText: st.name }).first();
+          const itemText = (await item.innerText().catch(() => "")).replace(/\s+/g, " ");
+          if (!/In progress/.test(itemText)) problems.push(`expanded list: 076 isn't "In progress" (${itemText.slice(0, 80) || "not listed"})`);
+
+          // Questions & answers → Class Review page, HTTP 200.
+          const qa = row.locator(`a[href="/teacher/tests/${TM}/review"]`).first();
+          if (!(await qa.isVisible().catch(() => false))) problems.push("mathLinear row has no Questions & answers link");
+          else {
+            const label = (await qa.innerText()).trim();
+            const r = await context.request.get(`${BASE}/teacher/tests/${TM}/review`);
+            if (r.status() !== 200) problems.push(`Questions & answers → HTTP ${r.status()}`);
+            notes.push(`Q&A "${label}" → ${r.status()}`);
+          }
+          if (!(await row.locator(`a[href="/teacher/tests/${TM}/results"]`).first().isVisible().catch(() => false))) problems.push("mathLinear row has no Results link");
+        }
+
+        // Not listed: other subject, and same subject not assigned to the class.
+        if (secText.includes(nameE)) problems.push(`engLinear "${nameE}" (R&W, other subject) is listed`);
+        if (secText.includes(nameS)) problems.push(`shortTimer "${nameS}" (not assigned to class A) is listed`);
+        const eng = await context.request.get(`${BASE}/teacher/tests/${TE}/review`);
+        if (eng.status() === 200) problems.push(`engLinear Class Review opens for the Math teacher (HTTP ${eng.status()})`);
+      }
+
+      // Scores grid: Q&A link next to the test name.
+      const gridQa = page.locator("section[aria-labelledby=class-scores-heading]").locator(`a[href="/teacher/tests/${TM}/review"]`).first();
+      if (!(await gridQa.isVisible().catch(() => false))) problems.push("Scores grid has no Q&A link next to mathLinear");
+
+      // Results page: Q&A button at the top.
+      const rr = await page.goto(`${BASE}/teacher/tests/${TM}/results`, { waitUntil: "networkidle" });
+      const top = page.locator(`a[href="/teacher/tests/${TM}/review"]`).first();
+      if (rr?.status() !== 200) problems.push(`results page → HTTP ${rr?.status()}`);
+      else if (!(await top.isVisible().catch(() => false))) problems.push("results page has no Questions & answers button");
+      await context.close();
+    } finally {
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      await deleteSubs(st.id, TM).catch(() => {});
+      await db.from("test_assignments").update({ class_group_ids: tsOrig }).eq("test_id", TS);
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
+
+
+  // ── D-20261114-1 ─────────────────────────────────────────
+  // A student with extended time (×2) gets stuck and the admin presses
+  // "Reset" — first on Module 1 mid-way, later on Module 2. The reset exam
+  // must still carry ×2 (POST /api/admin/submissions/[id]/reset keeps
+  // metadata.time_multiplier via resetSubmissionMetadata), restart with the
+  // FULL extended time, still accept saves past the normal limit + grace,
+  // and a reset Module 2 must be resumed by Start (not refused as a retake,
+  // not a new attempt) with its clock restarted. shortTimer (2 + 2 min),
+  // student 074, QA admin, API only (~15 s).
+  await check("D-20261114-1", [], "有「延長時間 ×2」的學生考到一半卡住，管理員按「重設」考卷（第一模組、第二模組都試）：重設後的考卷還是要有加倍的時間、而且從完整的加倍時間重新開始；超過原本時間後選的答案還是存得進去；第二模組重設後按開始要回到同一份第二模組（不能說不能重考、也不能變成新的一次），交卷算準時、答案有算分", "計時", () =>
+    asStudent(74, TESTS.shortTimer, async ({ s, b, context }) => {
+      const T = TESTS.shortTimer;
+      const R = context.request;
+      const t = (await db.from("tests").select("module_id,module_2_id,time_limit_minutes,time_limit_minutes_module_2,is_untimed,is_adaptive").eq("id", T).single()).data;
+      if (!t || t.is_untimed || t.is_adaptive || !t.module_2_id) throw new Error("setup: shortTimer must be a timed two-module linear test");
+      const MULT = 2, GRACE = 60;
+      const L1 = t.time_limit_minutes * 60, L2 = (t.time_limit_minutes_module_2 ?? t.time_limit_minutes) * 60;
+      const E1 = L1 * MULT, E2 = L2 * MULT;
+      const FF1 = L1 + GRACE + 15, FF2 = L2 + GRACE + 15; // past normal limit + grace, inside ×2
+      if (FF1 > E1 - 30 || FF2 > E2 - 30) throw new Error(`setup: shortTimer limits ${L1}/${L2}s are too long for this check`);
+      const { data: pre } = await db.from("test_time_accommodations").select("student_id").eq("test_id", T);
+      if ((pre ?? []).length) throw new Error(`setup: shortTimer already has ${pre.length} extended-time row(s) (left over?)`);
+      const prof = (await db.from("users").select("metadata").eq("id", s.id).single()).data?.metadata ?? {};
+      if (prof.time_multiplier != null) throw new Error("setup: 074 has a profile testing time (left over?)");
+      const q1 = await moduleQs(t.module_id), q2 = await moduleQs(t.module_2_id);
+      const isKey = (q) => q.question_type === "Multiple Choice" && /^[A-D]$/.test(String(q.correct_answer).trim());
+      const mc1 = q1.filter(isKey), mc2 = q2.filter(isKey);
+      if (mc1.length < 2 || mc2.length < 2) throw new Error("setup: shortTimer needs 2 single-letter MC questions per module");
+      const key = (q) => String(q.correct_answer).trim();
+      const row = async (id) => (await db.from("submissions").select("*").eq("id", id).single()).data;
+      const remaining = async (id) => (await (await R.get(`${BASE}/api/student/submissions/${id}`)).json().catch(() => ({}))).data?.timeRemainingSeconds;
+      const save = (id, q, v) => R.patch(`${BASE}/api/student/submissions/${id}`, { data: { answers: { [q.id]: v }, answersMode: "merge", metadata: {} } });
+      const ago = (sec) => new Date(Date.now() - sec * 1000).toISOString();
+      const problems = [], notes = [];
+      const admin = await login(b, ADMIN_CLERK);
+      const A = admin.context.request;
+      try {
+        const put = await A.put(`${BASE}/api/admin/tests/${T}/accommodations`, { data: { studentId: s.id, multiplier: MULT } });
+        if (put.status() !== 200) throw new Error(`setup: admin sets ×${MULT} → HTTP ${put.status()} ${(await put.text()).slice(0, 120)}`);
+
+        // ── Module 1: start, answer, time runs on, admin resets.
+        const st = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        const m1 = (await st.json().catch(() => ({}))).data?.id;
+        if (!m1) throw new Error(`setup: start → HTTP ${st.status()}`);
+        if ((await row(m1)).metadata?.time_multiplier !== MULT) throw new Error(`setup: attempt not stamped ×${MULT} (${JSON.stringify((await row(m1)).metadata)})`);
+        if ((await save(m1, mc1[0], key(mc1[0]))).status() !== 200) throw new Error("setup: first Module 1 save failed");
+        await db.from("submissions").update({ started_at: ago(200) }).eq("id", m1).eq("status", "In Progress");
+        const before = await remaining(m1);
+        const rs1 = await A.post(`${BASE}/api/admin/submissions/${m1}/reset`, {});
+        if (rs1.status() !== 200) throw new Error(`setup: admin reset Module 1 → HTTP ${rs1.status()} ${(await rs1.text()).slice(0, 120)}`);
+        const r1 = await row(m1);
+        const rem1 = await remaining(m1);
+        notes.push(`M1: ${before}s left before reset → ${rem1}s after (×${r1.metadata?.time_multiplier ?? "none"})`);
+        if (r1.status !== "In Progress" || Object.keys(r1.answers ?? {}).length) problems.push(`after the Module 1 reset the row is ${r1.status} with ${Object.keys(r1.answers ?? {}).length} answers`);
+        if (r1.metadata?.time_multiplier !== MULT) problems.push(`the Module 1 reset dropped the extended time (metadata ${JSON.stringify(r1.metadata)})`);
+        if (!(typeof rem1 === "number" && rem1 >= E1 - 15 && rem1 <= E1)) problems.push(`after the Module 1 reset the student has ${rem1}s, expected the full extended ${E1}s`);
+        // Past the normal limit + grace (but inside ×2): the save must land.
+        await db.from("submissions").update({ started_at: ago(FF1) }).eq("id", m1).eq("status", "In Progress");
+        const sv1 = await save(m1, mc1[1], key(mc1[1]));
+        const r1b = await row(m1);
+        if (sv1.status() !== 200 || r1b.answers?.[mc1[1].id] !== key(mc1[1])) problems.push(`after the reset, a save ${FF1}s in (inside ×${MULT}) → HTTP ${sv1.status()}, saved ${r1b.answers?.[mc1[1].id] === key(mc1[1])}`);
+        const sb1 = await R.post(`${BASE}/api/student/submissions/${m1}/submit`, { data: { metadata: {} } });
+        const sb1j = await sb1.json().catch(() => ({}));
+        const r1c = await row(m1);
+        notes.push(`M1 submit ${FF1}s in → ${sb1.status()} ${r1c.status} ${r1c.correct_count}/${r1c.total_questions}`);
+        if (sb1.status() !== 200 || r1c.status !== "Submitted" || r1c.correct_count !== 1) problems.push(`Module 1 after the reset: submit → HTTP ${sb1.status()}, ${r1c.status}, ${r1c.correct_count} right (expected Submitted, 1 right — only the answer given after the reset)`);
+        const m2 = sb1j.data?.nextSubmissionId ?? (await subs(s.id, T)).find((x) => x.adaptive_track && x.adaptive_track !== "module_1")?.id;
+        if (!m2) throw new Error(`setup: no Module 2 after the Module 1 submit (${JSON.stringify(sb1j).slice(0, 120)})`);
+
+        // ── Module 2: open, answer, time runs on, admin resets it.
+        const rem2a = await remaining(m2); // opening stamps the clock
+        if ((await save(m2, mc2[0], key(mc2[0]))).status() !== 200) throw new Error("setup: first Module 2 save failed");
+        const m2row = await row(m2);
+        if (m2row.metadata?.time_multiplier !== MULT) problems.push(`Module 2 didn't inherit ×${MULT} (${JSON.stringify(m2row.metadata?.time_multiplier)})`);
+        await db.from("submissions").update({ metadata: { ...m2row.metadata, module_2_started_at: ago(200), answers_version: (m2row.metadata?.answers_version ?? 0) + 1 } }).eq("id", m2).eq("status", "In Progress");
+        const before2 = await remaining(m2);
+        const rs2 = await A.post(`${BASE}/api/admin/submissions/${m2}/reset`, {});
+        if (rs2.status() !== 200) throw new Error(`setup: admin reset Module 2 → HTTP ${rs2.status()} ${(await rs2.text()).slice(0, 120)}`);
+        const r2 = await row(m2);
+        if (r2.status !== "In Progress" || Object.keys(r2.answers ?? {}).length) problems.push(`after the Module 2 reset the row is ${r2.status} with ${Object.keys(r2.answers ?? {}).length} answers`);
+        if (r2.metadata?.time_multiplier !== MULT) problems.push(`the Module 2 reset dropped the extended time (metadata ${JSON.stringify(r2.metadata)})`);
+        const r1d = await row(m1);
+        if (r1d.status !== "Submitted" || r1d.correct_count !== r1c.correct_count) problems.push(`resetting Module 2 changed Module 1 (${r1d.status}, ${r1d.correct_count})`);
+        // The student presses Start / Resume on the test page.
+        const st2 = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        const st2j = await st2.json().catch(() => ({}));
+        const rows = await subs(s.id, T);
+        notes.push(`M2 opened ${rem2a}s; ${before2}s left before reset; Start after reset → ${st2.status()} ${st2j.data?.id === m2 ? "same Module 2" : JSON.stringify(st2j).slice(0, 80)}`);
+        if (st2.status() >= 300 || st2j.data?.id !== m2) problems.push(`after the Module 2 reset, Start → HTTP ${st2.status()} ${JSON.stringify(st2j).slice(0, 100)} (expected to resume the reset Module 2)`);
+        if (rows.length !== 2 || rows.some((x) => x.attempt_number !== 1)) problems.push(`after the Module 2 reset + Start there are ${rows.length} rows ${JSON.stringify(rows.map((x) => [x.attempt_number, x.adaptive_track, x.status]))}`);
+        const rem2 = await remaining(m2);
+        notes.push(`M2 after reset ${rem2}s`);
+        if (!(typeof rem2 === "number" && rem2 >= E2 - 15 && rem2 <= E2)) problems.push(`after the Module 2 reset the student has ${rem2}s, expected the full extended ${E2}s`);
+        const m2r = await row(m2);
+        await db.from("submissions").update({ metadata: { ...m2r.metadata, module_2_started_at: ago(FF2), answers_version: (m2r.metadata?.answers_version ?? 0) + 1 } }).eq("id", m2).eq("status", "In Progress");
+        const sv2 = await save(m2, mc2[1], key(mc2[1]));
+        const r2b = await row(m2);
+        if (sv2.status() !== 200 || r2b.answers?.[mc2[1].id] !== key(mc2[1])) problems.push(`after the Module 2 reset, a save ${FF2}s in (inside ×${MULT}) → HTTP ${sv2.status()}, saved ${r2b.answers?.[mc2[1].id] === key(mc2[1])}`);
+        const sb2 = await R.post(`${BASE}/api/student/submissions/${m2}/submit`, { data: { metadata: {} } });
+        const r2c = await row(m2);
+        notes.push(`M2 submit ${FF2}s in → ${sb2.status()} ${r2c.status} ${r2c.correct_count}/${r2c.total_questions}`);
+        if (sb2.status() !== 200 || r2c.status !== "Submitted" || r2c.correct_count !== 1) problems.push(`Module 2 after the reset: submit → HTTP ${sb2.status()}, ${r2c.status}, ${r2c.correct_count} right (expected Submitted, 1 right)`);
+      } finally {
+        await A.put(`${BASE}/api/admin/tests/${T}/accommodations`, { data: { studentId: s.id, multiplier: null } }).catch(() => {});
+        await db.from("test_time_accommodations").delete().eq("test_id", T).eq("student_id", s.id);
+        await admin.context.close().catch(() => {});
+      }
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 2 * 60 * 1000);
+
+  // ── D-20261114-2 ─────────────────────────────────────────
+  // Adaptive test, pressed many times at once (two tabs / phone + laptop /
+  // a resend): the 2026-11-13 start-race fix (lib/start-race.ts) was
+  // checked on linear tests only. Here: (A) Start ×6 at once on the
+  // adaptive test → one Module 1, every request opens it. (B) Module 1 is
+  // graded but its Module 2 row is missing (the state the recovery path
+  // exists for: a failed handoff); the student presses "Continue to
+  // Module 2" in one tab while another tab reloads the exam page — 4 POST
+  // starts + 2 take-page loads at once, each of which runs recoverModule2.
+  // Exactly one Module 2, on the right adaptive track, same session, every
+  // POST opens it, the pages load. (C) Module 2 saves and submits. (D)
+  // After finishing (no retakes), Start ×6 → all refused, nothing created.
+  // adaptive, student 077, API only (~15 s).
+  await check("D-20261114-2", [], "自適應測驗（第二模組分難易）同時按好幾次「開始考試」只能開出一份；第一模組交了但第二模組沒建好時，學生在一個分頁按「繼續第二模組」、另一個分頁同時重新整理考試頁：只能開出一份第二模組、難度要對，每一次按都進到同一份，頁面不能出錯；考完後再同時按開始，全部都要被拒絕、不能多出新的考卷", "考試流程", () =>
+    asStudent(77, TESTS.adaptive, async ({ s, context }) => {
+      const T = TESTS.adaptive;
+      const R = context.request;
+      const N = 6;
+      const t = (await db.from("tests").select("allow_retake,is_adaptive,adaptive_threshold,module_1_id,module_2_easy_id,module_2_hard_id,due_date,open_date,status").eq("id", T).single()).data;
+      if (!t?.is_adaptive || !t.module_2_easy_id || !t.module_2_hard_id) throw new Error("setup: the adaptive test needs both Module 2 tracks");
+      if (t.allow_retake) throw new Error("setup: the adaptive test now allows retakes (part D expects refusals)");
+      const { data: gr0 } = await db.from("test_retake_grants").select("id").eq("test_id", T).eq("student_id", s.id).is("consumed_at", null);
+      if ((gr0 ?? []).length) throw new Error("setup: 077 has an open retake grant on the adaptive test (left over?)");
+      const thr = t.adaptive_threshold ?? 60;
+      const qs = await moduleQs(t.module_1_id);
+      const problems = [], notes = [];
+      const post = async () => {
+        const r = await R.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        const j = await r.json().catch(() => ({}));
+        return { status: r.status(), id: j.data?.id ?? null, err: j.error ?? null };
+      };
+      const summary = (rs) => {
+        const by = {};
+        for (const r of rs) { const k = r.status < 300 ? `${r.status}` : `${r.status} "${String(r.err).slice(0, 40)}"`; by[k] = (by[k] ?? 0) + 1; }
+        return Object.entries(by).map(([k, v]) => `${v}×${k}`).join(", ");
+      };
+
+      // A) Start ×6 at once.
+      const ra = await Promise.all(Array.from({ length: N }, post));
+      const rowsA = await subs(s.id, T);
+      notes.push(`start ×${N}: ${summary(ra)}; rows ${rowsA.length}`);
+      if (rowsA.length !== 1 || rowsA[0].adaptive_track !== "module_1" || rowsA[0].status !== "In Progress") problems.push(`adaptive Start ×${N} at once left ${rowsA.length} rows ${JSON.stringify(rowsA.map((r) => [r.attempt_number, r.adaptive_track, r.status]))} (expected one Module 1)`);
+      const m1 = rowsA[0]?.id;
+      if (!m1) throw new Error(`no attempt created: ${summary(ra)}`);
+      const badA = ra.filter((r) => r.status >= 300 || r.id !== m1);
+      if (badA.length) problems.push(`adaptive Start ×${N}: ${badA.length} of ${N} did not open the attempt (${summary(badA)})`);
+
+      // Module 1: every A–D-keyed MC right, the rest wrong → known track.
+      const right = (q) => q.question_type === "Multiple Choice" && /^[A-D]$/.test(String(q.correct_answer ?? "").trim().toUpperCase());
+      const ans = Object.fromEntries(qs.map((q) => {
+        const k = String(q.correct_answer ?? "").trim().toUpperCase();
+        if (right(q)) return [q.id, k];
+        if (q.question_type === "Multiple Choice") return [q.id, ["A", "B", "C", "D"].find((l) => l !== k)];
+        return [q.id, "99999"];
+      }));
+      const kRight = qs.filter(right).length;
+      const want = Math.round((kRight / qs.length) * 1000) / 10 >= thr ? "module_2_hard" : "module_2_easy";
+      const wantMod = want === "module_2_hard" ? t.module_2_hard_id : t.module_2_easy_id;
+      const sb = await R.post(`${BASE}/api/student/submissions/${m1}/submit`, { data: { answers: ans, answersMode: "merge", metadata: {} } });
+      const sbj = await sb.json().catch(() => ({}));
+      if (sb.status() !== 200) throw new Error(`setup: Module 1 submit → ${sb.status()} ${JSON.stringify(sbj).slice(0, 100)}`);
+      const m1row = (await db.from("submissions").select("status,correct_count,total_questions,session_id,percentage").eq("id", m1).single()).data;
+      if (m1row.correct_count !== kRight) throw new Error(`setup: Module 1 graded ${m1row.correct_count}, intended ${kRight}`);
+      // The handoff's Module 2 goes away → the "Module 2 missing" state.
+      const handoff = (await subs(s.id, T)).filter((r) => String(r.adaptive_track).startsWith("module_2"));
+      if (handoff.length !== 1) throw new Error(`setup: Module 1 submit created ${handoff.length} Module 2 rows`);
+      if (handoff[0].adaptive_track !== want) problems.push(`normal submit routed ${m1row.correct_count}/${m1row.total_questions} (${m1row.percentage}%) to ${handoff[0].adaptive_track}, expected ${want}`);
+      await db.from("answer_records").delete().eq("submission_id", handoff[0].id);
+      await db.from("submissions").delete().eq("id", handoff[0].id);
+
+      // B) "Continue to Module 2" ×4 + take page reload ×2, all at once.
+      const page = async () => {
+        const r = await R.get(`${BASE}/student/tests/${T}/take`);
+        const body = await r.text();
+        const onTake = new URL(r.url()).pathname === `/student/tests/${T}/take`;
+        return { status: r.status(), err: !onTake || /Application error|Internal Server Error|This page couldn.t load/i.test(body), url: new URL(r.url()).pathname };
+      };
+      const [rb, pages] = await Promise.all([
+        Promise.all(Array.from({ length: 4 }, post)),
+        Promise.all(Array.from({ length: 2 }, page)),
+      ]);
+      const rowsB = await subs(s.id, T);
+      const m2s = rowsB.filter((r) => String(r.adaptive_track).startsWith("module_2"));
+      notes.push(`continue ×4 + page ×2: ${summary(rb)}; pages ${pages.map((p) => p.status).join(",")}; Module 2 rows ${m2s.length} (${m2s.map((r) => r.adaptive_track).join(",")})`);
+      if (m2s.length !== 1) problems.push(`"Continue to Module 2" pressed at once with a reload: ${m2s.length} Module 2 rows ${JSON.stringify(m2s.map((r) => [r.adaptive_track, r.status]))} (expected one)`);
+      const m2 = m2s[0];
+      if (m2) {
+        if (m2.adaptive_track !== want || m2.module_id !== wantMod) problems.push(`recovered Module 2 is ${m2.adaptive_track}, expected ${want}`);
+        if (m2.session_id !== m1row.session_id || m2.attempt_number !== 1 || m2.status !== "In Progress") problems.push(`recovered Module 2: session same ${m2.session_id === m1row.session_id}, attempt ${m2.attempt_number}, ${m2.status}`);
+      }
+      const badB = rb.filter((r) => r.status >= 300 || r.id !== m2?.id);
+      if (badB.length) problems.push(`"Continue to Module 2" ×4 at once: ${badB.length} of 4 did not open Module 2 (${summary(badB)})`);
+      const badP = pages.filter((p) => p.status >= 400 || p.err);
+      if (badP.length) problems.push(`${badP.length} of 2 exam-page reloads during the Continue burst did not open Module 2: ${badP.map((p) => (p.url.endsWith("/take") ? `HTTP ${p.status} error page` : `bounced to ${p.url.replace(T, "<test>")} (HTTP ${p.status})`)).join(", ")} — take page found no open module, then recoverModule2 returned null because a parallel request had just created Module 2`);
+      const m1after = (await db.from("submissions").select("status,correct_count").eq("id", m1).single()).data;
+      if (m1after.status !== m1row.status || m1after.correct_count !== m1row.correct_count) problems.push(`the Continue burst changed Module 1 (${m1after.status} ${m1after.correct_count})`);
+      if (rowsB.filter((r) => r.adaptive_track === "module_1").length !== 1) problems.push("the Continue burst created another Module 1");
+
+      // C) Module 2 saves and submits.
+      if (m2) {
+        const q2 = (await moduleQs(m2.module_id)).find(right);
+        if (q2) {
+          const p = await R.patch(`${BASE}/api/student/submissions/${m2.id}`, { data: { answers: { [q2.id]: String(q2.correct_answer).trim().toUpperCase() }, answersMode: "merge", metadata: {} } });
+          if (p.status() !== 200) problems.push(`Module 2 save → HTTP ${p.status()}`);
+        }
+        const s2 = await R.post(`${BASE}/api/student/submissions/${m2.id}/submit`, { data: { metadata: {} } });
+        const r2 = (await db.from("submissions").select("status,correct_count").eq("id", m2.id).single()).data;
+        notes.push(`M2 submit → ${s2.status()} ${r2.status} ${r2.correct_count} right`);
+        if (s2.status() !== 200 || r2.status !== "Submitted" || (q2 && r2.correct_count !== 1)) problems.push(`Module 2 submit → HTTP ${s2.status()}, ${r2.status}, ${r2.correct_count} right`);
+      }
+
+      // D) Finished, no retakes: Start ×6 → all refused, nothing new.
+      const before = (await subs(s.id, T)).length;
+      const rd = await Promise.all(Array.from({ length: N }, post));
+      const after = await subs(s.id, T);
+      notes.push(`after finishing, start ×${N}: ${summary(rd)}`);
+      if (rd.some((r) => r.status !== 403) || after.length !== before) problems.push(`after finishing (no retakes), Start ×${N} at once → ${summary(rd)}, rows ${before}→${after.length} (expected all 403, nothing new)`);
+
+      if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+      return notes.join("; ");
+    }), 2 * 60 * 1000);
+
+
+  // ── D-20261114-6 ─────────────────────────────────────────
+  // Teachers publish their own tests (Premier ticket 93e0f09e item 5). A
+  // throwaway copy of mathLinear created by QA Teacher 01 with teacher_ids
+  // [Teacher 01]: Teacher 01 publishes it (refused with the no_modules
+  // reason while it has no module) → close → reopen → back to draft →
+  // publish; once student 076 has started, back to draft is refused (409)
+  // and it stays Published. Teacher 02 (not on teacher_ids, not the
+  // creator) gets 403 on publish / readiness. Then the test is handed to
+  // Class A only (creator → Admin 01, teacher_ids empty): Teacher 01, now
+  // only Class A's teacher, still reaches the test (analytics 200) but gets
+  // 403 on close / back to draft. Everything deleted in finally.
+  await check("D-20261114-6", [], "老師自己管理的測驗可以自己改狀態：建立者／名單上的老師可以發布（沒有模組時要被拒絕並說明原因）→關閉→重新開放→退回草稿；有學生開始後退回草稿要被拒絕；不在名單上的老師、只是被指派班級的班導，按發布／關閉都要被拒絕（403）", "老師/管理員動作", async () => {
+    const T1 = C.teachers[0], T2 = C.teachers[1], admin = C.admins[0];
+    const classA = C.classes.find((k) => k.name === "TEST Class A");
+    if (!T1?.clerkId || !T2?.clerkId || !admin || !classA) throw new Error("setup: Teacher 01 / Teacher 02 (with logins) / Admin 01 / Class A missing from cast");
+    const { data: tcls } = await db.from("class_group_teachers").select("class_group_id").eq("teacher_id", T1.id);
+    if (!(tcls ?? []).some((r) => r.class_group_id === classA.id)) throw new Error("setup: Teacher 01 isn't a teacher of Class A");
+    const s = studentByN(76);
+    if (!s) throw new Error("setup: student 076 not found");
+    const { data: src, error: srcErr } = await db.from("tests").select("*").eq("id", TESTS.mathLinear).single();
+    if (srcErr || !src) throw new Error(`setup: mathLinear not found (${srcErr?.message})`);
+
+    const MOD_COLS = ["module_id", "module_2_id", "module_1_id", "module_2_easy_id", "module_2_hard_id"];
+    const name = `QA D-20261114-6 teacher status ${Date.now()}`;
+    const { id: _id, created_at: _c, updated_at: _u, ...copy } = src;
+    void _id; void _c; void _u;
+    const noModules = Object.fromEntries(MOD_COLS.map((c) => [c, null]));
+    const { data: tmp, error: insErr } = await db.from("tests")
+      .insert({ ...copy, ...noModules, test_name: name, status: "Draft", created_by: T1.id, parent_test_id: null }).select("id").single();
+    if (insErr || !tmp) throw new Error(`setup: couldn't create the throwaway test (${insErr?.message})`);
+    const T = tmp.id;
+    const problems = [], notes = [];
+    const statusOf = async () => (await db.from("tests").select("status").eq("id", T).single()).data?.status;
+    let b = null;
+    try {
+      const { error: aErr } = await db.from("test_assignments")
+        .insert({ test_id: T, teacher_ids: [T1.id], student_ids: [], class_group_ids: [], created_by: T1.id });
+      if (aErr) throw new Error(`setup: couldn't create the assignment (${aErr.message})`);
+
+      b = await chromium.launch();
+      const t1 = await login(b, T1.clerkId);
+      const t2 = await login(b, T2.clerkId);
+      const act = async (ctx, a) => {
+        const r = await ctx.request.post(`${BASE}/api/teacher/tests/${T}/${a}`);
+        return { status: r.status(), j: await r.json().catch(() => ({})) };
+      };
+      const readiness = async (ctx) => {
+        const r = await ctx.request.get(`${BASE}/api/teacher/tests/${T}/readiness`);
+        return { status: r.status(), data: (await r.json().catch(() => ({}))).data };
+      };
+
+      // 1) Teacher 01, Draft with no module → publish refused with the reason.
+      const r0 = await readiness(t1.context);
+      if (r0.status !== 200 || !r0.data?.blockers?.some((x) => x.code === "no_modules"))
+        problems.push(`Teacher 01 readiness (no module) → HTTP ${r0.status} ${JSON.stringify(r0.data?.blockers ?? null).slice(0, 120)} (expected 200 + no_modules)`);
+      const p0 = await act(t1.context, "publish");
+      if (p0.status !== 409 || !p0.j.blockers?.some((x) => x.code === "no_modules") || !String(p0.j.error ?? "").includes("No module"))
+        problems.push(`Teacher 01 publish without a module → HTTP ${p0.status} ${JSON.stringify(p0.j).slice(0, 120)} (expected 409 "No module selected")`);
+      if ((await statusOf()) !== "Draft") problems.push("publish without a module changed the status");
+      notes.push(`no module: publish ${p0.status} "${String(p0.j.error ?? "").slice(0, 40)}"`);
+
+      // 2) Teacher 02: not on teacher_ids, not the creator → 403, nothing changes.
+      const p2 = await act(t2.context, "publish");
+      const r2 = await readiness(t2.context);
+      if (p2.status !== 403) problems.push(`Teacher 02 (not on the test) publish → HTTP ${p2.status} (expected 403)`);
+      if (r2.status !== 403) problems.push(`Teacher 02 (not on the test) readiness → HTTP ${r2.status} (expected 403)`);
+      if ((await statusOf()) !== "Draft") problems.push(`after Teacher 02's publish the status is ${await statusOf()}`);
+      notes.push(`Teacher 02: publish ${p2.status}, readiness ${r2.status}`);
+
+      // 3) Modules back + assigned to 076 → Teacher 01 publish → close → reopen → draft → publish.
+      const { error: mErr } = await db.from("tests").update(Object.fromEntries(MOD_COLS.map((c) => [c, src[c]]))).eq("id", T);
+      if (mErr) throw new Error(`setup: couldn't restore modules (${mErr.message})`);
+      const { error: sErr } = await db.from("test_assignments").update({ student_ids: [s.id] }).eq("test_id", T);
+      if (sErr) throw new Error(`setup: couldn't assign student 076 (${sErr.message})`);
+      const r1 = await readiness(t1.context);
+      if (!r1.data?.canPublish) problems.push(`with modules: Teacher 01 readiness still blocked ${JSON.stringify(r1.data?.blockers ?? r1.status)}`);
+      for (const [a, want] of [["publish", "Published"], ["close", "Closed"], ["reopen", "Published"], ["draft", "Draft"], ["publish", "Published"]]) {
+        const r = await act(t1.context, a);
+        const st = await statusOf();
+        if (r.status !== 200 || st !== want) problems.push(`Teacher 01 ${a} → HTTP ${r.status} status ${st} (expected 200 ${want}) ${String(r.j.error ?? "")}`);
+      }
+      notes.push("Teacher 01 publish/close/reopen/draft/publish ok");
+
+      // 4) 076 starts → back to draft refused, still Published.
+      await asStudent(76, T, async ({ context: sc }) => {
+        const start = await sc.request.post(`${BASE}/api/student/submissions`, { data: { testId: T } });
+        const subId = (await start.json().catch(() => ({}))).data?.id;
+        if (!subId) throw new Error(`student start failed ${start.status()}`);
+        const d = await act(t1.context, "draft");
+        if (d.status !== 409) problems.push(`Teacher 01 back to draft with a submission → HTTP ${d.status} (expected 409)`);
+        if ((await statusOf()) !== "Published") problems.push(`after refused back-to-draft the status is ${await statusOf()}`);
+        const rr = await readiness(t1.context);
+        if (rr.data?.hasSubmissions !== true) problems.push("Teacher 01 readiness.hasSubmissions false with a submission");
+        notes.push(`with a submission: draft ${d.status}`);
+      });
+
+      // 5) Class-only reach: creator → Admin 01, teacher_ids empty, Class A assigned.
+      //    Teacher 01 still sees the test through Class A, but may not change it.
+      const { error: cErr } = await db.from("tests").update({ created_by: admin.id }).eq("id", T);
+      const { error: gErr } = await db.from("test_assignments").update({ teacher_ids: [], class_group_ids: [classA.id] }).eq("test_id", T);
+      if (cErr || gErr) throw new Error(`setup: couldn't switch to class-only (${(cErr ?? gErr).message})`);
+      const reach = await t1.context.request.get(`${BASE}/api/teacher/tests/${T}/analytics`);
+      if (reach.status() !== 200) problems.push(`class-only: Teacher 01 analytics → HTTP ${reach.status()} (expected 200 — the test must still reach them through Class A)`);
+      const before = await statusOf();
+      const cc = await act(t1.context, "close");
+      const cd = await act(t1.context, "draft");
+      const cr = await readiness(t1.context);
+      if (cc.status !== 403) problems.push(`class-only teacher close → HTTP ${cc.status} (expected 403)`);
+      if (cd.status !== 403) problems.push(`class-only teacher back to draft → HTTP ${cd.status} (expected 403)`);
+      if (cr.status !== 403) problems.push(`class-only teacher readiness → HTTP ${cr.status} (expected 403)`);
+      if ((await statusOf()) !== before) problems.push(`class-only teacher changed the status ${before} → ${await statusOf()}`);
+      notes.push(`class-only: analytics ${reach.status()}, close ${cc.status}, draft ${cd.status}, readiness ${cr.status}`);
+
+      await t1.context.close();
+      await t2.context.close();
+    } finally {
+      if (b) await b.close().catch(() => {});
+      await deleteSubs(s.id, T).catch(() => {});
+      const { error: dAsg } = await db.from("test_assignments").delete().eq("test_id", T);
+      if (dAsg) console.error(`[D-20261114-6] cleanup: test_assignments delete failed for ${T}: ${dAsg.message}`);
+      const { error: dTest } = await db.from("tests").delete().eq("id", T);
+      if (dTest) console.error(`[D-20261114-6] cleanup: throwaway test ${T} delete failed: ${dTest.message}`);
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 4 * 60 * 1000);
+
+
+  // ── D-20261114-5 ─────────────────────────────────────────
+  // Premier ticket 6a0341ff: teachers print a test from Questions & answers
+  // (Class Review) through the admin's compact print page, gated by the
+  // per-test admin switch "Teachers can view & print questions/answers"
+  // (tests.teacher_qa_enabled, lib/teacher-qa.ts). Separate from the
+  // students' class-review lock (review_unlocked).
+  // Teacher 01 teaches TEST Class A, Math only; mathLinear (Math) and
+  // engLinear (R&W) are assigned to every QA class. The switch on mathLinear
+  // is flipped through the admin API and restored exactly in finally.
+  // Must hold:
+  //   - switch ON: /print/tests/<mathLinear> → 200 with questions laid out,
+  //     and the review page → 200 with a Print link to it;
+  //   - a teacher can't flip the switch (admin-only API → 403);
+  //   - switch OFF: print and review both show "The admin has turned off
+  //     questions & answers for this test" (no questions), and the class
+  //     page's Assigned Tests Q&A button is greyed out (no link); the
+  //     analytics API, question-detail API, a class-A student's result
+  //     (API + page) and its full printout carry no question text, choices,
+  //     correct answer or explanation, but keep numbers / answers / stats;
+  //     the source-PDF page image (200 while ON) is refused (403/404) and
+  //     Teaching Mode quick-test with a mathLinear question is refused (403);
+  //   - engLinear print (other subject) is refused (404) either way;
+  //   - a student (078) is refused print (sent away, no questions).
+  // added-tests.json entry:
+  //   { "id": "D-20261114-5", "added": "2026-11-14", "area": "老師/管理員動作",
+  //     "zh": "老師可以從「題目與答案（課堂講解）」列印自己科目的測驗（只限自己可以打開的測驗）；管理員把「老師可查看與列印題目和答案」關掉後，題目頁和列印都要被擋下並顯示「管理員已關閉此測驗的題目與答案」，班級頁的按鈕要變灰，老師在題目分析、單題分析、學生成績和成績列印裡也看不到題目內容、正確答案和解析（分數和對錯還在）；別的科目永遠不能列印，學生也不能列印" }
+  await check("D-20261114-5", [], "老師可以從「題目與答案（課堂講解）」列印自己科目的測驗（只限自己可以打開的測驗）；管理員把「老師可查看與列印題目和答案」關掉後，題目頁和列印都要被擋下並顯示「管理員已關閉此測驗的題目與答案」，班級頁的按鈕要變灰，老師在題目分析、單題分析、學生成績和成績列印裡也看不到題目內容、正確答案和解析（分數和對錯還在）；別的科目永遠不能列印，學生也不能列印", "老師/管理員動作", async () => {
+    const TM = TESTS.mathLinear, TE = TESTS.engLinear;
+    const teacher = C.teachers[0];
+    const classA = C.classes.find((k) => k.name === "TEST Class A");
+    if (!teacher?.clerkId || !classA) throw new Error("setup: Teacher 01 / TEST Class A not found");
+    const OFF_MSG = /The admin has turned off questions & answers for this test|管理員已關閉此測驗的題目與答案/;
+
+    // Setup facts (else the check means nothing).
+    const { data: link } = await db.from("class_group_teachers").select("subject").eq("class_group_id", classA.id).eq("teacher_id", teacher.id).maybeSingle();
+    if (link?.subject !== "Math") throw new Error(`setup: Teacher 01 should teach class A as Math, got ${link?.subject ?? "no link"}`);
+    const { data: asg } = await db.from("test_assignments").select("test_id, class_group_ids, teacher_ids").in("test_id", [TM, TE]);
+    for (const id of [TM, TE]) {
+      const a = (asg ?? []).find((x) => x.test_id === id);
+      if (!(a?.class_group_ids ?? []).includes(classA.id)) throw new Error(`setup: ${id} isn't assigned to class A`);
+      if ((a?.teacher_ids ?? []).includes(teacher.id)) throw new Error(`setup: Teacher 01 is a direct teacher of ${id}`);
+    }
+    const sw = await db.from("tests").select("id, teacher_qa_enabled, review_unlocked").in("id", [TM, TE]);
+    if (sw.error) throw new Error(`setup: teacher_qa_enabled unreadable (migration 0032 applied?): ${sw.error.message}`);
+    const origOf = Object.fromEntries((sw.data ?? []).map((r) => [r.id, r]));
+    const unlockedBefore = origOf[TM]?.review_unlocked;
+
+    const orig = C.students[0].id;
+    const problems = [], notes = [];
+    const b = await chromium.launch();
+    try {
+      await db.from("tests").update({ teacher_qa_enabled: true }).eq("id", TM);
+      await db.from("tests").update({ teacher_qa_enabled: true }).eq("id", TE);
+      const admin = await login(b, ADMIN_CLERK);
+      const t = await login(b, teacher.clerkId);
+
+      /** Open the print page; returns { status, questions, off }. */
+      const openPrint = async (page, id) => {
+        const r = await page.goto(`${BASE}/print/tests/${id}`, { waitUntil: "domcontentloaded" });
+        const status = r?.status() ?? 0;
+        if (status !== 200) return { status, questions: 0, off: false, url: page.url() };
+        // Either the laid-out preview ("N pages · US Letter") or the refusal.
+        await page.waitForFunction(() => /US Letter|turned off|已關閉/.test(document.body.innerText), null, { timeout: 90000 }).catch(() => {});
+        const text = await page.locator("body").innerText();
+        const questions = await page.locator(".pagedjs_page .print-question").count();
+        return { status, questions, off: OFF_MSG.test(text), url: page.url(), pages: text.match(/(\d+) pages? · US Letter/)?.[1] };
+      };
+
+      // ── switch ON
+      const on = await openPrint(t.page, TM);
+      if (on.status !== 200 || on.questions === 0 || on.off) problems.push(`ON: mathLinear print → HTTP ${on.status}, ${on.questions} questions laid out${on.off ? ", shows the turned-off message" : ""}`);
+      notes.push(`ON print: ${on.questions} questions on ${on.pages ?? "?"} pages`);
+      const rv = await t.page.goto(`${BASE}/teacher/tests/${TM}/review`, { waitUntil: "networkidle" });
+      if (rv?.status() !== 200) problems.push(`ON: review page → HTTP ${rv?.status()}`);
+      else if (!(await t.page.locator(`a[href="/print/tests/${TM}"]`).first().isVisible().catch(() => false))) problems.push("ON: review page has no Print link");
+      const engOn = await t.context.request.get(`${BASE}/print/tests/${TE}`);
+      if (engOn.status() !== 404) problems.push(`ON: engLinear print (other subject) → HTTP ${engOn.status()}, expected 404`);
+
+      // A source-PDF page of a mathLinear question (figure viewer) opens while ON.
+      const { data: tmRow } = await db.from("tests").select("module_id").eq("id", TM).single();
+      const { data: pq } = await db.from("questions").select("id, page_number").eq("module_id", tmRow.module_id).eq("parsing_status", "Approved").order("original_question_number").limit(1);
+      if (!pq?.[0]) throw new Error("setup: mathLinear has no approved question");
+      const pageUrl = `${BASE}/api/modules/${tmRow.module_id}/page/${pq[0].page_number ?? 1}?test=${TM}`;
+      const pgOn = await t.context.request.get(pageUrl);
+      if (pgOn.status() !== 200) problems.push(`ON: module page image → HTTP ${pgOn.status()}, expected 200`);
+
+      // Teacher can't flip the switch (admin-only).
+      const tf = await t.context.request.post(`${BASE}/api/admin/tests/${TM}/teacher-qa`, { data: { enabled: false } });
+      if (tf.status() !== 403) problems.push(`teacher POST teacher-qa → HTTP ${tf.status()}, expected 403`);
+
+      // ── switch OFF (through the admin API)
+      const af = await admin.context.request.post(`${BASE}/api/admin/tests/${TM}/teacher-qa`, { data: { enabled: false } });
+      if (af.status() !== 200) throw new Error(`admin couldn't turn the switch off: HTTP ${af.status()} ${await af.text()}`);
+      const { data: after } = await db.from("tests").select("teacher_qa_enabled, review_unlocked").eq("id", TM).single();
+      if (after.teacher_qa_enabled !== false) problems.push("admin API didn't store teacher_qa_enabled=false");
+      if (after.review_unlocked !== unlockedBefore) problems.push("turning the teacher switch off changed review_unlocked");
+
+      const off = await openPrint(t.page, TM);
+      if (!off.off || off.questions > 0) problems.push(`OFF: mathLinear print → HTTP ${off.status}, ${off.questions} questions, message ${off.off ? "shown" : "missing"}`);
+      await t.page.goto(`${BASE}/teacher/tests/${TM}/review`, { waitUntil: "networkidle" });
+      const rvText = await t.page.locator("main, body").first().innerText();
+      if (!OFF_MSG.test(rvText)) problems.push("OFF: review page doesn't show the turned-off message");
+      if (await t.page.locator(`a[href="/print/tests/${TM}"]`).count()) problems.push("OFF: review page still has the Print link");
+
+      await t.page.goto(`${BASE}/teacher/classes/${classA.id}`, { waitUntil: "networkidle" });
+      const row = t.page.locator("section[aria-labelledby=assigned-tests-heading] tbody tr", { hasText: (await db.from("tests").select("test_name").eq("id", TM).single()).data.test_name }).first();
+      if (!(await row.isVisible().catch(() => false))) problems.push("OFF: mathLinear not listed in Assigned Tests");
+      else {
+        if (await row.locator(`a[href="/teacher/tests/${TM}/review"]`).count()) problems.push("OFF: Assigned Tests Q&A is still a link");
+        const dis = row.locator("[data-teacher-qa-disabled] button[disabled]").first();
+        if (!(await dis.isVisible().catch(() => false))) problems.push("OFF: Assigned Tests Q&A isn't a disabled button");
+        else if (!OFF_MSG.test((await dis.getAttribute("title")) ?? "")) problems.push("OFF: disabled Q&A has no turned-off tooltip");
+      }
+      // No question content anywhere a teacher reaches with the switch OFF.
+      const an = await t.context.request.get(`${BASE}/api/teacher/tests/${TM}/analytics`);
+      const anJson = await an.json().catch(() => ({}));
+      const anQs = (anJson.modules ?? []).flatMap((m) => m.questions ?? []);
+      if (an.status() !== 200 || anQs.length === 0) problems.push(`OFF: analytics API → HTTP ${an.status()}, ${anQs.length} questions`);
+      else {
+        if (anJson.teacherQaOff !== true) problems.push("OFF: analytics API teacherQaOff isn't true");
+        const leaks = anQs.filter((q) => q.questionText != null || q.correctAnswer != null);
+        if (leaks.length) problems.push(`OFF: analytics API returns questionText/correctAnswer for ${leaks.length} question(s)`);
+        if (anQs.some((q) => typeof q.missed !== "number" || q.questionNumber == null)) problems.push("OFF: analytics API lost the per-question stats");
+        const qd = await t.context.request.get(`${BASE}/api/teacher/tests/${TM}/analytics/${anQs[0].questionId}`);
+        const qdJson = await qd.json().catch(() => ({}));
+        const qq = qdJson.question ?? {};
+        if (qd.status() !== 200) problems.push(`OFF: question-detail API → HTTP ${qd.status()}`);
+        else {
+          if (qq.questionText != null || qq.correctAnswer != null || qq.choices != null || qq.explanation != null) problems.push("OFF: question-detail API returns question text / choices / answer / explanation");
+          if (typeof qdJson.stats?.totalSubmissions !== "number") problems.push("OFF: question-detail API lost its stats");
+        }
+      }
+      // A class-A QA student's result, viewed by the teacher.
+      const { data: mem } = await db.from("class_group_members").select("student_id").eq("class_group_id", classA.id);
+      const qaIds = new Set(C.students.map((s) => s.id));
+      const classQa = (mem ?? []).map((m) => m.student_id).filter((id) => qaIds.has(id));
+      const { data: done } = await db.from("submissions").select("id, student_id").eq("test_id", TM).in("status", ["Submitted", "Late"]).in("student_id", classQa).limit(1);
+      const sub = done?.[0];
+      if (!sub) notes.push("no finished class-A attempt on mathLinear: result checks skipped");
+      else {
+        const rr = await t.context.request.get(`${BASE}/api/teacher/tests/${TM}/results/${sub.id}`);
+        const rj = await rr.json().catch(() => ({}));
+        const ans = rj.answers ?? [];
+        if (rr.status() !== 200 || ans.length === 0) problems.push(`OFF: result API → HTTP ${rr.status()}, ${ans.length} answers`);
+        else {
+          if (ans.some((a) => a.questionText != null || a.correctAnswer != null || a.explanation != null || (a.choices ?? []).length > 0 || (a.imageUrls ?? []).length > 0))
+            problems.push("OFF: result API returns question content to the teacher");
+          if (ans.some((a) => a.questionNumber == null || !("studentAnswer" in a) || !("isCorrect" in a))) problems.push("OFF: result API lost number / student answer / right-wrong");
+        }
+        await t.page.goto(`${BASE}/teacher/tests/${TM}/results/${sub.id}`, { waitUntil: "networkidle" });
+        if (!(await t.page.locator("[data-teacher-qa-hidden]").first().isVisible().catch(() => false))) problems.push("OFF: result page doesn't say the question text is hidden");
+        const pr = await t.page.goto(`${BASE}/print/results/${TM}?subs=${sub.id}&mode=full`, { waitUntil: "domcontentloaded" });
+        await t.page.waitForFunction(() => /US Letter|Preview failed/.test(document.body.innerText), null, { timeout: 90000 }).catch(() => {});
+        const prText = await t.page.locator("body").innerText();
+        if (pr?.status() !== 200) problems.push(`OFF: result printout → HTTP ${pr?.status()}`);
+        else if (await t.page.locator(".pagedjs_page .print-stem").count()) problems.push("OFF: full result printout still prints question stems");
+        else if (!/hidden by the admin/.test(prText) && /Answer:/.test(prText)) problems.push("OFF: full result printout has no hidden-content note");
+        notes.push(`result ${sub.id.slice(0, 8)}: ${ans.length} answers, no content`);
+      }
+
+      // Other doors to the same questions: the source-PDF page and Teaching
+      // Mode's quick test.
+      const pgOff = await t.context.request.get(pageUrl);
+      if (![403, 404].includes(pgOff.status())) problems.push(`OFF: module page image → HTTP ${pgOff.status()}, expected 403/404`);
+      const qt = await t.context.request.post(`${BASE}/api/teacher/teaching-mode/quick-test`, { data: { name: "qa nightly D-20261114-5 (must be refused)", questionIds: [pq[0].id] } });
+      const qtJson = await qt.json().catch(() => ({}));
+      if (qt.status() !== 403) {
+        problems.push(`OFF: quick-test with a mathLinear question → HTTP ${qt.status()}, expected 403`);
+        const made = qtJson.data?.id;
+        if (made) {
+          await db.from("test_assignments").delete().eq("test_id", made);
+          await db.from("tests").delete().eq("id", made);
+        }
+      } else if (!/turned off/.test(qtJson.error ?? "")) problems.push("OFF: quick-test 403 without the turned-off message");
+
+      // Results stay open for the teacher.
+      const res = await t.context.request.get(`${BASE}/teacher/tests/${TM}/results`);
+      if (res.status() !== 200) problems.push(`OFF: results page → HTTP ${res.status()} (teachers must still see results)`);
+      const engOff = await t.context.request.get(`${BASE}/print/tests/${TE}`);
+      if (engOff.status() !== 404) problems.push(`OFF: engLinear print → HTTP ${engOff.status()}, expected 404`);
+      // Admins are never blocked.
+      const ap = await openPrint(admin.page, TM);
+      if (ap.status !== 200 || ap.questions === 0 || ap.off) problems.push(`OFF: admin print → HTTP ${ap.status}, ${ap.questions} questions`);
+      await t.context.close();
+      await admin.context.close();
+
+      // ── a student is refused print (switch back ON so it isn't the switch refusing)
+      await db.from("tests").update({ teacher_qa_enabled: true }).eq("id", TM);
+      const st = studentByN(78);
+      if (!st) throw new Error("student 078 not found");
+      await borrowLogin(st.id, STUDENT1_CLERK);
+      const s = await login(b, STUDENT1_CLERK);
+      const sp = await openPrint(s.page, TM);
+      if (sp.questions > 0 || /\/print\/tests\//.test(new URL(sp.url).pathname)) problems.push(`student print → ${sp.status} at ${sp.url}, ${sp.questions} questions`);
+      notes.push(`student → ${new URL(sp.url).pathname}`);
+      await s.context.close();
+    } finally {
+      await b.close().catch(() => {});
+      await borrowLogin(orig, STUDENT1_CLERK).catch(() => {});
+      for (const id of [TM, TE]) {
+        await db.from("tests").update({ teacher_qa_enabled: origOf[id]?.teacher_qa_enabled ?? true }).eq("id", id);
+      }
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 4 * 60 * 1000);
+
+
+  // ── D-20261114-7 ─────────────────────────────────────────
+  // Premier ticket 695b0797: the admin Review Queue took 8–9 s to open (1.8 MB
+  // of HTML, every card and formula at once) and 5–10 s per group switch (the
+  // server rebuilt the whole queue). The grouping is now cached and the page
+  // shows 15 cards at a time from GET /api/admin/review-queue.
+  // READ-ONLY: QA Admin 01 opens the page, switches groups through the API,
+  // and walks focus mode with → / ← only. No decision is ever sent (QA
+  // accounts can't change shared questions anyway; the decide endpoint is
+  // also watched and any POST to it fails the check).
+  // Must hold:
+  //   - the page opens and the first card is visible and hydrated in < 3 s;
+  //   - a group switch through the API answers in < 1.5 s (best of 2: the
+  //     first call after a deploy may build the cache) and is < 200 KB;
+  //   - focus mode: → moves to card 2 ("2 / N"), ← back to "1 / N";
+  //     typing in the filter box doesn't trigger the shortcuts.
+  // ID note: D-20261114-3/-4/-5 were taken by parallel branches today, so -7.
+  // added-tests.json entry:
+  //   { "id": "D-20261114-7", "added": "2026-11-14", "area": "老師/管理員動作",
+  //     "zh": "管理員打開「審題佇列」要快：3 秒內看到第一題而且可以操作；切換分類（透過 API）1.5 秒內回來、資料小於 200 KB；專注模式用鍵盤 ←／→ 可以前後切換題目（只看不改，不送出任何決定）" }
+  await check("D-20261114-7", [], "管理員打開「審題佇列」要快：3 秒內看到第一題而且可以操作；切換分類（透過 API）1.5 秒內回來、資料小於 200 KB；專注模式用鍵盤 ←／→ 可以前後切換題目（只看不改，不送出任何決定）", "老師/管理員動作", async () => {
+    const problems = [];
+    const notes = [];
+    const b = await chromium.launch();
+    try {
+      const { page, context } = await login(b, ADMIN_CLERK);
+      const R = context.request;
+      const posts = [];
+      page.on("request", (r) => { if (r.method() !== "GET" && /\/api\/admin\/review-queue\/(decide|auto-settle)/.test(r.url())) posts.push(r.url()); });
+
+      // Warm once (a deploy's first request builds the cached grouping), then measure.
+      const warm = await R.get(`${BASE}/api/admin/review-queue?limit=1`);
+      if (warm.status() !== 200) throw new Error(`setup: /api/admin/review-queue → HTTP ${warm.status()} (not deployed yet?)`);
+      const first = await warm.json();
+      const groups = (first.summary ?? []).filter((g) => g.waiting > 0).map((g) => g.id);
+      if (groups.length === 0) return "queue is empty: nothing to time (PASS by default)";
+
+      // 1. Open the page: first card visible and hydrated.
+      let t = Date.now();
+      await page.goto(`${BASE}/admin/review-queue`, { waitUntil: "commit", timeout: 60000 });
+      await page.locator('[data-testid="queue-card"]').first().waitFor({ state: "visible", timeout: 30000 });
+      await page.waitForFunction(() => {
+        const el = document.querySelector('[data-testid="queue-card"]');
+        return !!el && Object.keys(el).some((k) => k.startsWith("__reactFiber"));
+      }, null, { timeout: 30000 });
+      const openMs = Date.now() - t;
+      notes.push(`open ${openMs} ms`);
+      if (openMs > 3000) problems.push(`page took ${openMs} ms to show a usable first card (limit 3000)`);
+      const cards = await page.locator('[data-testid="queue-card"]').count();
+      if (cards > 20) problems.push(`page rendered ${cards} cards at once (should page by 15)`);
+
+      // 2. Group switch through the API (best of 2), size.
+      for (const g of groups.slice(0, 3)) {
+        let best = Infinity, bytes = 0, status = 0, items = 0;
+        for (let i = 0; i < 2; i++) {
+          t = Date.now();
+          const r = await R.get(`${BASE}/api/admin/review-queue?group=${g}&limit=15`);
+          const body = await r.body();
+          best = Math.min(best, Date.now() - t);
+          bytes = body.length;
+          status = r.status();
+          items = status === 200 ? JSON.parse(body.toString()).items?.length ?? 0 : 0;
+        }
+        notes.push(`${g} ${best} ms ${(bytes / 1024).toFixed(0)} KB ${items} cards`);
+        if (status !== 200) problems.push(`?group=${g} → HTTP ${status}`);
+        if (best > 1500) problems.push(`?group=${g} took ${best} ms (limit 1500)`);
+        if (bytes > 200 * 1024) problems.push(`?group=${g} sent ${(bytes / 1024).toFixed(0)} KB (limit 200)`);
+      }
+
+      // 3. Focus mode keyboard (→ / ← only: nothing is decided).
+      const focusBtn = page.getByRole("button", { name: "Focus mode" });
+      await focusBtn.click();
+      const pos = page.locator('[data-testid="focus-position"]');
+      await pos.waitFor({ timeout: 10000 });
+      const p1 = (await pos.innerText()).trim();
+      if (!/^1 \/ \d+$/.test(p1)) problems.push(`focus mode starts at "${p1}", expected "1 / N"`);
+      const total = Number(p1.split("/")[1]);
+      if (total > 1) {
+        await page.keyboard.press("ArrowRight");
+        await page.waitForFunction(() => document.querySelector('[data-testid="focus-position"]')?.textContent?.trim().startsWith("2 /"), null, { timeout: 5000 }).catch(() => {});
+        const p2 = (await pos.innerText()).trim();
+        if (!p2.startsWith("2 /")) problems.push(`→ didn't move to card 2 (shows "${p2}")`);
+        await page.keyboard.press("ArrowLeft");
+        await page.waitForFunction(() => document.querySelector('[data-testid="focus-position"]')?.textContent?.trim().startsWith("1 /"), null, { timeout: 5000 }).catch(() => {});
+        const p3 = (await pos.innerText()).trim();
+        if (!p3.startsWith("1 /")) problems.push(`← didn't go back to card 1 (shows "${p3}")`);
+        // Shortcuts are ignored while typing: a key typed into a text box doesn't move the card.
+        await page.evaluate(() => {
+          const i = document.createElement("input");
+          i.id = "qa-typing-probe";
+          document.body.appendChild(i);
+          i.focus();
+        });
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.type("s2");
+        await page.waitForTimeout(300);
+        const p4 = (await pos.innerText()).trim();
+        if (!p4.startsWith("1 /")) problems.push(`keys typed into a text box moved the card ("${p4}")`);
+        await page.evaluate(() => document.getElementById("qa-typing-probe")?.remove());
+      } else notes.push("only one card: → / ← not exercised");
+      const shown = await page.locator('[data-testid="focus-view"] [data-testid="queue-card"]:visible').count();
+      if (shown !== 1) problems.push(`focus mode shows ${shown} cards (expected exactly 1)`);
+      if (posts.length) problems.push(`a decision was sent during a read-only check: ${posts.join(", ")}`);
+      await context.close();
+    } finally {
+      await b.close().catch(() => {});
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 3 * 60 * 1000);
+
+
+  // ── D-20261114-8 ─────────────────────────────────────────
+  // Premier branding (ticket 961ed023, branch feat/premier-branding). Every
+  // printed page carries the Premier "P" badge watermark: a real element per
+  // Paged.js page (.pagedjs_sheet > .print-watermark, an inline <svg><use
+  // href="#pw"> of the document's one <symbol id="pw"> — never an <img>), in the preview, in the browser's print and in the server
+  // PDF (drawn at the mark's opacity, ExtGState /ca 0.07). Admins can turn
+  // it off (Watermark option, wm=0); teachers can't — the page and the PDF
+  // route ignore wm=0 from them. Turning it off never changes the page count.
+  // The app header shows the badge + "PREMIER" + "SAT Exam OS · <role>".
+  // Read-only: QA admin / Teacher 01, mathLinear and its finished QA attempts.
+  // added-tests.json entry:
+  //   { "id": "D-20261114-8", "added": "2026-11-14", "area": "列印",
+  //     "zh": "列印的每一頁（空白考卷、學生作答結果、下載的 PDF）正中間都有淡灰色的 Premier「P」浮水印；管理員可以在列印預覽關掉浮水印（頁數不變），老師不能關（網址加 wm=0 也沒用、下載的 PDF 也一樣有）；管理員、老師、學生頁面左上角都是 Premier 標誌加「SAT Exam OS · 身分」" }
+  await check("D-20261114-8", [], "列印的每一頁（空白考卷、學生作答結果、下載的 PDF）正中間都有淡灰色的 Premier「P」浮水印；管理員可以在列印預覽關掉浮水印（頁數不變），老師不能關（網址加 wm=0 也沒用、下載的 PDF 也一樣有）；管理員、老師、學生頁面左上角都是 Premier 標誌加「SAT Exam OS · 身分」", "列印", async () => {
+    const T = TESTS.mathLinear;
+    const teacher = C.teachers[0];
+    if (!teacher?.clerkId) throw new Error("setup: Teacher 01 has no login in cast");
+    const { createRequire } = await import("node:module");
+    const require = createRequire(new URL("../../../../package.json", import.meta.url));
+    const { PDFDocument, PDFName, PDFDict, PDFNumber } = require("pdf-lib");
+
+    /** Laid-out preview: pages, pages with exactly one watermark mark, the admin toggle. */
+    const preview = async (page, path) => {
+      await page.bringToFront();
+      await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+      await page.waitForFunction(() => document.documentElement.dataset.printReady || document.documentElement.dataset.printFailed, null, { timeout: 120000, polling: 500 });
+      return page.evaluate(() => {
+        const pages = [...document.querySelectorAll(".print-preview-pages .pagedjs_page")];
+        return {
+          ready: Number(document.documentElement.dataset.printReady ?? 0),
+          failed: document.documentElement.dataset.printFailed ?? "",
+          pages: pages.length,
+          blank: pages.filter((p) => p.classList.contains("pagedjs_blank_page")).length,
+          // Each page: one mark referencing the document's single <symbol id="pw"> (which must hold the badge path).
+          marked: document.querySelector("symbol#pw > path") ? pages.filter((p) => p.querySelectorAll(':scope > .pagedjs_sheet > .print-watermark svg use[href="#pw"]').length === 1).length : 0,
+          imgMarks: document.querySelectorAll(".print-watermark img").length,
+          toggle: [...document.querySelectorAll("label")].some((l) => /^Watermark/.test(l.textContent.trim())),
+          text: document.querySelector(".print-preview-pages")?.innerText.slice(0, 50_000) ?? "",
+        };
+      });
+    };
+    /** PDF pages, and pages that paint at the watermark's opacity (ExtGState ca 0.07). */
+    const pdfMarks = async (bytes) => {
+      const doc = await PDFDocument.load(bytes, { updateMetadata: false });
+      const seen = (res, depth) => {
+        if (!(res instanceof PDFDict) || depth > 6) return false;
+        const gs = res.lookup(PDFName.of("ExtGState"));
+        if (gs instanceof PDFDict) for (const [, v] of gs.entries()) {
+          const d = doc.context.lookup(v);
+          const ca = d instanceof PDFDict ? d.lookup(PDFName.of("ca")) : null;
+          if (ca instanceof PDFNumber && Math.abs(ca.asNumber() - 0.07) < 0.005) return true;
+        }
+        const xo = res.lookup(PDFName.of("XObject"));
+        if (xo instanceof PDFDict) for (const [, v] of xo.entries()) {
+          const s = doc.context.lookup(v);
+          if (s?.dict && seen(s.dict.lookup(PDFName.of("Resources")), depth + 1)) return true;
+        }
+        return false;
+      };
+      const pages = doc.getPages();
+      return { pages: pages.length, marked: pages.filter((p) => seen(p.node.Resources(), 0)).length };
+    };
+
+    const problems = [], notes = [];
+    const b = await chromium.launch();
+    try {
+      const admin = await login(b, ADMIN_CLERK);
+      const t = await login(b, teacher.clerkId);
+
+      // ── headers: badge + wordmark + "SAT Exam OS · <role>"
+      for (const [who, s, path, role] of [["admin", admin, "/admin", "Admin"], ["teacher", t, "/teacher", "Teacher"]]) {
+        await s.page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+        const mark = s.page.locator('header [data-brand="premier"]');
+        await mark.waitFor({ timeout: 30000 }).catch(() => {});
+        const svgs = await mark.locator("svg").count();
+        const txt = (await mark.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        if (svgs < 2 || txt !== `SAT Exam OS · ${role}`) problems.push(`${who} header: ${svgs} brand marks, text "${txt}"`);
+      }
+      // A student's header too (QA student 072's own page, borrowed login).
+      await asStudent(72, [], async ({ page }) => {
+        await page.goto(`${BASE}/student`, { waitUntil: "domcontentloaded" });
+        const mark = page.locator('header [data-brand="premier"]');
+        await mark.waitFor({ timeout: 30000 }).catch(() => {});
+        const svgs = await mark.locator("svg").count();
+        const txt = (await mark.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        if (svgs < 2 || txt !== "SAT Exam OS · Student") problems.push(`student header: ${svgs} brand marks, text "${txt}"`);
+      });
+
+      // ── blank test, admin: on by default, every page; off with wm=0, same page count
+      const on = await preview(admin.page, `/print/tests/${T}`);
+      if (on.failed) problems.push(`blank test preview failed (${on.failed.slice(0, 120)})`);
+      if (on.pages < 2 || on.marked !== on.pages) problems.push(`blank test: ${on.marked} of ${on.pages} pages have the watermark`);
+      if (on.imgMarks) problems.push("watermark drawn with <img> (the figure checks would count it)");
+      if (!on.toggle) problems.push("admin print preview has no Watermark option");
+      if (/PREMIER/.test(on.text)) problems.push("watermark carries text");
+      const off = await preview(admin.page, `/print/tests/${T}?wm=0`);
+      if (off.marked !== 0) problems.push(`admin wm=0: ${off.marked} pages still watermarked`);
+      if (off.pages !== on.pages) problems.push(`page count changes with the watermark (${on.pages} on, ${off.pages} off)`);
+      // The browser's own print (print media, backgrounds off = default settings).
+      await admin.page.goto(`${BASE}/print/tests/${T}`, { waitUntil: "domcontentloaded" });
+      await admin.page.waitForFunction(() => document.documentElement.dataset.printReady, null, { timeout: 120000 });
+      await admin.page.emulateMedia({ media: "print" });
+      const bp = await pdfMarks(await admin.page.pdf({ preferCSSPageSize: true }));
+      await admin.page.emulateMedia({ media: null });
+      if (bp.pages !== on.pages || bp.marked !== bp.pages) problems.push(`browser print: ${bp.marked} of ${bp.pages} pages watermarked (preview ${on.pages})`);
+      notes.push(`blank test ${on.marked}/${on.pages} pages, print ${bp.marked}/${bp.pages}, off ${off.marked}/${off.pages}`);
+
+      // ── result printout (QA attempt): preview, Print all, server PDF
+      const list = await admin.page.request.get(`${BASE}/api/print/results/${T}/students`);
+      const { students = [] } = list.ok() ? await list.json() : {};
+      if (!students.length) throw new Error(`setup: no finished QA attempt on mathLinear (students API ${list.status()})`);
+      const s = students[0];
+      const res = await preview(admin.page, `/print/results/${T}?subs=${s.submissionId}`);
+      if (res.pages === 0 || res.marked !== res.pages) problems.push(`result printout: ${res.marked} of ${res.pages} pages watermarked`);
+      if (students.length > 1) {
+        const subsQ = students.slice(0, 3).map((x) => x.submissionId).join(",");
+        const all = await preview(admin.page, `/print/results/${T}?subs=${subsQ}`);
+        const allOff = await preview(admin.page, `/print/results/${T}?subs=${subsQ}&wm=0`);
+        if (all.marked !== all.pages) problems.push(`Print all: ${all.marked} of ${all.pages} pages watermarked (blank filler pages included)`);
+        if (all.pages !== allOff.pages || all.blank !== allOff.blank) problems.push(`Print all: pages/blank pages change with the watermark (${all.pages}/${all.blank} vs ${allOff.pages}/${allOff.blank})`);
+        notes.push(`print all ${all.marked}/${all.pages} (${all.blank} blank)`);
+      }
+      const pdf = await admin.page.request.get(`${BASE}/api/print/results/${T}/pdf?sub=${s.submissionId}`, { timeout: 120000 });
+      if (!pdf.ok()) problems.push(`admin PDF: HTTP ${pdf.status()}`);
+      else {
+        const m = await pdfMarks(await pdf.body());
+        if (m.pages !== res.pages || m.marked !== m.pages) problems.push(`downloaded PDF: ${m.marked} of ${m.pages} pages watermarked (preview ${res.pages})`);
+        notes.push(`result ${res.marked}/${res.pages}, PDF ${m.marked}/${m.pages}`);
+      }
+      const pdfOff = await admin.page.request.get(`${BASE}/api/print/results/${T}/pdf?sub=${s.submissionId}&wm=0`, { timeout: 120000 });
+      if (pdfOff.ok() && (await pdfMarks(await pdfOff.body())).marked !== 0) problems.push("admin PDF with wm=0 is still watermarked");
+
+      // ── teacher: no option, wm=0 ignored (page and PDF)
+      const tList = await t.page.request.get(`${BASE}/api/print/results/${T}/students`);
+      const { students: tStudents = [] } = tList.ok() ? await tList.json() : {};
+      if (!tStudents.length) problems.push(`Teacher 01 has no finished student on mathLinear to print (HTTP ${tList.status()})`);
+      else {
+        const ts = tStudents[0];
+        const tr = await preview(t.page, `/print/results/${T}?subs=${ts.submissionId}&wm=0`);
+        if (tr.pages === 0 || tr.marked !== tr.pages) problems.push(`teacher wm=0 result printout: ${tr.marked} of ${tr.pages} pages watermarked`);
+        if (tr.toggle) problems.push("teacher sees a Watermark option");
+        const tp = await t.page.request.get(`${BASE}/api/print/results/${T}/pdf?sub=${ts.submissionId}&wm=0`, { timeout: 120000 });
+        if (!tp.ok()) problems.push(`teacher PDF: HTTP ${tp.status()}`);
+        else {
+          const m = await pdfMarks(await tp.body());
+          if (m.marked !== m.pages) problems.push(`teacher PDF with wm=0: only ${m.marked} of ${m.pages} pages watermarked`);
+          notes.push(`teacher wm=0: page ${tr.marked}/${tr.pages}, PDF ${m.marked}/${m.pages}`);
+        }
+      }
+      // Teacher blank test (only while the admin's Q&A switch is on for mathLinear).
+      const { data: sw } = await db.from("tests").select("teacher_qa_enabled").eq("id", T).single();
+      if (sw?.teacher_qa_enabled) {
+        const tb = await preview(t.page, `/print/tests/${T}?wm=0`);
+        if (tb.marked !== tb.pages || tb.pages === 0) problems.push(`teacher wm=0 blank test: ${tb.marked} of ${tb.pages} pages watermarked`);
+        if (tb.toggle) problems.push("teacher sees a Watermark option on the blank test");
+      } else notes.push("teacher blank test skipped (Q&A switch off)");
+    } finally {
+      await b.close().catch(() => {});
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${notes.join("; ")}`);
+    return notes.join("; ");
+  }, 10 * 60 * 1000);
+
+
+  // ── D-20261114-10 ─────────────────────────────────────────
+  // Premier ticket b271dd38 (branch feat/multi-assign): assign several tests
+  // at once (POST /api/admin/tests/bulk-assign) + scheduled publish
+  // (tests.publish_at, migration 0034, /api/cron/scheduled-publish).
+  // QA fixtures only: six throwaway copies of TESTS.mathLinear created by the
+  // QA admin, QA students 087 / 088; everything is deleted in finally.
+  // Must hold:
+  //   - bulk assign of 2 tests to 2 students when one pair already exists:
+  //     summary "Assigned 2 tests to 2 students · 1 already assigned, skipped",
+  //     no duplicate ids in test_assignments.student_ids; sending it again
+  //     skips all 4 and writes nothing;
+  //   - one tests_assigned notification per student for the request (087: 1
+  //     listing only the new test; 088: 1 listing both), none on the repeat;
+  //   - a Closed test is refused (outcome "refused"), its assignment unchanged;
+  //   - with migration 0034: a Draft whose publish_at is in the past and that
+  //     passes the publish check is published by the cron route (dry run
+  //     first changes nothing), its publish_at cleared; a Draft that fails the
+  //     check (no module) stays Draft, keeps publish_at, gets publish_at_error,
+  //     its admin gets one scheduled_publish_failed notification, and a second
+  //     cron run doesn't retry it; students of a scheduled Draft get no notice
+  //     when it's scheduled, one when the cron publishes it; Unschedule
+  //     (PATCH publishAt: null) clears a schedule and the cron leaves that
+  //     Draft alone. Without 0034: a publish time → 503
+  //     "database update pending", and the check is SKIP (the assign part
+  //     still has to pass).
+  // added-tests.json entry:
+  //   { "id": "D-20261114-10", "added": "2026-11-14", "area": "老師/管理員動作",
+  //     "zh": "管理員一次把 2 份測驗指派給 2 位學生：已經指派過的會跳過、不會重複，結果顯示「Assigned 2 tests to 2 students · 1 already assigned, skipped」；每位學生只收到一則通知；已關閉的測驗會被拒絕；設定「預約發布」時間已到、檢查通過的草稿會被排程自動發布，檢查沒過的草稿維持草稿、記下錯誤並通知管理員，之後不會一直重試" }
+  await check("D-20261114-10", [], "管理員一次把 2 份測驗指派給 2 位學生：已經指派過的會跳過、不會重複，結果顯示「Assigned 2 tests to 2 students · 1 already assigned, skipped」；每位學生只收到一則通知；已關閉的測驗會被拒絕；設定「預約發布」時間已到、檢查通過的草稿會被排程自動發布，檢查沒過的草稿維持草稿、記下錯誤並通知管理員，之後不會一直重試", "老師/管理員動作", async () => {
+    const s87 = studentByN(87), s88 = studentByN(88);
+    if (!s87 || !s88) throw new Error("setup: students 087 / 088 not found in cast");
+    const { data: adminRow } = await db.from("users").select("id").eq("clerk_user_id", ADMIN_CLERK).maybeSingle();
+    if (!adminRow) throw new Error("setup: no users row for ADMIN_CLERK");
+    const { data: src, error: srcErr } = await db.from("tests").select("*").eq("id", TESTS.mathLinear).single();
+    if (srcErr || !src) throw new Error(`setup: mathLinear not found (${srcErr?.message})`);
+    const MOD_COLS = ["module_id", "module_2_id", "module_1_id", "module_2_easy_id", "module_2_hard_id"];
+    const { id: _id, created_at: _c, updated_at: _u, publish_at: _p, publish_at_error: _pe, ...copy } = src;
+    void _id; void _c; void _u; void _p; void _pe;
+    const stamp = Date.now();
+    const since = new Date(stamp - 30_000).toISOString();
+    const made = [];
+    const mk = async (label, extra) => {
+      const { data, error } = await db.from("tests")
+        .insert({ ...copy, test_name: `QA D-20261114-10 ${label} ${stamp}`, created_by: adminRow.id, parent_test_id: null, ...extra })
+        .select("id").single();
+      if (error || !data) throw new Error(`setup: couldn't create ${label} (${error?.message})`);
+      made.push(data.id);
+      const { error: aErr } = await db.from("test_assignments")
+        .insert({ test_id: data.id, teacher_ids: [], student_ids: [], class_group_ids: [], created_by: adminRow.id });
+      if (aErr) throw new Error(`setup: couldn't create the assignment for ${label} (${aErr.message})`);
+      return data.id;
+    };
+    const studentIdsOf = async (t) => (await db.from("test_assignments").select("student_ids").eq("test_id", t).single()).data?.student_ids ?? [];
+    const notes = (userId, type) =>
+      db.from("notifications").select("id, payload").eq("user_id", userId).eq("type", type).gte("created_at", since).then((r) => r.data ?? []);
+    const problems = [], info = [];
+    let b = null;
+    let migrationMissing = false;
+    try {
+      const A = await mk("A", { status: "Published" });
+      const B = await mk("B", { status: "Published" });
+      const X = await mk("closed", { status: "Closed" });
+      // One pair exists already: 087 on A.
+      await db.from("test_assignments").update({ student_ids: [s87.id] }).eq("test_id", A);
+
+      b = await chromium.launch();
+      const { context } = await login(b, ADMIN_CLERK);
+      const bulk = async (body) => {
+        const r = await context.request.post(`${BASE}/api/admin/tests/bulk-assign`, { data: body });
+        return { status: r.status(), j: await r.json().catch(() => ({})) };
+      };
+
+      // 1) 2 tests × 2 students, one pair already there.
+      const r1 = await bulk({ testIds: [A, B], studentIds: [s87.id, s88.id] });
+      if (r1.status !== 200) throw new Error(`bulk-assign → HTTP ${r1.status} ${JSON.stringify(r1.j).slice(0, 200)} (not deployed yet?)`);
+      const want1 = "Assigned 2 tests to 2 students · 1 already assigned, skipped";
+      if (r1.j.summary !== want1) problems.push(`summary "${r1.j.summary}" (expected "${want1}")`);
+      if (r1.j.totals?.skipped !== 1 || r1.j.totals?.tests !== 2) problems.push(`totals ${JSON.stringify(r1.j.totals)}`);
+      const aIds = await studentIdsOf(A), bIds = await studentIdsOf(B);
+      if (aIds.length !== 2 || new Set(aIds).size !== 2 || !aIds.includes(s88.id)) problems.push(`A student_ids ${JSON.stringify(aIds)} (expected 087 once + 088)`);
+      if (bIds.length !== 2 || !bIds.includes(s87.id) || !bIds.includes(s88.id)) problems.push(`B student_ids ${JSON.stringify(bIds)}`);
+      info.push(`1st: "${r1.j.summary}"`);
+
+      // 2) One notification per student.
+      const n87 = await notes(s87.id, "tests_assigned"), n88 = await notes(s88.id, "tests_assigned");
+      if (n87.length !== 1 || JSON.stringify(n87[0]?.payload?.test_ids) !== JSON.stringify([B]))
+        problems.push(`087 got ${n87.length} notification(s) ${JSON.stringify(n87.map((n) => n.payload?.test_ids))} (expected 1 for [B] only)`);
+      if (n88.length !== 1 || (n88[0]?.payload?.test_ids ?? []).length !== 2)
+        problems.push(`088 got ${n88.length} notification(s) ${JSON.stringify(n88.map((n) => n.payload?.test_ids))} (expected 1 listing both)`);
+
+      // Same request again: everything skipped, nothing written, no new notice.
+      const r2 = await bulk({ testIds: [A, B], studentIds: [s87.id, s88.id] });
+      if (r2.j.totals?.skipped !== 4) problems.push(`repeat: skipped ${r2.j.totals?.skipped} (expected 4) "${r2.j.summary}"`);
+      if ((await studentIdsOf(A)).length !== 2 || (await studentIdsOf(B)).length !== 2) problems.push("repeat wrote duplicate student ids");
+      if ((await notes(s87.id, "tests_assigned")).length !== 1 || (await notes(s88.id, "tests_assigned")).length !== 1)
+        problems.push("repeat sent another notification");
+      info.push(`repeat: "${r2.j.summary}"`);
+
+      // 3) Closed test refused.
+      const r3 = await bulk({ testIds: [X], studentIds: [s87.id] });
+      if (r3.status !== 200 || r3.j.results?.[0]?.outcome !== "refused") problems.push(`Closed test → HTTP ${r3.status} ${JSON.stringify(r3.j.results?.[0] ?? r3.j).slice(0, 160)} (expected outcome refused)`);
+      if ((await studentIdsOf(X)).length !== 0) problems.push("Closed test got a student");
+      info.push(`closed: "${r3.j.summary}"`);
+
+      // 4) Scheduled publish.
+      const probe = await db.from("tests").select("id, publish_at, publish_at_error").limit(1);
+      migrationMissing = Boolean(probe.error && /publish_at/.test(probe.error.message));
+      const P = await mk("ready draft", { status: "Draft" });
+      const F = await mk("no-module draft", { status: "Draft", ...Object.fromEntries(MOD_COLS.map((c) => [c, null])) });
+      const U = await mk("unscheduled draft", { status: "Draft" });
+      const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+      const n88Before = (await notes(s88.id, "tests_assigned")).length;
+      const r4 = await bulk({ testIds: [P, F, U], studentIds: [s88.id], publishAt: future });
+      if (migrationMissing) {
+        if (r4.status !== 503 || !/database update pending/i.test(r4.j.error ?? "")) problems.push(`publish time before 0034 → HTTP ${r4.status} "${r4.j.error}" (expected 503 database update pending)`);
+        if ((await studentIdsOf(P)).length !== 0) problems.push("a 503 request still assigned students");
+        info.push(`publish time before 0034: ${r4.status}`);
+      } else {
+        if (r4.status !== 200 || r4.j.totals?.scheduled?.length !== 3) problems.push(`schedule → HTTP ${r4.status} ${JSON.stringify(r4.j.totals ?? r4.j).slice(0, 160)}`);
+        const fRes = (r4.j.results ?? []).find((r) => r.testId === F);
+        if (!fRes?.notReady) problems.push("the no-module draft wasn't flagged notReady when scheduled");
+        if ((await notes(s88.id, "tests_assigned")).length !== n88Before) problems.push("088 was notified when the Drafts were only scheduled");
+        // Unschedule U.
+        const un = await context.request.patch(`${BASE}/api/admin/tests/${U}`, { data: { publishAt: null } });
+        const uRow = (await db.from("tests").select("publish_at").eq("id", U).single()).data;
+        if (un.status() !== 200 || uRow?.publish_at !== null) problems.push(`Unschedule → HTTP ${un.status()}, publish_at ${uRow?.publish_at} (expected 200, null)`);
+        // Move both due (DB: the API refuses a time in the past).
+        const past = new Date(Date.now() - 60 * 1000).toISOString();
+        await db.from("tests").update({ publish_at: past, publish_at_error: null }).in("id", [P, F]);
+        const secret = process.env.CRON_SECRET ?? "";
+        const cron = async (q) => {
+          const r = await fetch(`${BASE}/api/cron/scheduled-publish?testId=${P}&testId=${F}&testId=${U}${q}`, { headers: { Authorization: `Bearer ${secret}` } });
+          return { status: r.status, j: await r.json().catch(() => ({})) };
+        };
+        const row = async (t) => (await db.from("tests").select("status, publish_at, publish_at_error").eq("id", t).single()).data;
+        const dry = await cron("&dryRun=1");
+        if (dry.status === 401) throw new Error("setup: CRON_SECRET in .env.local doesn't match production");
+        const dryBy = Object.fromEntries((dry.j.outcomes ?? []).map((o) => [o.testId, o.result]));
+        if (dryBy[P] !== "would-publish" || dryBy[F] !== "would-fail") problems.push(`dry run ${JSON.stringify(dryBy)}`);
+        if ((await row(P)).status !== "Draft") problems.push("dry run published the test");
+        const run = await cron("");
+        const by = Object.fromEntries((run.j.outcomes ?? []).map((o) => [o.testId, o.result]));
+        const p = await row(P), f = await row(F);
+        if (run.status !== 200 || by[P] !== "published" || p.status !== "Published" || p.publish_at !== null)
+          problems.push(`ready draft: cron ${run.status} ${by[P]} → ${p.status}, publish_at ${p.publish_at} (expected Published, cleared)`);
+        if (by[F] !== "not-ready" || f.status !== "Draft" || !f.publish_at || !f.publish_at_error)
+          problems.push(`failing draft: ${by[F]} → ${f.status}, publish_at ${f.publish_at}, error ${f.publish_at_error} (expected Draft, kept, error note)`);
+        const adminNotes = (await notes(adminRow.id, "scheduled_publish_failed")).filter((n) => n.payload?.test_id === F);
+        if (adminNotes.length !== 1) problems.push(`admin got ${adminNotes.length} scheduled_publish_failed notification(s) for the failing draft (expected 1)`);
+        if (by[U]) problems.push(`the unscheduled draft was picked up by the cron (${by[U]})`);
+        const n88 = await notes(s88.id, "tests_assigned");
+        const pubNotes = n88.filter((n) => (n.payload?.test_ids ?? []).includes(P));
+        if (n88.length !== n88Before + 1 || pubNotes.length !== 1 || (pubNotes[0]?.payload?.test_ids ?? []).includes(F))
+          problems.push(`088 notices after the cron publish: ${n88.length - n88Before} new, ${JSON.stringify(pubNotes.map((n) => n.payload?.test_ids))} (expected 1 listing only the published test)`);
+        const again = await cron("");
+        if ((again.j.outcomes ?? []).some((o) => o.testId === F)) problems.push("second cron run retried the failing draft");
+        info.push(`cron: ${JSON.stringify(by)}; error note "${String(f.publish_at_error).slice(0, 60)}"`);
+      }
+      await context.close();
+    } finally {
+      if (b) await b.close().catch(() => {});
+      if (made.length) {
+        const { error: nErr } = await db.from("notifications").delete()
+          .in("user_id", [s87.id, s88.id, adminRow.id]).in("type", ["tests_assigned", "scheduled_publish_failed"]).gte("created_at", since);
+        if (nErr) console.error(`[D-20261114-10] cleanup: notifications delete failed: ${nErr.message}`);
+        for (const t of made) await deleteSubs(s88.id, t).catch(() => {});
+        const { error: dAsg } = await db.from("test_assignments").delete().in("test_id", made);
+        if (dAsg) console.error(`[D-20261114-10] cleanup: test_assignments delete failed: ${dAsg.message}`);
+        const { error: dT } = await db.from("tests").delete().in("id", made);
+        if (dT) console.error(`[D-20261114-10] cleanup: throwaway tests delete failed (${made.join(", ")}): ${dT.message}`);
+      }
+    }
+    if (problems.length) fail(`${problems.join("; ")}. ${info.join("; ")}`);
+    if (migrationMissing) {
+      const e = new Error("migration 0034 not applied");
+      e.__skip = true;
+      e.__details = `assign part PASS; scheduled publish needs migration 0034 (publish time → 503 as expected). ${info.join("; ")}`;
+      throw e;
+    }
+    return info.join("; ");
+  }, 4 * 60 * 1000);
+
+
+  // ── D-20261114-9 ─────────────────────────────────────────
+// The AI answer-key probe can give question n the ✓ of question n−1 when
+// n−1's choices carry over to the next page (Tests #9, #22, #23, #2).
+// Parses now prefer the PDF's ✓ (lib/answer-key-merge.ts), but keys set
+// before that, or by hand, can still be off. Re-read every printout
+// module's ✓ with the deterministic readers and flag correct_answer ≠ ✓.
+// Read-only. Rows in waiting-on-decision.json are skipped.
+await check("D-20261114-9", [], "每晚（只讀）重新掃描每一份印出來的模組 PDF：用 PDF 上的打勾（✓）對照每一題的正確答案，答案和 PDF 打勾的選項不一樣就要報出來（特別是「拿到上一題的打勾」這種錯位）；沒有打勾的題目不算錯", "題庫", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const appRoot = path.resolve(here, "../../../..");
+  const out = execFileSync(path.join(appRoot, "node_modules/.bin/tsx"), [path.join(here, "keyshift-scan.mjs"), "--json"], { cwd: appRoot, timeout: 9 * 60 * 1000, maxBuffer: 32 << 20 }).toString();
+  const r = JSON.parse(out.slice(out.indexOf("{")));
+  if (r.skipped) return `skipped: ${r.skipped}`;
+  const summary = `scanned ${r.scanned} printout modules, ${r.ticks} ✓ read, ${r.noMarks} without ✓ marks skipped`;
+  if (r.mismatches.length) fail(`${summary}; ${r.mismatches.length} 題答案和 PDF 打勾不同：${r.mismatches.slice(0, 12).map((m) => `${m.module} 第${m.n}題：答案 ${m.correct}，PDF 打勾 ${m.tick}${m.shift ? "（= 上一題的打勾，錯位）" : ""}${m.live ? "（考試中）" : ""}`).join("；")}${r.mismatches.length > 12 ? ` …（另 ${r.mismatches.length - 12} 題）` : ""}`);
+  return summary;
+}, 10 * 60 * 1000);
+
 }

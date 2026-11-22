@@ -14,6 +14,9 @@ import { runEdgeChecks } from "./edge-checks.mjs";
 import { runDailyChecks } from "./daily-checks.mjs";
 import { runPrintChecks } from "./print-checks.mjs";
 import { runFullLengthChecks } from "./fullsat-checks.mjs";
+import { runCustomTestChecks } from "./custom-checks.mjs";
+import { runFlDirectChecks } from "./fl-direct-checks.mjs";
+import { runM2Checks } from "./m2-checks.mjs";
 
 // ─────────────────────── paths ─────────────────────────
 const HARNESS_DIR = new URL("../", import.meta.url).pathname;
@@ -132,16 +135,24 @@ async function subs(studentId, testId) {
 }
 
 async function deleteSubs(studentId, testId) {
-  // Must delete answer_records before submissions to avoid FK constraint failures
-  const { data: existing } = await db
-    .from("submissions")
-    .select("id")
-    .eq("student_id", studentId)
-    .eq("test_id", testId);
-  if (existing?.length) {
-    const ids = existing.map((s) => s.id);
-    await db.from("answer_records").delete().in("submission_id", ids);
-    await db.from("submissions").delete().in("id", ids);
+  // Must delete answer_records before submissions to avoid FK constraint failures.
+  // Errors used to be ignored, so a transient Supabase failure left stale
+  // submissions behind (EDGE-SLOW-NET 11/13, 11/15). Retry once, then throw.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const { data: existing, error } = await db.from("submissions").select("id").eq("student_id", studentId).eq("test_id", testId);
+      if (error) throw new Error(`select: ${error.message}`);
+      if (!existing?.length) return;
+      const ids = existing.map((s) => s.id);
+      const ar = await db.from("answer_records").delete().in("submission_id", ids);
+      if (ar.error) throw new Error(`answer_records: ${ar.error.message}`);
+      const sb = await db.from("submissions").delete().in("id", ids);
+      if (sb.error) throw new Error(`submissions: ${sb.error.message}`);
+      return;
+    } catch (e) {
+      if (attempt >= 2) throw new Error(`deleteSubs(${studentId}, ${testId}) failed: ${e.message}`);
+      await new Promise((r) => setTimeout(r, 2000));
+    }
   }
 }
 
@@ -1671,6 +1682,24 @@ await runPrintChecks({ check, fail, TESTS, ADMIN_CLERK, REAL_ADMIN_CLERK, STUDEN
 await runFullLengthChecks({
   check, fail, skip, TESTS, C, STUDENT1_CLERK, ADMIN_CLERK, TEACHER1_CLERK, studentByN,
   moduleQs, correctPick, wrongPick, deleteSubs, START_MS, GLOBAL_TIMEOUT_MS,
+});
+
+// ── Z3b. FULL-LENGTH, FOUR MODULES PICKED DIRECTLY (ticket fb38d638, student 027).
+// Post-deploy alone: ONLY=FL-DIRECT-CREATE,FL-DIRECT-TAKE node nightly/run.mjs
+await runFlDirectChecks({
+  check, fail, skip, TESTS, C, STUDENT1_CLERK, ADMIN_CLERK, studentByN, moduleQs, correctPick,
+});
+
+// ── Z3c. MODULE 2 NOT TAKEN + ROW "…" MENU + REOPEN MODULE 2 (ticket 969e0414, students 028–033).
+// Post-deploy alone: ONLY=M2-NOT-TAKEN,M2-REOPEN,ROW-MENU node nightly/run.mjs
+await runM2Checks({
+  check, fail, skip, TESTS, C, STUDENT1_CLERK, ADMIN_CLERK, studentByN, moduleQs, correctPick,
+});
+
+// ── Z4. CUSTOM TESTS — build, take (fixed / adaptive / R&W+Math no break), result (students 022–024, 026).
+// Post-deploy alone: ONLY=CT-CREATE,CT-FIXED,CT-ADAPTIVE,CT-BOTH-NOBREAK,CT-RESULT node nightly/run.mjs
+await runCustomTestChecks({
+  check, fail, skip, C, STUDENT1_CLERK, ADMIN_CLERK, studentByN, correctPick, wrongPick,
 });
 
 // ── AA. PRODUCTION HEALTH — Vercel error summary ────────────
