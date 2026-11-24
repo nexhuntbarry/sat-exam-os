@@ -96,7 +96,9 @@ export default function ScoreProgressChart({
 
   // ── Layout ────────────────────────────────────────────────────────────
   const W = 680, H = height;
-  const padL = 44, padR = 16, padT = 24, padB = 20;
+  // padT/padB are generous: above-labels rise ~18 px above the topmost dot;
+  // up to two stacked below-labels descend ~32 px below the bottommost dot.
+  const padL = 44, padR = 20, padT = 28, padB = 42;
 
   // All unique x positions across every series, sorted chronologically.
   const allDates = [
@@ -160,6 +162,8 @@ export default function ScoreProgressChart({
 
   const labelY = placeLabels(
     labelPoints.map((p) => ({ id: p.id, x: p.x, dotY: p.dotY })),
+    // textHeight for fontSize 11 bold; dotRadius matches the <circle r="3.5">
+    { textHeight: 12, dotRadius: 3.5, gap: 2, labelGap: 2 },
   );
 
   const seriesConfig: {
