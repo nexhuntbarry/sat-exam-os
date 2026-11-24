@@ -71,7 +71,8 @@ export interface LiveCounts {
 export interface NotStartedStudent {
   studentId: string;
   name: string;
-  email: string;
+  /** Admin viewers only; never loaded for a teacher. */
+  email?: string;
 }
 
 export interface LiveSnapshot {

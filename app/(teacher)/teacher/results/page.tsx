@@ -3,7 +3,10 @@ import { redirect } from "next/navigation";
 import { ClipboardList } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { getCurrentUser } from "@/lib/auth";
-import { scopeUsers } from "@/lib/qa";
+import { getQaUserIds, scopeIds } from "@/lib/qa";
+import { studentClassNames } from "@/lib/result-printout";
+import { TEACHER_STUDENT_EMBED, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import { getTeacherTestScope, getTestSections, seesAllStudents } from "@/lib/teacher-access";
 import { getServiceClient } from "@/lib/supabase";
 import { StatCard } from "@/components/analytics/StatCard";
@@ -63,17 +66,18 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
       flParents.map(async (pid) => [pid, await flSectionScope(db, { userId: teacherId, role, isQa }, flLinks.childrenOf.get(pid)!)] as const),
     ),
   );
-  const { data: submissions } = await scopeUsers(db
+  // Students by name only (lib/teacher-student-view): no email is read.
+  const { data: submissions } = await scopeIds(db
     .from("submissions")
     .select(
       `
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, scaled_score, scaled_section, submitted_at, time_spent_seconds,
       session_id, adaptive_track, attempt_number, ${M2_NOT_TAKEN_COLUMN},
-      users!inner(display_name, email)
+      users!inner(${TEACHER_STUDENT_EMBED})
     `
     )
-    .in("test_id", expandWithChildren(testIds, flLinks)), isQa, "users.email")
+    .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", await getQaUserIds(), isQa)
     .order("submitted_at", { ascending: false });
 
   // Non-admin filter: keep a submission only if EITHER the test was
@@ -87,18 +91,10 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
     return scope.myStudentIds.has(s.student_id as string);
   });
 
-  // 3b. Class groups via student_profiles (separate query — no FK to submissions)
-  const studentIds = Array.from(new Set(subs.map((s) => s.student_id)));
-  const classMap = new Map<string, string | null>();
-  if (studentIds.length > 0) {
-    const { data: profiles } = await db
-      .from("student_profiles")
-      .select("user_id, class_group")
-      .in("user_id", studentIds);
-    for (const p of profiles ?? []) {
-      classMap.set(p.user_id, p.class_group ?? null);
-    }
-  }
+  // 3b. Class = the teacher's own classes the student is in (class_group_members).
+  const studentIds = Array.from(new Set(subs.map((s) => s.student_id as string)));
+  const classMap = await studentClassNames(db, { userId: teacherId, role, isQa }, studentIds);
+  const unnamed = await unnamedStudentLabel();
 
   // Two-module attempts produce two submission rows sharing a
   // session_id. Group siblings so each cross-test row represents one
@@ -123,7 +119,7 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
       return rank(a.adaptive_track) - rank(b.adaptive_track);
     });
     const head = sorted[0];
-    const u = head.users as unknown as { display_name: string; email: string };
+    const u = head.users as unknown as { display_name: string | null };
     const testId = listedTestId(head.test_id, flLinks);
     const meta = testMap.get(testId) ?? { name: "(unknown test)", section: null };
 
@@ -137,8 +133,7 @@ async function getCrossTestResults(teacherId: string, role: string, isQa: boolea
       section: attempt.fullLength ? "Full-length SAT" : meta.section,
       ...(attempt.fullLength ? { fullLength: true, detailHref: `/teacher/tests/${testId}/results` } : {}),
       studentId: head.student_id,
-      studentName: u.display_name,
-      email: u.email,
+      studentName: teacherStudentLabel(u, unnamed),
       classGroup: classMap.get(head.student_id) ?? null,
       status: attempt.status,
       module: attempt.module,

@@ -20,7 +20,8 @@ import {
 } from "@/lib/full-length-score";
 import { breakEndsAtMs } from "@/lib/full-length-attempt";
 import { getAssignedStudentIds, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
-import { getQaClassGroupIds, onSide, scopeUsers } from "@/lib/qa";
+import { getQaClassGroupIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
 import {
   isModule2Track,
   moduleRemainingSeconds,
@@ -60,6 +61,10 @@ export interface LiveScope {
   flScope?: FlSectionScope;
   /** Full-length links the caller already loaded. */
   links?: FullLengthLinks;
+  /** Admin only: not-started students carry their email. Teachers never get it. */
+  withEmail?: boolean;
+  /** Name for a student with no display name (teacher side). */
+  unnamedLabel?: string;
 }
 
 type LightRow = {
@@ -122,21 +127,24 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
   const kids = links.childrenOf.get(scope.testId) ?? null;
   const testIds = kids ? [kids.rw, kids.math].filter((x): x is string => Boolean(x)) : [scope.testId];
   const flScope = scope.flScope ?? FL_ALL_SECTIONS;
+  // QA side by student id: no users join, so no email is read.
+  const qaUsers = await getQaUserIds();
 
   // Paged (PostgREST caps a response at 1000 rows) and, with a student
   // scope, chunked so the id list can't overflow the request URL.
   const lightRows = async (studentIds: string[] | null): Promise<LightRow[]> => {
     const { data, error } = await fetchAllRows<LightRow>((from, to) => {
-      let q = scopeUsers(
+      let q = scopeIds(
         db
           .from("submissions")
           .select(
             "id, test_id, student_id, status, started_at, submitted_at, attempt_number, session_id, adaptive_track, " +
-              "score, correct_count, total_questions, percentage, tab_switches:metadata->tab_switches, users!inner(email)",
+              "score, correct_count, total_questions, percentage, tab_switches:metadata->tab_switches",
           )
           .in("test_id", testIds),
+        "student_id",
+        qaUsers,
         scope.viewerIsQa,
-        "users.email",
       );
       if (studentIds) q = q.in("student_id", studentIds);
       return q.order("id").range(from, to) as unknown as PromiseLike<{ data: LightRow[] | null; error: unknown }>;
@@ -317,22 +325,28 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
   let notStarted: NotStartedStudent[] = [];
   if (missing.length > 0) {
     // Chunked: a big roster's id list would overflow the request URL.
-    const users: { id: string; display_name: string | null; email: string }[] = [];
+    const users: { id: string; display_name: string | null; email?: string }[] = [];
     for (let i = 0; i < missing.length; i += ID_CHUNK) {
       // Only active accounts: pending / suspended students can't start anyway.
-      const { data, error: usersError } = await scopeUsers(
+      const { data, error: usersError } = await scopeIds(
         db
           .from("users")
-          .select("id, display_name, email")
+          .select(scope.withEmail ? "id, display_name, email" : TEACHER_STUDENT_SELECT)
           .eq("account_status", "approved")
           .in("id", missing.slice(i, i + ID_CHUNK)),
+        "id",
+        qaUsers,
         scope.viewerIsQa,
       );
       if (usersError) throw new Error(`live progress: users lookup failed: ${usersError.message}`);
-      users.push(...((data ?? []) as typeof users));
+      users.push(...((data ?? []) as unknown as typeof users));
     }
     notStarted = users
-      .map((u) => ({ studentId: u.id, name: u.display_name || u.email, email: u.email }))
+      .map((u): NotStartedStudent =>
+        scope.withEmail
+          ? { studentId: u.id, name: u.display_name || u.email || "", email: u.email }
+          : { studentId: u.id, name: teacherStudentLabel(u, scope.unnamedLabel) },
+      )
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 

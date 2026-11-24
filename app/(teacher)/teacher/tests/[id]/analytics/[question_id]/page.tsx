@@ -33,8 +33,8 @@ interface Stats {
 
 interface StudentEntry {
   id: string;
-  display_name: string;
-  email: string;
+  /** Name only ("Unnamed student" when none), never email. */
+  name: string;
 }
 
 interface WrongStudentSubmission {
@@ -320,8 +320,7 @@ export default function QuestionDetailPage() {
                 return (
                   <div key={s.id} className="flex items-center justify-between text-sm">
                     <div>
-                      <div className="text-charcoal">{s.display_name}</div>
-                      <div className="text-soft-mute text-xs">{s.email}</div>
+                      <div className="text-charcoal">{s.name}</div>
                     </div>
                     {subId && (
                       <Link
@@ -344,7 +343,7 @@ export default function QuestionDetailPage() {
               {rightStudents.map((s) => (
                 <div key={s.id} className="flex items-center text-sm gap-2">
                   <Check size={12} className="text-warm-amber flex-shrink-0" />
-                  <span className="text-mid-gray">{s.display_name}</span>
+                  <span className="text-mid-gray">{s.name}</span>
                 </div>
               ))}
             </div>

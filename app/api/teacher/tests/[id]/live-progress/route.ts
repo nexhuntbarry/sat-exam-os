@@ -5,6 +5,7 @@ import { getTeacherTestAccess } from "@/lib/teacher-access";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { flSectionScope } from "@/lib/full-length-score";
 import { loadLiveSnapshot } from "@/lib/live-progress";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 // GET /api/teacher/tests/[id]/live-progress
 // Live snapshot polled by the teacher test page (lib/live-progress). Same
@@ -29,6 +30,8 @@ export async function GET(
       viewerIsQa: user.isQa,
       studentIds: access.mode === "class" ? access.studentAllowlist : null,
       flScope: kids ? await flSectionScope(db, user, kids) : undefined,
+      // Not-started list: name only, never email (lib/teacher-student-view).
+      unnamedLabel: await unnamedStudentLabel(),
     });
     return NextResponse.json({ data: snapshot }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {

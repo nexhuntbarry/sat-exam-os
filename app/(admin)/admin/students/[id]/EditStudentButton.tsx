@@ -29,11 +29,13 @@ interface Props {
   student: StudentEditable;
   /** Current class_group_members names (read-only here; membership is changed via the ⋯ menu). */
   classNames: string[];
+  /** Open the dialog on load (?edit=name from the "No display name" list). */
+  defaultOpen?: boolean;
 }
 
-export default function EditStudentButton({ student, classNames }: Props) {
+export default function EditStudentButton({ student, classNames, defaultOpen = false }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

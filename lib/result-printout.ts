@@ -13,6 +13,8 @@ import { getQaTestIds, getQaUserIds, onSide } from "@/lib/qa";
 import { answerCandidates } from "@/lib/grade-submission";
 import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { teacherQaContentHidden } from "@/lib/teacher-qa";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import { fullLengthLinks, type FullLengthChildren } from "@/lib/full-length";
 import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
@@ -180,12 +182,21 @@ export async function studentClassNames(
 }
 
 async function namesAndClasses(db: SupabaseClient, ids: string[], onlyClassIds: Set<string> | null = null) {
-  const [usersRes, membersRes, profilesRes] = await Promise.all([
-    db.from("users").select("id, display_name, email").in("id", ids),
+  // onlyClassIds set = a teacher: name only (lib/teacher-student-view), no
+  // email and no profile class field are read.
+  const teacher = onlyClassIds !== null;
+  const [usersRes, membersRes, profilesRes, unnamed] = await Promise.all([
+    db.from("users").select(teacher ? TEACHER_STUDENT_SELECT : "id, display_name, email").in("id", ids),
     db.from("class_group_members").select("student_id, class_group_id, class_groups(name)").in("student_id", ids),
-    db.from("student_profiles").select("user_id, class_group").in("user_id", ids),
+    teacher ? Promise.resolve({ data: [] }) : db.from("student_profiles").select("user_id, class_group").in("user_id", ids),
+    teacher ? unnamedStudentLabel() : Promise.resolve(""),
   ]);
-  const nameOf = new Map(((usersRes.data ?? []) as { id: string; display_name: string | null; email: string }[]).map((u) => [u.id, u.display_name || u.email]));
+  const nameOf = new Map(
+    ((usersRes.data ?? []) as unknown as { id: string; display_name: string | null; email?: string }[]).map((u) => [
+      u.id,
+      teacher ? teacherStudentLabel(u, unnamed) : u.display_name || u.email || "Student",
+    ]),
+  );
   const classesOf = new Map<string, string[]>();
   for (const m of (membersRes.data ?? []) as unknown as { student_id: string; class_group_id: string; class_groups: { name: string } | { name: string }[] | null }[]) {
     // A teacher sees only their own classes' names, not other teachers'.

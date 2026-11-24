@@ -61,7 +61,8 @@ export interface GradebookTestInput {
 }
 
 export interface ShapeGradebookInput {
-  students: { id: string; name: string; email: string }[];
+  /** email: admin viewers only (teachers never load it). */
+  students: { id: string; name: string; email?: string }[];
   /** The class's assigned tests the viewer may see (full-length parents, never their children). */
   tests: GradebookTestInput[];
   /** The students' rows on those tests (and on full-length children). */
@@ -350,7 +351,13 @@ export function shapeGradebook(input: ShapeGradebookInput): Gradebook {
   const out: GradebookRow[] = input.students
     .map((s) => {
       const cells = cellsByStudent.get(s.id)!;
-      return { studentId: s.id, name: s.name, email: s.email, cells, summary: summarizeStudent(columns, cells) };
+      return {
+        studentId: s.id,
+        name: s.name,
+        ...(s.email !== undefined ? { email: s.email } : {}),
+        cells,
+        summary: summarizeStudent(columns, cells),
+      };
     })
     .sort((a, b) => a.name.localeCompare(b.name) || a.studentId.localeCompare(b.studentId));
 

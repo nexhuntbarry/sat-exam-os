@@ -6,6 +6,7 @@ import { formatDate } from "@/lib/datetime";
 import { printPageCss } from "@/lib/print-page-css";
 import { watermarkOn, watermarkOption } from "@/lib/print-watermark";
 import { gradebookSubjects, loadClassGradebook } from "@/lib/class-gradebook";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import { KIND_LABEL, effectiveSort, filterColumns, parseViewQuery, printGroups, sortRows } from "@/lib/class-gradebook-view";
 import GradebookTable, { GradebookLegend } from "@/components/analytics/GradebookTable";
 import PrintPreview from "@/components/print/PrintPreview";
@@ -43,6 +44,9 @@ export default async function PrintClassScoresPage({
     classGroupId: id,
     isQa: user.isQa,
     subjects: access.subjects,
+    // Admin keeps emails; a teacher gets names only (lib/teacher-student-view).
+    withEmail: user.role === "admin",
+    unnamedLabel: user.role === "admin" ? undefined : await unnamedStudentLabel(),
     testHref: (testId) => (user.role === "admin" ? `/admin/tests/${testId}/submissions?class=${id}` : `/teacher/tests/${testId}/results`),
   });
   const view = parseViewQuery({ subject: one(raw.subject), from: one(raw.from), to: one(raw.to), sort: one(raw.sort), dir: one(raw.dir) });

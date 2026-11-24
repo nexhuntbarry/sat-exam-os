@@ -30,8 +30,8 @@ import {
 export interface FullLengthResultRow {
   key: string;
   studentId: string;
+  /** Teacher view: name, never email (lib/teacher-student-view). */
   studentName: string;
-  email: string;
   classGroup: string | null;
   attemptNumber: number;
   status: AttemptStatus;
@@ -148,7 +148,7 @@ export function FullLengthResultsTable({
                 <Td kind="main" sticky="left">
                   <TwoLineCell
                     main={row.studentName}
-                    detail={[row.email, row.classGroup].filter(Boolean).join(" · ")}
+                    detail={row.classGroup ?? undefined}
                     mainClassName="font-medium text-charcoal"
                   />
                 </Td>

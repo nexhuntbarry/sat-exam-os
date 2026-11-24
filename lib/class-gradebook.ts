@@ -21,6 +21,7 @@ import { getTestSections, inSubjects } from "@/lib/teacher-access";
 import { shapeGradebook, type GradebookSubRow } from "@/lib/class-gradebook-shape";
 import type { Gradebook } from "@/lib/class-gradebook-view";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
 
 const SECTIONS = ["Math", "Reading & Writing"] as const;
 
@@ -59,7 +60,7 @@ export async function gradebookSubjects(
 
 type MemberRow = {
   student_id: string;
-  users: { id: string; email: string; display_name: string | null } | { id: string; email: string; display_name: string | null }[] | null;
+  users: { id: string; email?: string; display_name: string | null } | { id: string; email?: string; display_name: string | null }[] | null;
 };
 
 type AssignmentRow = {
@@ -83,6 +84,10 @@ export async function loadClassGradebookFrame(
     isQa: boolean;
     /** Teacher's subjects for this class (null = both / admin). */
     subjects: string[] | null;
+    /** Admin only: also load each student's email. Teachers never get it. */
+    withEmail?: boolean;
+    /** Name for a student with no display name (teacher side). */
+    unnamedLabel?: string;
   },
 ) {
   const [{ data: memberRows, error: memberErr }, { data: assignments, error: assignErr }, qaTests, qaUsers, links] =
@@ -90,7 +95,7 @@ export async function loadClassGradebookFrame(
       fetchAllRows<MemberRow>((from, to) =>
         db
           .from("class_group_members")
-          .select("student_id, users!student_id(id, email, display_name)")
+          .select(`student_id, users!student_id(${opts.withEmail ? "id, email, display_name" : TEACHER_STUDENT_SELECT})`)
           .eq("class_group_id", opts.classGroupId)
           .order("id")
           .range(from, to) as unknown as PromiseLike<{ data: MemberRow[] | null; error: unknown }>,
@@ -109,7 +114,11 @@ export async function loadClassGradebookFrame(
   const students = (memberRows ?? [])
     .map((m) => (Array.isArray(m.users) ? m.users[0] : m.users))
     .filter((u): u is NonNullable<typeof u> => Boolean(u) && onSide(u!.id, qaUsers, opts.isQa))
-    .map((u) => ({ id: u.id, name: u.display_name || u.email, email: u.email }));
+    .map((u): { id: string; name: string; email?: string } =>
+      opts.withEmail
+        ? { id: u.id, name: u.display_name || u.email || "", email: u.email }
+        : { id: u.id, name: teacherStudentLabel(u, opts.unnamedLabel) },
+    );
 
   const seen = new Set<string>();
   const candidates = ((assignments ?? []) as unknown as AssignmentRow[])
@@ -155,6 +164,10 @@ export async function loadClassGradebook(
     /** Questions & answers (Class Review) link next to each test name. */
     reviewHref?: (testId: string) => string;
     now?: Date;
+    /** Admin only: rows carry the student's email. Teachers never get it. */
+    withEmail?: boolean;
+    /** Name for a student with no display name (teacher side). */
+    unnamedLabel?: string;
   },
 ): Promise<Gradebook> {
   const { students, tests, scope, links } = await loadClassGradebookFrame(db, opts);

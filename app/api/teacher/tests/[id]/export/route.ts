@@ -13,10 +13,19 @@ import { orderToQuestionIds, questionIdsSpanModules, STUDENT_VISIBLE_QUESTION_ST
 import { loadFullLengthResults } from "@/lib/full-length-results";
 import { parseStages, stagedQuestionIds, stageOfQuestion } from "@/lib/custom-test/stage";
 import { tabSwitchTotal } from "@/lib/tab-switches";
+import {
+  sectionCsvHeader,
+  TEACHER_STUDENT_EMBED,
+  TEACHER_STUDENT_PROFILE_SELECT,
+  teacherCsvStudentCells,
+  teacherStudentLabel,
+} from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 // GET /api/teacher/tests/[id]/export
 // CSV of student results, one row per attempt (module rows of a
-// two-module attempt are combined).
+// two-module attempt are combined). Student columns are name, grade and
+// class only (lib/teacher-student-view): no email or contact field.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -27,6 +36,7 @@ export async function GET(
 
   const { id: testId } = await params;
   const db = getServiceClient();
+  const unnamed = await unnamedStudentLabel();
 
   // Class teachers can export their class's results. Direct-assigned
   // teachers get the full test export.
@@ -37,7 +47,7 @@ export async function GET(
 
   // Full-length SAT parent: its own columns (plan Phase 3).
   const flKids = (await fullLengthLinks(db)).childrenOf.get(testId);
-  if (flKids) return fullLengthCsv(db, user, testId, flKids, access.mode === "class" ? access.studentAllowlist : null);
+  if (flKids) return fullLengthCsv(db, user, testId, flKids, access.mode === "class" ? access.studentAllowlist : null, unnamed);
 
   // Fetch test name + questions
   const { data: test } = await db
@@ -131,7 +141,7 @@ export async function GET(
       id, student_id, status, correct_count, total_questions, percentage,
       scaled_score, submitted_at, time_spent_seconds, attempt_number,
       session_id, adaptive_track, module_id, tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
-      users!inner(display_name, email, student_profiles(grade))
+      users!inner(${TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: true });
@@ -165,8 +175,7 @@ export async function GET(
     tab_switches: unknown;
     m2_not_taken?: unknown;
     users: {
-      display_name: string;
-      email: string;
+      display_name: string | null;
       student_profiles?: { grade?: string } | { grade?: string }[] | null;
     };
   };
@@ -224,11 +233,7 @@ export async function GET(
   const twoModules = Boolean(test.is_adaptive || test.module_2_id);
   const section = (await getTestSections(db, [testId])).get(testId) ?? null;
   const lines: string[] = [
-    csvRow([
-      "Student", "Email", "Grade", "Class", "Attempt", "Status", "SAT Score",
-      ...(twoModules ? ["M1 Correct", "M2 Correct"] : ["Correct"]),
-      "% Correct", "Time Spent", "Left Tab", "Submitted At", ...qHeaders,
-    ]),
+    csvRow(sectionCsvHeader(twoModules, qHeaders)),
   ];
 
   for (const rows of attempts.values()) {
@@ -253,10 +258,11 @@ export async function GET(
       .pop();
 
     lines.push(csvRow([
-      head.users.display_name ?? "",
-      head.users.email ?? "",
-      sp?.grade ?? "",
-      classOf.get(head.student_id) ?? "",
+      ...teacherCsvStudentCells({
+        name: teacherStudentLabel(head.users, unnamed),
+        grade: sp?.grade,
+        className: classOf.get(head.student_id),
+      }),
       head.attempt_number ?? 1,
       status === "Incomplete" ? "Incomplete (Module 2 not taken)" : status,
       score?.sat ?? "",
@@ -313,6 +319,7 @@ async function fullLengthCsv(
   testId: string,
   kids: FullLengthChildren,
   studentAllowlist: Set<string> | null,
+  unnamedLabel: string,
 ): Promise<Response> {
   const childIds = [kids.rw, kids.math].filter((x): x is string => Boolean(x));
   const [{ data: test }, { data: childTests }, scope, attempts] = await Promise.all([
@@ -322,7 +329,7 @@ async function fullLengthCsv(
       .select("id, is_adaptive, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id, question_ids")
       .in("id", childIds),
     flSectionScope(db, user, kids),
-    loadFullLengthResults(db, testId, kids, { studentAllowlist, isQa: user.isQa }),
+    loadFullLengthResults(db, testId, kids, { studentAllowlist, isQa: user.isQa, unnamedLabel }),
   ]);
   if (!test) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -433,7 +440,6 @@ async function fullLengthCsv(
         flCsvRow(
           {
             studentName: a.studentName,
-            email: a.email,
             grade: a.grade ?? "",
             className: classOf.get(a.studentId) ?? "",
             attemptNumber: a.attemptNumber,

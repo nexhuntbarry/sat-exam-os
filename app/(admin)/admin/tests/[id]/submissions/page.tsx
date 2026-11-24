@@ -175,6 +175,7 @@ export default async function TestSubmissionsPage({
     testId: test.id,
     viewerIsQa: user.isQa,
     studentIds: classFilterStudentIds,
+    withEmail: true,
   }).catch((e) => {
     console.error("[admin/tests/submissions] live snapshot", e);
     return { ...emptyLiveSnapshot(), degraded: true };

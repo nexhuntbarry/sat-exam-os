@@ -8,6 +8,8 @@ import { getTeacherSubjectsForStudent } from "@/lib/teacher-access";
 import { getStudentProgressOccasions } from "@/lib/student-analytics";
 import { PrintAccessError, type Viewer } from "@/lib/result-printout";
 import { buildAssessments, MATH, RW, type Assessment, type ReportSection } from "@/lib/one-page-report";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 export interface OnePageReportData {
   studentId: string;
@@ -30,14 +32,23 @@ export async function loadOnePageReport(db: SupabaseClient, viewer: Viewer, stud
   // QA isolation: never show a student from the other side.
   if (!onSide(studentId, await getQaUserIds(), viewer.isQa)) throw new PrintAccessError(404, "Not found");
 
-  const { data: student } = await db.from("users").select("display_name, email, role").eq("id", studentId).maybeSingle();
+  // A teacher gets the name only (lib/teacher-student-view): no email is read.
+  const teacher = viewer.role === "teacher";
+  const { data } = await db
+    .from("users")
+    .select(teacher ? `${TEACHER_STUDENT_SELECT}, role` : "id, display_name, email, role")
+    .eq("id", studentId)
+    .maybeSingle();
+  const student = data as { display_name: string | null; email?: string; role: string } | null;
   if (!student || student.role !== "student") throw new PrintAccessError(404, "Not found");
 
   const sections = ([RW, MATH] as ReportSection[]).filter((s) => subjects === null || subjects.includes(s));
   const occasions = await getStudentProgressOccasions(studentId);
   return {
     studentId,
-    studentName: (student.display_name as string | null) || (student.email as string) || "Student",
+    studentName: teacher
+      ? teacherStudentLabel(student, await unnamedStudentLabel())
+      : student.display_name || student.email || "Student",
     sections,
     assessments: buildAssessments(occasions, sections),
   };

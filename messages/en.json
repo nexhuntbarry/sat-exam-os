@@ -37,7 +37,8 @@
     "status": "Status",
     "name": "Name",
     "email": "Email",
-    "notes": "Notes"
+    "notes": "Notes",
+    "unnamedStudent": "Unnamed student"
   },
   "roles": {
     "admin": "Admin",
@@ -163,6 +164,11 @@
         "badge": "Check profile",
         "markChecked": "Mark as checked",
         "noStudents": "No students flagged for profile check."
+      },
+      "unnamed": {
+        "title": "No display name ({count})",
+        "hint": "Teachers see these students as “Unnamed student”. Add a name so teachers can tell them apart.",
+        "addName": "Add name"
       }
     },
     "teachers": {

@@ -29,6 +29,8 @@ import StudentProfileCard from "@/components/students/StudentProfileCard";
 import { getStudentProgressOccasions } from "@/lib/student-analytics";
 import type { Occasion } from "@/lib/score-analysis";
 import { getTranslations } from "next-intl/server";
+import { TEACHER_STUDENT_PROFILE_SELECT, TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import {
   DataRow,
   DataTable,
@@ -75,9 +77,14 @@ async function loadStudent(
   if (!membership) return null;
 
   const [{ data: group }, { data: student }] = await Promise.all([
-    db.from("class_groups").select("id, name, campus, grade").eq("id", classGroupId).maybeSingle(),
-    // Grade only: teachers already see it on results; no parent contact / notes.
-    db.from("users").select("id, email, display_name, student_profiles(grade)").eq("id", studentId).maybeSingle(),
+    db.from("class_groups").select("id, name, grade").eq("id", classGroupId).maybeSingle(),
+    // Name + grade only (lib/teacher-student-view): no email, school,
+    // campus, parent contact or notes.
+    db
+      .from("users")
+      .select(`${TEACHER_STUDENT_SELECT}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT})`)
+      .eq("id", studentId)
+      .maybeSingle(),
   ]);
   if (!group || !student) return null;
 
@@ -406,10 +413,12 @@ export default async function TeacherStudentResultsPage({
   // Only the subject(s) this teacher teaches the class.
   // (The takeaways read these too, so a single-subject teacher's conclusions
   // only use their section.)
-  const [allOccasions, tt] = await Promise.all([
+  const [allOccasions, tt, unnamed] = await Promise.all([
     getStudentProgressOccasions(studentId, { habits: true }),
     getTranslations("studentTabs"),
+    unnamedStudentLabel(),
   ]);
+  const studentName = teacherStudentLabel(student as { display_name: string | null }, unnamed);
   const occasions = allOccasions
     .map((o) => ({ ...o, rows: o.rows.filter((r) => inSubjects(r.section, subjects)) }))
     .filter((o) => o.rows.length > 0 && inSubjects(o.section, subjects));
@@ -448,9 +457,9 @@ export default async function TeacherStudentResultsPage({
             </Link>
           </div>
           <h1 className="text-2xl font-bold text-charcoal">
-            {student.display_name ?? student.email}
+            {studentName}
           </h1>
-          <p className="text-soft-mute text-xs">{student.email}</p>
+          {grade && <p className="text-soft-mute text-xs">Grade {grade}</p>}
         </div>
         {occasions.length > 0 && (
           <Link href={`/report?student=${studentId}`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-divider text-sm font-semibold text-charcoal hover:bg-light-bg transition-colors whitespace-nowrap">
@@ -594,19 +603,18 @@ export default async function TeacherStudentResultsPage({
             label: tt("skills"),
             content: occasions.length === 0
               ? <p className="text-sm text-soft-mute">{tt("skillsEmpty")}</p>
-              : <StudentInsights occasions={occasions} name={student.display_name ?? student.email} />,
+              : <StudentInsights occasions={occasions} name={studentName} />,
           },
           {
             id: "profile",
             label: tt("profileTab"),
-            // What a teacher may see: no parent contact or notes.
+            // What a teacher may see: grade and this class only (no email,
+            // school, campus, parent contact or notes).
             content: (
               <StudentProfileCard
                 fields={[
-                  ["email", student.email],
                   ["grade", grade],
                   ["classGroup", group.name],
-                  ["campus", group.campus],
                 ]}
               />
             ),

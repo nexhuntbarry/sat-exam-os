@@ -314,10 +314,14 @@ function buildSessionGroups(rows: SubmissionRow[]): SessionGroup[] {
 
 export default async function AdminStudentDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ edit?: string }>;
 }) {
   const { id } = await params;
+  // ?edit=name (from the Students page "No display name" list) opens Edit.
+  const openEdit = (await searchParams).edit === "name";
   const [student, me] = await Promise.all([getStudent(id), getCurrentUser()]);
   if (!student || isQaEmail(student.email) !== (me?.isQa ?? false)) notFound();
 
@@ -899,6 +903,7 @@ export default async function AdminStudentDetailPage({
             time_multiplier: profileTimeMultiplier(student.metadata),
           }}
           classNames={memberships.map((m) => m.name)}
+          defaultOpen={openEdit}
         />
         {occasions.length > 0 && (
           <Link href={`/report?student=${student.id}`} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-divider text-sm font-medium text-charcoal hover:bg-light-bg transition-colors">

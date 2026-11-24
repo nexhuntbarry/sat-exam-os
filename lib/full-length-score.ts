@@ -13,6 +13,7 @@ import { attemptScore, averageSat, pctOf, type AttemptScore, type ScoreDisplay, 
 import { combineSectionScores } from "@/lib/scoring";
 import type { ProgressSubmission } from "@/lib/test-progress";
 import type { FullLengthChildren, FullLengthLinks } from "@/lib/full-length";
+import { TEACHER_CSV_STUDENT_COLUMNS, teacherCsvStudentCells } from "@/lib/teacher-student-view";
 
 export const FL_RW_SECTION = "Reading & Writing";
 export const FL_MATH_SECTION = "Math";
@@ -448,10 +449,14 @@ export function flCsvQuestionColumns(
   );
 }
 
-/** Header of the full-length results CSV. The other section's columns are left out for a single-subject teacher. */
+/**
+ * Header of the full-length results CSV (teacher export). The other
+ * section's columns are left out for a single-subject teacher. Student
+ * columns are name, grade and class only: no email or contact field.
+ */
 export function flCsvHeader(scope: FlSectionScope, questions: FlCsvQuestion[]): string[] {
   return [
-    "Student", "Email", "Grade", "Class", "Attempt", "Status", "Total (400–1600)",
+    ...TEACHER_CSV_STUDENT_COLUMNS, "Attempt", "Status", "Total (400–1600)",
     ...(scope.rw ? ["R&W (200–800)"] : []),
     ...(scope.math ? ["Math (200–800)"] : []),
     ...(scope.rw ? ["R&W M1 Correct", "R&W M2 Correct", "R&W M2 Track"] : []),
@@ -463,7 +468,6 @@ export function flCsvHeader(scope: FlSectionScope, questions: FlCsvQuestion[]): 
 
 export interface FlCsvInput {
   studentName: string;
-  email: string;
   grade: string;
   className: string;
   attemptNumber: number;
@@ -487,10 +491,7 @@ export function flCsvRow(input: FlCsvInput, scope: FlSectionScope, questions: Fl
   const t = input.timeSeconds;
   const sectionCells = (a: AttemptScore, track: string | null) => [moduleCell(a.modules[0]), moduleCell(a.modules[1]), track ?? ""];
   return [
-    input.studentName,
-    input.email,
-    input.grade,
-    input.className,
+    ...teacherCsvStudentCells({ name: input.studentName, grade: input.grade, className: input.className }),
     input.attemptNumber,
     s.status,
     s.total ?? "",

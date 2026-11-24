@@ -1,7 +1,9 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
-import { getQaTestIds, scopeUsers } from "@/lib/qa";
+import { getQaTestIds, getQaUserIds, scopeIds } from "@/lib/qa";
+import { TEACHER_STUDENT_EMBED, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import { loadManageDecision, type ManageUser } from "@/lib/test-manage";
 import TeacherTestStatus from "./TeacherTestStatus";
 import type { TestStatus } from "@/components/ui/StatusBadge";
@@ -53,6 +55,7 @@ import {
 async function getTeacherTest(
   testId: string,
   user: ManageUser,
+  unnamedLabel: string,
 ) {
   const db = getServiceClient();
 
@@ -83,15 +86,16 @@ async function getTeacherTest(
   // Full-length SAT parent: its attempts are on its two section children.
   const flLinks = await fullLengthLinksOrNone(db);
   const isFullLength = flLinks.childrenOf.has(testId);
-  let subQuery = scopeUsers(db
+  // Students by name only (lib/teacher-student-view): no email is read.
+  let subQuery = scopeIds(db
     .from("submissions")
     .select(`
       id, test_id, student_id, status, score, correct_count, total_questions,
       percentage, started_at, submitted_at, time_spent_seconds, session_id, adaptive_track, attempt_number,
       tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
-      users!inner(display_name, email)
+      users!inner(${TEACHER_STUDENT_EMBED})
     `)
-    .in("test_id", isFullLength ? await expandFullLength(db, [testId]) : [testId]), user.isQa, "users.email")
+    .in("test_id", isFullLength ? await expandFullLength(db, [testId]) : [testId]), "student_id", await getQaUserIds(), user.isQa)
     .order("submitted_at", { ascending: false });
   // A class-group teacher only sees their own class's attempts.
   if (access.mode === "class" && access.studentAllowlist) {
@@ -114,6 +118,7 @@ async function getTeacherTest(
       viewerIsQa: user.isQa,
       studentIds: access.mode === "class" ? access.studentAllowlist : null,
       flScope,
+      unnamedLabel,
     }).catch((e) => {
       console.error("[teacher/tests] live snapshot", e);
       return { ...emptyLiveSnapshot(), degraded: true };
@@ -145,13 +150,12 @@ type RawSubmission = {
   tab_switches: unknown;
   /** lib/module2-not-taken M2_NOT_TAKEN_COLUMN. */
   m2_not_taken?: unknown;
-  users: { display_name: string; email: string };
+  users: { display_name: string | null };
 };
 
 type SubmissionAttempt = {
   key: string;
   studentName: string;
-  email: string;
   attempt: AttemptScore;
   statusLabel?: string;
   timeSpentSeconds: number;
@@ -175,6 +179,7 @@ function buildSubmissionAttempts(
   links: FullLengthLinks,
   flMeta: Map<string, FlAttemptMeta>,
   flScope: FlSectionScope,
+  unnamedLabel: string,
 ): SubmissionAttempt[] {
   const bySession = new Map<string, RawSubmission[]>();
   for (const r of rows) {
@@ -186,8 +191,7 @@ function buildSubmissionAttempts(
   for (const [key, list] of bySession) {
     attempts.push({
       key,
-      studentName: list[0].users.display_name,
-      email: list[0].users.email,
+      studentName: teacherStudentLabel(list[0].users, unnamedLabel),
       ...(() => {
         const { fullLength, ...attempt } = scoreAttemptGroup(list, links, section, flMeta, () => flScope);
         // Full-length badge label ("On break", "Closed — Math not taken").
@@ -232,7 +236,8 @@ export default async function TeacherTestDetailPage({
   if (!user) redirect("/sign-in");
 
   const { id } = await params;
-  const data = await getTeacherTest(id, user);
+  const unnamedLabel = await unnamedStudentLabel();
+  const data = await getTeacherTest(id, user, unnamedLabel);
   if (!data) notFound();
   const tReview = await getTranslations("teacher.classReview");
   const qaOffReason = (await teacherQaOffIds(getServiceClient(), user, [id])).has(id)
@@ -253,6 +258,7 @@ export default async function TeacherTestDetailPage({
     flLinks,
     flMeta,
     flScope,
+    unnamedLabel,
   );
   const submitted = attempts.filter((a) => a.attempt.score?.sat != null);
   const avgSat = averageSat(submitted.map((a) => a.attempt.score?.sat));
@@ -392,7 +398,6 @@ export default async function TeacherTestDetailPage({
                     <Td kind="main" sticky="left">
                       <TwoLineCell
                         main={a.studentName}
-                        detail={a.email}
                         mainClassName="font-medium text-charcoal"
                       />
                     </Td>
@@ -419,7 +424,7 @@ export default async function TeacherTestDetailPage({
               {notStarted.map((s) => (
                 <DataRow key={`not-started:${s.studentId}`} expandBelow="lg" colSpan={6}>
                   <Td kind="main" sticky="left">
-                    <TwoLineCell main={s.name} detail={s.email} mainClassName="font-medium text-charcoal" />
+                    <TwoLineCell main={s.name} mainClassName="font-medium text-charcoal" />
                   </Td>
                   <Td>
                     <StatusBadge kind="attempt" status="Not started" />

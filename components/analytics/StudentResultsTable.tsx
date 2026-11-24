@@ -29,8 +29,8 @@ export interface StudentResultRow {
   submissionId: string;
   studentId: string;
   attemptNumber: number;
+  /** Teacher view: name, grade and class only (lib/teacher-student-view). */
   studentName: string;
-  email: string;
   grade: string | null;
   classGroup: string | null;
   status: AttemptStatus;
@@ -235,7 +235,6 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                 <Td kind="main" sticky="left">
                   <TwoLineCell
                     main={row.studentName}
-                    detail={row.email}
                     mainClassName="font-medium text-charcoal"
                   />
                 </Td>

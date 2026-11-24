@@ -1,4 +1,6 @@
 import { clerkClient } from "@clerk/nextjs/server";
+import Link from "next/link";
+import { getTranslations } from "next-intl/server";
 import { getServiceClient } from "@/lib/supabase";
 import StudentsClient from "./StudentsClient";
 import PageIntro from "@/components/shared/PageIntro";
@@ -89,9 +91,40 @@ export default async function StudentsPage() {
     ),
   }));
 
+  // Teachers see a student with no display name as "Unnamed student" (never
+  // the email), so list them here for the admin to name.
+  const unnamed = students.filter((s) => !(s.display_name as string | null)?.trim());
+  const t = await getTranslations("admin.students.unnamed");
+
   return (
     <>
       <PageIntro tKey="admin.students" />
+      {unnamed.length > 0 && (
+        <section
+          id="no-display-name"
+          className="mb-6 bg-status-warning/5 border border-status-warning/20 rounded-2xl overflow-hidden"
+        >
+          <div className="px-5 py-3 border-b border-status-warning/20">
+            <h2 className="text-status-warning font-semibold text-sm">
+              {t("title", { count: unnamed.length })}
+            </h2>
+            <p className="text-soft-mute text-xs mt-0.5">{t("hint")}</p>
+          </div>
+          <ul className="divide-y divide-divider">
+            {unnamed.map((s) => (
+              <li key={s.id as string} className="px-5 py-2.5 flex items-center justify-between gap-4 text-sm">
+                <span className="text-charcoal break-all">{s.email as string}</span>
+                <Link
+                  href={`/admin/students/${s.id as string}?edit=name`}
+                  className="shrink-0 text-warm-coral-text text-xs font-semibold hover:underline"
+                >
+                  {t("addName")}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <StudentsClient students={withClasses} classGroups={classGroups} />
     </>
   );

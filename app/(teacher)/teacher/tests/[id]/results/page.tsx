@@ -1,7 +1,9 @@
 import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getAssignedStudentIds, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
-import { scopeUsers } from "@/lib/qa";
+import { getQaUserIds, scopeIds } from "@/lib/qa";
+import { TEACHER_STUDENT_EMBED, TEACHER_STUDENT_PROFILE_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
@@ -54,16 +56,17 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     access.mode === "class" ? access.studentAllowlist : null,
   );
 
-  let subQuery = scopeUsers(db
+  // Students by name + grade only (lib/teacher-student-view): no email is read.
+  let subQuery = scopeIds(db
     .from("submissions")
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, attempt_number,
       scaled_score, scaled_section, session_id, adaptive_track, module_id,
       tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
-      users!inner(display_name, email, student_profiles(grade, class_group))
+      users!inner(${TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
     `)
-    .eq("test_id", testId), isQa, "users.email")
+    .eq("test_id", testId), "student_id", await getQaUserIds(), isQa)
     .order("submitted_at", { ascending: false });
   // A class-group teacher only sees their own class's attempts.
   if (access.mode === "class" && access.studentAllowlist) {
@@ -89,15 +92,18 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     tab_switches: unknown;
     m2_not_taken?: unknown;
     users: {
-      display_name: string;
-      email: string;
+      display_name: string | null;
       student_profiles?:
-        | { grade?: string; class_group?: string }
-        | { grade?: string; class_group?: string }[]
+        | { grade?: string }
+        | { grade?: string }[]
         | null;
     };
   };
   const subs = (submissions ?? []) as unknown as RawSub[];
+  // Class = the teacher's own classes the student is in (class_group_members),
+  // not the free-text profile field.
+  const classOf = await studentClassNames(db, { userId, role, isQa }, Array.from(new Set(subs.map((s) => s.student_id))));
+  const unnamed = await unnamedStudentLabel();
 
   // Pending retake grants — student_id → grant exists. Used to surface
   // "retake unlocked" badge in the row UI.
@@ -132,7 +138,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     const u = head.users;
     const spRaw = u.student_profiles ?? null;
     const sp = (Array.isArray(spRaw) ? spRaw[0] : spRaw) as
-      | { grade?: string; class_group?: string }
+      | { grade?: string }
       | null;
     const attempt = attemptScore(sorted, section);
     studentRows.push({
@@ -141,10 +147,9 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
       submissionId: sorted[sorted.length - 1].id,
       studentId: head.student_id,
       attemptNumber: head.attempt_number ?? 1,
-      studentName: u.display_name,
-      email: u.email,
+      studentName: teacherStudentLabel(u, unnamed),
       grade: sp?.grade ?? null,
-      classGroup: sp?.class_group ?? null,
+      classGroup: classOf.get(head.student_id) ?? null,
       status: attempt.status,
       module: attempt.module,
       score: attempt.score,
@@ -240,7 +245,7 @@ async function getFullLengthResultsData(
   const allowlist = access.mode === "class" ? access.studentAllowlist : null;
   const [studentIds, attempts, scope, { data: grants }] = await Promise.all([
     getAssignedStudentIds(db, assignment, user.isQa, allowlist),
-    loadFullLengthResults(db, testId, children, { studentAllowlist: allowlist, isQa: user.isQa }),
+    loadFullLengthResults(db, testId, children, { studentAllowlist: allowlist, isQa: user.isQa, unnamedLabel: await unnamedStudentLabel() }),
     flSectionScope(db, user, children),
     db.from("test_retake_grants").select("student_id").eq("test_id", testId).is("consumed_at", null),
   ]);

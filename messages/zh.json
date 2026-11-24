@@ -37,7 +37,8 @@
     "status": "狀態",
     "name": "姓名",
     "email": "電子郵件",
-    "notes": "備註"
+    "notes": "備註",
+    "unnamedStudent": "未命名學生"
   },
   "roles": {
     "admin": "管理員",
@@ -163,6 +164,11 @@
         "badge": "檢查個人資料",
         "markChecked": "標記為已確認",
         "noStudents": "沒有需要檢查個人資料的學生。"
+      },
+      "unnamed": {
+        "title": "未設定顯示名稱（{count}）",
+        "hint": "老師端會將這些學生顯示為「未命名學生」。請補上名稱，方便老師辨識。",
+        "addName": "新增名稱"
       }
     },
     "teachers": {

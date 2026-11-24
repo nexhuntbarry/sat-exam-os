@@ -25,8 +25,8 @@ export interface CompletionCounts {
 
 export interface AssignedTestStudent {
   studentId: string;
+  /** Teacher view: name only (lib/teacher-student-view), never email. */
   name: string;
-  email: string;
   state: StudentTestState;
   /**
    * Finished: the score the viewer may see (a single-subject teacher: their
@@ -183,7 +183,6 @@ export function assignedTestRows(
         students.push({
           studentId: r.studentId,
           name: r.name,
-          email: r.email,
           state,
           score:
             state === "submitted"

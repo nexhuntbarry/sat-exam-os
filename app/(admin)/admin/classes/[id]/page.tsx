@@ -293,6 +293,7 @@ export default async function ClassDetailPage({
     classGroupId: id,
     isQa,
     subjects: null,
+    withEmail: true,
     testHref: (testId) => `/admin/tests/${testId}/submissions?class=${id}`,
   }).catch((e) => {
     console.error("[classes/gradebook] load failed:", e);

@@ -4,6 +4,8 @@ import { getServiceClient } from "@/lib/supabase";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
 import { getTeacherTestAccess, testOwningQuestion } from "@/lib/teacher-access";
 import { teacherQaGate } from "@/lib/teacher-qa";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 // GET /api/teacher/tests/[id]/analytics/[question_id]
 export async function GET(
@@ -112,13 +114,20 @@ export async function GET(
   const wrongStudentIds = [...new Set(wrongSubmissionIds.map((sid) => studentIdMap[sid]).filter(Boolean))];
   const rightStudentIds = [...new Set(rightSubmissionIds.map((sid) => studentIdMap[sid]).filter(Boolean))];
 
-  const { data: wrongStudents } = wrongStudentIds.length > 0
-    ? await db.from("users").select("id, display_name, email").in("id", wrongStudentIds)
-    : { data: [] };
-
-  const { data: rightStudents } = rightStudentIds.length > 0
-    ? await db.from("users").select("id, display_name, email").in("id", rightStudentIds)
-    : { data: [] };
+  // Name only (lib/teacher-student-view): never email.
+  const unnamed = await unnamedStudentLabel();
+  const named = (rows: { id: string; display_name: string | null }[] | null) =>
+    (rows ?? []).map((u) => ({ id: u.id, name: teacherStudentLabel(u, unnamed) }));
+  const wrongStudents = named(
+    wrongStudentIds.length > 0
+      ? (await db.from("users").select(TEACHER_STUDENT_SELECT).in("id", wrongStudentIds)).data as { id: string; display_name: string | null }[] | null
+      : [],
+  );
+  const rightStudents = named(
+    rightStudentIds.length > 0
+      ? (await db.from("users").select(TEACHER_STUDENT_SELECT).in("id", rightStudentIds)).data as { id: string; display_name: string | null }[] | null
+      : [],
+  );
 
   // Map submission IDs for wrong students (for linking to submission detail)
   const wrongStudentSubmissions = wrongSubmissionIds.map((sid) => ({
@@ -163,8 +172,8 @@ export async function GET(
       avgTimeSeconds: avgTime,
       choiceDistribution: choiceDist,
     },
-    wrongStudents: wrongStudents ?? [],
-    rightStudents: rightStudents ?? [],
+    wrongStudents,
+    rightStudents,
     wrongStudentSubmissions,
     classReview,
     privateNote,

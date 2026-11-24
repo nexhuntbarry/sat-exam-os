@@ -10,6 +10,8 @@ import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import { ClipboardList, Users, BarChart2, AlertTriangle, CalendarClock, Eye, Presentation } from "lucide-react";
 import { getTranslations } from "next-intl/server";
+import { TEACHER_STUDENT_EMBED, TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import { DataRow, DataTable, EmptyRow, HeadRow, RowButton, Td, Th } from "@/components/ui/data-table";
 import { StatusBadge, SubjectTag, type TestStatus } from "@/components/ui/StatusBadge";
 import { teacherQaOffIds } from "@/lib/teacher-qa";
@@ -30,6 +32,8 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
   }
   const testIds = Array.from(scope.testIds);
   const qaUsers = await getQaUserIds();
+  // Students by name only (lib/teacher-student-view), never email.
+  const unnamed = await unnamedStudentLabel();
   // A full-length SAT's attempts are on its two section children: counted
   // under the parent, finished once Math Module 2 is graded.
   const flLinks = await fullLengthLinksOrNone(db);
@@ -49,7 +53,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     fetchAllRows((from, to) =>
       scopeIds(db
         .from("submissions")
-        .select(`id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, ${M2_NOT_TAKEN_COLUMN}, users!inner(display_name, email)`)
+        .select(`id, test_id, student_id, status, correct_count, total_questions, percentage, submitted_at, session_id, adaptive_track, attempt_number, started_at, ${M2_NOT_TAKEN_COLUMN}, users!inner(${TEACHER_STUDENT_EMBED})`)
         .in("test_id", expandWithChildren(testIds, flLinks)), "student_id", qaUsers, user.isQa)
         .order("id")
         .range(from, to),
@@ -127,7 +131,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
       done,
       percentage,
       submitted_at: submittedAt,
-      student: rows[0].users as { display_name: string; email: string },
+      studentName: teacherStudentLabel(rows[0].users as { display_name: string | null } | null, unnamed),
     };
   });
 
@@ -154,11 +158,12 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     .slice(0, 10);
 
   const { data: attentionUsers } = lowStudentIds.length > 0
-    ? await db.from("users").select("id, display_name, email").in("id", lowStudentIds)
+    ? await db.from("users").select(TEACHER_STUDENT_SELECT).in("id", lowStudentIds)
     : { data: [] };
 
-  const attentionWithScores = (attentionUsers ?? []).map((u) => ({
-    ...u,
+  const attentionWithScores = ((attentionUsers ?? []) as { id: string; display_name: string | null }[]).map((u) => ({
+    id: u.id,
+    name: teacherStudentLabel(u, unnamed),
     avgScore: studentScores[u.id]
       ? studentScores[u.id].reduce((a, b) => a + b, 0) / studentScores[u.id].length
       : null,
@@ -396,7 +401,7 @@ export default async function TeacherDashboardPage() {
               {recentSubmissions.map((s) => (
                 <div key={s.id} className="px-5 py-3 flex items-center gap-3">
                   <div className="flex-1 min-w-0">
-                    <div className="text-charcoal text-sm font-medium">{s.student.display_name}</div>
+                    <div className="text-charcoal text-sm font-medium">{s.studentName}</div>
                     <div className="text-soft-mute text-xs">
                       {s.submitted_at ? formatDateTime(s.submitted_at) : ""}
                     </div>
@@ -426,8 +431,7 @@ export default async function TeacherDashboardPage() {
             {attentionStudents.map((s) => (
               <div key={s.id} className="px-5 py-3 flex items-center justify-between gap-4">
                 <div>
-                  <div className="text-charcoal text-sm font-medium">{s.display_name}</div>
-                  <div className="text-soft-mute text-xs">{s.email}</div>
+                  <div className="text-charcoal text-sm font-medium">{s.name}</div>
                 </div>
                 <div className="text-status-error font-bold text-sm">
                   {s.avgScore != null ? `${s.avgScore.toFixed(1)}% avg` : "—"}

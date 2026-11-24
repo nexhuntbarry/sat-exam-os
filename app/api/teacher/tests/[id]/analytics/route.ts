@@ -9,6 +9,8 @@ import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { fullLengthLinks } from "@/lib/full-length";
 import { flSectionScope } from "@/lib/full-length-score";
 import { teacherQaContentHidden } from "@/lib/teacher-qa";
+import { TEACHER_STUDENT_EMBED, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 export interface StudentQuestionRow {
   name: string;
@@ -127,7 +129,7 @@ export async function GET(
   // Graded module rows in scope (class teachers: their own students only).
   let submissionQuery = db
     .from("submissions")
-    .select("id, student_id, status, session_id, adaptive_track, correct_count, total_questions, percentage, metadata, users!inner(display_name, email)")
+    .select(`id, student_id, status, session_id, adaptive_track, correct_count, total_questions, percentage, metadata, users!inner(${TEACHER_STUDENT_EMBED})`)
     .eq("test_id", testId);
   if (access.mode === "class" && access.studentAllowlist) {
     submissionQuery = submissionQuery.in("student_id", Array.from(access.studentAllowlist));
@@ -142,13 +144,14 @@ export async function GET(
       !(s.metadata as Record<string, unknown> | null)?.auto_closed_unopened,
   );
 
+  const unnamed = await unnamedStudentLabel();
   const subInfo = new Map(
     graded.map((s) => {
-      const u = s.users as unknown as { display_name: string | null; email: string | null } | null;
+      const u = s.users as unknown as { display_name: string | null } | null;
       return [
         s.id as string,
         {
-          name: u?.display_name ?? u?.email ?? "Student",
+          name: teacherStudentLabel(u, unnamed),
           activity: parseActivity((s.metadata as Record<string, unknown> | null)?.question_activity),
         },
       ];

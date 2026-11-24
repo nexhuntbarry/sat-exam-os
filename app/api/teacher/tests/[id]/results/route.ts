@@ -9,6 +9,8 @@ import { getAssignedStudentIds, getTeacherTestAccess } from "@/lib/teacher-acces
 import { scaleSectionScore } from "@/lib/scoring";
 import { studentClassNames } from "@/lib/result-printout";
 import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
+import { TEACHER_STUDENT_EMBED, TEACHER_STUDENT_PROFILE_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 const MODULE_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -28,6 +30,8 @@ export async function GET(
 
   const { id: testId } = await params;
   const db = getServiceClient();
+  // Students by name + grade only (lib/teacher-student-view), never email.
+  const unnamed = await unnamedStudentLabel();
 
   const access = await getTeacherTestAccess(db, user, testId);
   if (access.mode === null) {
@@ -54,7 +58,7 @@ export async function GET(
     const [{ data: flTest }, studentIds, attempts, scope] = await Promise.all([
       db.from("tests").select("id, test_name, due_date, open_date, status, test_kind").eq("id", testId).single(),
       getAssignedStudentIds(db, assignment, user.isQa, studentAllowlist),
-      loadFullLengthResults(db, testId, flKids, { studentAllowlist, isQa: user.isQa }),
+      loadFullLengthResults(db, testId, flKids, { studentAllowlist, isQa: user.isQa, unnamedLabel: unnamed }),
       flSectionScope(db, user, flKids),
     ]);
     if (!flTest) return NextResponse.json({ error: "Test not found" }, { status: 404 });
@@ -83,7 +87,6 @@ export async function GET(
       students: attempts.map((a) => ({
         studentId: a.studentId,
         studentName: a.studentName,
-        email: a.email,
         grade: a.grade,
         classGroup: classOf.get(a.studentId) ?? null,
         attemptNumber: a.attemptNumber,
@@ -122,7 +125,7 @@ export async function GET(
     .select(`
       id, student_id, status, score, correct_count, total_questions,
       percentage, submitted_at, time_spent_seconds, scaled_score, session_id, adaptive_track, ${M2_NOT_TAKEN_COLUMN},
-      users!inner(display_name, email, student_profiles(grade))
+      users!inner(${TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
     `)
     .in("test_id", await expandFullLength(db, [testId]))
     .order("submitted_at", { ascending: false });
@@ -150,8 +153,7 @@ export async function GET(
     adaptive_track: string | null;
     m2_not_taken?: unknown;
     users: {
-      display_name: string;
-      email: string;
+      display_name: string | null;
       student_profiles?:
         | { grade?: string }
         | { grade?: string }[]
@@ -180,7 +182,6 @@ export async function GET(
     submissionId: string;
     studentId: string;
     studentName: string;
-    email: string;
     grade: string | null;
     classGroup: string | null;
     status: string;
@@ -219,8 +220,7 @@ export async function GET(
       studentRows.push({
         submissionId: head.id,
         studentId: head.student_id,
-        studentName: u.display_name,
-        email: u.email,
+        studentName: teacherStudentLabel(u, unnamed),
         grade: sp?.grade ?? null,
         classGroup: classOf.get(head.student_id) ?? null,
         status: head.status,
@@ -261,8 +261,7 @@ export async function GET(
       // result view can stitch both modules via session_id.
       submissionId: sorted[sorted.length - 1].id,
       studentId: head.student_id,
-      studentName: u.display_name,
-      email: u.email,
+      studentName: teacherStudentLabel(u, unnamed),
       grade: sp?.grade ?? null,
       classGroup: classOf.get(head.student_id) ?? null,
       status,

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, MapPin, GraduationCap, Users } from "lucide-react";
+import { ArrowLeft, GraduationCap, Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { getTestSections, inSubjects, reachableTestIds } from "@/lib/teacher-access";
@@ -20,6 +20,8 @@ import AssignedTestsTable from "@/components/analytics/AssignedTestsTable";
 import { assignedTestRows, classReviewHref } from "@/lib/assigned-tests-view";
 import { teacherQaOffIds } from "@/lib/teacher-qa";
 import { getTranslations } from "next-intl/server";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import {
   DataRow,
   DataTable,
@@ -35,7 +37,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: boolean) {
+async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: boolean, unnamedLabel: string) {
   const db = getServiceClient();
 
   // Teacher must be assigned to this group; admin sees everything. The
@@ -54,7 +56,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
 
   const { data: group } = await db
     .from("class_groups")
-    .select("id, name, campus, grade")
+    .select("id, name, grade")
     .eq("id", id)
     .maybeSingle();
   if (!group) return null;
@@ -62,21 +64,23 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
   const { data: memberRows } = await db
     .from("class_group_members")
     .select(
+      // Name only (lib/teacher-student-view): never email / contact fields.
       `student_id,
-       users!student_id(id, email, display_name)`,
+       users!student_id(${TEACHER_STUDENT_SELECT})`,
     )
     .eq("class_group_id", id);
 
   type MemberRow = {
     student_id: string;
     users:
-      | { id: string; email: string; display_name: string | null }
-      | { id: string; email: string; display_name: string | null }[]
+      | { id: string; display_name: string | null }
+      | { id: string; display_name: string | null }[]
       | null;
   };
   const students = ((memberRows ?? []) as unknown as MemberRow[])
     .map((m) => (Array.isArray(m.users) ? m.users[0] : m.users))
-    .filter((u): u is NonNullable<typeof u> => Boolean(u));
+    .filter((u): u is NonNullable<typeof u> => Boolean(u))
+    .map((u) => ({ id: u.id, name: teacherStudentLabel(u, unnamedLabel) }));
 
   const studentIds = students.map((s) => s.id);
 
@@ -225,7 +229,8 @@ export default async function TeacherClassDetailPage({
 
   const { id } = await params;
   if (!onSide(id, await getQaClassGroupIds(), me.isQa)) notFound();
-  const data = await loadClass(id, me.userId, me.role === "admin", me.isQa);
+  const unnamedLabel = await unnamedStudentLabel();
+  const data = await loadClass(id, me.userId, me.role === "admin", me.isQa, unnamedLabel);
   if (!data) notFound();
   const { group, students, perStudent, subjects } = data;
   // Same grid as the admin class page, limited to this teacher's subject.
@@ -234,6 +239,7 @@ export default async function TeacherClassDetailPage({
     classGroupId: id,
     isQa: me.isQa,
     subjects,
+    unnamedLabel,
     testHref: (testId) => `/teacher/tests/${testId}/results`,
     reviewHref: classReviewHref,
   }).catch((e) => {
@@ -276,12 +282,6 @@ export default async function TeacherClassDetailPage({
         <div className="flex-1">
           <h1 className="text-2xl font-bold text-charcoal">{group.name}</h1>
           <div className="mt-1 flex flex-wrap gap-3 text-soft-mute text-xs">
-            {group.campus && (
-              <span className="inline-flex items-center gap-1">
-                <MapPin size={11} />
-                {group.campus}
-              </span>
-            )}
             {group.grade && (
               <span className="inline-flex items-center gap-1">
                 <GraduationCap size={11} />
@@ -339,7 +339,7 @@ export default async function TeacherClassDetailPage({
                     .filter(Boolean)
                     .join(" · ")
                 : null;
-              const name = s.display_name ?? s.email;
+              const name = s.name;
 
               return (
                 <DataRow
@@ -361,8 +361,7 @@ export default async function TeacherClassDetailPage({
                       className="block hover:text-warm-coral-text transition-colors"
                     >
                       <TwoLineCell
-                        main={s.display_name ?? s.email}
-                        detail={s.display_name ? s.email : undefined}
+                        main={s.name}
                         mainClassName="font-medium text-inherit"
                       />
                     </Link>

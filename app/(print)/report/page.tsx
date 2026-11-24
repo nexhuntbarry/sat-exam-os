@@ -6,6 +6,8 @@ import { formatDate } from "@/lib/datetime";
 import PrintableReport from "@/components/analytics/PrintableReport";
 import { getStudentBreakdownRows, getStudentProgressOccasions } from "@/lib/student-analytics";
 import { getTeacherSubjectsForStudent, inSubjects } from "@/lib/teacher-access";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +47,17 @@ export default async function ReportPage({
     redirect(me.role === "admin" ? "/admin" : me.role === "teacher" ? "/teacher" : "/student");
   }
 
-  const { data: student } = await db.from("users").select("display_name, email").eq("id", studentId).maybeSingle();
+  // A teacher gets the name only (lib/teacher-student-view): no email is read.
+  const isTeacher = me.role === "teacher";
+  const { data: student } = await db
+    .from("users")
+    .select(isTeacher ? TEACHER_STUDENT_SELECT : "id, display_name, email")
+    .eq("id", studentId)
+    .maybeSingle();
+  const row = student as { display_name: string | null; email?: string } | null;
+  const studentName = isTeacher
+    ? teacherStudentLabel(row, await unnamedStudentLabel())
+    : row?.display_name ?? row?.email ?? "Student";
   const [allBreakdownRows, allOccasions] = await Promise.all([
     getStudentBreakdownRows(studentId),
     getStudentProgressOccasions(studentId),
@@ -65,7 +77,7 @@ export default async function ReportPage({
 
   return (
     <PrintableReport
-      studentName={student?.display_name ?? student?.email ?? "Student"}
+      studentName={studentName}
       breakdownRows={breakdownRows}
       occasions={occasions}
       generatedOn={formatDate(new Date().toISOString())}

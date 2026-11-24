@@ -235,7 +235,7 @@ export default function GradebookTable({
           <tr key={r.studentId} className="border-b border-divider last:border-b-0 break-inside-avoid">
             <th scope="row" className={`${pad} ${sticky} text-left font-medium text-charcoal`}>
               <div className="leading-tight">{r.name}</div>
-              {!compact && r.name !== r.email && <div className="text-[11px] font-normal text-soft-mute truncate max-w-[12rem]">{r.email}</div>}
+              {!compact && r.email && r.name !== r.email && <div className="text-[11px] font-normal text-soft-mute truncate max-w-[12rem]">{r.email}</div>}
             </th>
             {columns.map((c) => {
               const cell = r.cells[c.id];

@@ -100,7 +100,8 @@ export interface StudentSummary {
 export interface GradebookRow {
   studentId: string;
   name: string;
-  email: string;
+  /** Admin viewers only; absent on the teacher side (never loaded). */
+  email?: string;
   /** testId → cell (every column has one). */
   cells: Record<string, GradebookCell>;
   summary: StudentSummary;
@@ -313,9 +314,11 @@ export function cellText(cell: GradebookCell | undefined): string {
  */
 export function gradebookCsvRows(gb: Pick<Gradebook, "scope" | "averages">, columns: GradebookColumn[], rows: GradebookRow[]): (string | number)[][] {
   const both = gb.scope.rw && gb.scope.math;
+  // Email only on the admin grid (its rows carry it); the teacher grid never loads it.
+  const withEmail = rows.some((r) => r.email !== undefined);
   const header = [
     "Student",
-    "Email",
+    ...(withEmail ? ["Email"] : []),
     ...columns.map((c) => `${c.name} (${KIND_LABEL[c.kind]})`),
     ...(gb.scope.math ? ["Latest Math"] : []),
     ...(gb.scope.rw ? ["Latest R&W"] : []),
@@ -324,7 +327,7 @@ export function gradebookCsvRows(gb: Pick<Gradebook, "scope" | "averages">, colu
   ];
   const body = rows.map((r) => [
     r.name,
-    r.email,
+    ...(withEmail ? [r.email ?? ""] : []),
     ...columns.map((c) => cellText(r.cells[c.id])),
     ...(gb.scope.math ? [r.summary.latestMath?.score ?? ""] : []),
     ...(gb.scope.rw ? [r.summary.latestRw?.score ?? ""] : []),
@@ -334,7 +337,7 @@ export function gradebookCsvRows(gb: Pick<Gradebook, "scope" | "averages">, colu
   ]);
   const avg = [
     "Class average",
-    "",
+    ...(withEmail ? [""] : []),
     ...columns.map((c) => c.avg ?? ""),
     ...(gb.scope.math ? [gb.averages.latestMath ?? ""] : []),
     ...(gb.scope.rw ? [gb.averages.latestRw ?? ""] : []),

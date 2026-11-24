@@ -24,7 +24,7 @@ export async function GET(
   try {
     // An unknown / other-side class is ignored, as on the page.
     const studentIds = classId ? await classGroupStudentIds(db, classId, user.isQa) : null;
-    const snapshot = await loadLiveSnapshot(db, { testId: id, viewerIsQa: user.isQa, studentIds });
+    const snapshot = await loadLiveSnapshot(db, { testId: id, viewerIsQa: user.isQa, studentIds, withEmail: true });
     return NextResponse.json({ data: snapshot }, { headers: { "Cache-Control": "no-store" } });
   } catch (e) {
     console.error("[admin/tests/live-progress]", e);

@@ -8,6 +8,7 @@ import type { ScoreDisplay } from "@/lib/score-display";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate } from "@/lib/datetime";
+import { teacherNameMatches } from "@/lib/teacher-student-view";
 import {
   DataTable,
   HeadRow,
@@ -25,8 +26,8 @@ export interface CrossTestResultRow {
   testName: string;
   section: string | null;
   studentId: string;
+  /** Teacher view: name only, never email (lib/teacher-student-view). */
   studentName: string;
-  email: string;
   classGroup: string | null;
   status: AttemptStatus;
   /** Module being taken while In progress. */
@@ -78,20 +79,12 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
   );
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (testFilter !== "all" && r.testId !== testFilter) return false;
       if (classFilter !== "all" && (r.classGroup ?? "—") !== classFilter) return false;
       if (statusFilter !== "all" && r.status !== statusFilter) return false;
-      if (q) {
-        if (
-          !r.studentName.toLowerCase().includes(q) &&
-          !r.email.toLowerCase().includes(q)
-        ) {
-          return false;
-        }
-      }
-      return true;
+      // Name only, never email.
+      return teacherNameMatches(r.studentName, search);
     });
   }, [rows, testFilter, classFilter, statusFilter, search]);
 
@@ -235,7 +228,6 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                 <Td kind="main" sticky="left">
                   <TwoLineCell
                     main={row.studentName}
-                    detail={row.email}
                     mainClassName="font-medium text-charcoal"
                   />
                 </Td>

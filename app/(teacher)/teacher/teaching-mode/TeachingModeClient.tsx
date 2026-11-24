@@ -69,7 +69,6 @@ interface CandidateQuestion {
 interface Cohort {
   id: string;
   name: string;
-  campus: string | null;
   grade: string | null;
 }
 

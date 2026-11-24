@@ -14,7 +14,6 @@ import { TAB_SWITCH_HELP } from "@/lib/tab-switches";
 
 interface StudentInfo {
   name: string;
-  email: string;
   grade: string | null;
   classGroup: string | null;
 }
@@ -256,7 +255,6 @@ export default function SubmissionDetailPage() {
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-xl font-bold text-charcoal">{student.name}</h1>
-            <div className="text-soft-mute text-sm mt-0.5">{student.email}</div>
             <div className="flex items-center gap-3 mt-1 text-sm text-soft-mute">
               {student.grade && <span>Grade {student.grade}</span>}
               {student.classGroup && <span>· {student.classGroup}</span>}

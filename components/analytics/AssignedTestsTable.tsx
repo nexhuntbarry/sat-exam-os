@@ -224,7 +224,7 @@ function StudentTable({ testId, testName, students }: { testId: string; testName
           {students.map((s) => (
             <tr key={s.studentId} className="border-b border-divider/70 last:border-0 align-middle">
               <td className="px-3 py-2">
-                <span className="block break-words leading-snug text-charcoal" title={s.email}>{s.name}</span>
+                <span className="block break-words leading-snug text-charcoal">{s.name}</span>
                 {s.note && <span className="block text-[11px] leading-snug text-soft-mute">{s.note}</span>}
               </td>
               <td className="px-3 py-2 whitespace-nowrap">
