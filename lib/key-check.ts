@@ -34,6 +34,7 @@ import { fetchAllRows } from "@/lib/fetch-all-rows";
 import { liveQuestionIds } from "@/lib/live-questions";
 import { labelFullLengthChildren } from "@/lib/full-length";
 import { tryEvaluate } from "@/lib/math/safe-eval";
+import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
 
 export type QType = typeof MC_TYPE | typeof SPR_TYPE;
 
@@ -301,14 +302,18 @@ export interface KeyChangePreview {
 /**
  * What rescoring would do if the key became `newKey` — computed the same way
  * lib/rescore.ts recomputes, but nothing is written. `includeStudent` lets
- * the caller hide the other QA side's students.
+ * the caller hide the other QA side's students. `viewer.role` comes from the
+ * server session: anyone but an admin (e.g. a teacher with the question-
+ * review flag) gets student names only (lib/teacher-student-view), no email.
  */
 export async function previewKeyChange(
   db: SupabaseClient,
   questionId: string,
   newKey: string,
   includeStudent: (studentId: string | null) => boolean = () => true,
+  viewer: { role: string | null | undefined; unnamedLabel?: string } = { role: null },
 ): Promise<KeyChangePreview> {
+  const isAdmin = viewer.role === "admin";
   const { data: q } = await db.from("questions").select("id, correct_answer, question_text").eq("id", questionId).maybeSingle();
   const oldKey = (q?.correct_answer as string | null) ?? null;
   const questionText = (q?.question_text as string | null) ?? null;
@@ -343,10 +348,17 @@ export async function previewKeyChange(
   const studentIds = [...new Set([...subs.values()].map((s) => s.student_id).filter(Boolean))] as string[];
   const testIds = [...new Set([...subs.values()].map((s) => s.test_id).filter(Boolean))] as string[];
   const [users, tests] = await Promise.all([
-    studentIds.length ? db.from("users").select("id, display_name, email").in("id", studentIds) : null,
+    studentIds.length
+      ? db.from("users").select(isAdmin ? "id, display_name, email" : TEACHER_STUDENT_SELECT).in("id", studentIds)
+      : null,
     testIds.length ? db.from("tests").select("id, test_name").in("id", testIds) : null,
   ]);
-  const userName = new Map(((users?.data ?? []) as { id: string; display_name: string | null; email: string | null }[]).map((u) => [u.id, u.display_name || u.email || "Student"]));
+  const userName = new Map(
+    ((users?.data ?? []) as unknown as { id: string; display_name: string | null; email?: string | null }[]).map((u) => [
+      u.id,
+      isAdmin ? u.display_name || u.email || "Student" : teacherStudentLabel(u, viewer.unnamedLabel),
+    ]),
+  );
   const testName = new Map(((tests?.data ?? []) as { id: string; test_name: string | null }[]).map((t) => [t.id, t.test_name || "Test"]));
   await labelFullLengthChildren(db, testName);
 

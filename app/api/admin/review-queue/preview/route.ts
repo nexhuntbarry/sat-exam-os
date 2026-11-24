@@ -5,6 +5,7 @@ import { getQaUserIds, onSide } from "@/lib/qa";
 import { previewKeyChange } from "@/lib/key-check";
 import { keyTypeProblem } from "@/lib/answer-key";
 import { liveQuestionIds } from "@/lib/live-questions";
+import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 // POST /api/admin/review-queue/preview
 // Body: { id, correct_answer }
@@ -35,7 +36,12 @@ export async function POST(req: Request) {
     choices: q.choices,
   });
   const qaIds = await getQaUserIds();
-  const preview = await previewKeyChange(db, id, nextKey, (studentId) => onSide(studentId, qaIds, auth.isQa));
+  // A reviewer teacher (can_review_questions) gets student names only, no
+  // email (lib/teacher-student-view); the role comes from the server session.
+  const preview = await previewKeyChange(db, id, nextKey, (studentId) => onSide(studentId, qaIds, auth.isQa), {
+    role: auth.role,
+    unnamedLabel: auth.role === "admin" ? undefined : await unnamedStudentLabel(),
+  });
   const live = q.parsing_status === "Approved" ? (await liveQuestionIds(db, [id])).has(id) : false;
   return NextResponse.json({
     ...preview,

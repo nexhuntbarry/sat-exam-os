@@ -37,17 +37,35 @@ export function teacherNameMatches(name: string, query: string): boolean {
 
 /** The teacher results CSV's student columns, exactly these three. */
 export const TEACHER_CSV_STUDENT_COLUMNS = ["Student", "Grade", "Class"] as const;
+/** An admin's export of the same CSV keeps the Email column. */
+export const ADMIN_CSV_STUDENT_COLUMNS = ["Student", "Email", "Grade", "Class"] as const;
 
-/** Header of the teacher section-test results CSV (api/teacher/tests/[id]/export). */
-export function sectionCsvHeader(twoModules: boolean, questionHeaders: string[]): string[] {
+/**
+ * Student columns of the results CSV. `admin` must come from the server
+ * session (user.role === "admin"), never from the request.
+ */
+export function csvStudentColumns(admin: boolean): string[] {
+  return admin ? [...ADMIN_CSV_STUDENT_COLUMNS] : [...TEACHER_CSV_STUDENT_COLUMNS];
+}
+
+/** Header of the section-test results CSV (api/teacher/tests/[id]/export). */
+export function sectionCsvHeader(twoModules: boolean, questionHeaders: string[], admin = false): string[] {
   return [
-    ...TEACHER_CSV_STUDENT_COLUMNS, "Attempt", "Status", "SAT Score",
+    ...csvStudentColumns(admin), "Attempt", "Status", "SAT Score",
     ...(twoModules ? ["M1 Correct", "M2 Correct"] : ["Correct"]),
     "% Correct", "Time Spent", "Left Tab", "Submitted At", ...questionHeaders,
   ];
 }
 
-/** A row's cells under TEACHER_CSV_STUDENT_COLUMNS. */
-export function teacherCsvStudentCells(s: { name: string; grade: string | null | undefined; className: string | null | undefined }): string[] {
-  return [s.name, s.grade ?? "", s.className ?? ""];
+/** A row's cells under csvStudentColumns(admin); the email is dropped unless admin. */
+export function csvStudentCells(
+  s: { name: string; email?: string | null; grade: string | null | undefined; className: string | null | undefined },
+  admin = false,
+): string[] {
+  return admin ? [s.name, s.email ?? "", s.grade ?? "", s.className ?? ""] : [s.name, s.grade ?? "", s.className ?? ""];
+}
+
+/** Admin viewer's name for a student: display name, else the email (admin pages' rule). */
+export function adminStudentLabel(u: { display_name?: string | null; email?: string | null } | null | undefined): string {
+  return u?.display_name?.trim() || u?.email || UNNAMED_STUDENT;
 }

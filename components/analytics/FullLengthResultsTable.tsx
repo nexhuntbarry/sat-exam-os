@@ -32,6 +32,8 @@ export interface FullLengthResultRow {
   studentId: string;
   /** Teacher view: name, never email (lib/teacher-student-view). */
   studentName: string;
+  /** Only when the server-session viewer is an admin. */
+  email?: string;
   classGroup: string | null;
   attemptNumber: number;
   status: AttemptStatus;
@@ -148,7 +150,7 @@ export function FullLengthResultsTable({
                 <Td kind="main" sticky="left">
                   <TwoLineCell
                     main={row.studentName}
-                    detail={row.classGroup ?? undefined}
+                    detail={[row.email, row.classGroup].filter(Boolean).join(" · ") || undefined}
                     mainClassName="font-medium text-charcoal"
                   />
                 </Td>

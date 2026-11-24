@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { ArrowLeft, GraduationCap, Users } from "lucide-react";
+import { ArrowLeft, MapPin, GraduationCap, Users } from "lucide-react";
 import { getCurrentUser } from "@/lib/auth";
 import { getQaClassGroupIds, getQaTestIds, onSide } from "@/lib/qa";
 import { getTestSections, inSubjects, reachableTestIds } from "@/lib/teacher-access";
@@ -56,7 +56,7 @@ async function loadClass(id: string, teacherId: string, isAdmin: boolean, isQa: 
 
   const { data: group } = await db
     .from("class_groups")
-    .select("id, name, grade")
+    .select("id, name, campus, grade")
     .eq("id", id)
     .maybeSingle();
   if (!group) return null;
@@ -282,6 +282,12 @@ export default async function TeacherClassDetailPage({
         <div className="flex-1">
           <h1 className="text-2xl font-bold text-charcoal">{group.name}</h1>
           <div className="mt-1 flex flex-wrap gap-3 text-soft-mute text-xs">
+            {group.campus && (
+              <span className="inline-flex items-center gap-1">
+                <MapPin size={11} />
+                {group.campus}
+              </span>
+            )}
             {group.grade && (
               <span className="inline-flex items-center gap-1">
                 <GraduationCap size={11} />

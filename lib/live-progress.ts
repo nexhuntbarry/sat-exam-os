@@ -20,7 +20,7 @@ import {
 } from "@/lib/full-length-score";
 import { breakEndsAtMs } from "@/lib/full-length-attempt";
 import { getAssignedStudentIds, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
-import { getQaClassGroupIds, getQaUserIds, onSide, scopeIds } from "@/lib/qa";
+import { getQaClassGroupIds, getQaUserIds, onSide } from "@/lib/qa";
 import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
 import {
   isModule2Track,
@@ -127,30 +127,27 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
   const kids = links.childrenOf.get(scope.testId) ?? null;
   const testIds = kids ? [kids.rw, kids.math].filter((x): x is string => Boolean(x)) : [scope.testId];
   const flScope = scope.flScope ?? FL_ALL_SECTIONS;
-  // QA side by student id: no users join, so no email is read.
+  // QA side by student id, checked in memory after the fetch (no id list in
+  // the URL, and no email is read).
   const qaUsers = await getQaUserIds();
 
   // Paged (PostgREST caps a response at 1000 rows) and, with a student
   // scope, chunked so the id list can't overflow the request URL.
+  // users!inner(id) keeps dropping rows whose student account is gone.
   const lightRows = async (studentIds: string[] | null): Promise<LightRow[]> => {
     const { data, error } = await fetchAllRows<LightRow>((from, to) => {
-      let q = scopeIds(
-        db
-          .from("submissions")
-          .select(
-            "id, test_id, student_id, status, started_at, submitted_at, attempt_number, session_id, adaptive_track, " +
-              "score, correct_count, total_questions, percentage, tab_switches:metadata->tab_switches",
-          )
-          .in("test_id", testIds),
-        "student_id",
-        qaUsers,
-        scope.viewerIsQa,
-      );
+      let q = db
+        .from("submissions")
+        .select(
+          "id, test_id, student_id, status, started_at, submitted_at, attempt_number, session_id, adaptive_track, " +
+            "score, correct_count, total_questions, percentage, tab_switches:metadata->tab_switches, users!inner(id)",
+        )
+        .in("test_id", testIds);
       if (studentIds) q = q.in("student_id", studentIds);
       return q.order("id").range(from, to) as unknown as PromiseLike<{ data: LightRow[] | null; error: unknown }>;
     });
     if (error) throw new Error(`live progress: submissions lookup failed: ${(error as { message?: string }).message ?? error}`);
-    return data;
+    return data.filter((r) => onSide(r.student_id, qaUsers, scope.viewerIsQa));
   };
   const rows: LightRow[] = [];
   if (allow) {
@@ -328,18 +325,14 @@ export async function loadLiveSnapshot(db: SupabaseClient, scope: LiveScope): Pr
     const users: { id: string; display_name: string | null; email?: string }[] = [];
     for (let i = 0; i < missing.length; i += ID_CHUNK) {
       // Only active accounts: pending / suspended students can't start anyway.
-      const { data, error: usersError } = await scopeIds(
-        db
-          .from("users")
-          .select(scope.withEmail ? "id, display_name, email" : TEACHER_STUDENT_SELECT)
-          .eq("account_status", "approved")
-          .in("id", missing.slice(i, i + ID_CHUNK)),
-        "id",
-        qaUsers,
-        scope.viewerIsQa,
-      );
+      const { data, error: usersError } = await db
+        .from("users")
+        .select(scope.withEmail ? "id, display_name, email" : TEACHER_STUDENT_SELECT)
+        .eq("account_status", "approved")
+        .in("id", missing.slice(i, i + ID_CHUNK));
       if (usersError) throw new Error(`live progress: users lookup failed: ${usersError.message}`);
-      users.push(...((data ?? []) as unknown as typeof users));
+      // QA side checked in memory (no QA id list in the URL).
+      users.push(...((data ?? []) as unknown as typeof users).filter((u) => onSide(u.id, qaUsers, scope.viewerIsQa)));
     }
     notStarted = users
       .map((u): NotStartedStudent =>

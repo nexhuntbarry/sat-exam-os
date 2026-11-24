@@ -31,6 +31,8 @@ export interface StudentResultRow {
   attemptNumber: number;
   /** Teacher view: name, grade and class only (lib/teacher-student-view). */
   studentName: string;
+  /** Only when the server-session viewer is an admin. */
+  email?: string;
   grade: string | null;
   classGroup: string | null;
   status: AttemptStatus;
@@ -235,6 +237,7 @@ export function StudentResultsTable({ rows, testId }: StudentResultsTableProps) 
                 <Td kind="main" sticky="left">
                   <TwoLineCell
                     main={row.studentName}
+                    detail={row.email}
                     mainClassName="font-medium text-charcoal"
                   />
                 </Td>

@@ -2,7 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { getCurrentUser } from "@/lib/auth";
 import { getAssignedStudentIds, getTeacherTestAccess, getTestSections } from "@/lib/teacher-access";
 import { getQaUserIds, scopeIds } from "@/lib/qa";
-import { TEACHER_STUDENT_EMBED, TEACHER_STUDENT_PROFILE_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { adminStudentLabel, TEACHER_STUDENT_EMBED, TEACHER_STUDENT_PROFILE_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
 import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
@@ -27,6 +27,9 @@ import { tabSwitchTotal } from "@/lib/tab-switches";
 
 async function getResultsData(testId: string, userId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
+  // role is the server session's: an admin opened this from an admin page
+  // and keeps seeing emails; a teacher never gets them.
+  const admin = role === "admin";
 
   // Two-track access: direct (teacher_ids) or class-group teacher.
   const access = await getTeacherTestAccess(db, { userId, role, isQa }, testId);
@@ -64,7 +67,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
       percentage, submitted_at, time_spent_seconds, attempt_number,
       scaled_score, scaled_section, session_id, adaptive_track, module_id,
       tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
-      users!inner(${TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
+      users!inner(${admin ? "display_name, email" : TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
     `)
     .eq("test_id", testId), "student_id", await getQaUserIds(), isQa)
     .order("submitted_at", { ascending: false });
@@ -93,6 +96,7 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
     m2_not_taken?: unknown;
     users: {
       display_name: string | null;
+      email?: string | null;
       student_profiles?:
         | { grade?: string }
         | { grade?: string }[]
@@ -147,7 +151,9 @@ async function getResultsData(testId: string, userId: string, role: string, isQa
       submissionId: sorted[sorted.length - 1].id,
       studentId: head.student_id,
       attemptNumber: head.attempt_number ?? 1,
-      studentName: teacherStudentLabel(u, unnamed),
+      ...(admin
+        ? { studentName: adminStudentLabel(u), email: u.email ?? "" }
+        : { studentName: teacherStudentLabel(u, unnamed) }),
       grade: sp?.grade ?? null,
       classGroup: classOf.get(head.student_id) ?? null,
       status: attempt.status,
@@ -245,7 +251,13 @@ async function getFullLengthResultsData(
   const allowlist = access.mode === "class" ? access.studentAllowlist : null;
   const [studentIds, attempts, scope, { data: grants }] = await Promise.all([
     getAssignedStudentIds(db, assignment, user.isQa, allowlist),
-    loadFullLengthResults(db, testId, children, { studentAllowlist: allowlist, isQa: user.isQa, unnamedLabel: await unnamedStudentLabel() }),
+    loadFullLengthResults(db, testId, children, {
+      studentAllowlist: allowlist,
+      isQa: user.isQa,
+      unnamedLabel: await unnamedStudentLabel(),
+      // Server-session admin keeps emails (admin pages link here).
+      withEmail: user.role === "admin",
+    }),
     flSectionScope(db, user, children),
     db.from("test_retake_grants").select("student_id").eq("test_id", testId).is("consumed_at", null),
   ]);

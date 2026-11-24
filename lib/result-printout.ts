@@ -181,10 +181,11 @@ export async function studentClassNames(
   return out;
 }
 
-async function namesAndClasses(db: SupabaseClient, ids: string[], onlyClassIds: Set<string> | null = null) {
-  // onlyClassIds set = a teacher: name only (lib/teacher-student-view), no
-  // email and no profile class field are read.
-  const teacher = onlyClassIds !== null;
+async function namesAndClasses(db: SupabaseClient, ids: string[], viewer: Viewer) {
+  // Anyone but an admin (by the server-session role): name only
+  // (lib/teacher-student-view), no email and no profile class field are read.
+  const teacher = viewer.role !== "admin";
+  const onlyClassIds = await visibleClassIds(db, viewer);
   const [usersRes, membersRes, profilesRes, unnamed] = await Promise.all([
     db.from("users").select(teacher ? TEACHER_STUDENT_SELECT : "id, display_name, email").in("id", ids),
     db.from("class_group_members").select("student_id, class_group_id, class_groups(name)").in("student_id", ids),
@@ -370,7 +371,7 @@ export async function loadResultPrintouts(
   const [section, visInputs, people] = await Promise.all([
     getTestSections(db, [testId]).then((m) => m.get(testId) ?? null),
     loadAnswerVisibilityInputs(db, [testId], studentIds),
-    namesAndClasses(db, studentIds, await visibleClassIds(db, viewer)),
+    namesAndClasses(db, studentIds, viewer),
   ]);
 
   const out: StudentResultPrintout[] = [];
@@ -483,7 +484,7 @@ async function loadFullLengthPrintouts(
 
   const [visInputs, people, scope] = await Promise.all([
     loadAnswerVisibilityInputs(db, [testId], studentIds),
-    namesAndClasses(db, studentIds, await visibleClassIds(db, viewer)),
+    namesAndClasses(db, studentIds, viewer),
     viewer.role === "teacher" ? flSectionScope(db, viewer, kids) : Promise.resolve(FL_ALL_SECTIONS),
   ]);
 
@@ -596,7 +597,7 @@ export async function listPrintableAttempts(db: SupabaseClient, viewer: Viewer, 
   if (flKids) {
     const flPicks = await fullLengthPrintPicks(db, testId, flKids, allowed, viewer);
     if (flPicks.length === 0) return [];
-    const flPeople = await namesAndClasses(db, flPicks.map((p) => p.studentId), await visibleClassIds(db, viewer));
+    const flPeople = await namesAndClasses(db, flPicks.map((p) => p.studentId), viewer);
     return flPicks
       .map((p) => ({ submissionId: p.submissionId, studentId: p.studentId, ...flPeople(p.studentId) }))
       .sort((a, b) => a.studentName.localeCompare(b.studentName));
@@ -623,7 +624,7 @@ export async function listPrintableAttempts(db: SupabaseClient, viewer: Viewer, 
     picks.push({ studentId, submissionId: last.id });
   }
   if (picks.length === 0) return [];
-  const people = await namesAndClasses(db, picks.map((p) => p.studentId), await visibleClassIds(db, viewer));
+  const people = await namesAndClasses(db, picks.map((p) => p.studentId), viewer);
   return picks
     .map((p) => ({ submissionId: p.submissionId, studentId: p.studentId, ...people(p.studentId) }))
     .sort((a, b) => a.studentName.localeCompare(b.studentName));

@@ -20,7 +20,7 @@ export async function GET() {
   if (user.role === "admin") {
     const { data } = await scopeIds(db
       .from("class_groups")
-      .select("id, name, grade"), "id", qaGroups, user.isQa);
+      .select("id, name, campus, grade"), "id", qaGroups, user.isQa);
     return NextResponse.json({ cohorts: data ?? [] });
   }
 
@@ -38,7 +38,7 @@ export async function GET() {
 
   const { data: cohorts } = await scopeIds(db
     .from("class_groups")
-    .select("id, name, grade")
+    .select("id, name, campus, grade")
     .in("id", Array.from(cohortIds)), "id", qaGroups, user.isQa);
 
   return NextResponse.json({ cohorts: cohorts ?? [] });

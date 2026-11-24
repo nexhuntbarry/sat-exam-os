@@ -26,7 +26,7 @@ import {
   type FullLengthScore,
 } from "@/lib/full-length-score";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
-import { TEACHER_STUDENT_EMBED, TEACHER_STUDENT_PROFILE_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { adminStudentLabel, TEACHER_STUDENT_EMBED, TEACHER_STUDENT_PROFILE_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
 
 export type FlResultRow = FlScoreRow & {
   id: string;
@@ -47,9 +47,11 @@ export type FlResultRow = FlScoreRow & {
   tab_switches?: unknown;
   /** lib/module2-not-taken M2_NOT_TAKEN_COLUMN. */
   m2_not_taken?: unknown;
-  // Teacher view: name + grade only (lib/teacher-student-view).
+  // Teacher view: name + grade only (lib/teacher-student-view); email only
+  // when the server-session viewer is an admin (opts.withEmail).
   users: {
     display_name: string | null;
+    email?: string | null;
     student_profiles?: { grade?: string | null } | { grade?: string | null }[] | null;
   };
 };
@@ -60,6 +62,8 @@ export interface FlResultAttempt {
   attemptNumber: number;
   key: string;
   studentName: string;
+  /** Admin viewers only (opts.withEmail); never loaded for a teacher. */
+  email?: string;
   grade: string | null;
   /** Module 1 first, then Module 2. */
   rw: FlResultRow[];
@@ -86,7 +90,14 @@ export async function loadFullLengthResults(
   db: SupabaseClient,
   parentId: string,
   children: FullLengthChildren,
-  opts: { studentAllowlist: Set<string> | null; isQa: boolean; studentIds?: string[]; unnamedLabel?: string },
+  opts: {
+    studentAllowlist: Set<string> | null;
+    isQa: boolean;
+    studentIds?: string[];
+    unnamedLabel?: string;
+    /** Server-session admin only: rows carry the student's email. */
+    withEmail?: boolean;
+  },
 ): Promise<FlResultAttempt[]> {
   const childIds = [children.rw, children.math].filter((x): x is string => Boolean(x));
   if (childIds.length === 0) return [];
@@ -99,7 +110,7 @@ export async function loadFullLengthResults(
         id, test_id, student_id, status, correct_count, total_questions, percentage,
         submitted_at, time_spent_seconds, attempt_number, session_id, adaptive_track, started_at, module_id,
         tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
-        users!inner(${TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
+        users!inner(${opts.withEmail ? "display_name, email" : TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
       `)
       .in("test_id", childIds);
     if (opts.studentAllowlist) q = q.in("student_id", Array.from(opts.studentAllowlist));
@@ -134,7 +145,9 @@ export async function loadFullLengthResults(
       studentId: head.student_id,
       attemptNumber: head.attempt_number ?? 1,
       key,
-      studentName: teacherStudentLabel(head.users, opts.unnamedLabel),
+      ...(opts.withEmail
+        ? { studentName: adminStudentLabel(head.users), email: head.users.email ?? "" }
+        : { studentName: teacherStudentLabel(head.users, opts.unnamedLabel) }),
       grade: profile?.grade ?? null,
       rw: g.rw,
       math: g.math,
@@ -190,6 +203,7 @@ export function fullLengthTableRows(
       key: a.key,
       studentId: a.studentId,
       studentName: a.studentName,
+      ...(a.email !== undefined ? { email: a.email } : {}),
       classGroup: opts.classOf.get(a.studentId) ?? null,
       attemptNumber: a.attemptNumber,
       status: badge.status,

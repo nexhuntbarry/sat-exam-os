@@ -33,7 +33,7 @@ export async function POST(req: Request) {
   const problem = keyTypeProblem({ question_type: nextType, correct_answer: nextKey, question_text: q.question_text as string | null, choices: nextChoices });
 
   const qaIds = await getQaUserIds();
-  const preview = await previewKeyChange(db, id, nextKey, (studentId) => onSide(studentId, qaIds, auth.isQa));
+  const preview = await previewKeyChange(db, id, nextKey, (studentId) => onSide(studentId, qaIds, auth.isQa), { role: auth.role });
   const live = q.parsing_status === "Approved" ? (await liveQuestionIds(db, [id])).has(id) : false;
   return NextResponse.json({
     ...preview,

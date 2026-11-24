@@ -1083,6 +1083,7 @@
     }
   },
   "studentTabs": {
+    "gradeLine": "Grade {grade}",
     "overview": "Overview",
     "tests": "Tests",
     "skills": "Skills",

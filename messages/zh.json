@@ -1083,6 +1083,7 @@
     }
   },
   "studentTabs": {
+    "gradeLine": "年級：{grade}",
     "overview": "總覽",
     "tests": "測驗",
     "skills": "能力分析",

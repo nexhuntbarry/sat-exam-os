@@ -13,6 +13,7 @@ interface AssignmentRow {
   class_group: {
     id: string;
     name: string;
+    campus: string | null;
     grade: string | null;
   } | null;
 }
@@ -23,7 +24,7 @@ async function getMyClasses(teacherId: string) {
     .from("class_group_teachers")
     .select(
       `class_group_id,
-       class_group:class_groups!class_group_id(id, name, grade)`,
+       class_group:class_groups!class_group_id(id, name, campus, grade)`,
     )
     .eq("teacher_id", teacherId);
 
@@ -90,7 +91,7 @@ export default async function TeacherClassesPage() {
               <DataRow key={c.id} href={`/teacher/classes/${c.id}`}>
                 <Td kind="main" sticky="left">
                   <Link href={`/teacher/classes/${c.id}`} className="block text-charcoal hover:text-warm-coral-text transition-colors">
-                    <TwoLineCell main={c.name} wrapMain mainClassName="font-medium text-inherit" />
+                    <TwoLineCell main={c.name} detail={c.campus ?? undefined} wrapMain mainClassName="font-medium text-inherit" />
                   </Link>
                 </Td>
                 <Td className="text-mid-gray">{c.grade ?? "—"}</Td>

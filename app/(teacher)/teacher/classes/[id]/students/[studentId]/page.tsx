@@ -459,7 +459,7 @@ export default async function TeacherStudentResultsPage({
           <h1 className="text-2xl font-bold text-charcoal">
             {studentName}
           </h1>
-          {grade && <p className="text-soft-mute text-xs">Grade {grade}</p>}
+          {grade && <p className="text-soft-mute text-xs">{tt("gradeLine", { grade })}</p>}
         </div>
         {occasions.length > 0 && (
           <Link href={`/report?student=${studentId}`} className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-divider text-sm font-semibold text-charcoal hover:bg-light-bg transition-colors whitespace-nowrap">

@@ -14,10 +14,11 @@ import { loadFullLengthResults } from "@/lib/full-length-results";
 import { parseStages, stagedQuestionIds, stageOfQuestion } from "@/lib/custom-test/stage";
 import { tabSwitchTotal } from "@/lib/tab-switches";
 import {
+  adminStudentLabel,
+  csvStudentCells,
   sectionCsvHeader,
   TEACHER_STUDENT_EMBED,
   TEACHER_STUDENT_PROFILE_SELECT,
-  teacherCsvStudentCells,
   teacherStudentLabel,
 } from "@/lib/teacher-student-view";
 import { unnamedStudentLabel } from "@/lib/teacher-student-label";
@@ -25,7 +26,8 @@ import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 // GET /api/teacher/tests/[id]/export
 // CSV of student results, one row per attempt (module rows of a
 // two-module attempt are combined). Student columns are name, grade and
-// class only (lib/teacher-student-view): no email or contact field.
+// class only (lib/teacher-student-view): no email or contact field. A
+// server-session admin (admin pages link here) also gets the Email column.
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -37,6 +39,8 @@ export async function GET(
   const { id: testId } = await params;
   const db = getServiceClient();
   const unnamed = await unnamedStudentLabel();
+  // From the server session only, never the request.
+  const admin = user.role === "admin";
 
   // Class teachers can export their class's results. Direct-assigned
   // teachers get the full test export.
@@ -141,7 +145,7 @@ export async function GET(
       id, student_id, status, correct_count, total_questions, percentage,
       scaled_score, submitted_at, time_spent_seconds, attempt_number,
       session_id, adaptive_track, module_id, tab_switches:metadata->tab_switches, ${M2_NOT_TAKEN_COLUMN},
-      users!inner(${TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
+      users!inner(${admin ? "display_name, email" : TEACHER_STUDENT_EMBED}, student_profiles(${TEACHER_STUDENT_PROFILE_SELECT}))
     `)
     .eq("test_id", testId)
     .order("submitted_at", { ascending: true });
@@ -176,6 +180,7 @@ export async function GET(
     m2_not_taken?: unknown;
     users: {
       display_name: string | null;
+      email?: string | null;
       student_profiles?: { grade?: string } | { grade?: string }[] | null;
     };
   };
@@ -233,7 +238,7 @@ export async function GET(
   const twoModules = Boolean(test.is_adaptive || test.module_2_id);
   const section = (await getTestSections(db, [testId])).get(testId) ?? null;
   const lines: string[] = [
-    csvRow(sectionCsvHeader(twoModules, qHeaders)),
+    csvRow(sectionCsvHeader(twoModules, qHeaders, admin)),
   ];
 
   for (const rows of attempts.values()) {
@@ -258,11 +263,15 @@ export async function GET(
       .pop();
 
     lines.push(csvRow([
-      ...teacherCsvStudentCells({
-        name: teacherStudentLabel(head.users, unnamed),
-        grade: sp?.grade,
-        className: classOf.get(head.student_id),
-      }),
+      ...csvStudentCells(
+        {
+          name: admin ? adminStudentLabel(head.users) : teacherStudentLabel(head.users, unnamed),
+          email: head.users.email,
+          grade: sp?.grade,
+          className: classOf.get(head.student_id),
+        },
+        admin,
+      ),
       head.attempt_number ?? 1,
       status === "Incomplete" ? "Incomplete (Module 2 not taken)" : status,
       score?.sat ?? "",
@@ -329,7 +338,7 @@ async function fullLengthCsv(
       .select("id, is_adaptive, module_id, module_2_id, module_1_id, module_2_easy_id, module_2_hard_id, question_ids")
       .in("id", childIds),
     flSectionScope(db, user, kids),
-    loadFullLengthResults(db, testId, kids, { studentAllowlist, isQa: user.isQa, unnamedLabel }),
+    loadFullLengthResults(db, testId, kids, { studentAllowlist, isQa: user.isQa, unnamedLabel, withEmail: user.role === "admin" }),
   ]);
   if (!test) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -426,7 +435,8 @@ async function fullLengthCsv(
   );
 
   const classOf = await studentClassNames(db, user, Array.from(new Set(attempts.map((a) => a.studentId))));
-  const lines = [csvRow(flCsvHeader(scope, questions))];
+  const admin = user.role === "admin";
+  const lines = [csvRow(flCsvHeader(scope, questions, admin))];
   // Finished attempts oldest first, then unfinished ones.
   const ordered = flCsvOrder(
     attempts.map((a) => ({
@@ -440,6 +450,7 @@ async function fullLengthCsv(
         flCsvRow(
           {
             studentName: a.studentName,
+            email: a.email,
             grade: a.grade ?? "",
             className: classOf.get(a.studentId) ?? "",
             attemptNumber: a.attemptNumber,
@@ -453,6 +464,7 @@ async function fullLengthCsv(
           },
           scope,
           questions,
+          admin,
         ),
       ),
     );

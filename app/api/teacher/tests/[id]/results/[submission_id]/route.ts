@@ -13,7 +13,7 @@ import { sectionDetailRowId } from "@/lib/full-length-results";
 import { orderToQuestionIds, type QuestionSetScope } from "@/lib/student-exam";
 import { teacherQaContentHidden } from "@/lib/teacher-qa";
 import { isModule2NotTaken } from "@/lib/module2-not-taken";
-import { TEACHER_STUDENT_EMBED, teacherStudentLabel } from "@/lib/teacher-student-view";
+import { adminStudentLabel, TEACHER_STUDENT_EMBED, teacherStudentLabel } from "@/lib/teacher-student-view";
 import { unnamedStudentLabel } from "@/lib/teacher-student-label";
 
 // Two-track access model:
@@ -100,7 +100,7 @@ export async function GET(
       percentage, started_at, submitted_at, time_spent_seconds, answers,
       tutor_notes, attempt_number, scaled_score, scaled_section, metadata,
       session_id, adaptive_track, module_id,
-      users!inner(${TEACHER_STUDENT_EMBED})
+      users!inner(${user.role === "admin" ? "display_name, email" : TEACHER_STUDENT_EMBED})
     `)
     .eq("id", submissionId)
     .eq("test_id", testId)
@@ -198,7 +198,7 @@ export async function GET(
     }
   }
 
-  const u = submission.users as unknown as { display_name: string | null };
+  const u = submission.users as unknown as { display_name: string | null; email?: string | null };
   const sp = (profile ?? null) as { grade?: string } | null;
 
   // Highlights/notes the student attached during the take. Stored under
@@ -426,8 +426,11 @@ export async function GET(
   return NextResponse.json({
     fullLength,
     // Name, grade and the teacher's own classes only: never email / contact.
+    // A server-session admin (linked here from admin pages) keeps the email.
     student: {
-      name: teacherStudentLabel(u, await unnamedStudentLabel()),
+      ...(user.role === "admin"
+        ? { name: adminStudentLabel(u), email: u.email ?? "" }
+        : { name: teacherStudentLabel(u, await unnamedStudentLabel()) }),
       grade: sp?.grade ?? null,
       classGroup: classOf.get(submission.student_id as string) ?? null,
     },
