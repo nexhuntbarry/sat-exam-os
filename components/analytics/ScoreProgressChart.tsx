@@ -110,11 +110,16 @@ export default function ScoreProgressChart({
   ].sort();
   const n = allDates.length;
 
+  // Inset the first and last data points so their labels don't collide with
+  // the y-axis tick labels on the left (and have a tidy right margin).
+  // A label centered at padL would have its left edge ~14 px into the tick
+  // area; with xInset=20 the left edge clears the tick column by ~6 px.
+  const xInset = 20;
   const xOf = (date: string): number => {
     const i = allDates.indexOf(date);
-    return n <= 1
-      ? padL + (W - padL - padR) / 2
-      : padL + (i * (W - padL - padR)) / (n - 1);
+    if (n <= 1) return padL + (W - padL - padR) / 2;
+    const dataWidth = W - padL - padR - 2 * xInset;
+    return padL + xInset + (i * dataWidth) / (n - 1);
   };
 
   const yOf = (s: number): number =>

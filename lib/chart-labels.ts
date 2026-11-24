@@ -1,38 +1,42 @@
 // Pure label-placement helper for SVG score charts.
 //
-// Strategy: within each x column, the topmost dot's label goes ABOVE its dot;
-// all other dots' labels go BELOW. This direction-split guarantees that an
-// above-label and the first below-label can never collide (the above-label
-// ends above the topmost dot; every below-label starts below its own dot,
-// which is at or below the topmost dot). Within the below-group, stacked
-// labels are nudged down until every adjacent pair is separated by at least
-// textHeight + labelGap pixels (full bounding-box clearance, not just centre
-// spacing).
+// Algorithm:
+//   1. Within each x column, sort dots top→bottom (smallest SVG y first).
+//   2. Split into *clusters*: consecutive dots whose screen gap is less than
+//      2 × textHeight are "close" and belong to the same cluster.  Dots
+//      separated by a larger gap are independent clusters.
+//   3. Within each cluster:
+//        • 1 dot  → label ABOVE its dot.
+//        • 2 dots → upper dot ABOVE, lower dot BELOW.
+//        • 3+ dots → top dot ABOVE, all others BELOW (stacked downward with
+//          full bounding-box clearance so boxes never touch).
+//
+//   This ensures that an isolated dot always gets its label above, while two
+//   nearby dots (e.g. Math 510 and R&W 490) always split above/below
+//   regardless of a third dot that sits far away (e.g. Total 1000).
 //
 // Label bounding box (SVG, y increases downward):
-//   top    = labelY - textHeight   (the character cap-height above baseline)
-//   bottom = labelY                (the text baseline)
+//   top    = labelY - textHeight
+//   bottom = labelY  (the text baseline)
 //
-// Dot occupies [dotY - dotRadius, dotY + dotRadius].
-// Above label: labelY = dotY - dotRadius - gap  (bottom of text clears top of dot)
-// Below label: labelY = dotY + dotRadius + gap + textHeight  (top of text clears bottom of dot)
+// Dot occupies [dotY − dotRadius, dotY + dotRadius].
+// ABOVE: labelY = dotY − dotRadius − gap  (box bottom clears dot top by gap px)
+// BELOW: labelY = dotY + dotRadius + gap + textHeight  (box top clears dot bottom by gap px)
 
 export interface PlaceLabelConfig {
-  /** Rendered height of a label in px (font-size + ascenders). Default 12. */
+  /** Rendered height of a label (font-size + ascenders). Default 12. */
   textHeight?: number;
   /** Dot radius in px. Default 3.5. */
   dotRadius?: number;
-  /** Minimum gap (px) between a dot's edge and the nearest label edge. Default 2. */
+  /** Gap between dot edge and nearest label edge. Default 2. */
   gap?: number;
-  /** Minimum gap (px) between two adjacent label bounding boxes. Default 2. */
+  /** Gap between adjacent label bounding boxes in the same cluster. Default 2. */
   labelGap?: number;
 }
 
 /**
- * Compute a label Y (baseline) for every data point, with bounding-box-aware
- * collision avoidance.
- *
- * Returns Map<id, labelY>. Use as the SVG `text` element's `y` attribute.
+ * Compute a label Y (baseline) for every data point.
+ * Returns Map<id, labelY>.  Use as the SVG `text` element's `y` attribute.
  */
 export function placeLabels(
   points: { id: string; x: number; dotY: number }[],
@@ -43,15 +47,17 @@ export function placeLabels(
   const gap        = config.gap        ?? 2;
   const labelGap   = config.labelGap   ?? 2;
 
-  // Offsets from dotY to label baseline:
-  const aboveOffset = -(dotRadius + gap);             // above: clearance between label bottom and dot top
-  const belowOffset =   dotRadius + gap + textHeight; // below: clearance between label top and dot bottom
+  // Two consecutive dots (sorted) whose screen gap is below this form one cluster.
+  const clusterGap = textHeight * 2; // e.g. 24 px for textHeight=12
 
-  // Minimum distance between two consecutive below-label baselines for
-  // their bounding boxes to be fully non-overlapping (with labelGap clearance).
+  // Offset from dotY to label baseline:
+  const aboveY = (dotY: number) => dotY - dotRadius - gap;
+  const belowY = (dotY: number) => dotY + dotRadius + gap + textHeight;
+
+  // Minimum baseline separation for two below-labels to be box-clear.
   const minStep = textHeight + labelGap;
 
-  // Group by rounded x so points ≤0.5 px apart share a column.
+  // Group by rounded x so dots ≤0.5 px apart share one column.
   const byX = new Map<number, { id: string; dotY: number }[]>();
   for (const p of points) {
     const xKey = Math.round(p.x);
@@ -63,24 +69,41 @@ export function placeLabels(
   const result = new Map<string, number>();
 
   for (const group of byX.values()) {
-    // Sort topmost (smallest y value = highest on screen) first.
+    // Sort topmost (smallest y) first.
     const sorted = [...group].sort((a, b) => a.dotY - b.dotY);
 
-    // Assign initial positions.
-    const positions: { id: string; dotY: number; labelY: number }[] = sorted.map((g, i) => ({
-      id: g.id,
-      dotY: g.dotY,
-      labelY: g.dotY + (i === 0 ? aboveOffset : belowOffset),
-    }));
-
-    // Resolve overlaps within the below-group (positions[1..n-1]) by pushing
-    // each label down until it clears the one before it.
-    for (let i = 2; i < positions.length; i++) {
-      const minY = positions[i - 1].labelY + minStep;
-      if (positions[i].labelY < minY) positions[i].labelY = minY;
+    // Build clusters.
+    const clusters: { id: string; dotY: number }[][] = [];
+    let cur: { id: string; dotY: number }[] = [sorted[0]];
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].dotY - sorted[i - 1].dotY < clusterGap) {
+        cur.push(sorted[i]);
+      } else {
+        clusters.push(cur);
+        cur = [sorted[i]];
+      }
     }
+    clusters.push(cur);
 
-    for (const p of positions) result.set(p.id, p.labelY);
+    // Place labels per cluster.
+    for (const cluster of clusters) {
+      // Top dot always goes ABOVE.
+      result.set(cluster[0].id, aboveY(cluster[0].dotY));
+
+      if (cluster.length > 1) {
+        // Remaining dots go BELOW, stacked down until every adjacent pair
+        // has full bounding-box clearance.
+        const belowItems = cluster.slice(1).map((g) => ({
+          id: g.id,
+          labelY: belowY(g.dotY),
+        }));
+        for (let i = 1; i < belowItems.length; i++) {
+          const minY = belowItems[i - 1].labelY + minStep;
+          if (belowItems[i].labelY < minY) belowItems[i].labelY = minY;
+        }
+        for (const item of belowItems) result.set(item.id, item.labelY);
+      }
+    }
   }
 
   return result;
