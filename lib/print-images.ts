@@ -55,30 +55,75 @@ function loadOnce(img: HTMLImageElement, timeoutMs: number): Promise<boolean> {
 // stuck proxy can't push the server PDF past its render limit.
 const RETRY_TIMEOUT_MS = 6000;
 
+// Overall cap so a single hanging image (network flakiness, never-firing
+// load/error) can't keep the Print button disabled past this limit.
+// Worst case without it: 20 s initial + 2 × (5 s session + 6 s retry) = 42 s.
+// With it, Print is enabled within overallTimeoutMs; any images still pending
+// at cutoff are added to `failed`, keeping the missing-figure warning honest.
+export const OVERALL_TIMEOUT_MS = 25_000;
+
 export async function waitForImages(
   root: ParentNode = document,
-  { timeoutMs = 20000, onProgress, retries = IMAGE_RETRIES }: { timeoutMs?: number; onProgress?: (loaded: number, total: number) => void; retries?: number } = {},
+  {
+    timeoutMs = 20000,
+    onProgress,
+    retries = IMAGE_RETRIES,
+    overallTimeoutMs = OVERALL_TIMEOUT_MS,
+  }: {
+    timeoutMs?: number;
+    onProgress?: (loaded: number, total: number) => void;
+    retries?: number;
+    overallTimeoutMs?: number;
+  } = {},
 ): Promise<{ total: number; failed: string[] }> {
   const imgs = Array.from(root.querySelectorAll("img"));
   let loaded = 0;
   onProgress?.(0, imgs.length);
   const failed: string[] = [];
-  await Promise.all(
-    imgs.map(async (img) => {
-      // A lazy image off-screen would never start loading on its own.
-      if (img.loading === "lazy") img.loading = "eager";
-      let ok = await loadOnce(img, timeoutMs);
-      for (let attempt = 1; !ok && attempt <= retries && /^(?!data:|blob:)./.test(img.getAttribute("src") ?? ""); attempt++) {
-        await refreshSession();
-        img.src = retrySrc(img.getAttribute("src")!, attempt);
-        ok = await loadOnce(img, Math.min(timeoutMs, RETRY_TIMEOUT_MS));
-      }
-      // Count every settled image (loaded or failed) so the progress
-      // reaches total before printing; failures are reported separately.
-      if (!ok) failed.push(img.alt || img.currentSrc || img.src);
-      onProgress?.(++loaded, imgs.length);
-    }),
+  // null = still running, true = loaded, false = failed before overall cutoff.
+  const results: (boolean | null)[] = new Array(imgs.length).fill(null);
+
+  let cutoff = false;
+  const cutoffPromise = new Promise<void>((res) =>
+    setTimeout(() => { cutoff = true; res(); }, overallTimeoutMs),
   );
+
+  await Promise.race([
+    Promise.all(
+      imgs.map(async (img, i) => {
+        // A lazy image off-screen would never start loading on its own.
+        if (img.loading === "lazy") img.loading = "eager";
+        let ok = await loadOnce(img, timeoutMs);
+        for (let attempt = 1; !ok && !cutoff && attempt <= retries && /^(?!data:|blob:)./.test(img.getAttribute("src") ?? ""); attempt++) {
+          await refreshSession();
+          if (cutoff) break;
+          img.src = retrySrc(img.getAttribute("src")!, attempt);
+          ok = await loadOnce(img, Math.min(timeoutMs, RETRY_TIMEOUT_MS));
+        }
+        // Record outcome before touching shared state; a stale callback
+        // that fires after the overall timer must not double-count.
+        results[i] = ok;
+        if (cutoff) return; // cleanup loop handles progress + failed for this image
+        // Count every settled image (loaded or failed) so the progress
+        // reaches total before printing; failures are reported separately.
+        if (!ok) failed.push(img.alt || img.currentSrc || img.src);
+        onProgress?.(++loaded, imgs.length);
+      }),
+    ),
+    cutoffPromise,
+  ]);
+
+  // Synchronously collect images cut off by the overall timer. JS is
+  // single-threaded: after Promise.race resolves we're in a microtask
+  // continuation, so no still-running callbacks have interleaved yet —
+  // results[i] === null reliably means "not yet settled".
+  for (let i = 0; i < imgs.length; i++) {
+    if (results[i] === null) {
+      failed.push(imgs[i].alt || imgs[i].currentSrc || imgs[i].src);
+      onProgress?.(++loaded, imgs.length);
+    }
+  }
+
   return { total: imgs.length, failed };
 }
 
