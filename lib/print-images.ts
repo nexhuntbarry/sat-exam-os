@@ -80,13 +80,16 @@ export async function waitForImages(
   let loaded = 0;
   onProgress?.(0, imgs.length);
   const failed: string[] = [];
-  // null = still running, true = loaded, false = failed before overall cutoff.
+  // Outcome per image: null = still running, true = loaded, false = failed.
   const results: (boolean | null)[] = new Array(imgs.length).fill(null);
+  // Whether the image was already counted in progress/failed by its own callback.
+  const counted: boolean[] = new Array(imgs.length).fill(false);
 
   let cutoff = false;
-  const cutoffPromise = new Promise<void>((res) =>
-    setTimeout(() => { cutoff = true; res(); }, overallTimeoutMs),
-  );
+  let cutoffTimer: ReturnType<typeof setTimeout> | undefined;
+  const cutoffPromise = new Promise<void>((res) => {
+    cutoffTimer = setTimeout(() => { cutoff = true; res(); }, overallTimeoutMs);
+  });
 
   await Promise.race([
     Promise.all(
@@ -100,10 +103,10 @@ export async function waitForImages(
           img.src = retrySrc(img.getAttribute("src")!, attempt);
           ok = await loadOnce(img, Math.min(timeoutMs, RETRY_TIMEOUT_MS));
         }
-        // Record outcome before touching shared state; a stale callback
-        // that fires after the overall timer must not double-count.
         results[i] = ok;
-        if (cutoff) return; // cleanup loop handles progress + failed for this image
+        // After the overall cutoff the cleanup loop below owns progress + failed.
+        if (cutoff) return;
+        counted[i] = true;
         // Count every settled image (loaded or failed) so the progress
         // reaches total before printing; failures are reported separately.
         if (!ok) failed.push(img.alt || img.currentSrc || img.src);
@@ -112,16 +115,16 @@ export async function waitForImages(
     ),
     cutoffPromise,
   ]);
+  clearTimeout(cutoffTimer);
 
-  // Synchronously collect images cut off by the overall timer. JS is
-  // single-threaded: after Promise.race resolves we're in a microtask
-  // continuation, so no still-running callbacks have interleaved yet —
-  // results[i] === null reliably means "not yet settled".
+  // Images not counted by their own callback were cut off by the overall
+  // timer. One that settled successfully in that instant counts as loaded;
+  // anything else is reported missing. An image that finishes loading later
+  // still shows on the page, but stays listed as missing for this print.
   for (let i = 0; i < imgs.length; i++) {
-    if (results[i] === null) {
-      failed.push(imgs[i].alt || imgs[i].currentSrc || imgs[i].src);
-      onProgress?.(++loaded, imgs.length);
-    }
+    if (counted[i]) continue;
+    if (results[i] !== true) failed.push(imgs[i].alt || imgs[i].currentSrc || imgs[i].src);
+    onProgress?.(++loaded, imgs.length);
   }
 
   return { total: imgs.length, failed };
