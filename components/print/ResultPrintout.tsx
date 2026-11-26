@@ -1,6 +1,7 @@
 import MathMarkdown from "@/components/MathMarkdown";
 import { ChoiceBubble, Mark, QuestionBlock, imgSrc } from "@/components/tests/PrintableTest";
 import { formatDate } from "@/lib/datetime";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import type { PrintOptions, StudentResultPrintout } from "@/lib/result-printout";
 
 // One student's printed result: a one-page summary (score, per-module
@@ -52,6 +53,7 @@ export default function ResultPrintout({
         <div className="border-b-2 border-charcoal pb-3 mb-5">
           <h1 className="print-student-name text-xl font-bold">{p.studentName}</h1>
           <p className="text-sm text-mid-gray">
+            {(fl || p.section) && <SubjectTag section={p.section} fullLength={Boolean(fl)} className="mr-1.5 align-middle" />}
             {[p.className, p.testName].filter(Boolean).join(" · ")}
           </p>
           <p className="text-sm text-mid-gray">
@@ -69,14 +71,14 @@ export default function ResultPrintout({
             </div>
             {fl.scope.rw && (
               <div>
-                <div className="text-xs uppercase tracking-wide text-mid-gray">Reading and Writing</div>
+                <SubjectTag section="Reading & Writing" label="Reading and Writing" />
                 <div className="text-xl font-semibold">{fl.rw.score?.sat ?? "—"}</div>
                 <div className="text-xs text-mid-gray">{fl.rw.score?.modules ?? "—"}</div>
               </div>
             )}
             {fl.scope.math && (
               <div>
-                <div className="text-xs uppercase tracking-wide text-mid-gray">Math</div>
+                <SubjectTag section="Math" />
                 <div className="text-xl font-semibold">{fl.math.score?.sat ?? "—"}</div>
                 <div className="text-xs text-mid-gray">{fl.math.score?.modules ?? "—"}</div>
               </div>

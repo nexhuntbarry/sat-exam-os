@@ -1,4 +1,5 @@
 import { cn } from "@/components/ui/data-table/cn";
+import { SUBJECT_COLORS, subjectKind } from "@/lib/subject-colors";
 
 // One vocabulary and one colour per status, everywhere (docs/table-standard.md
 // rule 6). Red is reserved for errors and destructive actions, so no status
@@ -125,15 +126,40 @@ export function StatusBadge(props: Props) {
   );
 }
 
-/** Subject as a small neutral tag: "Math" / "R&W". */
-export function SubjectTag({ section, className }: { section: string | null | undefined; className?: string }) {
-  if (!section) return null;
-  const text = section === "Reading & Writing" ? "R&W" : section;
+/**
+ * Subject as a small filled tag, one colour per subject (lib/subject-colors.ts):
+ * "Math" (blue), "R&W" (gold), "Full-length" (navy). `section` takes the DB
+ * value ("Math" / "Reading & Writing") or a short form; pass `fullLength` for
+ * a full-length SAT. `label` overrides the text (e.g. a translated name).
+ * Unknown sections fall back to a neutral chip with the raw text.
+ */
+export function SubjectTag({
+  section,
+  fullLength,
+  label,
+  className,
+}: {
+  section?: string | null;
+  fullLength?: boolean;
+  label?: string;
+  className?: string;
+}) {
+  const kind = subjectKind(section, fullLength);
+  if (!kind && !section) return null;
+  const text = label ?? (kind === "math" ? "Math" : kind === "rw" ? "R&W" : kind === "full" ? "Full-length" : section);
+  const c = kind ? SUBJECT_COLORS[kind] : null;
   return (
     <span
-      title={section}
+      title={kind === "rw" ? "Reading & Writing" : kind === "full" ? (label ?? "Full-length SAT") : (section ?? undefined)}
+      style={{
+        ...(c ? { backgroundColor: c.bg, color: c.text, borderColor: c.border } : {}),
+        // Keep the fill when printed (browsers drop backgrounds by default).
+        printColorAdjust: "exact",
+        WebkitPrintColorAdjust: "exact",
+      }}
       className={cn(
-        "inline-flex items-center whitespace-nowrap rounded border border-divider bg-surface px-1.5 text-[11px] font-medium leading-5 text-mid-gray",
+        "inline-flex items-center whitespace-nowrap rounded border px-2 text-xs font-semibold leading-5",
+        !c && "border-divider bg-surface text-mid-gray",
         className,
       )}
     >

@@ -17,7 +17,7 @@ import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { flModuleCells, flStatusText, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, scopedFlScore } from "@/lib/full-length-score";
 import type { RecentScoreItem } from "@/lib/recent-scores";
 import { ScoreCell } from "@/components/ui/ScoreCell";
-import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
+import { StatusBadge, SubjectTag, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
 import StudentInsights from "@/components/analytics/StudentInsights";
 import RecentPracticeTests from "@/components/analytics/RecentPracticeTests";
@@ -561,7 +561,7 @@ export default async function TeacherStudentResultsPage({
                   <Td kind="main" sticky="left">
                     <TwoLineCell
                       main={<ClampText>{s.testName}</ClampText>}
-                      detail={s.section ?? undefined}
+                      detail={s.section ? <SubjectTag section={s.section} /> : undefined}
                       mainClassName="font-medium text-charcoal"
                     />
                   </Td>

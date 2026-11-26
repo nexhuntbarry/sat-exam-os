@@ -26,7 +26,7 @@ import {
   TruncatedText,
   type RowAction,
 } from "@/components/ui/data-table";
-import { StatusBadge, type QuestionStatus } from "@/components/ui/StatusBadge";
+import { StatusBadge, SubjectTag, type QuestionStatus } from "@/components/ui/StatusBadge";
 
 // ────────────────────────────────────────────
 // Types
@@ -523,7 +523,13 @@ export default function QuestionBankTable({ initialModuleId }: QuestionBankTable
                   </Td>
                   <Td kind="long" className="w-[16%]">
                     <TwoLineCell
-                      main={String(qNum)}
+                      main={
+                        <span className="inline-flex items-center gap-1.5">
+                          {qNum}
+                          <SubjectTag section={q.section} />
+                        </span>
+                      }
+                      mainTitle={`Q${qNum} · ${q.section}`}
                       detail={moduleName}
                     />
                   </Td>

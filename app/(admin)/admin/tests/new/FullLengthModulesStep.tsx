@@ -2,6 +2,7 @@
 
 import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import type { FullLengthSource } from "../full-length-sources";
 
 export type FlKey = "rw" | "math";
@@ -119,8 +120,8 @@ export default function FullLengthModulesStep({ modules, sources, picks, onPick,
           <section key={key} aria-label={title} className="rounded-2xl border border-divider p-4 space-y-3">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h3 className="text-charcoal text-sm font-semibold">
-                  {i + 1}. {title}
+                <h3 className="flex items-center gap-1.5 text-charcoal text-sm font-semibold">
+                  {i + 1}. <SubjectTag section={FL_BLOCK_SECTION[key]} label={title} />
                 </h3>
                 <p className="text-soft-mute text-xs mt-0.5">{tf("adaptiveHint")}</p>
               </div>

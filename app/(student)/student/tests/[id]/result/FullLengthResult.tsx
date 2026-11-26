@@ -19,6 +19,7 @@ import { isCustomRows, type AttemptScore } from "@/lib/score-display";
 import { officialBreakdownRow } from "@/lib/sat-skills";
 import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import AnswerReviewItem, { type AnswerDetail } from "./AnswerReviewItem";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 
 // Result of a full-length SAT (plan Phase 3): Total /1600, R&W and Math
 // /800 with their M1/M2 counts, then one tab per section reusing the
@@ -59,7 +60,7 @@ function SectionCard({ title, a, active, href }: { title: string; a: AttemptScor
         active ? "border-warm-coral/40 bg-warm-coral/5" : "border-divider hover:border-warm-coral/30",
       )}
     >
-      <div className="text-soft-mute text-xs font-medium uppercase tracking-wider">{title}</div>
+      <SubjectTag section={title} label={title} />
       <div className="text-3xl font-bold text-charcoal mt-1">
         {a.score?.sat ?? "—"}
         <span className="text-base text-soft-mute font-normal">/800</span>
@@ -232,8 +233,9 @@ export default async function FullLengthResult({
       )}
 
       <div className="bg-surface border border-divider rounded-2xl p-8 text-center space-y-4">
-        <div className="text-soft-mute text-sm font-medium uppercase tracking-wider">
-          Estimated SAT score · Full-length
+        <div className="flex items-center justify-center gap-2 text-soft-mute text-sm font-medium">
+          <span className="uppercase tracking-wider">Estimated SAT score</span>
+          <SubjectTag fullLength label="Full-length SAT" />
         </div>
         <div className="text-6xl font-bold text-charcoal">
           {score.total ?? "—"}

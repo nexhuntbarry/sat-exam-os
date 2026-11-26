@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { History } from "lucide-react";
 import { formatShortDate } from "@/lib/datetime";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import {
   formatScoreChange,
   recentScoreRows,
@@ -37,11 +38,7 @@ export default async function RecentPracticeTests({ items }: { items: RecentScor
         <span className="text-xs text-soft-mute tabular-nums">{formatShortDate(r.date)}</span>
         <span className="min-w-0 text-sm font-medium text-charcoal">
           {name}
-          {r.kind === "full" && (
-            <span className="ml-2 text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-status-info/12 text-status-info whitespace-nowrap">
-              {t("fullLength")}
-            </span>
-          )}
+          {r.kind === "full" && <SubjectTag fullLength label={t("fullLength")} className="ml-2" />}
         </span>
         <span className="col-start-2 sm:col-start-auto text-sm tabular-nums whitespace-nowrap">
           {r.kind === "full" ? (
@@ -57,7 +54,8 @@ export default async function RecentPracticeTests({ items }: { items: RecentScor
           ) : (
             <>
               <span className="font-bold text-charcoal">
-                {sectionLabel(r.sections[0]?.section ?? "")} {r.sections[0]?.sat ?? "—"}
+                <SubjectTag section={r.sections[0]?.section} label={sectionLabel(r.sections[0]?.section ?? "")} className="mr-1.5" />
+                {r.sections[0]?.sat ?? "—"}
               </span>
               {est}
             </>

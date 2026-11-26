@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ChevronRight, ChevronLeft, Check, Calculator, Image as ImageIcon } from "lucide-react";
 import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import { isFullyApproved } from "../module-approval";
 import { datetimeLocalToIso } from "../datetime-local";
 import type { FullLengthSource } from "../full-length-sources";
@@ -449,8 +450,9 @@ export default function CreateTestClient({
               ) : (
                 <div className="space-y-3">
                   <div>
-                    <label className="block text-sm font-medium text-charcoal mb-1">
+                    <label className="flex items-center gap-1.5 text-sm font-medium text-charcoal mb-1">
                       Module 1 <span className="text-status-error">*</span>
+                      <SubjectTag section={selectedModule?.section} />
                     </label>
                     <select
                       value={selectedModuleId}
@@ -503,8 +505,9 @@ export default function CreateTestClient({
               <div className="space-y-3">
                 {/* Module 1 picker */}
                 <div>
-                  <label className="block text-sm font-medium text-charcoal mb-1">
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-charcoal mb-1">
                     Module 1 <span className="text-status-error">*</span>
+                    <SubjectTag section={module1Section} />
                   </label>
                   <select
                     value={module1Id}

@@ -7,6 +7,7 @@ import { getQaTestIds, onSide } from "@/lib/qa";
 import { formatDateTime, formatShortDateTime } from "@/lib/datetime";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import SubmissionRowActions from "./SubmissionRowActions";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import {
   DataTable,
   HeadRow,
@@ -184,9 +185,14 @@ export default async function ManageSubmissionsPage({
                               : s.adaptive_track === "module_2_hard"
                                 ? "Module 2 · Hard"
                                 : "Single";
-                      const moduleLabel = flKids
-                        ? `${s.test_id === flKids.rw ? "R&W" : "Math"} · ${trackLabel}`
-                        : trackLabel;
+                      const moduleLabel = flKids ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <SubjectTag section={s.test_id === flKids.rw ? "rw" : "math"} />
+                          {trackLabel}
+                        </span>
+                      ) : (
+                        trackLabel
+                      );
                       return (
                         <DataRow key={s.id} colSpan={6}>
                           <Td kind="main" className="font-medium text-charcoal">

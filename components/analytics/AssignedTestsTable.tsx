@@ -31,7 +31,6 @@ import { LiveProgressCell } from "@/components/analytics/LiveProgressCell";
 import { StatusBadge, SubjectTag, type AttemptStatus, type TestStatus } from "@/components/ui/StatusBadge";
 import { DataRow, DataTable, EmptyRow, HeadRow, RowButton, Td, Th, cn } from "@/components/ui/data-table";
 
-const SECTION_OF = { math: "Math", rw: "Reading & Writing" } as const;
 const COLS = 6;
 
 const ATTEMPT_OF: Record<AssignedTestStudent["state"], AttemptStatus> = {
@@ -101,7 +100,7 @@ export default function AssignedTestsTable({
               const n = t.students.length;
               const status = t.status ? <StatusBadge kind="test" status={t.status as TestStatus} /> : null;
               const subject =
-                t.kind === "math" || t.kind === "rw" ? <SubjectTag section={SECTION_OF[t.kind]} /> : <span className="text-xs text-mid-gray">{KIND_LABEL[t.kind]}</span>;
+                t.kind === "other" ? <span className="text-xs text-mid-gray">{KIND_LABEL[t.kind]}</span> : <SubjectTag section={t.kind} />;
               return (
                 <Fragment key={t.id}>
                   <DataRow className={cn(expanded && "border-b-0")}>

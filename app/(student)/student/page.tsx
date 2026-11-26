@@ -7,6 +7,7 @@ import { ClipboardList, User } from "lucide-react";
 import Link from "next/link";
 import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { getAssignedTestIds, isModule2Track } from "@/lib/student-exam";
@@ -86,6 +87,7 @@ async function getUpcomingTests(userId: string) {
     ...t,
     testStatus: subMap[t.id] ?? "Not Started",
     incomplete: incomplete.has(t.id),
+    fullLength: flLinks.childrenOf.has(t.id),
   }));
 }
 
@@ -181,9 +183,9 @@ export default async function StudentDashboardPage() {
                 <div key={t.id} className="px-5 py-3 flex items-center justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <p className={clsx("text-sm font-medium truncate", sectionTitleClass(mod?.section))}>{t.test_name}</p>
-                    <p className="text-soft-mute text-xs">
-                      {mod?.section ?? "Adaptive"}
-                      {t.due_date ? ` · Due ${formatDate(t.due_date)}` : ""}
+                    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-soft-mute text-xs">
+                      {t.fullLength || mod?.section ? <SubjectTag section={mod?.section} fullLength={t.fullLength} /> : "Adaptive"}
+                      {t.due_date ? <span>Due {formatDate(t.due_date)}</span> : null}
                     </p>
                   </div>
                   {isSubmitted && t.incomplete && (

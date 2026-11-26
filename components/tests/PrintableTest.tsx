@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 import MathMarkdown from "@/components/MathMarkdown";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import { answerCandidates } from "@/lib/grade-submission";
 
 export interface PrintQuestion {
@@ -63,7 +64,8 @@ export default function PrintableTest({
                 <div>
                   <h1 className="text-xl font-bold">{testName}</h1>
                   <p className="text-sm text-mid-gray">
-                    {[m.section, m.label, `${m.questions.length} questions`].filter(Boolean).join(" · ")}
+                    {m.section && <SubjectTag section={m.section} className="mr-1.5 align-middle" />}
+                    {[m.label, `${m.questions.length} questions`].filter(Boolean).join(" · ")}
                   </p>
                 </div>
                 {withKey ? (
@@ -98,7 +100,7 @@ export default function PrintableTest({
             {withKey && m.questions.length > 0 && (
               <div className="break-inside-avoid mt-6">
                 <h2 className="text-sm font-bold uppercase tracking-wide mb-2">
-                  Answer key{m.label ? ` · ${m.label}` : ""}
+                  Answer key{m.section && <SubjectTag section={m.section} className="mx-1.5 align-middle normal-case tracking-normal" />}{m.label ? `${m.section ? "" : " · "}${m.label}` : ""}
                 </h2>
                 <div className="grid grid-cols-4 gap-x-4 gap-y-1 text-sm border-t border-divider pt-2">
                   {m.questions.map((q, qi) => (
@@ -121,7 +123,10 @@ export default function PrintableTest({
             m.questions.length === 0 ? null : (
               <div key={mi} className="mb-5">
                 {(m.label || m.section) && (
-                  <h2 className="text-sm font-bold uppercase tracking-wide mb-2">{[m.section, m.label].filter(Boolean).join(" · ")}</h2>
+                  <h2 className="text-sm font-bold uppercase tracking-wide mb-2">
+                    {m.section && <SubjectTag section={m.section} className="mr-1.5 align-middle normal-case tracking-normal" />}
+                    {m.label}
+                  </h2>
                 )}
                 <ol className="space-y-2">
                   {m.questions.map((q, qi) => (

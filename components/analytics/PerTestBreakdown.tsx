@@ -1,6 +1,7 @@
 import { computeBreakdown, tierOf, TIER_LABEL, type Occasion } from "@/lib/score-analysis";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import { ChevronRight, ClipboardList } from "lucide-react";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 
 const TIER_SOFT: Record<string, string> = {
   excellent: "bg-status-success/12 text-status-success",
@@ -54,9 +55,12 @@ export default function PerTestBreakdown({
                 <ChevronRight size={15} className="text-soft-mute transition-transform group-open:rotate-90 shrink-0" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-charcoal truncate">{o.label ?? "Test"}</div>
-                  <div className="text-xs text-soft-mute">
-                    {fmtDate(o.date)}{o.section ? ` · ${o.section}` : ""}
-                    {pct != null && ` · ${pct.toFixed(1)}% correct`}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-soft-mute">
+                    {o.section && <SubjectTag section={o.section} />}
+                    <span>
+                      {fmtDate(o.date)}
+                      {pct != null && ` · ${pct.toFixed(1)}% correct`}
+                    </span>
                   </div>
                 </div>
                 <div className="text-right whitespace-nowrap tabular-nums">

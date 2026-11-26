@@ -173,6 +173,7 @@ async function getTeacherDashboardData(user: { userId: string; role: string | nu
     ...t,
     studentCount: rosterByTest.get(t.id)?.size ?? 0,
     submittedCount: submittedByTest[t.id] ?? 0,
+    fullLength: flLinks.childrenOf.has(t.id),
   }));
 
   // Open or due today, and assigned to my classes / students (or to me).
@@ -300,11 +301,7 @@ export default async function TeacherDashboardPage() {
                   {/* Status / Subject columns are hidden below lg: fold them under the name. */}
                   <span className="mt-1 flex flex-wrap items-center gap-1.5 lg:hidden">
                     {t.status && <StatusBadge kind="test" status={t.status as TestStatus} />}
-                    {t.section === "Math" || t.section === "Reading & Writing" ? (
-                      <SubjectTag section={t.section} />
-                    ) : t.section ? (
-                      <span className="text-xs text-mid-gray">{t.section}</span>
-                    ) : null}
+                    <SubjectTag section={t.section} />
                   </span>
                   {(t.openDate || t.dueDate) && (
                     <span className="mt-0.5 block whitespace-normal text-xs text-soft-mute">
@@ -313,7 +310,7 @@ export default async function TeacherDashboardPage() {
                   )}
                 </Td>
                 <Td priority="lg">{t.status ? <StatusBadge kind="test" status={t.status as TestStatus} /> : <span className="text-soft-mute">—</span>}</Td>
-                <Td priority="lg" className="text-mid-gray">{t.section === "Math" || t.section === "Reading & Writing" ? <SubjectTag section={t.section} /> : t.section ?? "—"}</Td>
+                <Td priority="lg" className="text-mid-gray">{t.section ? <SubjectTag section={t.section} /> : "—"}</Td>
                 <Td className="text-mid-gray">{t.submittedCount} / {t.studentCount} submitted</Td>
                 <Td kind="actions" sticky="right">
                   {/* Two outline buttons (no red primary in a list); stacked below xl. */}
@@ -369,7 +366,7 @@ export default async function TeacherDashboardPage() {
                       >
                         {t.test_name}
                       </Link>
-                      <div className="text-soft-mute text-xs">{mod?.section ?? "Adaptive"}</div>
+                      <div className="mt-0.5 text-soft-mute text-xs">{t.fullLength || mod?.section ? <SubjectTag section={mod?.section} fullLength={t.fullLength} /> : "Adaptive"}</div>
                     </div>
                     <div className="text-right flex-shrink-0 text-xs text-soft-mute">
                       <div>{t.submittedCount}/{t.studentCount} submitted</div>

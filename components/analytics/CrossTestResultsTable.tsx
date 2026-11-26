@@ -6,7 +6,7 @@ import { ArrowUpDown, ChevronUp, ChevronDown, Search } from "lucide-react";
 import { useTranslations } from "next-intl";
 import type { ScoreDisplay } from "@/lib/score-display";
 import { ScoreCell } from "@/components/ui/ScoreCell";
-import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
+import { StatusBadge, SubjectTag, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { formatDateTime, formatShortDate } from "@/lib/datetime";
 import { teacherNameMatches } from "@/lib/teacher-student-view";
 import {
@@ -235,7 +235,7 @@ export function CrossTestResultsTable({ rows, testOptions, classOptions }: Props
                 <Td kind="long">
                   <TwoLineCell
                     main={row.testName}
-                    detail={row.section ?? ""}
+                    detail={row.section ? <SubjectTag section={row.section} /> : ""}
                   />
                 </Td>
                 <Td>

@@ -7,7 +7,7 @@ import { Check, X, Save, Printer } from "lucide-react";
 import { SubmissionDetailPanel } from "@/components/analytics/SubmissionDetailPanel";
 import type { AnswerDetail } from "@/components/analytics/SubmissionDetailPanel";
 import { scoreDisplay, type ScoreModule } from "@/lib/score-display";
-import { StatusBadge, attemptStatusLabel } from "@/components/ui/StatusBadge";
+import { StatusBadge, SubjectTag, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import { TabSwitchCount } from "@/components/analytics/TabSwitchCount";
 import { TAB_SWITCH_HELP } from "@/lib/tab-switches";
@@ -229,11 +229,12 @@ export default function SubmissionDetailPage() {
         // other section sit on top.
         <div className="bg-surface border border-divider rounded-2xl p-5 flex items-center justify-between gap-4 flex-wrap">
           <div>
-            <div className="text-soft-mute text-xs uppercase tracking-wider">
-              Full-length SAT · {data.fullLength.parentName}
+            <div className="flex items-center gap-1.5 text-soft-mute text-xs">
+              <SubjectTag fullLength label="Full-length SAT" />
+              <span className="uppercase tracking-wider">{data.fullLength.parentName}</span>
             </div>
             <div className="text-charcoal text-sm mt-1">
-              Showing {data.fullLength.section === "rw" ? "Reading and Writing" : "Math"}
+              Showing <SubjectTag section={data.fullLength.section} className="align-middle" />
               {" · "}Total <span className="font-bold">{data.fullLength.total ?? "—"}</span>
               <span className="text-soft-mute">/1600</span>
               {data.fullLength.rwSat != null && <> · R&amp;W {data.fullLength.rwSat}</>}

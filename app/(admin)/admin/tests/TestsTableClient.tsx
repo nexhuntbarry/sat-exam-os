@@ -263,9 +263,10 @@ function TestsTable({
             ? [{ label: `M${mod.module_number ?? 1}`, name: mod.module_name }]
             : [];
           const moduleList = test.fullLength ? (
-            ([["R&W", test.fullLength.rw], ["Math", test.fullLength.math]] as const).map(([label, name]) => (
-              <div key={label} className="text-[11px] text-soft-mute leading-snug break-words">
-                {label}: {name ?? <span className="italic">{tf("sourceDeleted")}</span>}
+            ([["rw", test.fullLength.rw], ["math", test.fullLength.math]] as const).map(([key, name]) => (
+              <div key={key} className="flex items-start gap-1.5 text-[11px] text-soft-mute leading-snug break-words">
+                <SubjectTag section={key} className="shrink-0" />
+                <span className="min-w-0">{name ?? <span className="italic">{tf("sourceDeleted")}</span>}</span>
               </div>
             ))
           ) : moduleLines.length > 0 ? (
@@ -313,7 +314,7 @@ function TestsTable({
                       mainClassName="font-medium text-inherit"
                       detail={
                         test.fullLength ? (
-                          <SubjectTag section={tf("tag")} />
+                          <SubjectTag fullLength label={tf("tag")} />
                         ) : mod?.section || test.is_adaptive ? (
                           <span className="inline-flex items-center gap-1.5">
                             <SubjectTag section={mod?.section} />

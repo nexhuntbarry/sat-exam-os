@@ -2,6 +2,7 @@ import { hideStageModules } from "@/lib/custom-test/stage";
 import { getServiceClient } from "@/lib/supabase";
 import Link from "next/link";
 import { Plus, FileText, ArrowUp, ArrowDown } from "lucide-react";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import { clsx } from "clsx";
 import { sectionTitleClass } from "@/lib/section-color";
 import DeleteModuleButton from "./DeleteModuleButton";
@@ -168,9 +169,14 @@ export default async function ModulesPage({
           </thead>
           <tbody>
             {modules.map((mod) => {
-              const sectionLabel = mod.section
-                ? `${mod.section}${mod.module_number ? ` · M${mod.module_number}` : ""}`
-                : "—";
+              const sectionLabel = mod.section ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <SubjectTag section={mod.section} />
+                  {mod.module_number ? <span>M{mod.module_number}</span> : null}
+                </span>
+              ) : (
+                "—"
+              );
               const approvalTitle = mod.approvalTotal === 0
                 ? undefined
                 : isFullyApproved({ approved: mod.approved, total: mod.approvalTotal })

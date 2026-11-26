@@ -88,6 +88,8 @@ export interface TestRow {
   detailHref?: string;
   /** Overrides the status text (a full-length SAT: "On break", "Closed — Math not taken"). */
   statusLabel?: string;
+  /** A full-length SAT parent row: shows the Full-length subject tag. */
+  fullLength?: boolean;
 }
 
 const STATUS_KEY: Record<TestRowStatus, string> = {
@@ -383,7 +385,7 @@ export default function TestsTable({
                           {g.testName}
                         </ClampText>
                       </Link>
-                      {sectionLabel && <SubjectTag section={g.section} className="mt-0.5" />}
+                      {(sectionLabel || g.fullLength) && <SubjectTag section={g.section} fullLength={g.fullLength} className="mt-0.5" />}
                     </div>
                   </div>
                 </Td>

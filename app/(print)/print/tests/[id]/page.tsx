@@ -164,8 +164,9 @@ export default async function PrintTestPage({
       ]);
       if (modError || qError) return loadFailed("module questions", (modError ?? qError)!);
       modules.push({
-        label: part.sectionLabel ? [part.sectionLabel, slot.label ?? "Module 1"].join(" · ") : slot.label,
-        section: part.sectionLabel ? null : ((mod?.section as string | null) ?? null),
+        // Full-length: the section shows as its SubjectTag, the label is the module.
+        label: part.sectionLabel ? slot.label ?? "Module 1" : slot.label,
+        section: part.sectionLabel ?? ((mod?.section as string | null) ?? null),
         questions: orderToQuestionIds((questions ?? []) as unknown as PrintQuestion[], part.test, slot.moduleId, (q) => q.id),
         ...(first && part.dividerBefore ? { dividerBefore: part.dividerBefore } : {}),
       });

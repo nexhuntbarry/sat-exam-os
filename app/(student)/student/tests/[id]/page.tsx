@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Clock, BookOpen, Calendar } from "lucide-react";
 import StartTestButton from "./StartTestButton";
 import FullLengthLanding from "./FullLengthLanding";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import RefreshAtOpenTime from "./RefreshAtOpenTime";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 import {
@@ -278,13 +279,14 @@ export default async function StudentTestLandingPage({
           <p className="text-soft-mute">
             {mod ? (
               <>
-                {mod.module_name} · {mod.section}
+                <SubjectTag section={mod.section} className="mr-1.5 align-middle" />
+                {mod.module_name}
                 {mod.module_number ? ` M${mod.module_number}` : ""}
                 {module2Meta && (
                   <>
                     {" "}
                     <span className="text-charcoal/40">+</span>{" "}
-                    {module2Meta.module_name} · {module2Meta.section}
+                    {module2Meta.module_name}
                     {module2Meta.module_number ? ` M${module2Meta.module_number}` : ""}
                   </>
                 )}

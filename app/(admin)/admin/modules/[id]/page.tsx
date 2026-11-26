@@ -2,6 +2,7 @@ import { getServiceClient } from "@/lib/supabase";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft, ExternalLink, AlertCircle, CheckCircle2, ClipboardList, Ban, Upload } from "lucide-react";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import { clsx } from "clsx";
 import { getTranslations } from "next-intl/server";
 import ModuleParseButton from "./ModuleParseButton";
@@ -108,7 +109,8 @@ export default async function ModuleDetailPage({
         <div className="flex-1">
           <h1 className="text-2xl font-bold text-charcoal">{mod.module_name}</h1>
           <p className="text-soft-mute text-sm mt-0.5">
-            {mod.section} · Module {mod.module_number}
+            <SubjectTag section={mod.section} className="mr-1.5 align-middle" />
+            Module {mod.module_number}
             {mod.difficulty && ` · ${mod.difficulty}`}
           </p>
         </div>

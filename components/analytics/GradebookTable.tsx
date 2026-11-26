@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Ban, Circle, Clock, Presentation, XCircle } from "lucide-react";
 import { formatShortDate } from "@/lib/datetime";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import {
   KIND_LABEL,
   TIER_LABEL,
@@ -186,9 +187,9 @@ export default function GradebookTable({
                 )}
                 <SortButton k={`test:${c.id}`} label={c.name} sort={sort} onSort={onSort} />
               </div>
-              <div className="font-normal text-soft-mute whitespace-nowrap">
-                {KIND_LABEL[c.kind]}
-                {c.dueDate ? ` · Due ${formatShortDate(c.dueDate)}` : ""}
+              <div className="mt-0.5 flex items-center gap-1.5 font-normal text-soft-mute whitespace-nowrap">
+                {c.kind === "other" ? KIND_LABEL[c.kind] : <SubjectTag section={c.kind} />}
+                {c.dueDate ? <span>Due {formatShortDate(c.dueDate)}</span> : null}
               </div>
               {!compact && c.reviewHref && reviewOff?.ids.includes(c.id) && (
                 <span

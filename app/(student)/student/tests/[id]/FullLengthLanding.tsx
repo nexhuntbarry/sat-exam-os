@@ -18,6 +18,7 @@ import {
 } from "@/lib/full-length-attempt";
 import { loadTimeMultiplier } from "@/lib/full-length-admin";
 import StartFullLengthButton from "./StartFullLengthButton";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import RefreshAtOpenTime from "./RefreshAtOpenTime";
 
 // Landing page of a full-length SAT (plan Phase 2): the two sections with
@@ -116,7 +117,7 @@ export default async function FullLengthLanding({
       <div className="bg-surface border border-divider rounded-2xl p-8 space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-charcoal mb-1">{parent.test_name}</h1>
-          <p className="text-soft-mute">Full-length SAT · Reading and Writing, then Math</p>
+          <p className="flex flex-wrap items-center gap-1.5 text-soft-mute"><SubjectTag fullLength label="Full-length SAT" /> Reading and Writing, then Math</p>
           {multiplier > 1 && (
             <p className="text-sm text-charcoal mt-1">Extended time: ×{multiplier} on every module</p>
           )}
@@ -144,7 +145,7 @@ export default async function FullLengthLanding({
 
         <ol className="space-y-2 text-sm">
           <li className="flex justify-between gap-3 border-b border-divider pb-2">
-            <span className="text-charcoal">Section 1 · Reading and Writing</span>
+            <span className="text-charcoal inline-flex items-center gap-1.5">Section 1 <SubjectTag section="Reading & Writing" label="Reading and Writing" /></span>
             <span className="text-soft-mute text-right">
               Module 1: {rw.m1Count} questions, {fmt(rw.m1Seconds)} · Module 2: {rw.m2Count} questions, {fmt(rw.m2Seconds)}
             </span>
@@ -158,7 +159,7 @@ export default async function FullLengthLanding({
             </li>
           )}
           <li className="flex justify-between gap-3">
-            <span className="text-charcoal">Section 2 · Math</span>
+            <span className="text-charcoal inline-flex items-center gap-1.5">Section 2 <SubjectTag section="Math" /></span>
             <span className="text-soft-mute text-right">
               Module 1: {math.m1Count} questions, {fmt(math.m1Seconds)} · Module 2: {math.m2Count} questions, {fmt(math.m2Seconds)}
             </span>

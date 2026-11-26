@@ -10,7 +10,7 @@ import { fullLengthLinksOrNone, type FullLengthLinks } from "@/lib/full-length";
 import { type AttemptScore } from "@/lib/score-display";
 import { attemptGroupKey, flBadge, listedTestId, scoreAttemptGroup } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { StatusBadge, SubjectTag } from "@/components/ui/StatusBadge";
 import StudentInsights from "@/components/analytics/StudentInsights";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
@@ -229,7 +229,7 @@ export default async function StudentResultsPage() {
                     />
                   </Td>
                   <Td priority="md" className="text-mid-gray">
-                    {r.section ?? "—"}
+                    {r.section ? <SubjectTag section={r.section} /> : "—"}
                   </Td>
                   <Td>
                     <ScoreCell score={r.attempt.score} />

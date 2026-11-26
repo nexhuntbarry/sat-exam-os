@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Check, ClipboardList, Search, X } from "lucide-react";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 import { clsx } from "clsx";
 import { Portal } from "@/components/ui/Portal";
 import { nyLocalToIso, plural } from "@/lib/test-assign-shared";
@@ -173,7 +174,10 @@ export default function AssignTestsDialog({
                         <div className="flex-1 min-w-0">
                           <div className="text-sm font-medium truncate">{t.name}</div>
                           {(t.status || t.section) && (
-                            <div className="text-xs text-soft-mute">{[t.section, t.status].filter(Boolean).join(" · ")}</div>
+                            <div className="mt-0.5 flex items-center gap-1.5 text-xs text-soft-mute">
+                              <SubjectTag section={t.section} />
+                              {t.status && <span>{t.status}</span>}
+                            </div>
                           )}
                         </div>
                         {has && <span className="text-xs text-soft-mute italic shrink-0">already assigned</span>}

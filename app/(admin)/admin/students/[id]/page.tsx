@@ -661,6 +661,7 @@ export default async function AdminStudentDetailPage({
       testId: g.parentId,
       testName: (testById.get(g.parentId)?.test_name as string | undefined) ?? "—",
       section: null,
+      fullLength: true,
       status,
       currentModule: null,
       ...assignmentFields(g.parentId),

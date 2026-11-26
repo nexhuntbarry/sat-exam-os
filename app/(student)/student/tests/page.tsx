@@ -5,7 +5,6 @@ import { getCurrentUser } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
 import { ClipboardList } from "lucide-react";
-import { clsx } from "clsx";
 import PageIntro from "@/components/shared/PageIntro";
 import { formatShortDate } from "@/lib/datetime";
 import { getAssignedTestIds, getInProgressOrPendingM2TestIds, isModule2Track } from "@/lib/student-exam";
@@ -14,7 +13,7 @@ import { attemptScore } from "@/lib/score-display";
 import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { fullLengthAttemptScore } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
-import { StatusBadge, type AttemptStatus } from "@/components/ui/StatusBadge";
+import { StatusBadge, SubjectTag, type AttemptStatus } from "@/components/ui/StatusBadge";
 import { getTranslations } from "next-intl/server";
 import {
   DataTable,
@@ -288,7 +287,7 @@ async function getStudentTests(studentId: string) {
     const incomplete =
       testStatus === "Submitted" &&
       (flKids ? flAttempt : latestRows).some((r) => isModule2NotTaken(r));
-    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score, incomplete, resumeOnly: resumeOnlyIds.has(t.id) };
+    return { ...t, attempt, testStatus, needsModule2, lastSubmittedAt, score, incomplete, resumeOnly: resumeOnlyIds.has(t.id), fullLength: Boolean(flKids) };
   });
 }
 
@@ -340,9 +339,10 @@ export default async function StudentTestsPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/sign-in");
 
-  const [tests, t] = await Promise.all([
+  const [tests, t, tfl] = await Promise.all([
     getStudentTests(user.userId),
     getTranslations("student.tests"),
+    getTranslations("fullLength"),
   ]);
 
   const sorted = [...tests].sort((a, b) => {
@@ -393,20 +393,15 @@ export default async function StudentTestsPage() {
               const onModule2 = computeOnModule2(test);
               const subtitle = buildSubtitle(test, t);
 
-              // Subject tag label
-              const section = mod?.section ?? (isTwoModule ? "Math" : null);
-              const subjectLabel =
-                section === "Math"
-                  ? t("subject.math")
-                  : section === "Reading & Writing"
-                  ? t("subject.readingWriting")
-                  : section ?? null;
-              const subjectClass =
-                section === "Math"
-                  ? "bg-blue-50 text-blue-600 border border-blue-200"
-                  : section === "Reading & Writing"
-                  ? "bg-violet-50 text-violet-600 border border-violet-200"
-                  : "bg-light-bg text-mid-gray border border-divider";
+              // Subject tag label (translated; colours from SubjectTag)
+              const section = test.fullLength ? null : mod?.section ?? (isTwoModule ? "Math" : null);
+              const subjectLabel = test.fullLength
+                ? tfl("tag")
+                : section === "Math"
+                ? t("subject.math")
+                : section === "Reading & Writing"
+                ? t("subject.readingWriting")
+                : section ?? null;
 
               // Status string (never wraps)
               const statusLabel =
@@ -448,16 +443,7 @@ export default async function StudentTestsPage() {
                         main={test.test_name}
                         detail={
                           <span className="flex items-center gap-1.5 flex-wrap">
-                            {subjectLabel && (
-                              <span
-                                className={clsx(
-                                  "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold whitespace-nowrap",
-                                  subjectClass,
-                                )}
-                              >
-                                {subjectLabel}
-                              </span>
-                            )}
+                            {subjectLabel && <SubjectTag section={section} fullLength={test.fullLength} label={subjectLabel} />}
                             <span className="text-soft-mute text-xs">{subtitle}</span>
                           </span>
                         }

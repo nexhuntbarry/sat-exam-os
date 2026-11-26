@@ -3,6 +3,7 @@ import { createTranslator } from "next-intl";
 import en from "@/messages/en.json";
 import zh from "@/messages/zh.json";
 import { BRAND } from "@/lib/brand";
+import { SUBJECT_COLORS, SUBJECT_LINE_COLORS } from "@/lib/subject-colors";
 import { PremierBadge, PremierWordmark } from "@/components/brand/Premier";
 import {
   assessmentType,
@@ -35,7 +36,7 @@ const notoTc = Noto_Sans_TC({ subsets: ["latin"], preload: false, display: "bloc
 
 export type ReportLang = "en" | "zh";
 
-const NAVY = "#0c2a55";
+const NAVY = SUBJECT_COLORS.full.bg; // #0c2a55, also the Full-length subject tag
 const GOLD_RULE = "#d8a640";
 const INK = "#13294b";
 const MUTED = "#5f6b7a";
@@ -43,8 +44,10 @@ const GREEN = "#23925f";
 const GOLD = "#d6a23a";
 const SERIES: Record<SeriesKey, { color: string; label: string; width: number; dash?: string; r: number; hollow?: boolean }> = {
   total: { color: "#12376e", label: "#12376e", width: 3.6, r: 5 },
-  math: { color: "#2f6fc4", label: "#2a64b2", width: 2.2, dash: "7 4", r: 3.8 },
-  rw: { color: "#86afe2", label: "#5a88c4", width: 2.4, dash: "1.5 4", r: 3.8, hollow: true },
+  // Subject colours shared with SubjectTag / ScoreProgressChart (lib/subject-colors.ts);
+  // the dashes keep the lines apart in black-and-white print.
+  math: { color: SUBJECT_LINE_COLORS.math, label: SUBJECT_LINE_COLORS.math, width: 2.2, dash: "7 4", r: 3.8 },
+  rw: { color: SUBJECT_LINE_COLORS.rw, label: SUBJECT_LINE_COLORS.rw, width: 2.4, dash: "1.5 4", r: 3.8, hollow: true },
 };
 
 /** Page CSS: Letter, no margins (the header band runs to the edges). */
@@ -141,9 +144,9 @@ export default function OnePageReport({
   );
   const dateEvery = dense && multiYear ? 2 : 1;
 
-  const scoreCard = (label: string, v: CardValue | null, of: number, empty: string) => (
+  const scoreCard = (label: string, v: CardValue | null, of: number, empty: string, labelColor?: string) => (
     <div className="opr-card">
-      <div className="opr-label">{label}</div>
+      <div className="opr-label" style={labelColor ? { color: labelColor } : undefined}>{label}</div>
       <div className="num">
         <span className={`big ${v ? "" : "opr-none"}`}>{v ? v.value : "—"}</span>
         <span className="of">/{of}</span>
@@ -199,8 +202,8 @@ export default function OnePageReport({
                   {both ? (cards.change ? t("sinceDate", { date: day(cards.change.since), score: cards.change.from }) : t("noChange")) : ""}
                 </div>
               </div>
-              {scoreCard(t("math"), sections.includes(MATH) ? cards.math : null, 800, sections.includes(MATH) ? t("noSection") : "")}
-              {scoreCard(t("rw"), sections.includes(RW) ? cards.rw : null, 800, sections.includes(RW) ? t("noSection") : "")}
+              {scoreCard(t("math"), sections.includes(MATH) ? cards.math : null, 800, sections.includes(MATH) ? t("noSection") : "", SUBJECT_COLORS.math.text)}
+              {scoreCard(t("rw"), sections.includes(RW) ? cards.rw : null, 800, sections.includes(RW) ? t("noSection") : "", SUBJECT_COLORS.rw.text)}
             </div>
 
             <div className="opr-chart">
@@ -232,7 +235,9 @@ export default function OnePageReport({
                 .filter((x): x is NonNullable<typeof x> => Boolean(x))
                 .map(({ s, rows }) => (
                   <div key={s} className="opr-dcard">
-                    <h3>{s === MATH ? t("math") : t("rw")}</h3>
+                    <h3 style={{ color: SUBJECT_COLORS[s === MATH ? "math" : "rw"].text }}>
+                      {s === MATH ? t("math") : t("rw")}
+                    </h3>
                     {rows.map((r) => {
                       const color = r.latest == null ? "#a3adba" : r.latest >= STRONG_PCT ? GREEN : GOLD;
                       return (

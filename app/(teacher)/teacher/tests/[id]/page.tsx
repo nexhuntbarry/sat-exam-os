@@ -27,7 +27,7 @@ import {
   type FlSectionScope,
 } from "@/lib/full-length-score";
 import { ScoreCell } from "@/components/ui/ScoreCell";
-import { StatusBadge } from "@/components/ui/StatusBadge";
+import { StatusBadge, SubjectTag } from "@/components/ui/StatusBadge";
 import { tabSwitchTotal } from "@/lib/tab-switches";
 import { TabSwitchHeader } from "@/components/analytics/TabSwitchCount";
 import { loadLiveSnapshot } from "@/lib/live-progress";
@@ -285,9 +285,9 @@ export default async function TeacherTestDetailPage({
         </div>
         <p className="text-soft-mute text-sm mt-1">
           {isFullLength
-            ? "Full-length SAT · Reading and Writing + Math · Total 400–1600"
+            ? <><SubjectTag fullLength label="Full-length SAT" className="mr-1.5 align-middle" />Reading and Writing + Math · Total 400–1600</>
             : mod
-            ? <>{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</>
+            ? <><SubjectTag section={mod.section} className="mr-1.5 align-middle" />{mod.module_name}{mod.module_number ? ` M${mod.module_number}` : ""}</>
             : "Adaptive · Module 1 + Module 2 (easy/hard)"}
         </p>
       </div>

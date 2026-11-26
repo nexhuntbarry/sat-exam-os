@@ -15,6 +15,7 @@ import AnswerReviewItem from "./AnswerReviewItem";
 import FullLengthResult from "./FullLengthResult";
 import { isModule2NotTaken, M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { getTranslations } from "next-intl/server";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 
 const TRACK_LABEL: Record<string, string> = {
   module_1: "Module 1",
@@ -397,8 +398,9 @@ export default async function StudentResultPage({
           per-module correct counts; % correct is secondary. Two-module
           sessions also link to each module's own answers. */}
       <div className="bg-surface border border-divider rounded-2xl p-8 text-center space-y-4">
-        <div className="text-soft-mute text-sm font-medium uppercase tracking-wider">
-          {score?.sat != null ? `Estimated SAT score${section ? ` · ${section}` : ""}` : "Your Score"}
+        <div className="flex items-center justify-center gap-2 text-soft-mute text-sm font-medium">
+          <span className="uppercase tracking-wider">{score?.sat != null ? "Estimated SAT score" : "Your Score"}</span>
+          {score?.sat != null && section && <SubjectTag section={section} />}
         </div>
         {score?.sat != null && (
           <div className="text-6xl font-bold text-charcoal">

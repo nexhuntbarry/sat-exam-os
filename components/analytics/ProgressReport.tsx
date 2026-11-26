@@ -1,5 +1,6 @@
 import { computeProgress, tierOf, type Occasion, type DomainTrend } from "@/lib/score-analysis";
 import { TrendingUp, TrendingDown, Minus, LineChart } from "lucide-react";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 
 const TIER_STROKE: Record<string, string> = {
   excellent: "var(--color-status-success, #16A34A)",
@@ -52,7 +53,7 @@ function DomainTrendRow({ t }: { t: DomainTrend }) {
     <div className="flex items-center gap-3 py-2.5">
       <div className="w-44 shrink-0">
         <div className="text-sm font-medium text-charcoal leading-tight">{t.domain}</div>
-        <div className="text-xs text-soft-mute">{t.section}</div>
+        <SubjectTag section={t.section} className="mt-0.5" />
       </div>
       <Sparkline points={t.series.map((p) => p.pct)} stroke={stroke} />
       <div className="flex-1 text-xs text-mid-gray tabular-nums">

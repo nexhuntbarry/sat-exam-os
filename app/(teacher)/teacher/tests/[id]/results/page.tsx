@@ -24,6 +24,7 @@ import { fullLengthTableRows, loadFullLengthResults } from "@/lib/full-length-re
 import { studentClassNames } from "@/lib/result-printout";
 import { FullLengthResultsTable } from "@/components/analytics/FullLengthResultsTable";
 import { tabSwitchTotal } from "@/lib/tab-switches";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 
 async function getResultsData(testId: string, userId: string, role: string, isQa: boolean) {
   const db = getServiceClient();
@@ -321,7 +322,8 @@ async function FullLengthResultsPage({
         <div>
           <h1 className="text-2xl font-bold text-charcoal">{test.test_name} — Results</h1>
           <p className="text-soft-mute text-sm mt-1">
-            Full-length SAT · Reading and Writing + Math · Total 400–1600
+            <SubjectTag fullLength label="Full-length SAT" className="mr-1.5 align-middle" />
+            Reading and Writing + Math · Total 400–1600
             {test.due_date && ` · Due ${formatDate(test.due_date)}`}
           </p>
           {!(scope.rw && scope.math) && (
@@ -425,7 +427,7 @@ export default async function TestResultsPage({
           <h1 className="text-2xl font-bold text-charcoal">{test.test_name} — Results</h1>
           <p className="text-soft-mute text-sm mt-1">
             {mod
-              ? <>{mod.module_name} · {mod.section}{mod.module_number ? ` M${mod.module_number}` : ""}</>
+              ? <><SubjectTag section={mod.section} className="mr-1.5 align-middle" />{mod.module_name}{mod.module_number ? ` M${mod.module_number}` : ""}</>
               : "Adaptive · multi-module"}
             {test.time_limit_minutes && ` · ${test.time_limit_minutes} min`}
             {test.due_date && ` · Due ${formatDate(test.due_date)}`}

@@ -531,7 +531,7 @@ export default async function TestDetailPage({
           <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
             {fl ? (
               <>
-                <SubjectTag section={tf("tag")} />
+                <SubjectTag fullLength label={tf("tag")} />
                 <span>
                   {tf("sectionRw")} {sectionTime(fl.children.rw)} →{" "}
                   {fl.breakMinutes === 0 && !fl.allowSectionPause ? "no break" : tf("breakValue", { minutes: fl.breakMinutes })} →{" "}

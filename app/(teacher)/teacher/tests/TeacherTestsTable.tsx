@@ -61,7 +61,7 @@ function Table({
         {rows.map((test) => {
           const mod = test.module;
           const section = test.isFullLength ? (
-            <SubjectTag section={flTag} />
+            <SubjectTag fullLength label={flTag} />
           ) : mod ? (
             <span className="inline-flex items-center gap-1.5">
               <SubjectTag section={mod.section} />

@@ -1,5 +1,6 @@
 import type { Occasion } from "@/lib/score-analysis";
 import { placeLabels } from "@/lib/chart-labels";
+import { SUBJECT_LINE_COLORS } from "@/lib/subject-colors";
 import { TrendingUp } from "lucide-react";
 
 // SAT score progression chart: Total (400–1600), Math (200–800), and R&W
@@ -9,10 +10,12 @@ import { TrendingUp } from "lucide-react";
 // occasions passed in are already filtered to their subject(s)).
 // Inline SVG, no client JS, no external chart deps.
 
+// Math / R&W use the subject colours (lib/subject-colors.ts, same as
+// SubjectTag); Total stays green so it reads apart from both.
 const COLORS = {
   total: "var(--color-status-success, #059669)",
-  math:  "var(--color-status-info,    #0284C7)",
-  rw:    "var(--color-warm-coral,     #F0523D)",
+  math:  SUBJECT_LINE_COLORS.math,
+  rw:    SUBJECT_LINE_COLORS.rw,
 } as const;
 
 const SERIES_LABEL: Record<keyof typeof COLORS, string> = {

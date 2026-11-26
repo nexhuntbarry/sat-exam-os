@@ -1,5 +1,6 @@
 import { computeBreakdown, narrative, tierOf, TIER_LABEL, type AnswerRow, type Tier, type DomainStat, type SkillStat } from "@/lib/score-analysis";
 import { Sparkles, ChevronRight } from "lucide-react";
+import { SubjectTag } from "@/components/ui/StatusBadge";
 
 const TIER_BAR: Record<Tier, string> = {
   excellent: "bg-status-success",
@@ -138,7 +139,7 @@ export default function ScoreBreakdown({
         {b.bySection.map((sec) => (
           <div key={sec.section}>
             <div className="flex items-baseline justify-between mb-1">
-              <h3 className="text-sm font-semibold text-charcoal">{sec.section}</h3>
+              <h3 className="text-sm font-semibold text-charcoal"><SubjectTag section={sec.section} label={sec.section} /></h3>
               <span className={`text-xs font-medium ${TIER_SOFT[tierOf(sec.pct)]} px-2 py-0.5 rounded-full`}>
                 {sec.pct}% · {TIER_LABEL[tierOf(sec.pct)]}
               </span>
