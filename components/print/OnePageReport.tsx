@@ -44,7 +44,7 @@ const MUTED = "#5f6b7a";
 const GREEN = "#23925f";
 const GOLD = "#d6a23a";
 const SERIES: Record<SeriesKey, { color: string; label: string; width: number; dash?: string; r: number; hollow?: boolean }> = {
-  total: { color: SUBJECT_LINE_COLORS.total, label: SUBJECT_LINE_COLORS.total, width: 3.6, r: 5 },
+  total: { color: SUBJECT_LINE_COLORS.total, label: SUBJECT_LINE_COLORS.totalLabel, width: 3.6, r: 5 },
   // Subject colours shared with SubjectTag / ScoreProgressChart (lib/subject-colors.ts);
   // the dashes keep the lines apart in black-and-white print.
   math: { color: SUBJECT_LINE_COLORS.math, label: SUBJECT_LINE_COLORS.math, width: 2.2, dash: "7 4", r: 3.8 },

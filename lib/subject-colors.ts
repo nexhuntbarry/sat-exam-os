@@ -23,8 +23,12 @@ export const SUBJECT_COLORS = {
 export const SUBJECT_LINE_COLORS = {
   math: SUBJECT_COLORS.math.text, // 8.32:1 on white
   rw: SUBJECT_COLORS.rw.text, // 6.37:1 on white
-  /** The R&W + Math total line (one-page parent report and ScoreProgressChart): a lighter Premier navy. */
-  total: "#12376e", // 11.7:1 on white
+  /** The R&W + Math total line (one-page parent report and ScoreProgressChart): the site's coral
+   *  accent (--color-warm-coral, the main buttons), clearly apart from Math blue and R&W gold in
+   *  hue and lightness. 3.51:1 on white: fine for a line/dot (non-text, needs 3:1). */
+  total: "#F0523D",
+  /** Total point labels: the button coral's darker shade (--color-warm-coral-dark), 4.56:1 on white. */
+  totalLabel: "#D63F2A",
 } as const;
 
 /** Map a section / subject string (DB value, short form, or kind) to a SubjectKind. */

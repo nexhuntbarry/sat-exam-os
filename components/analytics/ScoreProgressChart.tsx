@@ -106,7 +106,7 @@ export default function ScoreProgressChart({
     })),
   );
   const labelPoints = order.flatMap((k) =>
-    pts[k].map((p) => ({ id: `${k}-${p.i}`, x: xOf(p.i), dotY: yOf(p.score), score: p.score, fill: COLORS[k], text: String(p.score) })),
+    pts[k].map((p) => ({ id: `${k}-${p.i}`, x: xOf(p.i), dotY: yOf(p.score), score: p.score, fill: COLORS[k], labelFill: k === "total" ? SUBJECT_LINE_COLORS.totalLabel : COLORS[k], text: String(p.score) })),
   );
   const labelY = placeLabels(
     labelPoints,
@@ -173,7 +173,7 @@ export default function ScoreProgressChart({
               textAnchor="middle"
               fontSize="11"
               fontWeight="600"
-              fill={lp.fill}
+              fill={lp.labelFill}
               stroke="var(--color-surface,#fff)"
               strokeWidth="3"
               paintOrder="stroke"
