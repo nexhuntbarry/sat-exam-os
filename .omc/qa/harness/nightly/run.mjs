@@ -17,6 +17,7 @@ import { runFullLengthChecks } from "./fullsat-checks.mjs";
 import { runCustomTestChecks } from "./custom-checks.mjs";
 import { runFlDirectChecks } from "./fl-direct-checks.mjs";
 import { runM2Checks } from "./m2-checks.mjs";
+import { runTeacherPiiCheck } from "./teacher-pii-check.mjs";
 
 // ─────────────────────── paths ─────────────────────────
 const HARNESS_DIR = new URL("../", import.meta.url).pathname;
@@ -85,9 +86,15 @@ function skip(reason) {
   throw e;
 }
 
+// Checks kept so the end-of-run pass can retry environment-flake ERRORs.
+const registry = new Map();
+const ENV_FLAKE_RE = /page\.goto: Timeout|net::ERR_/;
+let RETRYING = false;
+
 async function check(id, finding_ids, title_zh, area, fn, timeoutMs = 8 * 60 * 1000) {
   if (ONLY && !ONLY.includes(id)) return;
-  if (Date.now() - START_MS > GLOBAL_TIMEOUT_MS) {
+  registry.set(id, [id, finding_ids, title_zh, area, fn, timeoutMs]);
+  if (!RETRYING && Date.now() - START_MS > GLOBAL_TIMEOUT_MS) {
     results.push({ id, finding_ids, title_zh, area, result: "ERROR", details: "global timeout", ms: 0 });
     saveResults();
     return;
@@ -1296,6 +1303,9 @@ await check("H-12", ["H-12"], "老師替別班建立快速測驗應收到 403", 
   }
 });
 
+// ── S2. TEACHER-PII — no student PII leaks on teacher pages/APIs ──────────
+await runTeacherPiiCheck({ check, fail, TESTS, C, TEACHER1_CLERK, ADMIN_CLERK });
+
 // ── T. H-14/H-15 Mobile UI ──────────────────────────────────
 await check("H-14-15", ["H-14", "H-15"], "手機作答頁頂部不重疊；Enter 選答不跳題", "UX", async () => {
   const T = TESTS.engLinear;
@@ -1820,6 +1830,31 @@ await check("FULL-TIMED", [], "完整考一場（英文 2 個模組各 32 分鐘
 }, 80 * 60 * 1000);
 
 // ─────────────────────────────────────────────────────────
+// Retry pass: ERRORs that died on navigation timeouts (browser/network flake,
+// not an app verdict) get one more run; the retry's result replaces the first.
+{
+  const flaky = results.filter((r) => r.result === "ERROR" && ENV_FLAKE_RE.test(r.details) && registry.has(r.id));
+  if (flaky.length) {
+    LOG_LINE(`\n=== Retrying ${flaky.length} navigation-timeout ERRORs ===`);
+    RETRYING = true;
+    const RETRY_DEADLINE = START_MS + GLOBAL_TIMEOUT_MS + 60 * 60 * 1000; // report runs 06:00, run starts 00:00
+    let stillBroken = 0;
+    for (const r of flaky) {
+      // Stop when out of time, or after 3 retries in a row hit the same wall (env still down).
+      if (Date.now() > RETRY_DEADLINE || stillBroken >= 3) { LOG_LINE(`  retry pass stopped (${stillBroken >= 3 ? "env still failing" : "time"})`); break; }
+      const first = r.details.split("\n")[0];
+      results.splice(results.indexOf(r), 1);
+      const n = results.length;
+      await check(...registry.get(r.id));
+      const again = results[n];
+      if (again) {
+        again.details = `[retry; 1st: ${first}] ${again.details}`.slice(0, 900);
+        stillBroken = again.result === "ERROR" && ENV_FLAKE_RE.test(again.details) ? stillBroken + 1 : 0;
+      }
+      saveResults();
+    }
+  }
+}
 LOG_LINE(`\n=== Done in ${Math.round((Date.now() - START_MS) / 1000)}s ===`);
 LOG_LINE(`PASS: ${results.filter((r) => r.result === "PASS").length}  FAIL: ${results.filter((r) => r.result === "FAIL").length}  ERROR: ${results.filter((r) => r.result === "ERROR").length}  SKIP: ${results.filter((r) => r.result === "SKIP").length}`);
 LOG_LINE(`Results: ${OUT_JSON}`);

@@ -939,7 +939,12 @@ async function runAll(h, state) {
         figs.push(`${pdf.images}/${f.srcDistinct} figures`);
         return page.evaluate(() => [...document.querySelectorAll(".print-source section")].map((sec) => {
           if (sec.hasAttribute("data-print-divider")) return { divider: sec.querySelector("h1")?.textContent?.trim() };
-          const head = sec.querySelector("p")?.textContent ?? "";
+          // Since 11-26 the section prints as a SubjectTag ("R&W"/"Math") before the module label.
+          const p = sec.querySelector("p");
+          const tagEl = p?.querySelector("span");
+          const tagTxt = tagEl?.textContent?.trim() ?? "";
+          const sectionName = { "R&W": "Reading and Writing", "Math": "Math" }[tagTxt];
+          const head = sectionName ? `${sectionName} · ${(p.textContent ?? "").slice((p.textContent ?? "").indexOf(tagTxt) + tagTxt.length).trim()}` : (p?.textContent ?? "");
           const keyH = [...sec.querySelectorAll("h2")].find((h) => /Answer key/.test(h.textContent));
           const keys = keyH ? [...keyH.nextElementSibling.children].map((d) => d.children[1]?.textContent?.trim() ?? "") : [];
           return { head, keys };
