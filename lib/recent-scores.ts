@@ -31,6 +31,31 @@ export interface RecentScoreItem {
   total: number | null;
   /** A Custom test: the score is an estimate. */
   estimated?: boolean;
+  /** A section test that completes an R&W + Math set (lib/test-pairing): the set's total. */
+  set?: RecentSetTotal | null;
+}
+
+export interface RecentSetTotal {
+  /** 400–1600, R&W + Math of the set. */
+  total: number;
+  /** The set's name; null for a same-day pair of differently named tests. */
+  name: string | null;
+}
+
+/**
+ * Submission id → the set total, for each section attempt in an R&W + Math
+ * set (lib/one-page-report buildAssessments: pair assessments only). A
+ * recent-tests row finds its set through one of its submission ids.
+ */
+export function setTotalsBySubmission(
+  assessments: { kind: string; name: string | null; total: number | null; rw: { submissionIds: string[] } | null; math: { submissionIds: string[] } | null }[],
+): Map<string, RecentSetTotal> {
+  const out = new Map<string, RecentSetTotal>();
+  for (const a of assessments) {
+    if (a.kind !== "pair" || a.total == null) continue;
+    for (const id of [...(a.rw?.submissionIds ?? []), ...(a.math?.submissionIds ?? [])]) out.set(id, { total: a.total, name: a.name });
+  }
+  return out;
 }
 
 export interface RecentScoreRow extends RecentScoreItem {

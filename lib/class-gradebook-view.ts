@@ -87,8 +87,14 @@ export interface StudentSummary {
   /** Latest finished Math score: a Math test or the Math section of a full-length SAT. */
   latestMath: ScorePoint | null;
   latestRw: ScorePoint | null;
-  /** latestMath + latestRw (null unless both exist). */
+  /**
+   * Total of the student's latest set (lib/test-pairing): a full-length SAT,
+   * or an R&W + Math set of section tests. null when none has both sections
+   * (or the viewer sees one section only).
+   */
   estTotal: number | null;
+  /** The set behind estTotal (for the cell's hover). */
+  estTotalSet?: { name: string | null; rw: number; math: number; fullLength: boolean; testNames: string[] } | null;
   /**
    * The student's most recent finished test vs their previous finished
    * test of the same subject (Math vs Math, R&W vs R&W, full-length total

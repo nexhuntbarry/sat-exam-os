@@ -106,7 +106,7 @@ export default async function PrintClassScoresPage({
               <GradebookLegend compact />
             </div>
             <p className="mt-1 text-[7.5pt] text-mid-gray">
-              Latest finished attempt per student, scored as on each test&rsquo;s Results page. Est. total = latest Math + latest R&amp;W. Change = most
+              Latest finished attempt per student, scored as on each test&rsquo;s Results page. Est. total = R&amp;W + Math of the latest set (same set name, or same day) or full-length SAT. Change = most
               recent finished test vs the previous one of the same subject.
             </p>
           </>

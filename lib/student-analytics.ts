@@ -8,6 +8,7 @@ import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { attemptGroupKey } from "@/lib/full-length-score";
 import { moduleTimeLimitSeconds, type ModuleTiming } from "@/lib/student-exam";
 import { parseActivity, type ActivityMap } from "@/lib/question-activity";
+import { loadPairOverrides } from "@/lib/test-pairing";
 
 // Every graded answer for a student, flattened for the strengths/weaknesses
 // breakdown (is_correct + the question's section/domain/skill).
@@ -73,7 +74,11 @@ export async function getStudentProgressOccasions(
   })[];
   if (rows.length === 0) return [];
   // A full-length SAT's two sections are one test when windowing insights.
-  const flLinks = await fullLengthLinksOrNone(db);
+  // Pairing overrides (lib/test-pairing): which R&W and Math tests make a set.
+  const [flLinks, pairOverrides] = await Promise.all([
+    fullLengthLinksOrNone(db),
+    loadPairOverrides(db, rows.map((r) => r.test_id)),
+  ]);
 
   const { data: recs } = await fetchAllRows((from, to) =>
     db
@@ -122,7 +127,16 @@ export async function getStudentProgressOccasions(
     const key = r.session_id ?? r.id;
     let occ = occMap.get(key);
     if (!occ) {
-      occ = { date: r.submitted_at ?? "", label: r.tests.test_name, rows: [], testKey: attemptGroupKey(r, flLinks), key, submissionIds: [] };
+      occ = {
+        date: r.submitted_at ?? "",
+        label: r.tests.test_name,
+        rows: [],
+        testKey: attemptGroupKey(r, flLinks),
+        key,
+        submissionIds: [],
+        testId: r.test_id,
+        ...(pairOverrides.has(r.test_id) ? { pairWith: pairOverrides.get(r.test_id) as string | null } : {}),
+      };
       occMap.set(key, occ);
     }
     if (r.submitted_at && r.submitted_at > occ.date) occ.date = r.submitted_at;

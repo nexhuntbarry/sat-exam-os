@@ -23,6 +23,8 @@ export const SUBJECT_COLORS = {
 export const SUBJECT_LINE_COLORS = {
   math: SUBJECT_COLORS.math.text, // 8.32:1 on white
   rw: SUBJECT_COLORS.rw.text, // 6.37:1 on white
+  /** The R&W + Math total line (one-page parent report and ScoreProgressChart): a lighter Premier navy. */
+  total: "#12376e", // 11.7:1 on white
 } as const;
 
 /** Map a section / subject string (DB value, short form, or kind) to a SubjectKind. */

@@ -1029,6 +1029,8 @@
     "math": "數學",
     "fullLength": "完整 SAT",
     "estimated": "估計",
+    "setTotal": "整套總分 {total}",
+    "setTotalTitle": "{name} 的閱讀與寫作 + 數學",
     "vs": "比 {date} {delta}",
     "first": "第一次",
     "showAll": "顯示全部（{n}）",

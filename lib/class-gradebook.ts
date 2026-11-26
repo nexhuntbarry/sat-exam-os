@@ -21,6 +21,7 @@ import { getTestSections, inSubjects } from "@/lib/teacher-access";
 import { shapeGradebook, type GradebookSubRow } from "@/lib/class-gradebook-shape";
 import type { Gradebook } from "@/lib/class-gradebook-view";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
+import { loadPairOverrides } from "@/lib/test-pairing";
 import { TEACHER_STUDENT_SELECT, teacherStudentLabel } from "@/lib/teacher-student-view";
 
 const SECTIONS = ["Math", "Reading & Writing"] as const;
@@ -174,7 +175,7 @@ export async function loadClassGradebook(
   const testIds = tests.map((t) => t.id);
   const studentIds = students.map((s) => s.id);
   const flParents = testIds.filter((id) => links.childrenOf.has(id));
-  const [{ data: rows, error: rowsErr }, flMeta] = await Promise.all([
+  const [{ data: rows, error: rowsErr }, flMeta, pairOverrides] = await Promise.all([
     testIds.length && studentIds.length
       ? fetchAllRows<GradebookSubRow>((from, to) =>
           db
@@ -189,6 +190,7 @@ export async function loadClassGradebook(
         )
       : Promise.resolve({ data: [] as GradebookSubRow[], error: null }),
     loadFlAttemptMeta(db, flParents),
+    loadPairOverrides(db, testIds),
   ]);
   if (rowsErr) throw new Error(`gradebook submissions lookup failed: ${(rowsErr as { message?: string }).message ?? String(rowsErr)}`);
 
@@ -202,5 +204,6 @@ export async function loadClassGradebook(
     now: opts.now ?? new Date(),
     testHref: opts.testHref,
     reviewHref: opts.reviewHref,
+    pairOverrides,
   });
 }

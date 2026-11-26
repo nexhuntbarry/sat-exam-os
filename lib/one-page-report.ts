@@ -6,15 +6,19 @@
 //
 // One "assessment" =
 //   - a full-length SAT attempt (both sections scored) → its own total;
-//   - otherwise the section tests finished on one New York calendar day:
-//     an R&W and a Math test that day → one assessment, total = R&W + Math;
-//     one section only → that section, no total. (Two tests of the same
-//     section on one day: the later one counts.)
+//   - otherwise one set of section tests (lib/test-pairing pairSections:
+//     admin override, else the same set name, else the same New York day):
+//     an R&W and a Math test → one assessment, total = R&W + Math; one
+//     section only → that section, no total. (A section taken twice in a
+//     set: the later one counts.)
 // Custom tests (estimated scores) and attempts without a SAT score yet
 // (Module 2 open, Incomplete) are not practice-test scores and are left out.
 
 import { combineSectionScores } from "@/lib/scoring";
 import { computeBreakdown, MIN_QUESTIONS_TO_COMPARE, type AnswerRow, type Occasion } from "@/lib/score-analysis";
+import { normalizeSetName, nyDay, pairSections, shortSetLabels, type PairOverrides } from "@/lib/test-pairing";
+
+export { nyDay };
 
 export const RW = "Reading & Writing";
 export const MATH = "Math";
@@ -38,6 +42,10 @@ export interface SectionResult {
   /** That section's answers in this assessment (for the domain %). */
   rows: AnswerRow[];
   date: string;
+  testId: string | null;
+  testName: string | null;
+  /** The attempt's submission rows (to find a test row's set). */
+  submissionIds: string[];
 }
 
 export interface Assessment {
@@ -45,17 +53,12 @@ export interface Assessment {
   /** Latest submitted_at among its tests. */
   date: string;
   kind: "full" | "pair" | "section";
+  /** The set's name ("Nov 26 SAT Intensive day 1"; a full-length SAT: its test name); null when it has none. */
+  name: string | null;
   rw: SectionResult | null;
   math: SectionResult | null;
-  /** 400–1600 for a full-length SAT or a same-day R&W + Math pair; null otherwise. */
+  /** 400–1600 for a full-length SAT or an R&W + Math set; null otherwise. */
   total: number | null;
-}
-
-const NY_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
-/** The New York calendar day of an ISO timestamp ("2026-11-20"). */
-export function nyDay(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : NY_DAY.format(d);
 }
 
 const isSection = (s: string | null | undefined): s is ReportSection => s === RW || s === MATH;
@@ -69,13 +72,28 @@ const result = (o: Occasion): SectionResult => ({
   sat: o.score!.sat!,
   rows: o.rows.filter((r) => r.section === o.section),
   date: o.date,
+  testId: o.testId ?? null,
+  testName: o.label ?? null,
+  submissionIds: o.submissionIds ?? [],
 });
+
+/** The admin pairing overrides carried on the occasions (Occasion.pairWith). */
+export function occasionOverrides(occasions: Occasion[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  for (const o of occasions) if (o.testId && o.pairWith !== undefined) out.set(o.testId, o.pairWith);
+  return out;
+}
 
 /**
  * The student's assessments, oldest first. `sections` limits what is shown
  * (a teacher of one subject): with one section only, nothing has a total.
+ * `overrides`: the admin pairing overrides (default: those on the occasions).
  */
-export function buildAssessments(occasions: Occasion[], sections: readonly ReportSection[] = [RW, MATH]): Assessment[] {
+export function buildAssessments(
+  occasions: Occasion[],
+  sections: readonly ReportSection[] = [RW, MATH],
+  overrides: PairOverrides = occasionOverrides(occasions),
+): Assessment[] {
   const ok = occasions.filter(scored).filter((o) => sections.includes(o.section));
   const both = sections.includes(RW) && sections.includes(MATH);
   const out: Assessment[] = [];
@@ -96,6 +114,7 @@ export function buildAssessments(occasions: Occasion[], sections: readonly Repor
         key,
         date: rw.date > math.date ? rw.date : math.date,
         kind: "full",
+        name: normalizeSetName(rw.label ?? math.label) || null,
         rw: result(rw),
         math: result(math),
         total: combineSectionScores(rw.score!.sat!, math.score!.sat!),
@@ -106,26 +125,20 @@ export function buildAssessments(occasions: Occasion[], sections: readonly Repor
     }
   }
 
-  // Section tests: grouped by New York day; the later test of a section wins.
-  const byDay = new Map<string, Map<ReportSection, Occasion & { section: ReportSection }>>();
-  for (const o of loose) {
-    const day = nyDay(o.date);
-    const m = byDay.get(day) ?? new Map();
-    const cur = m.get(o.section);
-    if (!cur || o.date > cur.date) m.set(o.section, o);
-    byDay.set(day, m);
-  }
-  for (const [day, m] of byDay) {
-    const rw = m.get(RW) ?? null;
-    const math = m.get(MATH) ?? null;
-    const total = rw && math ? combineSectionScores(rw.score!.sat!, math.score!.sat!) : null;
+  // Section tests: one assessment per set (lib/test-pairing). A teacher of
+  // one subject sees one section only, so nothing pairs.
+  const items = loose.map((o) => ({ section: o.section, date: o.date, testId: o.testId ?? null, testName: o.label ?? null, o }));
+  for (const set of pairSections(items, both ? overrides : new Map())) {
+    const rw = set.rw?.o ?? null;
+    const math = set.math?.o ?? null;
     out.push({
-      key: `day:${day}`,
-      date: [rw?.date, math?.date].filter((d): d is string => Boolean(d)).sort().pop()!,
+      key: set.key,
+      date: set.date,
       kind: rw && math ? "pair" : "section",
+      name: set.name,
       rw: rw ? result(rw) : null,
       math: math ? result(math) : null,
-      total,
+      total: rw && math ? combineSectionScores(rw.score!.sat!, math.score!.sat!) : null,
     });
   }
   return out.sort((a, b) => a.date.localeCompare(b.date) || a.key.localeCompare(b.key));
@@ -269,6 +282,31 @@ export function niceScale(values: number[], minSpan: number, floor: number, ceil
 
 export type SeriesKey = "total" | "math" | "rw";
 
+export interface ChartColumn {
+  i: number;
+  x: number;
+  /** The assessment's date (the later section). */
+  date: string;
+  /** Short set name for the x axis ("Day 1"); null = show the date only. */
+  label: string | null;
+  /** Each section's finish time, distinct New York days, oldest first. */
+  sectionDates: string[];
+}
+
+/** Short x-axis labels of the assessments (lib/test-pairing shortSetLabels). */
+export function setLabels(list: Assessment[]): (string | null)[] {
+  return shortSetLabels(list.map((a) => a.name));
+}
+
+/** Each section's finish time of an assessment, one per New York day, oldest first. */
+export function sectionDates(a: Assessment): string[] {
+  const seen = new Set<string>();
+  return [a.rw?.date, a.math?.date]
+    .filter((d): d is string => Boolean(d))
+    .sort()
+    .filter((d) => (seen.has(nyDay(d)) ? false : (seen.add(nyDay(d)), true)));
+}
+
 export interface ChartPoint {
   /** Index of the assessment on the chart (0-based). */
   i: number;
@@ -291,8 +329,8 @@ export interface ChartLayout {
   /** Gridlines: each axis tick and its y. */
   totalTicks: { value: number; y: number }[];
   sectionTicks: { value: number; y: number }[];
-  /** x of each assessment and its date. */
-  columns: { i: number; x: number; date: string }[];
+  /** x of each assessment, its date, its short set label (null: none) and its sections' dates. */
+  columns: ChartColumn[];
   series: Record<SeriesKey, ChartPoint[]>;
   /** Assessments left off the front of the chart (more than CHART_MAX_POINTS). */
   hidden: number;
@@ -323,6 +361,7 @@ export const CHART_BOX: ChartBox = { width: 688, height: 290, axis: 44, xLabels:
 export function chartLayout(all: Assessment[], box: ChartBox = CHART_BOX): ChartLayout {
   const list = all.slice(-CHART_MAX_POINTS);
   const hidden = all.length - list.length;
+  const labels = setLabels(list);
   const left = box.axis;
   const right = box.width - box.axis;
   const inner = 22; // keep the end points (and their labels) off the axes
@@ -371,7 +410,7 @@ export function chartLayout(all: Assessment[], box: ChartBox = CHART_BOX): Chart
     sectionScale,
     totalTicks: totalScale && totalBand ? totalScale.ticks.map((value) => ({ value, y: yOf(value, totalScale, totalBand!) })) : [],
     sectionTicks: sectionScale && sectionBand ? sectionScale.ticks.map((value) => ({ value, y: yOf(value, sectionScale, sectionBand!) })) : [],
-    columns: list.map((a, i) => ({ i, x: xOf(i), date: a.date })),
+    columns: list.map((a, i) => ({ i, x: xOf(i), date: a.date, label: labels[i], sectionDates: sectionDates(a) })),
     series,
     hidden,
   };

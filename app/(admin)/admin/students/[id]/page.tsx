@@ -32,7 +32,8 @@ import StudentTestsActions, { type ClassChoice } from "./StudentTestsActions";
 import CheckProfileBadge from "./CheckProfileBadge";
 import StudentInsights from "@/components/analytics/StudentInsights";
 import RecentPracticeTests from "@/components/analytics/RecentPracticeTests";
-import type { RecentScoreItem } from "@/lib/recent-scores";
+import { setTotalsBySubmission, type RecentScoreItem } from "@/lib/recent-scores";
+import { buildAssessments } from "@/lib/one-page-report";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import ScoreBreakdown from "@/components/analytics/ScoreBreakdown";
 import StudentConclusions from "@/components/analytics/StudentConclusions";
@@ -745,15 +746,15 @@ export default async function AdminStudentDetailPage({
     groups.map((g) => (g.section === "Math" ? scoreOfGroup(g)?.sat : null)).find((x) => x != null) ?? null;
   const latestRWScore =
     groups.map((g) => (g.section === "Reading & Writing" ? scoreOfGroup(g)?.sat : null)).find((x) => x != null) ?? null;
-  // Prefer the latest finished full-length SAT total (a real one-sitting
-  // score) over adding up the latest section tests.
-  const latestFl = flScored
-    .filter((g) => flFinished(g.score) && g.score.total != null)
-    .map((g) => ({ total: g.score.total!, at: [...g.rw, ...g.math].map((r) => r.submitted_at ?? "").sort().pop() ?? "" }))
-    .sort((a, b) => b.at.localeCompare(a.at))[0];
+  // Latest total: a full-length SAT or an R&W + Math set (lib/test-pairing),
+  // as on the one-page report — never the latest section tests added up.
+  const assessments = buildAssessments(occasions);
+  const latestSet = [...assessments].reverse().find((a) => a.total != null);
+  const setTotals = setTotalsBySubmission(assessments);
 
   // "Recent practice tests": finished attempts only, with the same scores
   // as the Tests table (section tests: scoreOfGroup; full-length: its total).
+  // A section test in an R&W + Math set also shows the set's total.
   const recentItems: RecentScoreItem[] = [
     ...groups
       .filter((g) => g.status === "Submitted" || g.status === "Late")
@@ -776,6 +777,7 @@ export default async function AdminStudentDetailPage({
         ],
         total: null,
         estimated: score!.estimated,
+        set: setTotals.get(g.detailSubmissionId) ?? null,
       })),
     ...flScored
       .filter((g) => flFinished(g.score) && lastSubmittedAt([...g.rw, ...g.math]))
@@ -796,7 +798,7 @@ export default async function AdminStudentDetailPage({
 
   // Summary stats (Overview tab).
   const stats = (
-    <div className={clsx("grid grid-cols-2 gap-4", latestFl ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
+    <div className={clsx("grid grid-cols-2 gap-4", latestSet ? "sm:grid-cols-4" : "sm:grid-cols-3")}>
       <div className="bg-surface border border-divider rounded-2xl p-5">
         <p className="text-soft-mute text-xs">Latest Math</p>
         <p className="text-3xl font-bold text-charcoal mt-1">
@@ -809,11 +811,13 @@ export default async function AdminStudentDetailPage({
           {latestRWScore ?? "—"}
         </p>
       </div>
-      {/* A real one-sitting total only; no estimate from adding up section tests. */}
-      {latestFl && (
+      {/* A full-length SAT or an R&W + Math set only; no estimate from adding up unrelated section tests. */}
+      {latestSet && (
         <div className="bg-surface border border-divider rounded-2xl p-5">
-          <p className="text-soft-mute text-xs">Total · Full-length SAT</p>
-          <p className="text-3xl font-bold text-charcoal mt-1">{latestFl.total}</p>
+          <p className="text-soft-mute text-xs truncate" title={latestSet.name ?? undefined}>
+            Total · {latestSet.kind === "full" ? "Full-length SAT" : latestSet.name ?? "R&W + Math"}
+          </p>
+          <p className="text-3xl font-bold text-charcoal mt-1">{latestSet.total}</p>
         </div>
       )}
       <div className="bg-surface border border-divider rounded-2xl p-5">

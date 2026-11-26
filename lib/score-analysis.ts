@@ -330,6 +330,13 @@ export interface Occasion {
   testKey?: string;
   /** The attempt's session_id (or its one submission id). */
   key?: string;
+  /** The test the attempt belongs to (a full-length SAT: the section test). */
+  testId?: string;
+  /**
+   * Admin pairing override of that test (lib/test-pairing, tests.pairing):
+   * the partner test id, null = explicitly no pair, undefined = automatic.
+   */
+  pairWith?: string | null;
   /** Submission rows the occasion was built from. */
   submissionIds?: string[];
   /** Per-module clocks (only with { habits: true }). */

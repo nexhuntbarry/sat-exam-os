@@ -1029,6 +1029,8 @@
     "math": "Math",
     "fullLength": "Full-length SAT",
     "estimated": "Est.",
+    "setTotal": "Set total {total}",
+    "setTotalTitle": "R&W + Math of {name}",
     "vs": "{delta} vs {date}",
     "first": "First one",
     "showAll": "Show all ({n})",

@@ -18,6 +18,7 @@ import {
   targetedReview,
   type Assessment,
   type CardValue,
+  type ChartColumn,
   type ChartLayout,
   type ReportSection,
   type SeriesKey,
@@ -43,7 +44,7 @@ const MUTED = "#5f6b7a";
 const GREEN = "#23925f";
 const GOLD = "#d6a23a";
 const SERIES: Record<SeriesKey, { color: string; label: string; width: number; dash?: string; r: number; hollow?: boolean }> = {
-  total: { color: "#12376e", label: "#12376e", width: 3.6, r: 5 },
+  total: { color: SUBJECT_LINE_COLORS.total, label: SUBJECT_LINE_COLORS.total, width: 3.6, r: 5 },
   // Subject colours shared with SubjectTag / ScoreProgressChart (lib/subject-colors.ts);
   // the dashes keep the lines apart in black-and-white print.
   math: { color: SUBJECT_LINE_COLORS.math, label: SUBJECT_LINE_COLORS.math, width: 2.2, dash: "7 4", r: 3.8 },
@@ -222,7 +223,17 @@ export default function OnePageReport({
                   {sections.includes(RW) && <Legend k="rw" label={t("rw")} />}
                 </div>
               </div>
-              <ProgressChart chart={chart} xLabel={(i) => (chart.columns.length <= 6 ? (lang === "zh" ? `第 ${i} 次` : `Assessment ${i}`) : String(i))} date={(iso, i) => ((chart.columns.length - 1 - i) % dateEvery === 0 ? shortDate.format(new Date(iso)) : "")} offset={chart.hidden} />
+              <ProgressChart
+                chart={chart}
+                xLabel={(i) => (chart.columns.length <= 6 ? (lang === "zh" ? `第 ${i} 次` : `Assessment ${i}`) : String(i))}
+                // Under each point: each section's date (one when both were the same day; a crowded chart: the set's date only).
+                date={(c) =>
+                  (chart.columns.length - 1 - c.i) % dateEvery === 0
+                    ? (dense ? [c.date] : c.sectionDates).map((d) => shortDate.format(new Date(d))).join(" · ")
+                    : ""
+                }
+                offset={chart.hidden}
+              />
             </div>
 
             <div className="opr-dhead">
@@ -305,14 +316,19 @@ function ProgressChart({
   offset,
 }: {
   chart: ChartLayout;
+  /** Fallback x label (assessment number) for a column without a set name. */
   xLabel: (n: number) => string;
-  /** The date under column `i` ("" = none). */
-  date: (iso: string, i: number) => string;
+  /** The date line under a column ("" = none). */
+  date: (c: ChartColumn) => string;
   offset: number;
 }) {
   const { width, height, plot } = chart;
   const xl = height - 30;
   const dense = chart.columns.length > 12;
+  // A set name cut to its column's width (~5.5 px a character at this size).
+  const colWidth = chart.columns.length > 1 ? (plot.right - plot.left) / chart.columns.length : plot.right - plot.left;
+  const maxChars = Math.max(4, Math.floor(colWidth / (dense ? 5 : 5.6)));
+  const fit = (s: string) => (s.length > maxChars ? `${s.slice(0, maxChars - 1).trimEnd()}…` : s);
   return (
     <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Score progression">
       {chart.totalTicks.map(({ value, y }) => (
@@ -357,8 +373,11 @@ function ProgressChart({
       })}
       {chart.columns.map((c) => (
         <g key={c.i}>
-          <text x={c.x} y={xl + 12} textAnchor="middle" fontSize={dense ? 8.5 : 9.5} fontWeight={700} fill={MUTED}>{xLabel(c.i + 1 + offset)}</text>
-          <text x={c.x} y={xl + 24} textAnchor="middle" fontSize={dense ? 8 : 9} fill={MUTED}>{date(c.date, c.i)}</text>
+          <text x={c.x} y={xl + 12} textAnchor="middle" fontSize={dense ? 8.5 : 9.5} fontWeight={700} fill={MUTED}>
+            {c.label ? <title>{c.label}</title> : null}
+            {c.label ? fit(c.label) : xLabel(c.i + 1 + offset)}
+          </text>
+          <text x={c.x} y={xl + 24} textAnchor="middle" fontSize={dense ? 8 : 9} fill={MUTED}>{date(c)}</text>
         </g>
       ))}
     </svg>

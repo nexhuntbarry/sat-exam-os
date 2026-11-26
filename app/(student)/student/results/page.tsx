@@ -15,6 +15,8 @@ import StudentInsights from "@/components/analytics/StudentInsights";
 import ScoreProgressChart from "@/components/analytics/ScoreProgressChart";
 import PerTestBreakdown from "@/components/analytics/PerTestBreakdown";
 import { getStudentProgressOccasions } from "@/lib/student-analytics";
+import { buildAssessments } from "@/lib/one-page-report";
+import { setTotalsBySubmission } from "@/lib/recent-scores";
 import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import {
   DataTable,
@@ -170,6 +172,8 @@ export default async function StudentResultsPage() {
   const { rows, sectionOf, flLinks, parentName } = await getStudentResults(user.userId);
   const results = buildResultGroups(rows, sectionOf, flLinks, parentName);
   const occasions = await getStudentProgressOccasions(user.userId);
+  // A section test in an R&W + Math set (lib/test-pairing) also shows the set's total.
+  const setTotals = setTotalsBySubmission(buildAssessments(occasions));
 
   return (
     <div className="space-y-6">
@@ -233,6 +237,14 @@ export default async function StudentResultsPage() {
                   </Td>
                   <Td>
                     <ScoreCell score={r.attempt.score} />
+                    {setTotals.has(r.detailSubmissionId) && (
+                      <span
+                        className="block text-xs text-mid-gray whitespace-nowrap"
+                        title={setTotals.get(r.detailSubmissionId)!.name ? `R&W + Math of ${setTotals.get(r.detailSubmissionId)!.name}` : undefined}
+                      >
+                        Set total {setTotals.get(r.detailSubmissionId)!.total}
+                      </span>
+                    )}
                   </Td>
                   <Td>
                     <StatusBadge kind="attempt" status={r.attempt.status} module={r.attempt.module} label={r.statusLabel} />

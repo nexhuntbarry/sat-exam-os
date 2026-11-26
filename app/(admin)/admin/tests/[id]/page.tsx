@@ -26,6 +26,8 @@ import FullLengthSourcesCard from "./FullLengthSourcesCard";
 import CustomRulesCard from "./CustomRulesCard";
 import { loadCustomTest } from "@/lib/custom-test/db";
 import AccommodationsCard from "./AccommodationsCard";
+import PairingCard from "./PairingCard";
+import { autoPartnerByName, isPairingColumnMissing, parsePairing } from "@/lib/test-pairing";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import {
   accommodationKind,
@@ -299,6 +301,46 @@ async function getFullLengthDetail(testId: string) {
   };
 }
 
+/**
+ * "Paired with" card data: the stored override (tests.pairing), the tests of
+ * the other section on the viewer's QA side (no full-length SATs), and the
+ * automatic partner by set name. pending = migration 0036 not applied.
+ */
+async function loadPairingCard(testId: string, testName: string, section: "Math" | "Reading & Writing", viewerIsQa: boolean) {
+  const db = getServiceClient();
+  const other = section === "Math" ? "Reading & Writing" : "Math";
+  type Row = { id: string; test_name: string; created_at: string | null; m: { section: string | null } | null; m1: { section: string | null } | null };
+  const [{ data: all, error }, own, qaIds, links] = await Promise.all([
+    db.from("tests").select("id, test_name, created_at, m:modules!module_id(section), m1:modules!module_1_id(section)").neq("id", testId),
+    db.from("tests").select("pairing").eq("id", testId).maybeSingle(),
+    getQaTestIds(),
+    fullLengthLinksOrNone(db),
+  ]);
+  if (error) throw new Error(error.message);
+  const pending = isPairingColumnMissing(own.error);
+  if (own.error && !pending) console.error("[admin/tests] pairing read failed:", own.error.message);
+  const options = ((all ?? []) as unknown as Row[])
+    .filter((t) => onSide(t.id, qaIds, viewerIsQa) && !links.parentOf.has(t.id) && !links.childrenOf.has(t.id))
+    .filter((t) => (t.m?.section ?? t.m1?.section ?? null) === other)
+    .map((t) => ({ id: t.id, name: t.test_name, createdAt: t.created_at }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const stored = own.error ? undefined : parsePairing((own.data as { pairing?: unknown } | null)?.pairing);
+  const pick = (o: { id: string; name: string } | undefined | null) => (o ? { id: o.id, name: o.name } : null);
+  const current =
+    stored === undefined
+      ? ({ mode: "auto" } as const)
+      : stored === null
+        ? ({ mode: "none" } as const)
+        : ({ mode: "pair", partner: pick(options.find((o) => o.id === stored)) } as const);
+  return {
+    other,
+    pending,
+    current,
+    auto: pick(autoPartnerByName(testName, options)),
+    options: options.map((o) => ({ id: o.id, name: o.name })),
+  };
+}
+
 export default async function TestDetailPage({
   params,
   searchParams,
@@ -353,6 +395,14 @@ export default async function TestDetailPage({
       console.error("[admin/tests] teacher_qa_enabled read failed:", e);
       return { enabled: null, error: e instanceof Error ? e.message : String(e) };
     });
+  // "Paired with" (lib/test-pairing): section tests only; a full-length SAT keeps its own total.
+  const pairing =
+    !fl && !test.parent_test_id && (section === "Math" || section === "Reading & Writing")
+      ? await loadPairingCard(test.id, test.test_name as string, section, user.isQa).catch((e) => {
+          console.error("[admin/tests] pairing read failed:", e);
+          return null;
+        })
+      : null;
   const [visibilityInputs, tv] = await Promise.all([
     loadAnswerVisibilityInputs(
       db,
@@ -838,6 +888,17 @@ export default async function TestDetailPage({
           initial={sectionAccommodations}
           profile={profileTimes}
           kind="section"
+        />
+      )}
+
+      {pairing && (
+        <PairingCard
+          testId={test.id}
+          otherSection={pairing.other === "Math" ? "Math" : "R&W"}
+          current={pairing.current}
+          autoPartner={pairing.auto}
+          options={pairing.options}
+          pending={pairing.pending}
         />
       )}
 

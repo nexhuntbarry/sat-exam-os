@@ -16,6 +16,8 @@ import {
  * practice tests, newest first (RECENT_SCORES_DEFAULT, then "Show all"),
  * with the real stored scores and the change vs. the previous test of the
  * same section (a full-length SAT: its 400–1600 total vs. the previous one).
+ * A section test that completes an R&W + Math set (lib/test-pairing) also
+ * shows the set's total.
  */
 export default async function RecentPracticeTests({ items }: { items: RecentScoreItem[] }) {
   const t = await getTranslations("recentScores");
@@ -58,6 +60,11 @@ export default async function RecentPracticeTests({ items }: { items: RecentScor
                 {r.sections[0]?.sat ?? "—"}
               </span>
               {est}
+              {r.set && (
+                <span className="block text-xs text-mid-gray" title={r.set.name ? t("setTotalTitle", { name: r.set.name }) : undefined}>
+                  {t("setTotal", { total: r.set.total })}
+                </span>
+              )}
             </>
           )}
         </span>

@@ -34,13 +34,38 @@ export interface PlaceLabelConfig {
   labelGap?: number;
 }
 
+/** A drawn line segment that labels should not sit on. */
+export interface LabelSegment {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+/** Does the segment pass through the box [left, right] × [top, bottom]? */
+function segmentHitsBox(s: LabelSegment, left: number, right: number, top: number, bottom: number): boolean {
+  const lo = Math.max(left, Math.min(s.x1, s.x2));
+  const hi = Math.min(right, Math.max(s.x1, s.x2));
+  if (lo > hi) return false;
+  const yAt = (x: number) => (s.x2 === s.x1 ? s.y1 : s.y1 + ((s.y2 - s.y1) * (x - s.x1)) / (s.x2 - s.x1));
+  const ya = yAt(lo);
+  const yb = yAt(hi);
+  return Math.max(ya, yb) >= top && Math.min(ya, yb) <= bottom;
+}
+
 /**
  * Compute a label Y (baseline) for every data point.
  * Returns Map<id, labelY>.  Use as the SVG `text` element's `y` attribute.
+ *
+ * `avoid` (optional): the chart's line segments. A dot alone in its cluster
+ * then gets its label BELOW instead when a line runs through the ABOVE spot
+ * and not through the below one (e.g. a line climbing steeply from the dot).
+ * The label is `width` px wide (default: 6.5 px a character of `text`).
  */
 export function placeLabels(
-  points: { id: string; x: number; dotY: number }[],
+  points: { id: string; x: number; dotY: number; text?: string; width?: number }[],
   config: PlaceLabelConfig = {},
+  avoid?: { segments: LabelSegment[] },
 ): Map<string, number> {
   const textHeight = config.textHeight ?? 12;
   const dotRadius  = config.dotRadius  ?? 3.5;
@@ -59,12 +84,21 @@ export function placeLabels(
 
   // Group by rounded x so dots ≤0.5 px apart share one column.
   const byX = new Map<number, { id: string; dotY: number }[]>();
+  const byId = new Map(points.map((p) => [p.id, p]));
   for (const p of points) {
     const xKey = Math.round(p.x);
     const arr = byX.get(xKey) ?? [];
     arr.push({ id: p.id, dotY: p.dotY });
     byX.set(xKey, arr);
   }
+
+  // A lone dot's label spot is blocked when a line segment runs through it.
+  const blocked = (id: string, labelY: number): boolean => {
+    const p = byId.get(id);
+    if (!avoid || !p) return false;
+    const half = (p.width ?? (p.text?.length ?? 3) * 6.5) / 2;
+    return avoid.segments.some((s) => segmentHitsBox(s, p.x - half, p.x + half, labelY - textHeight, labelY));
+  };
 
   const result = new Map<string, number>();
 
@@ -87,8 +121,10 @@ export function placeLabels(
 
     // Place labels per cluster.
     for (const cluster of clusters) {
-      // Top dot always goes ABOVE.
-      result.set(cluster[0].id, aboveY(cluster[0].dotY));
+      // Top dot goes ABOVE (a lone dot: BELOW when only that spot is clear of the lines).
+      const top = cluster[0];
+      const flip = cluster.length === 1 && blocked(top.id, aboveY(top.dotY)) && !blocked(top.id, belowY(top.dotY));
+      result.set(top.id, flip ? belowY(top.dotY) : aboveY(top.dotY));
 
       if (cluster.length > 1) {
         // Remaining dots go BELOW, stacked down until every adjacent pair

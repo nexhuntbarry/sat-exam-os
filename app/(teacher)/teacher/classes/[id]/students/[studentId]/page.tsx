@@ -15,7 +15,8 @@ import { M2_NOT_TAKEN_COLUMN } from "@/lib/module2-not-taken";
 import { attemptScore, averageSat, type ScoreDisplay } from "@/lib/score-display";
 import { fullLengthLinksOrNone } from "@/lib/full-length";
 import { flModuleCells, flStatusText, fullLengthAttemptScore, loadFlAttemptMeta, flAttemptKey, scopedFlScore } from "@/lib/full-length-score";
-import type { RecentScoreItem } from "@/lib/recent-scores";
+import { setTotalsBySubmission, type RecentScoreItem } from "@/lib/recent-scores";
+import { buildAssessments } from "@/lib/one-page-report";
 import { ScoreCell } from "@/components/ui/ScoreCell";
 import { StatusBadge, SubjectTag, attemptStatusLabel } from "@/components/ui/StatusBadge";
 import { formatShortDate, formatShortDateTime, formatDateTime } from "@/lib/datetime";
@@ -422,6 +423,10 @@ export default async function TeacherStudentResultsPage({
   const occasions = allOccasions
     .map((o) => ({ ...o, rows: o.rows.filter((r) => inSubjects(r.section, subjects)) }))
     .filter((o) => o.rows.length > 0 && inSubjects(o.section, subjects));
+  // A section test in an R&W + Math set (lib/test-pairing) also shows the
+  // set's total. A teacher of one subject has one section only: no sets.
+  const setTotals = setTotalsBySubmission(buildAssessments(occasions));
+  const recentRows = recentItems.map((it) => (it.kind === "section" ? { ...it, set: setTotals.get(it.key) ?? null } : it));
   const occBySubmission = new Map<string, Occasion>();
   for (const o of occasions) for (const sid of o.submissionIds ?? []) occBySubmission.set(sid, o);
   const breakdownRows = (submissionIds: string[]) =>
@@ -481,7 +486,7 @@ export default async function TeacherStudentResultsPage({
             content: (
               <>
                 {/* Lead with the real practice-test scores. */}
-                <RecentPracticeTests items={recentItems} />
+                <RecentPracticeTests items={recentRows} />
                 {occasions.length > 1 && <ScoreProgressChart occasions={occasions} />}
                 <StudentConclusions occasions={occasions} studentId={studentId} displayName={student.display_name} />
                 <div className="grid grid-cols-3 gap-4">

@@ -28,6 +28,7 @@ import {
   type FlSectionScope,
 } from "@/lib/full-length-score";
 import type { FullLengthChildren, FullLengthLinks } from "@/lib/full-length";
+import { pairSections, PAIR_MATH, PAIR_RW, type PairItem, type PairOverrides } from "@/lib/test-pairing";
 import type {
   CellState,
   Gradebook,
@@ -75,6 +76,8 @@ export interface ShapeGradebookInput {
   testHref: (testId: string) => string;
   /** The test's Questions & answers (Class Review) page, next to the name (teacher grid). */
   reviewHref?: (testId: string) => string;
+  /** Admin pairing overrides (lib/test-pairing) for the est. total's sets. */
+  pairOverrides?: PairOverrides;
 }
 
 const isGraded = (s: string) => s === "Submitted" || s === "Late";
@@ -252,13 +255,53 @@ function byNewest(a: ScorePoint & { order: string }, b: ScorePoint & { order: st
 }
 
 /**
- * A student's summary over every column: latest Math / R&W (section tests
- * and the sections of a finished full-length SAT), est. total = the two
- * added, and the change of their most recent finished test vs their
- * previous one of the same subject. Each cell counts with its shown
- * (latest finished) attempt.
+ * The student's latest set with a total among these columns: a finished
+ * full-length SAT (its own total), or an R&W + Math set of section tests
+ * (lib/test-pairing pairSections: admin override, same set name, else same
+ * New York day). Set date = when its later section was finished.
  */
-export function summarizeStudent(columns: GradebookColumn[], cells: Record<string, GradebookCell>): StudentSummary {
+function latestSet(
+  columns: GradebookColumn[],
+  cells: Record<string, GradebookCell>,
+  overrides: PairOverrides | undefined,
+): { total: number; date: string; set: NonNullable<StudentSummary["estTotalSet"]> } | null {
+  type Item = PairItem & { score: number };
+  const items: Item[] = [];
+  const found: { total: number; date: string; set: NonNullable<StudentSummary["estTotalSet"]> }[] = [];
+  for (const c of columns) {
+    const cell = cells[c.id];
+    if (!cell || cell.state !== "scored" || cell.sat == null) continue;
+    const date = cell.takenAt ?? c.date ?? "";
+    if (c.kind === "math" || c.kind === "rw") {
+      items.push({ section: c.kind === "math" ? PAIR_MATH : PAIR_RW, date, testId: c.id, testName: c.name, score: cell.sat });
+    } else if (c.kind === "fl" && cell.rw != null && cell.math != null) {
+      found.push({ total: cell.sat, date, set: { name: c.name, rw: cell.rw, math: cell.math, fullLength: true, testNames: [c.name] } });
+    }
+  }
+  for (const s of pairSections(items, overrides)) {
+    if (!s.rw || !s.math) continue;
+    found.push({
+      total: s.rw.score + s.math.score,
+      date: s.date,
+      set: { name: s.name, rw: s.rw.score, math: s.math.score, fullLength: false, testNames: [s.rw.testName ?? "", s.math.testName ?? ""] },
+    });
+  }
+  return found.sort((a, b) => b.date.localeCompare(a.date))[0] ?? null;
+}
+
+/**
+ * A student's summary over every column: latest Math / R&W (section tests
+ * and the sections of a finished full-length SAT), est. total = the total
+ * of their latest set (latestSet; null for a viewer of one section), and
+ * the change of their most recent finished test vs their previous one of
+ * the same subject. Each cell counts with its shown (latest finished)
+ * attempt.
+ */
+export function summarizeStudent(
+  columns: GradebookColumn[],
+  cells: Record<string, GradebookCell>,
+  opts: { both?: boolean; overrides?: PairOverrides } = {},
+): StudentSummary {
   type P = ScorePoint & { order: string; kind: GradebookKind };
   const tests: P[] = [];
   const math: P[] = [];
@@ -280,10 +323,12 @@ export function summarizeStudent(columns: GradebookColumn[], cells: Record<strin
   tests.sort(byNewest);
   const latest = tests[0];
   const previous = latest ? tests.slice(1).find((p) => p.kind === latest.kind) : undefined;
+  const set = opts.both === false ? null : latestSet(columns, cells, opts.overrides);
   return {
     latestMath,
     latestRw,
-    estTotal: latestMath && latestRw ? latestMath.score + latestRw.score : null,
+    estTotal: set?.total ?? null,
+    estTotalSet: set?.set ?? null,
     change:
       latest && previous
         ? { delta: latest.score - previous.score, kind: latest.kind, latest: strip(latest)!, previous: strip(previous)! }
@@ -356,7 +401,7 @@ export function shapeGradebook(input: ShapeGradebookInput): Gradebook {
         name: s.name,
         ...(s.email !== undefined ? { email: s.email } : {}),
         cells,
-        summary: summarizeStudent(columns, cells),
+        summary: summarizeStudent(columns, cells, { both: scope.rw && scope.math, overrides: input.pairOverrides }),
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name) || a.studentId.localeCompare(b.studentId));

@@ -271,9 +271,9 @@ export default function GradebookTable({
               <td
                 className={`${pad} border-l border-divider align-top font-bold text-charcoal`}
                 title={
-                  r.summary.estTotal != null
-                    ? `Latest Math ${r.summary.latestMath!.score} + latest R&W ${r.summary.latestRw!.score} = ${r.summary.estTotal}`
-                    : "Needs a finished Math score and a finished R&W score"
+                  r.summary.estTotal != null && r.summary.estTotalSet
+                    ? `${r.summary.estTotalSet.name ?? r.summary.estTotalSet.testNames.join(" + ")}: R&W ${r.summary.estTotalSet.rw} + Math ${r.summary.estTotalSet.math} = ${r.summary.estTotal}`
+                    : "Needs a finished R&W and Math test of one set (or a full-length SAT)"
                 }
               >
                 {r.summary.estTotal ?? <span className="text-soft-mute font-normal">—</span>}
